@@ -5,18 +5,18 @@
 
 ## Purpose
 
-Tool subsystem — registry, type definitions, filtering, metadata parsing, MCP integration, the stateful terminal system, standard built-in tools, AST code-analysis tools, LSP integration, web tools, tool-result overflow management, and workspace-scoped tools. All tools implement the `Tool` ABC from `modex_agent/core`.
+Tool subsystem — the concrete tool manager, type definitions, filtering, metadata parsing, MCP integration, the stateful terminal system, standard built-in tools, AST code-analysis tools, LSP integration, web tools, tool-result overflow management, and workspace-scoped tools. All tools implement the `Tool` ABC from `modex_agent/core`.
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
-| `registry.py` | `ToolRegistry` — tool registration, lookup, and catalog management |
+| `manager.py` | `InMemoryToolManager` — the concrete ToolManager registry (moved from `core/tool_manager.py`, C2). Core keeps the `ToolManager` ABC + shared `execute()` behavior (result normalization, ctx propagation); this is the concrete implementation |
 | `types.py` | Tool-related type definitions (767 lines) — `ToolParameter`, `ToolSpec`, `ToolResult`, `ToolCall` |
-| `filter.py` | `FilteredToolManager` — per-agent tool visibility and access control |
+| `filter.py` | `FilteredToolManager` — per-agent tool visibility and access control (allow/deny wrap over any ToolManager) |
 | `metadata_parser.py` | Rich docstring parser (Google/NumPy/Sphinx styles) — extracts parameter schemas for automatic tool definition |
 | `presets.py` | Tool preset definitions — named sets of tools for different agent configurations |
-| `mcp_adapter.py` | `MCPToolAdapter`, `MCPToolRegistry` — bridges MCP protocol tools to the framework `Tool` interface |
+| `mcp_adapter.py` | `MCPToolAdapter`, `acquire_mcp_tools` — bridges MCP protocol tools to the framework `Tool` interface |
 | `mcp_loader.py` | `load_per_agent_mcp` — per-agent MCP server loading (relocated from `multi_agent/communication.py` per ADR-0019 T1). Resolves agent MCP server selection via `bot.config.mcp_registry`, builds `MCPClientManager` + initializes tools. Sole caller: `multi_agent/template.py` (subagent materialization path). |
 | `workspace_scoped.py` | Workspace-scoped tool wrappers — resolve relative paths against bound workspace root instead of process CWD (wraps read/write/edit/ls/glob/grep/bash) |
 | `graph_knowledge_capabilities.py` | `KnowledgeToolCapabilities` — frozen Pydantic model derived from `ToolPreset` via `from_preset()`; gates which knowledge actions (read/ls/grep/write/edit) an agent may use |
@@ -43,7 +43,7 @@ Tool subsystem — registry, type definitions, filtering, metadata parsing, MCP 
 - `FilteredToolManager` enforces per-agent tool visibility rules at runtime
 - `metadata_parser.py` enables automatic parameter schema extraction from docstrings
 - Terminal sessions are stateful — use session IDs for persistent shell interaction
-- No standalone `executor.py` exists; tool execution is handled by `ToolRegistry` lookup + individual tool `.execute()` calls, coordinated by the agent's `ToolNode` (see `modex_agent/agents/AGENTS.md`)
+- No standalone `executor.py` exists; tool execution is handled by `ToolManager.execute()` (shared behavior on the core ABC: not-found/disabled guards, ctx propagation via contextvar, result normalization via `result_metadata`) + individual tool `.execute()` calls, coordinated by the agent's `ToolNode` (see `modex_agent/agents/AGENTS.md`)
 
 ## Dependencies
 

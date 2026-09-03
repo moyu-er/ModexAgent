@@ -273,23 +273,10 @@ class TestTaskDispatchToolExecute:
 
 
 class TestTaskDispatchToolDescription:
-    def test_description_contains_prompt_construction_guidance(self) -> None:
-        tool = _task_tool(_store_with_subagent_target())
-        desc = tool.description
-        for keyword in ("TASK", "CONTEXT", "SCOPE", "OUTPUT", "VERIFICATION", "BOUNDARIES"):
-            assert keyword in desc, f"expected {keyword!r} in description"
-
-    def test_description_contains_when_not_to_use(self) -> None:
-        tool = _task_tool(_store_with_subagent_target())
-        desc = tool.description
-        assert "When NOT to use" in desc
-        lowered = desc.lower()
-        assert "read" in lowered or "grep" in lowered or "glob" in lowered
-
-    def test_description_contains_concurrency_guidance(self) -> None:
-        tool = _task_tool(_store_with_subagent_target())
-        desc = tool.description
-        assert "concurrently" in desc or "multiple" in desc
+    # Note: the description's static guidance text is deliberately NOT
+    # pinned here (static prompt content makes a meaningless test). Only
+    # the DYNAMIC parts are: the live subagent target list, the empty
+    # roster shape, and peer-target exclusion.
 
     def test_description_lists_available_subagents(self) -> None:
         store = CommunicationTargetStore()

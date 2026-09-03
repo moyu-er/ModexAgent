@@ -8,13 +8,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.mcp import (
     MCPTool as _MCPTool,
 )
 from modex_agent.tools.mcp.backend import McpBackend
 from modex_agent.tools.mcp.client import _DEFAULT_TOOL_TIMEOUT
-
-from .registry import ToolRegistry
 
 if TYPE_CHECKING:
     from modex_agent.core.tool_manager import Tool
@@ -29,7 +28,7 @@ class MCPToolAdapter:
     """MCP tool adapter.
 
     Converts MCP server capabilities into framework Tool objects
-    and registers them to ToolRegistry.
+    and registers them to InMemoryToolManager.
 
     Supports:
     - Config-driven MCP server connections
@@ -41,7 +40,7 @@ class MCPToolAdapter:
         >>> await manager.initialize()
         >>>
         >>> adapter = MCPToolAdapter(mcp_manager=manager)
-        >>> await adapter.register_tools(registry)
+        >>> await adapter.register_tools(manager)
     """
 
     def __init__(
@@ -56,12 +55,12 @@ class MCPToolAdapter:
 
     async def register_tools(
         self,
-        registry: ToolRegistry,
+        registry: InMemoryToolManager,
     ) -> list[str]:
-        """Register all connected MCP servers' tools to ToolRegistry.
+        """Register all connected MCP servers' tools to the tool manager.
 
         Args:
-            registry: tool registry
+            registry: tool manager
 
         Returns:
             list of registered tool names
@@ -109,7 +108,7 @@ async def acquire_mcp_tools(
     """Adapt a connected ``McpBackend`` into a flat list of framework ``Tool``s.
 
     Wraps ``backend`` in an :class:`MCPToolAdapter`, registers every server's
-    tools into a fresh :class:`ToolRegistry`, and returns the
+    tools into a fresh :class:`InMemoryToolManager`, and returns the
     collected ``Tool`` objects. Consumed by the framework per-agent MCP
     loader (``tools.mcp_loader.load_per_agent_mcp`` — the single call
     site for main agents at Stage 4 and subagents at materialization
@@ -121,7 +120,7 @@ async def acquire_mcp_tools(
     ``MCPClientManager`` is closed by its own ``release()``.
     """
     adapter = MCPToolAdapter(mcp_manager=backend, tool_timeout=tool_timeout)
-    registry = ToolRegistry()
+    registry = InMemoryToolManager()
     await adapter.register_tools(registry=registry)
     tools: list[Tool] = []
     for name in registry.list_tools():
@@ -129,45 +128,3 @@ async def acquire_mcp_tools(
         if tool is not None:
             tools.append(tool)
     return tools
-
-
-class MCPToolRegistry(ToolRegistry):
-    """ToolRegistry with MCP integration.
-
-    Automatically loads MCP servers from config and registers tools.
-
-    Example:
-        >>> registry = MCPToolRegistry(mcp_manager=manager)
-        >>> await registry.initialize_from_config()
-    """
-
-    def __init__(
-        self,
-        mcp_manager: McpBackend | None = None,
-        tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
-    ) -> None:
-        super().__init__()
-        self._mcp_adapter: MCPToolAdapter | None = None
-        self._mcp_manager = mcp_manager
-        self._tool_timeout = tool_timeout
-
-    async def initialize_from_config(self) -> list[str]:
-        """Initialize MCP tools from config.
-
-        Returns:
-            list of registered tool names
-        """
-        if self._mcp_manager is None:
-            logger.warning("MCP manager not provided, skipping MCP initialization")
-            return []
-
-        self._mcp_adapter = MCPToolAdapter(
-            mcp_manager=self._mcp_manager,
-            tool_timeout=self._tool_timeout,
-        )
-        return await self._mcp_adapter.register_tools(self)
-
-    async def close(self) -> None:
-        """Close MCP connections."""
-        if self._mcp_adapter:
-            await self._mcp_adapter.close()

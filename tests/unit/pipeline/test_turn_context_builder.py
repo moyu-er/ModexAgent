@@ -28,7 +28,6 @@ from modex_agent.core.agent import AgentCommKind, AgentContext
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.context import ContextState, InMemoryContextManager
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage
 from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
@@ -40,6 +39,7 @@ from modex_agent.pipeline.turn_context_config import (
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _agent_mock(name: str = "agent") -> Any:

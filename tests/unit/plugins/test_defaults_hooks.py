@@ -43,7 +43,8 @@ with the todo capability bundle.)
 
 from __future__ import annotations
 
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -58,10 +59,13 @@ from modex_agent.plugins.abc import (
     SimpleFactory,
 )
 from modex_agent.plugins.assembly.context import AgentContext, PoolRuntimeDeps
-from modex_agent.plugins.defaults.hooks import (
-    DeliverRetryHookFactory,
+from modex_agent.plugins.defaults.capabilities.experience import ExperienceSupply
+from modex_agent.plugins.defaults.capabilities.experience.hook_factory import (
     ExperienceReviewHookConfig,
     ExperienceReviewHookFactory,
+)
+from modex_agent.plugins.defaults.hooks import (
+    DeliverRetryHookFactory,
     InboxFlushHookFactory,
     LengthGuardHookFactory,
     MemoryTraceHookFactory,
@@ -123,10 +127,17 @@ class _TodoStore(TodoStore):
 
 
 def _register_all() -> ComponentRegistry:
-    """Run ``register_default_hooks`` against a fresh registry and return it."""
+    """Run ``register_default_hooks`` plus the experience feature's hook
+    registration against a fresh registry and return it (the hook factory
+    is owned by the experience capability package now)."""
+    from modex_agent.plugins.defaults.capabilities.experience.registration import (
+        register_experience_feature,
+    )
+
     registry = ComponentRegistry()
     with PluginRegistrationContext(registry) as ctx:
         register_default_hooks(ctx)
+        register_experience_feature(ctx)
     return registry
 
 
@@ -413,13 +424,13 @@ class TestAppliesToFiltering:
 
 
 class TestExperienceReviewChainSupply:
-    """Ticket 09: the factory assembles the hook from chain-supplied infra.
+    """The factory assembles the hook from chain-supplied infra.
 
     A roster reference must resolve against the pool's ``experience``
     capability supply — the review provider (the deployment's default
-    LLM), the experience dir + meta store — plus the pool's memory system
-    from ``pool_assembly_ctx.pool_data``. Missing supply fails LOUDLY (a
-    referenced component is never silently skipped).
+    LLM, fail-soft when absent per §10.6), the catalog — plus the pool's
+    memory system from ``pool_assembly_ctx.pool_data``. Missing supply
+    fails LOUDLY (a referenced component is never silently skipped).
     """
 
     @staticmethod
@@ -437,18 +448,20 @@ class TestExperienceReviewChainSupply:
         provider: object | None,
         pool_data: object | None = None,
     ) -> PoolRuntimeDeps:
-        from pathlib import Path
-
-        from modex_agent.core.experience import (
-            ExperienceCurator,
-            ExperienceManager,
-            FileExperienceSource,
-            PerFileExperienceMetaStore,
-        )
         from modex_agent.plugins.assembly.context import (
             PoolRuntimeDeps as _Deps,
         )
         from modex_agent.plugins.defaults.capabilities.experience import ExperienceSupply
+        from modex_agent.plugins.defaults.capabilities.experience.catalog import (
+            ExperienceCatalog,
+        )
+        from modex_agent.plugins.defaults.capabilities.experience.config import (
+            ExperiencePoolConfig,
+            ExperienceReviewConfig,
+        )
+        from modex_agent.plugins.defaults.capabilities.experience.metadata import (
+            PerFileExperienceMetaStore,
+        )
 
         # A REAL supply (the factory type-checks it); the dir is never
         # touched — these tests pin the missing-infra raises, not review IO.
@@ -456,12 +469,12 @@ class TestExperienceReviewChainSupply:
         meta_store = PerFileExperienceMetaStore(exp_dir)
         supply = ExperienceSupply(
             pool_name="default",
-            manager=ExperienceManager(source=FileExperienceSource(directories=[exp_dir])),
+            catalog=ExperienceCatalog(experience_dir=exp_dir, meta_store=meta_store),
             experience_dir=exp_dir,
             meta_store=meta_store,
-            curator=ExperienceCurator(experience_dir=exp_dir, meta_store=meta_store),
-            curator_interval=86400,
-            review_provider=provider,  # type: ignore[arg-type]
+            pool_config=ExperiencePoolConfig(),
+            review_config_by_agent={"default": ExperienceReviewConfig()},
+            review_provider=provider,
         )
         pool_assembly = MagicMock()
         pool_assembly.pool_data = pool_data
@@ -484,8 +497,10 @@ class TestExperienceReviewChainSupply:
         from unittest.mock import MagicMock
 
         from modex_agent.core.provider import LLMProvider
-        from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
         from modex_agent.memory.core.system import MemorySystem
+        from modex_agent.plugins.defaults.capabilities.experience.review_hook import (
+            ExperienceReviewHook,
+        )
 
         memory_system = MagicMock(spec=MemorySystem)
         pool_data = self._pool_data(tmp_path, memory_system=memory_system)
@@ -494,14 +509,22 @@ class TestExperienceReviewChainSupply:
         hook = await factory.create(ExperienceReviewHookConfig(), self._ctx(pool_runtime))
         assert isinstance(hook, ExperienceReviewHook)
         assert hook._memory_system is memory_system  # noqa: SLF001
-        assert hook._agent._provider is not None  # noqa: SLF001
+        assert cast("ExperienceSupply", pool_runtime.capability_supply["experience"]).review_agent_for("default") is not None
 
-    async def test_missing_provider_supply_raises_loud(self, tmp_path) -> None:
+    async def test_missing_provider_is_fail_soft(self, tmp_path) -> None:
+        """§10.6: no review LLM → the hook still builds; the reviewer is
+        absent and reviews skip with a warning at run time."""
         pool_data = self._pool_data(tmp_path, memory_system=object())
         pool_runtime = self._pool_runtime(provider=None, pool_data=pool_data)
         factory = ExperienceReviewHookFactory()
-        with pytest.raises(ValueError, match="review_provider"):
-            await factory.create(ExperienceReviewHookConfig(), self._ctx(pool_runtime))
+        hook = await factory.create(ExperienceReviewHookConfig(), self._ctx(pool_runtime))
+        assert (
+            cast("ExperienceSupply", pool_runtime.capability_supply["experience"]).review_agent_for(
+                "default"
+            )
+            is None
+        )
+        assert hook.name == "experience_review_hook"
 
     async def test_missing_pool_data_raises_loud(self) -> None:
         from unittest.mock import MagicMock

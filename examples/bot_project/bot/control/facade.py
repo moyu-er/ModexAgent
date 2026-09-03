@@ -43,11 +43,11 @@ from modex_agent.core.agent import AgentCommKind, AgentContext
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.history import ListMessageHistory
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.memory.core.split_stores import MessageStore
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.tools.manager import InMemoryToolManager
 
 logger = logging.getLogger(__name__)
 

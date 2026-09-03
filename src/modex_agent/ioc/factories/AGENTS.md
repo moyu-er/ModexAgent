@@ -38,7 +38,7 @@ Pure factory functions that consume Pydantic config objects from `modex_agent/io
 - `modex_agent/ioc/configs/` — all Pydantic config models consumed here
 - `modex_agent/providers/http/` — `HTTPStreamProvider` + protocol engines consumed by the LLM factory (ADR-0046); the only provider implementation — the legacy SDK providers were removed (2026-08-26 cleanup)
 - `modex_agent/memory/` — `DefaultMemorySystem`, `MemoryLayerConfigSet`, governance classes
-- `modex_agent/tools/` — `MCPClientManager`, `MCPToolAdapter`, `ToolRegistry`, standard tools
+- `modex_agent/tools/` — `MCPClientManager`, `MCPToolAdapter`, `InMemoryToolManager`, standard tools
 - `modex_agent/multi_agent/` — `AgentDescriptor`, `AgentAddress`, `AgentCommKind`
 
 <!-- MANUAL -->

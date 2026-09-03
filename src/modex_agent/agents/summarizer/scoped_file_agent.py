@@ -23,7 +23,6 @@ from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.stream_events import Finish, LLMStreamEvent, StreamFailure, UsageSnapshot
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import MessageRole, TokenUsage
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.memory.hooks import LlmUsage
@@ -33,6 +32,7 @@ from modex_agent.memory.tools import (
     ScopedReadFileTool,
     ScopedWriteFileTool,
 )
+from modex_agent.tools.manager import InMemoryToolManager
 
 logger = logging.getLogger(__name__)
 

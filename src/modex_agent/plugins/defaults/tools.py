@@ -30,10 +30,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 from modex_agent.core.tool_manager import Tool
-from modex_agent.memory.tools.experience import ExperienceTool
 from modex_agent.plugins.abc import ComponentFactory, PrototypeFactory
 from modex_agent.plugins.assembly.context import PoolContext, PoolRuntimeDeps
 from modex_agent.plugins.defaults.capabilities.todo import require_todo_supply
@@ -259,40 +258,6 @@ class TerminalToolFactory(ComponentFactory):
         return TerminalTool(terminal_manager, registry=process_registry)
 
 
-class ExperienceToolConfig(BaseModel):
-    """Config for :class:`ExperienceToolFactory` — no settings.
-
-    The experience directory is a pool-layer resource extracted from
-    ``ctx.pool_runtime`` at ``create()`` time, not carried by config.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-class ExperienceToolFactory(ComponentFactory):
-    """Experience tool from the pool layer (moved from the bot plugin).
-
-    Declares ``PoolContext`` — the experience directory and its metadata
-    store are the pool's ``experience`` capability supply
-    (:meth:`ExperienceCapability.supply` builds them iff the capability
-    is effective in the pool). Missing supply fails loudly — a
-    roster-referenced component is never silently skipped (the bare
-    ``tools: [+experience]`` degraded mode hits this raise: the tool name
-    alone never built a supply).
-    """
-
-    config_model = ExperienceToolConfig
-
-    async def create(self, config: BaseModel, ctx: PoolContext) -> Tool:
-        from modex_agent.plugins.defaults.capabilities.experience import (
-            require_experience_supply,
-        )
-
-        del config
-        supply = require_experience_supply(ctx.pool_runtime)
-        return ExperienceTool(supply.experience_dir, supply.meta_store)
-
-
 def register_default_tools(ctx: PluginRegistrationContext) -> None:
     """Register the stateless standard tools plus the runtime and
     capability-backed tool factories."""
@@ -325,8 +290,6 @@ def register_default_tools(ctx: PluginRegistrationContext) -> None:
     for name, factory in todo_factories.items():
         ctx.register_tool(name, factory)
 
-    # Experience tool: the ``experience`` capability
-    # (plugins/defaults/capabilities/experience.py) contributes this
-    # registry name into rosters; the pool-data-fed factory builds the
-    # tool at assembly time.
-    ctx.register_tool("experience", ExperienceToolFactory())
+    # Experience tool: the ``experience`` capability package registers
+    # this name itself (its single registration entry also covers the
+    # capability + review hook) — nothing experience-owned here.

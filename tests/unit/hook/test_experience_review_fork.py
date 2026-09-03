@@ -14,14 +14,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult
-from modex_agent.core.experience.meta import PerFileExperienceMetaStore
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import MemoryContext
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import MessageRole, ToolCall
-from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.plugins.defaults.capabilities.experience.metadata import PerFileExperienceMetaStore
+from modex_agent.plugins.defaults.capabilities.experience.review_hook import ExperienceReviewHook
 
 
 def _make_messages() -> list[ChatMessage]:
@@ -52,8 +52,10 @@ class TestExperienceReviewAgentForkHistory:
 
     async def test_review_accepts_conversation_messages_parameter(self, tmp_path: Path) -> None:
         """review() must accept a ``conversation_messages`` kwarg (fork mode)."""
-        from modex_agent.agents.experience.review_agent import ExperienceReviewAgent
         from modex_agent.core.provider import LLMProvider
+        from modex_agent.plugins.defaults.capabilities.experience.reviewer import (
+            ExperienceReviewAgent,
+        )
 
         provider = MagicMock(spec=LLMProvider)
         agent = ExperienceReviewAgent(provider=provider, max_iterations=2)
@@ -92,8 +94,10 @@ class TestExperienceReviewAgentForkHistory:
 
     async def test_review_uses_fork_messages_when_provided(self, tmp_path: Path) -> None:
         """When conversation_messages is provided, forked messages seed the history."""
-        from modex_agent.agents.experience.review_agent import ExperienceReviewAgent
         from modex_agent.core.provider import LLMProvider
+        from modex_agent.plugins.defaults.capabilities.experience.reviewer import (
+            ExperienceReviewAgent,
+        )
 
         provider = MagicMock(spec=LLMProvider)
         agent = ExperienceReviewAgent(provider=provider, max_iterations=2)
@@ -131,33 +135,58 @@ class TestExperienceReviewAgentForkHistory:
         assert "configure the memory system" in str(history[0].get("content", ""))
 
 
+
 class TestExperienceReviewHookPassesForkHistory:
     """Verify ExperienceReviewHook passes raw history (fork) to the reviewer."""
 
     async def test_hook_passes_history_to_reviewer_not_text_snapshot(self, tmp_path: Path) -> None:
         """Hook must call review() with conversation_messages, not just snapshot text."""
-        from modex_agent.agents.experience.review_agent import ExperienceReviewAgent
+        from modex_agent.plugins.defaults.capabilities.experience.catalog import (
+            ExperienceCatalog,
+        )
+        from modex_agent.plugins.defaults.capabilities.experience.config import (
+            ExperiencePoolConfig,
+            ExperienceReviewConfig,
+        )
+        from modex_agent.plugins.defaults.capabilities.experience.metadata import (
+            PerFileExperienceMetaStore,
+        )
+        from modex_agent.plugins.defaults.capabilities.experience.reviewer import (
+            ExperienceReviewAgent,
+        )
+        from modex_agent.plugins.defaults.capabilities.experience.supply import (
+            ExperienceSupply,
+        )
 
         exp_dir = tmp_path / "experiences"
         exp_dir.mkdir(parents=True, exist_ok=True)
         meta = PerFileExperienceMetaStore(exp_dir)
+        supply = ExperienceSupply(
+            pool_name="p",
+            catalog=ExperienceCatalog(experience_dir=exp_dir, meta_store=meta),
+            experience_dir=exp_dir,
+            meta_store=meta,
+            pool_config=ExperiencePoolConfig(),
+            review_config_by_agent={"main": ExperienceReviewConfig()},
+            review_provider=MagicMock(),
+        )
 
         review_agent = MagicMock(spec=ExperienceReviewAgent)
         review_agent.review = AsyncMock(return_value=True)
+        supply.register_review_agent("main", review_agent)
         full_history = _make_messages()[1:]
         memory_system = MagicMock(spec=MemorySystem)
         memory_system.get_full_history = AsyncMock(return_value=full_history)
 
         hook = ExperienceReviewHook(
-            review_agent=review_agent,
+            agent_name="main",
+            supply=supply,
             memory_system=memory_system,
-            experience_dir=exp_dir,
-            meta_store=meta,
+            catalog=supply.catalog,
             min_messages=2,
             exp_cooldown_turns=3,
             snapshot_max_messages=3,
         )
-        hook._turn_counter = 10
 
         # Build a realistic history with structured tool_calls
         history_messages = [
@@ -174,18 +203,24 @@ class TestExperienceReviewHookPassesForkHistory:
                 ],
             },
             {"role": "tool", "tool_call_id": "tc_a", "content": "Error: ModuleNotFoundError"},
-            {"role": "assistant", "content": "Found the issue — missing import."},
+            {"role": "assistant", "content": "Found the issue - missing import."},
         ]
         ctx = MagicMock()
         ctx.history = ListMessageHistory(history_messages)
         ctx.session = SessionInfo.from_str("fork-review.main")
+        ctx.workspace_snapshot = None
 
         result = AgentResult(
             content="Found the issue", stop_reason=StopReason.COMPLETED, messages=[]
         )
 
+        await supply.start()
         await hook.after_graph(ctx, result)
-        await asyncio.sleep(0.15)  # let background task run
+        for _ in range(100):
+            if review_agent.review.called:
+                break
+            await asyncio.sleep(0.01)
+        await supply.stop()
 
         review_agent.review.assert_called_once()
         call_kwargs = review_agent.review.call_args.kwargs

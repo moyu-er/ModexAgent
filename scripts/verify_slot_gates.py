@@ -282,11 +282,16 @@ GATES: tuple[Gate, ...] = (
         wave="W1.4",
     ),
     # --- L5: MemoryOverrides.max_messages dead config (W5.1) ---
+    # Allowed: the experience review hook's snapshot shaping kwarg
+    # (memory.snapshot.format_snapshot_text) — an unrelated concept that
+    # postdates the gate (D1 moved the hook into plugins/).
     Gate(
         gate_id="L5",
         pattern=r"\bmax_messages\b",
         scope_dirs=("src/modex_agent/plugins",),
         suffixes=(".py",),
+        allowed_files=("src/modex_agent/plugins/defaults/capabilities/experience/review_hook.py",),
+        expected_allowed_hits=1,
         wave="W5.1",
     ),
     # --- L6: multi-provider model.yml bridge (W4.3) ---

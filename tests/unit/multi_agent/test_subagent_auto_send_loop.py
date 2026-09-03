@@ -5,7 +5,6 @@ from unittest.mock import MagicMock
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
@@ -15,6 +14,7 @@ from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _mock_tree(bus: object) -> SessionTreeManager:
@@ -42,7 +42,7 @@ async def test_max_iterations_sends_exactly_one_failed_agent_result() -> None:
     context = AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
-        tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
+        tool_manager=InMemoryToolManager(),
         session=SessionInfo(
             session_id="inv-1.worker",
             agent_name="worker",

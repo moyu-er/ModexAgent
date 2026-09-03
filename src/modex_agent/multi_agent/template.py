@@ -33,6 +33,7 @@ from modex_agent.ioc.configs.skills import SkillsConfig
 from modex_agent.multi_agent.execution_strategy import strategy_name_of
 from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.scope.spec import AgentSpec
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.presets import ContextMode, ToolPreset
 from modex_agent.workspace.scope_path import resolve_scope_path
 
@@ -40,11 +41,11 @@ if TYPE_CHECKING:
     from modex_agent.core.provider import LLMProvider
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.skills import SkillManager
-    from modex_agent.core.tool_manager import InMemoryToolManager
     from modex_agent.multi_agent.descriptor import AgentInstance
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
     from modex_agent.plugins.assembly.context import AssemblyContext
     from modex_agent.plugins.assembly.spec import AssemblySpec
+    from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _pool_name(deps: AgentMaterializeDeps) -> str:
@@ -520,12 +521,9 @@ class AgentTemplate:
         both reading the context chain — ticket 10 converged the subagent
         MCP path onto that single point).
         """
-        from modex_agent.core.tool_manager import (
-            InMemoryToolManager,
-            ToolManagerConfig,
-        )
+        from modex_agent.tools.manager import InMemoryToolManager
 
-        tm = InMemoryToolManager(config=ToolManagerConfig())
+        tm = InMemoryToolManager()
 
         return tm
 

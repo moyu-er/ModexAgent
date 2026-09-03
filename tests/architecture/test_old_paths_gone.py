@@ -74,6 +74,25 @@ FORBIDDEN_MODULE_PATHS: tuple[str, ...] = (
     # StoredMediaKind, MediaRefCollisionError) promoted to core/media.py;
     # media/models.py deleted with no shim.
     "media/models.py",
+    # C2 (plan §15): InMemoryToolManager moved to tools/manager.py;
+    # DynamicSchemaProvider folded into Tool (core/tool_manager.py);
+    # ToolRegistry compatibility shell deleted (deletion test passed —
+    # get_definitions had zero callers, MCPToolRegistry zero users);
+    # the modex_agent.registry re-export package deleted with it.
+    "core/tool.py",
+    "tools/registry.py",
+    "registry/__init__.py",
+    # D1 (plan §15): the Experience vertical slice moved into the
+    # ``experience`` capability package
+    # (plugins/defaults/capabilities/experience/); every old path is
+    # deleted with no shims — the package is the sole implementation.
+    "core/experience",
+    "agents/experience",
+    "hook/builtin/experience_review.py",
+    "memory/tools/experience.py",
+    "memory/prompts/experience",
+    "plugins/defaults/capabilities/experience.py",
+    "multi_agent/pool_config/experience.py",
 )
 
 # (shim module, origin module) — the shim must not import anything from the
@@ -92,6 +111,15 @@ FORBIDDEN_SYMBOLS: tuple[str, ...] = (
     # enum and DefaultValues members died with it.
     "LLMProviderConfig",
     "LLMProviderKind",
+    # C2: deleted ToolManager configuration shells. ToolManagerConfig was
+    # empty (zero field readers); ToolRegistry/MCPToolRegistry were
+    # compatibility subclasses of InMemoryToolManager with zero live users.
+    "ToolManagerConfig",
+    "ToolRegistry",
+    "MCPToolRegistry",
+    # C2: DynamicSchemaProvider folded into Tool — Tool is its only
+    # implementer; the separate ABC is deleted.
+    "DynamicSchemaProvider",
 )
 
 

@@ -28,6 +28,7 @@ from modex_agent.adapters.output import NullOutputAdapter, OutputAdapter
 from modex_agent.core.types import OutputMessage
 from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.pipeline.context_assembler import assemble_context
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 class FakeContextState(ContextState):
@@ -264,7 +265,7 @@ class CapturingOutputAdapter(OutputAdapter):
 @pytest.mark.asyncio
 async def test_pipeline_continue_runs_agent_without_appending_command() -> None:
     from modex_agent.core.context import InMemoryContextManager
-    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.tools.manager import InMemoryToolManager
     from tests.unit.pipeline._helpers import _make_react_pipeline
 
     agent = FakeAgent()
@@ -297,7 +298,7 @@ async def test_pipeline_continue_runs_agent_without_appending_command() -> None:
 async def test_pipeline_continue_during_pending_approval_returns_notice() -> None:
     """/continue during pending approval returns notice and does not auto-deny."""
     from modex_agent.core.context import InMemoryContextManager
-    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.tools.manager import InMemoryToolManager
     from tests.unit.pipeline._helpers import _make_react_pipeline
 
     agent = FakeAgent()
@@ -332,7 +333,7 @@ async def test_pipeline_drops_slash_command_when_busy_in_queue_mode() -> None:
     """Slash commands must not be queued as raw text when agent is busy."""
 
     from modex_agent.core.context import InMemoryContextManager
-    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.tools.manager import InMemoryToolManager
     from modex_agent.pipeline.busy_input import BusyInputMode
     from tests.unit.pipeline._helpers import _make_react_pipeline
 
@@ -382,7 +383,7 @@ async def test_pipeline_drops_slash_command_when_busy_in_queue_mode() -> None:
 @pytest.mark.asyncio
 async def test_pipeline_skill_uses_transformed_user_content() -> None:
     from modex_agent.core.context import InMemoryContextManager
-    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.tools.manager import InMemoryToolManager
     from tests.unit.pipeline._helpers import _make_react_pipeline
 
     agent = FakeAgent()
@@ -419,7 +420,7 @@ async def test_pipeline_skill_uses_transformed_user_content() -> None:
 async def test_pipeline_skill_propagates_xml_format_to_agent_messages() -> None:
     """Skill XML content must carry content_format and truncatable_paths."""
     from modex_agent.core.context import InMemoryContextManager
-    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.tools.manager import InMemoryToolManager
     from tests.unit.pipeline._helpers import _make_react_pipeline
 
     agent = FakeAgent()

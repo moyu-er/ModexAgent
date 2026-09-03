@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.tools.mcp_loader import load_per_agent_mcp
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _tool_manager_with_sentinel() -> InMemoryToolManager:
@@ -27,7 +27,7 @@ def _tool_manager_with_sentinel() -> InMemoryToolManager:
         async def execute(self, *args: object, **kwargs: object) -> str:  # type: ignore[no-untyped-def]
             return "ok"
 
-    tm = InMemoryToolManager(config=ToolManagerConfig())
+    tm = InMemoryToolManager()
     tm.register(_SentinelTool())  # type: ignore[arg-type]
     return tm
 

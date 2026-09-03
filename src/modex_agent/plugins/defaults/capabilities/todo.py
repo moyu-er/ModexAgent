@@ -18,8 +18,8 @@ and the hooks are HOOK-slot factories owned by
 roster/section contribution (P2 — single component-resolution path), the
 pool-level supply (:meth:`TodoCapability.supply` builds the ONE
 :class:`TodoStore` the tools, the reorientation hook, and the WebUI
-todo panel share), and the section content provider (byte-verbatim
-migration from the retired provider — see :data:`_TODO_DISCIPLINE_PROMPT`).
+todo panel share), and the section content provider (persistent norms
+only — see :data:`_TODO_DISCIPLINE_PROMPT`).
 
 The two tools are a dual anchor (C2): they move together — vetoing
 either one (``tools: [-todo_write]``) fails the bind loudly instead of
@@ -62,35 +62,28 @@ __all__ = ["TodoCapability", "TodoCapabilityConfig", "TodoSupply", "require_todo
 #: Section id of the discipline section (single source for contribute + assemble).
 _DISCIPLINE_SECTION_ID = "todo.discipline"
 
-# The discipline section content — VERBATIM the retired tool-gated todo
-# provider's output (byte-parity is the acceptance bar of this migration,
-# SPEC §8.2 section row: 内容逐字搬家).
+# The discipline section content — v2: persistent norms only (norms that
+# bind while the tools are NOT being called). Usage/mechanics rules live
+# solely in the ``todo_write`` description (single source of truth); the
+# v1 rules that duplicated the description were dropped.
 _TODO_DISCIPLINE_PROMPT = """\
-## Task Tracking
+## Task Discipline
 
-Track multi-step work with `todo_write`:
+Your todo list is the authoritative statement of progress: never
+describe work as done in prose while the list shows it open.
 
-* **Plan first** — for any task with 3+ steps, write the full plan as
-  `pending` items before starting; if work is already underway, start
-  tracking now (done steps as `completed`) and plan the remainder.
-* **Update at every transition** — mark items `in_progress` → `completed` as
-  work moves; never describe work as done in prose while the list shows it
-  open.
-* **Refresh on new phases** — when starting a new experiment batch, build,
-  or file, re-write the list to match the current plan; a stale list is as
-  bad as none.
-* **Close out honestly** — do not end your turn with open items unless
-  blocked; if blocked, keep the item open and add one for the blocker.
+Close out honestly — do not end your turn with open items unless you
+are blocked.
 """
 
 #: Constant version — the section content is static, so the KV-cache prefix
 #: never invalidates within a session (SPEC §7.3 / E10: static content =
 #: constant version).
-_DISCIPLINE_SECTION_VERSION = "todo.discipline.v1"
+_DISCIPLINE_SECTION_VERSION = "todo.discipline.v2"
 
 
 class _TodoSectionProvider(SystemPromptProvider):
-    """Static ``todo.discipline`` section — the retired provider's bytes.
+    """Static ``todo.discipline`` section (persistent norms only).
 
     Renders for agents whose binding carries the active section
     (compile-time knowledge — the retired runtime tool-registration gate
@@ -161,9 +154,9 @@ class TodoCapability(Capability):
     the pool's :class:`TodoSupply` (iff the capability is effective
     somewhere in the pool — the pre-migration always-built store died
     with the dark supply, SPEC P5); ``assemble`` wires the static
-    ``todo.discipline`` section provider — byte-identical to the retired
-    tool-gated provider's output, delivered through the
-    capability-section anchor.
+    ``todo.discipline`` section provider — persistent norms only, the
+    usage/mechanics rules living in the ``todo_write`` description —
+    delivered through the capability-section anchor.
     """
 
     name = "todo"
@@ -227,7 +220,7 @@ class TodoCapability(Capability):
         return TodoSupply(store=JsonFileTodoStore(todo_dir))
 
     async def assemble(self, binding: CapabilityBinding, ctx: AgentContext) -> CapabilityWiring:
-        """Wire the discipline section provider (the byte-parity channel).
+        """Wire the discipline section provider (the capability channel).
 
         The provider is built iff the binding carries the active
         ``todo.discipline`` section (C2-gated); the static content needs no

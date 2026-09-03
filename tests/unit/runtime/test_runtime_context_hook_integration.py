@@ -50,8 +50,8 @@ def _make_runtime(hook_runner=None, runtime_mgr=None):
     return AgentRuntime(services=services, state=state), identity
 
 
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.tools.manager import InMemoryToolManager
 from tests.unit.pipeline._helpers import _make_react_pipeline
 
 

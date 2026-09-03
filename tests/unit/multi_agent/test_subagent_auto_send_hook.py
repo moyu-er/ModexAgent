@@ -8,7 +8,6 @@ from modex_agent.core.constants import ExecutionStrategyKind, StopReason
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.hook.builtin import SubagentAutoSendHook
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
@@ -17,6 +16,7 @@ from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _make_bus(tmpdir: Path) -> LocalAgentMessageBus:
@@ -39,7 +39,7 @@ def _make_context(
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
-        tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
+        tool_manager=InMemoryToolManager(),
         session=session,
         comm_kind=AgentCommKind.SUBAGENT,
     )

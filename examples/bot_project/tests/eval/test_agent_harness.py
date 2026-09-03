@@ -26,7 +26,6 @@ from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, TextPa
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import (
-    InMemoryToolManager,
     Tool,
     ToolConfig,
     ToolExecutionContext,
@@ -48,6 +47,7 @@ from modex_agent.trace.cassette import (
 )
 from modex_agent.trace.chat_span_hook import ChatSpanHook
 from modex_agent.trace.semconv import GenAiAttr
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _ScriptedToolManager(ToolManager):

@@ -25,8 +25,9 @@ from modex_agent.plugins.assembly.context import (
 )
 from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
 from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.defaults.capabilities.experience.tool_factory import ExperienceToolFactory
 from modex_agent.plugins.defaults.communication import TaskToolFactory
-from modex_agent.plugins.defaults.tools import ExperienceToolFactory, TodoToolFactory
+from modex_agent.plugins.defaults.tools import TodoToolFactory
 from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import compile_scope

@@ -62,7 +62,6 @@ from modex_agent.core.message import (
     build_media_ref,
 )
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import TokenUsage, ToolCall
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.factories.llm import create_llm_provider
@@ -75,6 +74,7 @@ from modex_agent.providers.http.provider import HTTPStreamProvider
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.tools.manager import InMemoryToolManager
 
 pytestmark = pytest.mark.integration
 

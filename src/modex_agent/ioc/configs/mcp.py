@@ -2,7 +2,7 @@
 
 MCP is a source of Tool objects, not an agent-level capability.
 Declare servers here; the factory connects, converts tools, and
-injects them into ToolRegistry for agent selection in code.
+injects them into the tool manager for agent selection in code.
 """
 
 from __future__ import annotations

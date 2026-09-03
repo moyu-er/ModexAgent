@@ -87,6 +87,7 @@ from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.plugins.assembly.context import AgentContext
 from modex_agent.scope.spec import PoolSpec
+from modex_agent.tools.manager import InMemoryToolManager
 
 from .builders import _PoolAssemblyMixin
 

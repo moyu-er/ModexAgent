@@ -3,17 +3,27 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.experience.meta import ExperienceMetaStore, PerFileExperienceMetaStore
-from modex_agent.memory.tools.experience import (
+from modex_agent.plugins.defaults.capabilities.experience.catalog import (
+    ExperienceCatalog,
+    ExperienceRouterTool,
+)
+from modex_agent.plugins.defaults.capabilities.experience.metadata import (
+    ExperienceMetaStore,
+    PerFileExperienceMetaStore,
+)
+from modex_agent.plugins.defaults.capabilities.experience.tools import (
     ExperienceDeleteTool,
     ExperienceEditTool,
     ExperienceListTool,
     ExperiencePathResolver,
     ExperienceReadTool,
     ExperienceRenameDirTool,
-    ExperienceTool,
     ExperienceWriteTool,
 )
+
+
+def _catalog_for_tool(exp_dir: Path, meta_store: ExperienceMetaStore) -> ExperienceCatalog:
+    return ExperienceCatalog(experience_dir=exp_dir, meta_store=meta_store)
 
 
 @pytest.fixture
@@ -455,12 +465,12 @@ async def test_list_rejects_dotdot_path(exp_dir: Path, meta_store: ExperienceMet
     assert "cannot contain" in result.lower()
 
 
-# --- ExperienceTool (unified router) ---------------------------------------
+# --- ExperienceRouterTool (unified router) ---------------------------------------
 
 @pytest.mark.asyncio
 async def test_experience_tool_list(exp_dir: Path, meta_store: ExperienceMetaStore) -> None:
     _make_exp(exp_dir, "exp-a", "Desc A")
-    tool = ExperienceTool(exp_dir, meta_store)
+    tool = ExperienceRouterTool(_catalog_for_tool(exp_dir, meta_store))
     result = await tool.execute(action="list")
     assert "exp-a/" in result
 
@@ -468,7 +478,7 @@ async def test_experience_tool_list(exp_dir: Path, meta_store: ExperienceMetaSto
 @pytest.mark.asyncio
 async def test_experience_tool_read(exp_dir: Path, meta_store: ExperienceMetaStore) -> None:
     _make_exp(exp_dir, "test-exp", "Desc")
-    tool = ExperienceTool(exp_dir, meta_store)
+    tool = ExperienceRouterTool(_catalog_for_tool(exp_dir, meta_store))
     result = await tool.execute(action="read", name="test-exp")
     assert "name: test-exp" in result
     assert "## Steps" in result
@@ -476,7 +486,7 @@ async def test_experience_tool_read(exp_dir: Path, meta_store: ExperienceMetaSto
 
 @pytest.mark.asyncio
 async def test_experience_tool_write(exp_dir: Path, meta_store: ExperienceMetaStore) -> None:
-    tool = ExperienceTool(exp_dir, meta_store)
+    tool = ExperienceRouterTool(_catalog_for_tool(exp_dir, meta_store))
     result = await tool.execute(
         action="write",
         name="new-exp",
@@ -489,7 +499,7 @@ async def test_experience_tool_write(exp_dir: Path, meta_store: ExperienceMetaSt
 @pytest.mark.asyncio
 async def test_experience_tool_edit(exp_dir: Path, meta_store: ExperienceMetaStore) -> None:
     _make_exp(exp_dir, "test-exp", "Old")
-    tool = ExperienceTool(exp_dir, meta_store)
+    tool = ExperienceRouterTool(_catalog_for_tool(exp_dir, meta_store))
     result = await tool.execute(
         action="edit",
         name="test-exp",
@@ -505,7 +515,7 @@ async def test_experience_tool_read_with_path(exp_dir: Path, meta_store: Experie
     sub_file = exp_dir / "test-exp" / "references" / "ref.txt"
     sub_file.parent.mkdir(parents=True, exist_ok=True)
     sub_file.write_text("sub content", encoding="utf-8")
-    tool = ExperienceTool(exp_dir, meta_store)
+    tool = ExperienceRouterTool(_catalog_for_tool(exp_dir, meta_store))
     result = await tool.execute(action="read", name="test-exp", path="references/ref.txt")
     # Raw file content
     assert "sub content" in result
@@ -514,7 +524,7 @@ async def test_experience_tool_read_with_path(exp_dir: Path, meta_store: Experie
 @pytest.mark.asyncio
 async def test_experience_tool_write_with_path(exp_dir: Path, meta_store: ExperienceMetaStore) -> None:
     _make_exp(exp_dir, "test-exp")
-    tool = ExperienceTool(exp_dir, meta_store)
+    tool = ExperienceRouterTool(_catalog_for_tool(exp_dir, meta_store))
     result = await tool.execute(
         action="write",
         name="test-exp",
@@ -531,7 +541,7 @@ async def test_experience_tool_edit_with_path(exp_dir: Path, meta_store: Experie
     sub_file = exp_dir / "test-exp" / "references" / "ref.txt"
     sub_file.parent.mkdir(parents=True, exist_ok=True)
     sub_file.write_text("old content", encoding="utf-8")
-    tool = ExperienceTool(exp_dir, meta_store)
+    tool = ExperienceRouterTool(_catalog_for_tool(exp_dir, meta_store))
     result = await tool.execute(
         action="edit",
         name="test-exp",
@@ -546,7 +556,7 @@ async def test_experience_tool_edit_with_path(exp_dir: Path, meta_store: Experie
 @pytest.mark.asyncio
 async def test_experience_tool_list_with_name(exp_dir: Path, meta_store: ExperienceMetaStore) -> None:
     _make_exp(exp_dir, "test-exp")
-    tool = ExperienceTool(exp_dir, meta_store)
+    tool = ExperienceRouterTool(_catalog_for_tool(exp_dir, meta_store))
     result = await tool.execute(action="list", name="test-exp")
     assert "EXPERIENCE.md" in result
 
@@ -554,7 +564,7 @@ async def test_experience_tool_list_with_name(exp_dir: Path, meta_store: Experie
 @pytest.mark.asyncio
 async def test_experience_tool_rename(exp_dir: Path, meta_store: ExperienceMetaStore) -> None:
     _make_exp(exp_dir, "old-name")
-    tool = ExperienceTool(exp_dir, meta_store)
+    tool = ExperienceRouterTool(_catalog_for_tool(exp_dir, meta_store))
     result = await tool.execute(action="rename", name="old-name", new_name="new-name")
     assert "<status>success</status>" in result
     assert (exp_dir / "new-name").exists()
@@ -562,7 +572,7 @@ async def test_experience_tool_rename(exp_dir: Path, meta_store: ExperienceMetaS
 
 @pytest.mark.asyncio
 async def test_experience_tool_unknown_action(exp_dir: Path, meta_store: ExperienceMetaStore) -> None:
-    tool = ExperienceTool(exp_dir, meta_store)
+    tool = ExperienceRouterTool(_catalog_for_tool(exp_dir, meta_store))
     result = await tool.execute(action="destroy")
     assert "<status>error</status>" in result
     assert "Unknown action" in result
@@ -687,7 +697,7 @@ async def test_delete_rejects_path_separators(exp_dir: Path, meta_store: Experie
 @pytest.mark.asyncio
 async def test_experience_tool_delete(exp_dir: Path, meta_store: ExperienceMetaStore) -> None:
     _make_exp(exp_dir, "to-delete")
-    tool = ExperienceTool(exp_dir, meta_store)
+    tool = ExperienceRouterTool(_catalog_for_tool(exp_dir, meta_store))
     result = await tool.execute(action="delete", name="to-delete")
     assert "<status>success</status>" in result
     assert not (exp_dir / "to-delete").exists()
@@ -697,7 +707,7 @@ async def test_experience_tool_delete(exp_dir: Path, meta_store: ExperienceMetaS
 async def test_experience_tool_delete_unknown_action_still_lists_delete(
     exp_dir: Path, meta_store: ExperienceMetaStore,
 ) -> None:
-    tool = ExperienceTool(exp_dir, meta_store)
+    tool = ExperienceRouterTool(_catalog_for_tool(exp_dir, meta_store))
     result = await tool.execute(action="destroy")
     assert "Unknown action" in result
     assert "delete" in result  # error message lists valid actions including delete

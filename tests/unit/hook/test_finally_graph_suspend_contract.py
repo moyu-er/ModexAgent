@@ -29,9 +29,9 @@ import modex_agent
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.hook.abc import FinallyGraphHook, OutcomeFinallyHook
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.tools.manager import InMemoryToolManager
 
 _SRC_ROOT = Path(modex_agent.__file__).parent
 
@@ -77,7 +77,7 @@ def _make_context() -> AgentContext:
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
-        tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
+        tool_manager=InMemoryToolManager(),
         session=SessionInfo.from_str("pfx.agent"),
     )
 

@@ -16,7 +16,6 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo, SessionIdFactory
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_registry import InMemorySessionRegistry
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
@@ -36,6 +35,7 @@ from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrac
 from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
 from modex_agent.multi_agent.state import AgentState
 from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _StubPoller(InboxPoller):

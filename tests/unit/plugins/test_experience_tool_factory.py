@@ -1,11 +1,10 @@
-"""ExperienceToolFactory — the ``experience`` capability's FW tool factory.
+"""ExperienceToolFactory — the ``experience`` capability's tool factory.
 
 ``create()`` resolves the pool's ``experience`` capability supply through
 the context chain (``capability_supply['experience']`` — the supply owns
-the experience dir + meta store, SPEC §8.3) and builds the tool on it.
-Missing supply fails loudly (a roster-referenced component is never
-silently skipped) — same pattern as ``TestExperienceReviewChainSupply``
-in ``test_defaults_hooks.py``.
+the catalog) and builds the router tool on it. Missing supply fails
+loudly — same pattern as the dark-supply pins in
+``test_experience_supply.py``.
 """
 
 from __future__ import annotations
@@ -22,9 +21,11 @@ from modex_agent.plugins.defaults.capabilities.experience import (
     ExperienceCapability,
     ExperienceSupply,
 )
-from modex_agent.plugins.defaults.tools import (
+from modex_agent.plugins.defaults.capabilities.experience.registration import (
+    register_experience_feature,
+)
+from modex_agent.plugins.defaults.capabilities.experience.tool_factory import (
     ExperienceToolFactory,
-    register_default_tools,
 )
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
@@ -35,7 +36,7 @@ _EXPERIENCE_NAME = EXPERIENCE_TOOL_NAME
 def _register_defaults() -> ComponentRegistry:
     registry = ComponentRegistry()
     with PluginRegistrationContext(registry) as ctx:
-        register_default_tools(ctx)
+        register_experience_feature(ctx)
     return registry
 
 
@@ -58,7 +59,7 @@ def _supply(data_dir: Path) -> ExperienceSupply:
 
 class TestExperienceToolRegistration:
     """The experience capability's contributed tool name resolves in the
-    TOOL slot."""
+    TOOL slot (through the package's single registration entry)."""
 
     def test_experience_factory_registered_under_contributed_name(self) -> None:
         registry = _register_defaults()
@@ -70,13 +71,15 @@ class TestExperienceToolChainSupply:
     """create() assembles the tool from the capability supply, fail-loud."""
 
     async def test_creates_tool_from_capability_supply(self, tmp_path: Path) -> None:
-        from modex_agent.memory.tools.experience import ExperienceTool
+        from modex_agent.plugins.defaults.capabilities.experience.catalog import (
+            ExperienceRouterTool,
+        )
 
         supply = _supply(tmp_path)
         pool_runtime = PoolRuntimeDeps(capability_supply={"experience": supply})
         factory = ExperienceToolFactory()
         tool = await factory.create(factory.config_model(), _ctx(pool_runtime))
-        assert isinstance(tool, ExperienceTool)
+        assert isinstance(tool, ExperienceRouterTool)
         assert tool.name == _EXPERIENCE_NAME
         assert supply.experience_dir.exists()
 

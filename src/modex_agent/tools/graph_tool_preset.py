@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool, ToolManager
+from modex_agent.core.tool_manager import Tool, ToolManager
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 class GraphToolPreset:

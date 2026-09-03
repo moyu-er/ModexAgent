@@ -6,8 +6,8 @@ faces of the section channel (ADR-0047 / SPEC §7.2 + §7.3):
 - the fixed anchor in ``MemorySystemContextManager.load()`` — capability
   sections render AFTER the fork context (2a) and BEFORE core memory;
   the retired TodoAware (2b) position is covered by this anchor since
-  todo 12 (the ``todo`` capability delivers its byte-identical section
-  through the channel), and the retired AgentComm (2c) position joined
+  todo 12 (the ``todo`` capability delivers its section through the
+  channel), and the retired AgentComm (2c) position joined
   it at the subagents migration (the three communication briefs ride
   the capability channel only — a runtime task-tool registration
   renders nothing);
@@ -19,13 +19,12 @@ faces of the section channel (ADR-0047 / SPEC §7.2 + §7.3):
   ``pipeline.get_or_refresh()`` — the anchor block must be provably
   additive-only; the golden was REGENERATED at todo 12 when the retired
   TodoAware provider died (the no-capabilities baseline lost the
-  "## Task Tracking" section — the todo section's own byte parity is
-  pinned by ``test_todo_section.py`` against its own pre-migration
-  capture) and at the subagents migration when the retired AgentComm
-  composite died (the baseline lost the delegation brief the retired
-  provider had rendered from the runtime task-tool presence — the three
-  briefs' own byte parity is pinned by ``test_subagents_supply.py``
-  against its own pre-migration capture);
+  "## Task Tracking" section) and at the subagents migration when the
+  retired AgentComm composite died (the baseline lost the delegation
+  brief the retired provider had rendered from the runtime task-tool
+  presence). The sections' own content is deliberately NOT pinned
+  byte-for-byte — static prompt text makes a meaningless test; the
+  wiring/geometry/scoping contracts are pinned instead;
 - the native dispatch loop in ``assemble_native_agent`` — capability
   ``assemble()`` per compiled capability, merged prompt providers land via
   the setter, wirings ride ``NativeAssemblyResult.capability_wirings``;
@@ -53,7 +52,7 @@ from modex_agent.core.constants import (
 )
 from modex_agent.core.context import InMemoryContextManager
 from modex_agent.core.prompt import SystemPromptProvider
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool
+from modex_agent.core.tool_manager import Tool
 from modex_agent.hook.runner import HookRunner
 from modex_agent.memory.hooks import MemoryHookRunner
 from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
@@ -88,6 +87,7 @@ from modex_agent.scope import (
 )
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.tools.manager import InMemoryToolManager
 
 _GOLDEN_PATH = Path(__file__).parent / "goldens" / "capability_sections_baseline.txt"
 

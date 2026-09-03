@@ -1,6 +1,6 @@
 """Ticket 02 — position-derived defaults table (SPEC §3.2), row by row.
 
-Root = archive/core/experience memory eligibility + approval eligibility +
+Root = archive/core memory eligibility + approval eligibility + 
 eager registration + toolset profile ``full``. Non-root = session-only
 memory + lazy materialization + toolset profile ``read-write``. Every
 default yields to the node's own declaration (framework default < node
@@ -25,7 +25,7 @@ from modex_agent.tools.presets import ToolPreset
 class TestDefaultsForPosition:
     def test_root_defaults_row_by_row(self) -> None:
         d = defaults_for_position(is_root=True)
-        assert d.memory_preset is MemoryPreset.ARCHIVE_CORE_EXPERIENCE
+        assert d.memory_preset is MemoryPreset.ARCHIVE_CORE
         assert d.approval_eligible is True
         assert d.registration is RegistrationTiming.EAGER
         assert d.toolset_profile is ToolPreset.FULL
@@ -80,7 +80,7 @@ class TestEffectiveDefaultsOverrides:
         d = effective_defaults(agent)
         # node declaration beats framework default (archive off)
         assert d.archive_enabled is True
-        assert d.memory_preset is MemoryPreset.ARCHIVE_CORE_EXPERIENCE
+        assert d.memory_preset is MemoryPreset.ARCHIVE_CORE
 
     def test_non_root_memory_block_cannot_flip_preset(self) -> None:
         # SPEC §3.2: non-root = session-only. The block's session-override

@@ -1,7 +1,6 @@
 """Position-derived defaults table (SPEC §3.2).
 
-Root (the derived in-degree-0 node) gets main-agent defaults:
-archive/core/experience memory eligibility + approval eligibility + eager
+Root (the derived in-degree-0 node) gets main-agent defaults:\narchive/core memory eligibility + approval eligibility + eager
 registration + toolset profile ``full``. Non-root gets subagent defaults:
 session-only memory + lazy materialization + toolset profile
 ``read-write``. Every default yields to the node's own declaration —
@@ -29,12 +28,12 @@ from modex_agent.tools.presets import ToolPreset
 class MemoryPreset(StrEnum):
     """Position-derived memory eligibility family (SPEC §3.2 memory row)."""
 
-    ARCHIVE_CORE_EXPERIENCE = "archive_core_experience"
+    ARCHIVE_CORE = "archive_core"
     """Root default — the ``main_agent_memory`` preset family: archive/core
-    layers eligible (toggleable), experience review on."""
+    layers eligible (toggleable). Experience is NOT part of any memory
+    preset — the ``experience`` capability is its sole enablement."""
     SESSION_ONLY = "session_only"
-    """Non-root default — the ``subagent_memory`` preset family: session +
-    governance + pruned only, no long-term layers, no experience."""
+    """Non-root default — the ``subagent_memory`` preset family: session +\n    governance + pruned only, no long-term layers."""
 
 
 class RegistrationTiming(StrEnum):
@@ -72,7 +71,7 @@ def defaults_for_position(*, is_root: bool) -> PositionDefaults:
     """The SPEC §3.2 defaults for a tree position."""
     if is_root:
         return PositionDefaults(
-            memory_preset=MemoryPreset.ARCHIVE_CORE_EXPERIENCE,
+            memory_preset=MemoryPreset.ARCHIVE_CORE,
             archive_enabled=False,
             core_enabled=False,
             approval_eligible=True,
@@ -143,7 +142,7 @@ def effective_defaults(agent: AgentSpec) -> PositionDefaults:
 
     archive_enabled = base.archive_enabled
     core_enabled = base.core_enabled
-    if agent.memory is not None and base.memory_preset is MemoryPreset.ARCHIVE_CORE_EXPERIENCE:
+    if agent.memory is not None and base.memory_preset is MemoryPreset.ARCHIVE_CORE:
         archive_enabled = agent.memory.archive_enabled
         core_enabled = agent.memory.core_enabled
 
@@ -177,7 +176,7 @@ def memory_config_for_position(
     archive/core toggles and the session threshold (node ``memory:``
     override, else the boot-injected model window) parameterize it.
     """
-    if defaults.memory_preset is MemoryPreset.ARCHIVE_CORE_EXPERIENCE:
+    if defaults.memory_preset is MemoryPreset.ARCHIVE_CORE:
         return main_agent_memory(
             max_context_tokens=session_max_context_tokens,
             archive_enabled=defaults.archive_enabled,

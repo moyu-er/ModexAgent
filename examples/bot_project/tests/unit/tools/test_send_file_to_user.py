@@ -21,9 +21,9 @@ from bot.webui.transcript_store import JSONLTranscriptStore
 from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.media import AttachmentLocator, Kind
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.pool_config.media import MediaConfig
+from modex_agent.tools.manager import InMemoryToolManager
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 

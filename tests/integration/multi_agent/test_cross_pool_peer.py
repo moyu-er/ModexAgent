@@ -18,7 +18,6 @@ import pytest
 from modex_agent.core.agent import AgentCommKind, AgentContext
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.session_registry import InMemorySessionRegistry
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
@@ -37,6 +36,7 @@ from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrac
 from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
 from modex_agent.multi_agent.state import AgentState
 from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
+from modex_agent.tools.manager import InMemoryToolManager
 
 pytestmark = pytest.mark.integration
 

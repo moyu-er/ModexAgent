@@ -23,9 +23,7 @@ from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_store import SessionStore
 from modex_agent.core.skills import SkillManager
 from modex_agent.core.tool_manager import (
-    InMemoryToolManager,
     Tool,
-    ToolManagerConfig,
 )
 from modex_agent.hook.abc import Hook
 from modex_agent.ioc.configs.app import AppConfig
@@ -43,6 +41,7 @@ from modex_agent.scope.spec import AgentSpec
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.registry import ScopeRegistryStore
+from modex_agent.tools.manager import InMemoryToolManager
 
 if TYPE_CHECKING:
     from bot.service.pool.declaration import DeclaredPoolBuild
@@ -170,7 +169,7 @@ class _PoolAssemblyMixin:
         TOOL-slot factories / the FW MCP loader reading the context chain,
         on top of the empty base manager this builder returns.
         """
-        tm = InMemoryToolManager(config=ToolManagerConfig())
+        tm = InMemoryToolManager()
         logger.info(
             "Pool '%s': ToolManager ready (%d tools total)", pool_name, len(tm.list_tools())
         )

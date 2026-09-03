@@ -472,7 +472,6 @@ class _RecordingToolManager(ToolManager):
     """Wraps a ToolManager, recording every execute() call."""
 
     def __init__(self, wrapped: ToolManager, recorder: CassetteRecorder) -> None:
-        super().__init__(wrapped.config)
         self._wrapped = wrapped
         self._recorder = recorder
 
@@ -618,7 +617,6 @@ class _ReplayToolManager(ToolManager):
     """Replay wrapper — returns recorded results, never calls the wrapped executor."""
 
     def __init__(self, wrapped: ToolManager, engine: CassetteReplayEngine) -> None:
-        super().__init__(wrapped.config)
         self._wrapped = wrapped
         self._engine = engine
 

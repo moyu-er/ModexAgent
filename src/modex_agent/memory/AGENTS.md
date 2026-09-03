@@ -9,7 +9,7 @@ Storage is backend-pluggable: the file backend (`DefaultScopedStorage`) ships as
 
 ## Purpose
 
-The `memory/` module provides a comprehensive memory system for agents. It manages message histories across multiple scopes (Session, User, Tenant, Agent, Channel, Chat, Composite, Global), handles compaction and consolidation (transforming session messages into archive files and core memory summaries), governs context windows via injection policies, and provides agent-facing tools for experience and file operations.
+The `memory/` module provides a comprehensive memory system for agents. It manages message histories across multiple scopes (Session, User, Tenant, Agent, Channel, Chat, Composite, Global), handles compaction and consolidation (transforming session messages into archive files and core memory summaries), governs context windows via injection policies, and provides agent-facing scoped file tools for summarizer agents.
 
 ## Key Files
 
@@ -44,9 +44,9 @@ The `memory/` module provides a comprehensive memory system for agents. It manag
 | `pruned/` | 4 py | `PrunedManager` + `PrunedStorage` (ABC + `FilePrunedStorage`) + `PrunedIndexEntry` — catalog of cleaned-up session messages, session-scoped |
 | `registry/` | 3 py | `MemoryStoreRegistry` — storage provider registry. `resolve()` returns a `MemoryStoreBundle`. `BaseMemoryStoreRegistry` ABC + `DefaultMemoryStoreRegistry` (file-backed). The in-memory registry was removed in T03 |
 | `pipeline/` | 3 py | `SystemPromptPipeline` — ordered collection of versioned `SystemPromptProvider` (ABC + pipeline orchestrator + provider implementations) |
-| `prompts/` | 8 files | Prompt templates: `archive/` (agent_system.md, agent_user.md), `experience/` (review_system.md, review_user.md), `core_memory/` (consolidator_system.md, consolidator_user.md — renamed from `knowledge/` per ADR-0035), `compact/` (agent_system.md, agent_user.md — session compact summary prompts) |
+| `prompts/` | 6 files | Prompt templates: `archive/` (agent_system.md, agent_user.md), `core_memory/` (consolidator_system.md, consolidator_user.md — renamed from `knowledge/` per ADR-0035), `compact/` (agent_system.md, agent_user.md — session compact summary prompts) |
 | `stores/` | 7 py | Storage backend implementations — `FileStorage`, `DefaultScopedStorage` (file, implements all four split ABCs), `InMemoryScopedStorage` (in-memory, implements all four split ABCs), `DirArchiveStorage`, `MarkdownCoreMemoryStorage` (renamed from `MarkdownKnowledgeStorage` per ADR-0035), storage utilities. The standalone `InMemoryStorage` was removed in T03 |
-| `tools/` | 7 py | Agent-facing tools — 6 experience tools (read/write/edit/list/rename/delete), scoped file tools (read/write/edit/list) for summarizer agents (see `tools/AGENTS.md`) |
+| `tools/` | 6 py | Agent-facing tools — scoped file tools (read/write/edit/list) for summarizer agents (the 6 experience tools moved to the `experience` capability package, plan §10) |
 
 ### Memory Scope Hierarchy
 

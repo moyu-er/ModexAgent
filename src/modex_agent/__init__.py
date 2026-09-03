@@ -11,9 +11,9 @@ Agent Framework Core - 多Agent服务框架核心
 """
 
 from ._version import __version__
-from .agents import ReActAgent, ReActEvent
 from .adapters.emitter import StreamingAwareEmitter
 from .adapters.output import OutputAdapter
+from .agents import ReActAgent, ReActEvent
 from .core.agent import Agent, AgentContext
 from .core.context import ContextManager, ContextState
 from .core.emitter import (
@@ -23,11 +23,9 @@ from .core.emitter import (
 from .core.events import AgentEvent, EmitterConfig
 from .core.provider import CallbackStreamProvider, LLMProvider
 from .core.tool_manager import (
-    InMemoryToolManager,
     Tool,
     ToolConfig,
     ToolManager,
-    ToolManagerConfig,
     ToolResult,
 )
 from .core.turn_events import (
@@ -47,6 +45,7 @@ from .pipeline import (
     InputAdapter,
     InputMessage,
 )
+from .tools.manager import InMemoryToolManager
 
 __all__ = [
     "__version__",
@@ -74,7 +73,6 @@ __all__ = [
     "ToolManager",
     "InMemoryToolManager",
     "ToolConfig",
-    "ToolManagerConfig",
     # Agent
     "Agent",
     "AgentContext",

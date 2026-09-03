@@ -15,7 +15,7 @@ from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.constants import ExecutionStrategyKind, ReasoningEffort
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.skills import SkillManager
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool
+from modex_agent.core.tool_manager import Tool
 from modex_agent.hook import Hook, HookSpec
 from modex_agent.hook.runner import HookRunner
 from modex_agent.ioc.configs.memory import ArchiveConfig, CoreMemoryConfig, MemoryConfig
@@ -38,15 +38,16 @@ from modex_agent.plugins.assembly.context import (
 )
 from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
 from modex_agent.plugins.capability import CapabilityWiring
+from modex_agent.tools.manager import InMemoryToolManager
 
 if TYPE_CHECKING:
+    from modex_agent.adapters.output import OutputAdapter
     from modex_agent.core.context import ContextManager
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.provider import LLMProvider
     from modex_agent.messaging import MessageBroker
     from modex_agent.multi_agent.factory import AgentFactory
     from modex_agent.multi_agent.pool import AgentPool
-    from modex_agent.adapters.output import OutputAdapter
     from modex_agent.plugins.registry import ComponentRegistry
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 

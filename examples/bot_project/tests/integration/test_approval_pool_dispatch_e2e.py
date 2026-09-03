@@ -40,7 +40,7 @@ from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.core.context import InMemoryContextManager
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool
+from modex_agent.core.tool_manager import Tool
 from modex_agent.core.types import InputMessage, LLMResponse, OutputMessage, ToolCall
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.ioc.factories.approval import build_approval_runtime
@@ -54,6 +54,7 @@ from modex_agent.runtime.enums import SnapshotReason, TurnPhase
 from modex_agent.runtime.models import StateQueryScope
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _make_react_pipeline(

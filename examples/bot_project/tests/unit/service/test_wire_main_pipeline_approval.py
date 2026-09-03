@@ -33,7 +33,6 @@ from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClas
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
@@ -53,6 +52,7 @@ from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.scope.spec import AgentSpec, PoolSpec
+from modex_agent.tools.manager import InMemoryToolManager
 
 pytestmark = pytest.mark.skipif(
     shutil.which("modexctl") is None,
@@ -249,7 +249,7 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
     so ``./*`` follows the active workspace, not the static bot project_dir."""
     from modex_agent.approval.constants import ApprovalTier
     from modex_agent.core.agent import AgentContext
-    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.tools.manager import InMemoryToolManager
     from modex_agent.core.types import ToolCall
     from modex_agent.memory.history import ListMessageHistory
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider

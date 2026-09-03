@@ -59,7 +59,6 @@ from modex_agent.core.history import ListMessageHistory
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.session_registry import SessionRegistry
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.turn_events import (
     TurnEvent,
     TurnTextEvent,
@@ -67,6 +66,7 @@ from modex_agent.core.turn_events import (
     TurnToolResultEvent,
 )
 from modex_agent.core.types import MessageRole
+from modex_agent.tools.manager import InMemoryToolManager
 
 # ---------------------------------------------------------------------------
 # Test doubles

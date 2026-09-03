@@ -6,8 +6,9 @@ Pins the FW-化 of the retired BIZ communication assembly:
   retired BIZ ``create_pool`` site — the same objects, the same shape);
 - ``assemble()`` builds the per-agent target store from the DECLARED
   tree and binds the root's store onto the service;
-- the three section providers reproduce the retired composite
-  provider's briefs byte-for-byte (the machine-captured golden);
+- the section providers: wiring shape + the peer brief's live-store
+  dynamics (the static briefs' text is deliberately NOT pinned
+  byte-for-byte — static prompt content makes a meaningless test);
 - the dark supply: a zero-topology pool compiles no capability, so a
   hand-referenced communication entry loud-raises at the factory;
 - the typed carriers the supply replaced are gone (death greps).
@@ -15,7 +16,6 @@ Pins the FW-化 of the retired BIZ communication assembly:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -27,7 +27,6 @@ from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.agent import AgentContext as RuntimeAgentContext
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.service import _TracePropagatingPeerNormal
@@ -58,8 +57,7 @@ from modex_agent.plugins.defaults.communication import (
 from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
-
-_GOLDEN = Path(__file__).resolve().parent / "goldens" / "subagents_section_briefs.json"
+from modex_agent.tools.manager import InMemoryToolManager
 
 _CAPABILITY = SubagentsCapability()
 
@@ -308,8 +306,9 @@ class TestPerAgentStores:
             await SendToAgentToolFactory().create(_empty_config(), chain)
 
 
-class TestSectionByteParity:
-    """The three section providers reproduce the retired briefs exactly."""
+class TestSectionProviders:
+    """The section providers: wiring shape + the peer brief's live-store
+    dynamics."""
 
     @staticmethod
     def _binding(*section_ids: str) -> CapabilityBinding:
@@ -319,33 +318,24 @@ class TestSectionByteParity:
             )
         )
 
-    async def test_delegation_brief_byte_equal(self) -> None:
-        wiring = await _CAPABILITY.assemble(
-            self._binding("subagents.delegation"),
-            _Topology.chain(_Topology.ROOT, "native_main"),
-        )
-        golden = json.loads(_GOLDEN.read_text(encoding="utf-8"))
-        assert await wiring.prompt_providers[0].get_or_refresh() == golden["delegation"]
-
-    async def test_consultation_brief_byte_equal(self) -> None:
-        wiring = await _CAPABILITY.assemble(
-            self._binding("subagents.consultation"),
-            _Topology.chain(_Topology.LEAF, "native_sub"),
-        )
-        golden = json.loads(_GOLDEN.read_text(encoding="utf-8"))
-        assert await wiring.prompt_providers[0].get_or_refresh() == golden["consultation"]
-
-    async def test_peer_brief_byte_equal_and_tracks_late_peers(self) -> None:
-        # The peer brief renders the REMOTE target names from the LIVE
-        # store — empty until workspace materialize joins the peers,
-        # then exactly the retired provider's bytes (the golden captured
-        # two remote + one local target: only the remote names list).
+    async def test_peer_brief_empty_until_peers_join(self) -> None:
         wiring = await _CAPABILITY.assemble(
             self._binding("subagents.peer"),
             _Topology.chain(_Topology.ROOT, "native_main"),
         )
         provider = wiring.prompt_providers[0]
         assert await provider.get_or_refresh() == ""
+
+    async def test_peer_brief_tracks_remote_peers_and_skips_local(self) -> None:
+        # The peer brief renders the REMOTE target names from the LIVE
+        # store — local (non-tree) targets are excluded. The static brief
+        # text is deliberately NOT pinned byte-for-byte (static prompt
+        # content makes a meaningless test); the store-driven dynamics
+        # are the contract.
+        wiring = await _CAPABILITY.assemble(
+            self._binding("subagents.peer"),
+            _Topology.chain(_Topology.ROOT, "native_main"),
+        )
         store = wiring.artifacts["target_store"]
         store.add(
             CommunicationTarget(
@@ -370,9 +360,13 @@ class TestSectionByteParity:
                 pool_name="pool-alpha",
             )
         )
+        provider = wiring.prompt_providers[0]
         content = await provider.get_or_refresh()
-        golden = json.loads(_GOLDEN.read_text(encoding="utf-8"))
-        assert content == golden["peer_two_remote_one_local"]
+
+        assert "## Communicating With Remote Agents" in content
+        assert "beta" in content
+        assert "gamma" in content
+        assert "alpha" not in content
 
     async def test_sections_render_in_binding_order(self) -> None:
         wiring = await _CAPABILITY.assemble(

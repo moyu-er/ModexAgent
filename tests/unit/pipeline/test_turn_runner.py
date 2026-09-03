@@ -22,7 +22,7 @@ from modex_agent.core.emitter import AgentResult
 from modex_graph.exceptions import GraphInterrupt
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool
+from modex_agent.core.tool_manager import Tool
 from modex_agent.core.types import InputMessage
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
@@ -32,6 +32,7 @@ from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.models import TurnSnapshot
 from modex_agent.runtime.store import InMemoryTurnStateStore
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 # ---------------------------------------------------------------------------

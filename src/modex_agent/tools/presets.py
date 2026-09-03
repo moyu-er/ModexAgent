@@ -7,7 +7,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final
 
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool
+from modex_agent.core.tool_manager import Tool
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.standard import (
     EditFileTool,
     GlobTool,

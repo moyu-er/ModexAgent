@@ -621,6 +621,10 @@ class TaskDispatchTool(ParallelTool):
     def _build_description(self) -> str:
         subagent_targets = self._store.list_subagents()
 
+        # v2: mechanics + quick exclusions only. The delegation
+        # methodology (when to delegate, the six-element brief spec, the
+        # lifecycle discipline) lives solely in the ``subagents.delegation``
+        # system-prompt section — this description points at it.
         lines = [
             "Dispatch a task to a subagent.",
             "",
@@ -633,11 +637,9 @@ class TaskDispatchTool(ParallelTool):
             "output stay local. Dispatch is asynchronous — the result arrives as a",
             "notification when the subagent finishes, in a later turn.",
             "",
-            "When to use this tool:",
-            "- Any complex, self-contained sub-goal — even if each step is",
-            "  trivial (installing a toolchain, pinning down an unfamiliar API).",
-            "  Your context is the scarce resource; the full spec is in your",
-            '  system prompt under "Delegating To Subagents".',
+            "When to use: any complex, self-contained sub-goal — your context is",
+            "the scarce resource. The full when-to / when-NOT-to methodology is",
+            'in your system prompt under "Delegating To Subagents".',
             "",
             "When NOT to use this tool:",
             "- If you want to read a specific file, use the read tool directly — it's faster",
@@ -648,21 +650,11 @@ class TaskDispatchTool(ParallelTool):
             "Usage notes:",
             "1. Launch multiple tasks concurrently when they are independent — use",
             "   multiple tool calls in a single message.",
-            "2. Once you delegate work to a subagent, do not duplicate that work yourself.",
-            "3. After dispatching, the preferred action is to end your turn and wait for",
-            "   the notification — this ensures you receive the result promptly. You may",
-            "   continue with non-overlapping work if you have independent tasks that",
-            "   cannot wait, but avoid working on the same files or topics as the subagent.",
-            "4. The subagent's result is returned to you only — relay a concise summary to",
+            "2. The subagent's result is returned to you only — relay a concise summary to",
             "   the user if needed.",
-            "5. Write a high-quality brief in `content` — cover all six elements",
+            "3. Write a high-quality brief in `content` — cover all six elements",
             "   (TASK / CONTEXT / SCOPE / OUTPUT / VERIFICATION / BOUNDARIES); the full",
             '   spec is in your system prompt under "Delegating To Subagents".',
-            "6. Trust subagent results, but verify before relying on them — run the",
-            "   brief's VERIFICATION step or spot-check the change yourself.",
-            "",
-            'A one-line task like "fix the bug" is insufficient — the result quality',
-            "is directly proportional to your prompt quality.",
             "",
         ]
 

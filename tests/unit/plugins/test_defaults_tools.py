@@ -16,8 +16,10 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from modex_agent.plugins.abc import ComponentSlot, PrototypeFactory
-from modex_agent.plugins.defaults.tools import (
+from modex_agent.plugins.defaults.capabilities.experience.tool_factory import (
     ExperienceToolConfig,
+)
+from modex_agent.plugins.defaults.tools import (
     ToolConfig,
     register_default_tools,
 )
@@ -54,8 +56,8 @@ def _expected_production_union() -> set[str]:
     # (process/terminal explicit roster opt-in, not preset-expanded);
     # "ast_grep_search"/"ast_grep_replace", "todo_write"/"todo_read", and
     # "experience" are the ast_grep / todo / experience capabilities'
-    # direct registrations (no longer supplement-projected); "aci_edit"
-    # is the aci capability's.
+    # direct registrations (experience rides the package's own entry);
+    # "aci_edit" is the aci capability's.
     return _expected_preset_union() | {
         "bash",
         "process",
@@ -70,10 +72,16 @@ def _expected_production_union() -> set[str]:
 
 
 def _register_defaults() -> ComponentRegistry:
-    """Register default tools into a fresh registry and return it."""
+    """Register default tools plus the experience feature's tool into a
+    fresh registry and return it."""
+    from modex_agent.plugins.defaults.capabilities.experience.registration import (
+        register_experience_feature,
+    )
+
     registry = ComponentRegistry()
     with PluginRegistrationContext(registry) as ctx:
         register_default_tools(ctx)
+        register_experience_feature(ctx)
     return registry
 
 
@@ -257,7 +265,9 @@ class TestRegisterDefaultTools:
 
     def test_calls_register_tool_per_unique_name(self):
         """The number of register_tool calls == the number of unique tool
-        names in the preset union (dedup across presets)."""
+        names in the preset union (dedup across presets). The experience
+        tool is NOT among them — the experience package's own entry
+        registers it."""
         registry = ComponentRegistry()
         # Capture register_tool calls via a thin wrapper.
         calls: list[str] = []
@@ -275,7 +285,7 @@ class TestRegisterDefaultTools:
         finally:
             PluginRegistrationContext.register_tool = original_register  # type: ignore[method-assign]
 
-        expected = _expected_production_union()
+        expected = _expected_production_union() - {"experience"}
         assert set(calls) == expected
         # No duplicate registrations.
         assert len(calls) == len(set(calls)), (

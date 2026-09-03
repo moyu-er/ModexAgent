@@ -23,10 +23,11 @@ from modex_agent.core.constants import FinishReason, StopReason
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolResult
+from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.types import MessageRole
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_graph.constants import GraphNode
 
 

@@ -1,4 +1,4 @@
-"""工具管理器 - 抽象基类和实现
+"""工具管理器 - 抽象契约与共享执行行为（C2: 具体实现移至 tools/manager.py）。
 
 提供 ToolManager 抽象层，支持工具注册和执行调度。
 """
@@ -9,7 +9,6 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
-from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, ClassVar
@@ -19,7 +18,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
 from modex_agent.core.media import MediaStore
 from modex_agent.core.message import ContentFormat, ContentPart, TextPart
-from modex_agent.core.tool import DynamicSchemaProvider
 
 logger = logging.getLogger(__name__)
 
@@ -74,18 +72,16 @@ def get_tool_execution_context() -> ToolExecutionContext | None:
     return _tool_execution_ctx.get()
 
 
-@dataclass
-class ToolConfig:
-    """单个工具的配置"""
+class ToolConfig(BaseModel):
+    """单个工具的配置（C2: frozen Pydantic — rule 10/12）。
+
+    ``enabled`` 通过替换整个 config 对象来切换（不可变值），例如
+    ``tool.config = ToolConfig(enabled=False)``。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     enabled: bool = True  # 是否启用
-
-
-@dataclass
-class ToolManagerConfig:
-    """ToolManager 全局配置"""
-
-    pass
 
 
 class ExecutionMode(StrEnum):
@@ -104,7 +100,7 @@ class ExecutionMode(StrEnum):
     EXCLUSIVE = "exclusive"
 
 
-class Tool(DynamicSchemaProvider):
+class Tool(ABC):
     """工具基类
 
     所有工具应继承此类并实现 execute 方法。
@@ -113,8 +109,9 @@ class Tool(DynamicSchemaProvider):
     1. 新方式：直接传入参数到 __init__
     2. 旧方式（兼容）：继承后通过 @property 定义 name, description, parameters
 
-    Implements DynamicSchemaProvider — override get_dynamic_schema()
-    for context-aware descriptions. Default returns static get_schema().
+    动态 schema（C2 折叠自原独立 ABC）：覆写
+    ``get_dynamic_schema()`` 以返回上下文感知的描述；默认返回静态
+    ``get_schema()``。
     """
 
     required_modalities: frozenset[Modality] = frozenset()
@@ -248,10 +245,24 @@ class Tool(DynamicSchemaProvider):
         }
 
     def get_dynamic_schema(self) -> dict[str, Any]:
-        """DynamicSchemaProvider impl — returns static schema by default.
+        """Dynamic schema 默认实现 — 返回静态 schema。
+
         Override in subclasses for context-aware descriptions.
         """
         return self.get_schema()
+
+    def get_dynamic_schema_for(
+        self, caps: ModelCapabilities | None = None
+    ) -> dict[str, Any]:
+        """Return the tool schema, optionally adapted to model capabilities.
+
+        Default implementation ignores ``caps`` and delegates to
+        :meth:`get_dynamic_schema`, so existing subclasses keep working
+        unchanged. Subclasses that produce capability-aware schemas (e.g.
+        hiding image parameters when the active model is text-only) override
+        this method instead of ``get_dynamic_schema``.
+        """
+        return self.get_dynamic_schema()
 
     def is_available(self, caps: ModelCapabilities | None) -> bool:
         """Visibility gate used by :meth:`ToolManager.get_tool_descriptions`.
@@ -396,16 +407,12 @@ class ToolManager(ABC):
     职责：
     1. 工具注册/注销（动态扩展）
     2. 工具执行调度
-    3. 工具配置管理
-    4. 生成工具描述给 LLM
+    3. 生成工具描述给 LLM
 
     不处理：
     - 具体的工具实现（由 Tool 子类实现）
     - LLM 调用
     """
-
-    def __init__(self, config: ToolManagerConfig | None = None) -> None:
-        self.config = config or ToolManagerConfig()
 
     # ---- 工具注册/注销 ----
 
@@ -557,47 +564,3 @@ class ToolManager(ABC):
             if tool.config.enabled and tool.is_available(caps):
                 descriptions.append(tool.get_dynamic_schema_for(caps))
         return descriptions
-
-
-class InMemoryToolManager(ToolManager):
-    """内存中的工具管理器实现"""
-
-    def __init__(self, config: ToolManagerConfig | None = None) -> None:
-        super().__init__(config)
-        self._tools: dict[str, Tool] = {}
-
-    def register(self, tool: Tool, config: ToolConfig | None = None) -> None:
-        """注册工具"""
-        self._tools[tool.name] = tool
-        if config:
-            tool.config = config
-        logger.info(f"Tool registered: {tool.name}")
-
-    def unregister(self, tool_name: str) -> bool:
-        """注销工具"""
-        if tool_name in self._tools:
-            self._tools.pop(tool_name)
-            logger.debug(f"Tool unregistered: {tool_name}")
-            return True
-        return False
-
-    def get_tool(self, tool_name: str) -> Tool | None:
-        """获取工具"""
-        return self._tools.get(tool_name)
-
-    def list_tools(self) -> list[str]:
-        """列出所有工具"""
-        return list(self._tools.keys())
-
-    def is_registered(self, tool_name: str) -> bool:
-        """检查工具是否已注册"""
-        return tool_name in self._tools
-
-    @property
-    def tools(self) -> dict[str, Tool]:
-        """所有已注册的工具（按名称索引）。调试用，修改 dict 不影响管理器。"""
-        return dict(self._tools)
-
-    def __contains__(self, tool_name: str) -> bool:
-        """支持 'tool_name in tool_manager' 语法"""
-        return self.is_registered(tool_name)

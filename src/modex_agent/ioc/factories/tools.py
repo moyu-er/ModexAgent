@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool, ToolManagerConfig
+from modex_agent.core.tool_manager import Tool
 from modex_agent.ioc.configs.mcp import MCPConfig
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.mcp_adapter import MCPToolAdapter
 
 if TYPE_CHECKING:
@@ -81,9 +82,7 @@ async def register_mcp_tools(
     if adapter is None:
         return []
 
-    from modex_agent.tools.registry import ToolRegistry
-
-    registry = ToolRegistry()
+    registry = InMemoryToolManager()
     names = await adapter.register_tools(registry=registry)
     for name in names:
         tool = registry.tools.get(name)
@@ -103,7 +102,7 @@ def create_tool_manager(
     Returns:
         Configured InMemoryToolManager with all tools registered.
     """
-    tm = InMemoryToolManager(config=ToolManagerConfig())
+    tm = InMemoryToolManager()
     for tool in tools:
         tm.register(tool)
     return tm

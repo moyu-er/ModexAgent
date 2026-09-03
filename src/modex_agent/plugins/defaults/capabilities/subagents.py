@@ -220,30 +220,39 @@ def require_subagents_supply(pool_runtime: PoolRuntimeDeps | None) -> SubagentsS
 
 
 # ---------------------------------------------------------------------------
-# The three section providers — the retired composite provider's briefs,
-# migrated byte-verbatim (content byte-equality is the acceptance bar).
+# The three section providers. The delegation brief (v3) is the FULL
+# delegation methodology — when to delegate, the six-element brief spec,
+# and the lifecycle discipline (dispatch → wait → verify → synthesize).
+# The ``task`` tool description carries only the call mechanics and quick
+# exclusions and points here; the methodology lives nowhere else.
 # ---------------------------------------------------------------------------
 
 #: Constant versions for the static briefs — the content never changes,
 #: so the KV-cache prefix never invalidates within a session (SPEC §7.3
 #: / E10: static content = constant version).
-_DELEGATION_SECTION_VERSION = "subagents.delegation.v2"
+_DELEGATION_SECTION_VERSION = "subagents.delegation.v3"
 _CONSULTATION_SECTION_VERSION = "subagents.consultation.v1"
 
-# The delegation brief — v2 revises the delegation axis from per-step
+# The delegation brief — v2 revised the delegation axis from per-step
 # triviality to overall complexity (v1's "trivial one-step actions"
 # exemption let a 9-call install grind stay in the main context because
 # each call was trivial; observed on tb21-all-v8 bn-fit-modify, where
 # 20/40 calls were self-contained grind a fresh-context subagent should
-# have absorbed). Byte-parity pinned by the section golden.
+# have absorbed). v3 reorganizes the same rules into four subsections
+# (when to delegate / when NOT / writing the brief / discipline) and
+# absorbs the mechanism notes that previously duplicated the ``task``
+# description — no rule was dropped; each now has exactly one home.
 _DELEGATION_BRIEF = """\
 ## Delegating To Subagents
 
-You own the `task` tool. Its description lists the available subagents and
-what each is for — check it before starting non-trivial work, and pick the
-subagent whose strengths match the job.
+You own the `task` tool. Its description lists the available subagents
+and what each is for — check it before starting non-trivial work, and
+pick the subagent whose strengths match the job. This section is the
+full methodology: when to delegate, how to write the brief, and the
+discipline that carries a delegation from dispatch to synthesis.
 
-When to delegate:
+### When to delegate
+
 - Bulk or parallelizable investigation ("find all X", "map how Y works") — a
   fresh context does it cheaper and without polluting yours.
 - A complex, self-contained sub-goal — even when each step is trivial
@@ -256,13 +265,16 @@ When to delegate:
 - Verification of a deliverable before you report it — fresh eyes, no
   anchoring on your own assumptions.
 
-When NOT to delegate:
+### When NOT to delegate
+
 - Simple few-step work: a needle query or a couple of known calls — direct
   tool use is faster.
 - Work whose brief would cost more to write than the work itself — deeply
   coupled to your live context, do it yourself.
 
-Writing the task brief. The subagent sees ONLY the `content` you pass — never
+### Writing the task brief
+
+The subagent sees ONLY the `content` you pass — never
 your conversation, reasoning, or tool results. Output quality is directly
 proportional to brief quality. Structure every brief with all six elements:
 
@@ -277,7 +289,8 @@ proportional to brief quality. Structure every brief with all six elements:
 A one-line brief like "fix the bug" is insufficient. If your brief is only a
 few lines, it is probably too thin.
 
-Discipline:
+### Delegation discipline
+
 - Dispatch independent tasks in parallel — multiple `task` calls in a single
   message — but no more than 3 is suggested, and give parallel subagents
   disjoint files and resources so they cannot conflict.

@@ -24,7 +24,6 @@ from modex_agent.core.emitter import AgentResult
 from modex_agent.core.history import ListMessageHistory
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage
 from modex_agent.hook import FinallyGraphHook, HookRunner, HookSpec
 from modex_agent.multi_agent.session_tree.session_binding import SessionBindingStore
@@ -33,6 +32,7 @@ from modex_agent.workspace.runtime import (
     is_workspace_root_bound,
     resolve_workspace_root,
 )
+from modex_agent.tools.manager import InMemoryToolManager
 
 # ---------------------------------------------------------------------------
 # Fakes

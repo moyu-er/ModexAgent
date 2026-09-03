@@ -7,16 +7,11 @@ import pytest
 from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_manager import ToolManager
 from modex_agent.memory.history import ListMessageHistory
 
 
-from modex_agent.core.tool_manager import ToolManager, ToolManagerConfig
-
-
 class FakeToolManager(ToolManager):
-    def __init__(self):
-        super().__init__(ToolManagerConfig())
-
     def register(self, tool, config=None):
         pass
 

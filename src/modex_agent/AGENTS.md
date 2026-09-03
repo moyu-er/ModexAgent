@@ -28,7 +28,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `memory/` | 18 py | `consolidation/`, `core/`, `injection/`, `layers/`, `pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Three-layer memory — session/archive/core, compaction, consolidation, governance, injection. Split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) + `MemoryStoreBundle` (see `memory/AGENTS.md`) |
 | `persistence/` | 31 py | `adapters/`, `managers/`, `migrations/`, `session_artifacts/` | Hybrid persistence layer (ADR-0023, ADR-0028~0031). `ConnectionManager` + `MigrationRunner` (per-workspace SQLite), `PersistenceBackend`/`PersistenceConfig`, `ColumnProjection` (ADR-0030), session artifact cleanup (`SessionArtifactCleaner`/`DefaultSessionArtifactCleaner`, `SqliteSessionDatabaseCleaner`, ADR-0018), SQLite adapters for the split store + runtime-state ABCs. All timestamps are INTEGER ms (ADR-0029) |
 | `multi_agent/` | 20 py | `inbox/` | Star-topology orchestration — `AgentPool`, inbox (`InboxMQ`), `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
-| `tools/` | 8 py | `ast/`, `lsp/`, `mcp/`, `overflow/`, `standard/`, `terminal/`, `web/` | Tool subsystem — registry, executor, MCP, terminal (pexpect/tmux/winpty), overflow, standard tools (see `tools/AGENTS.md`) |
+| `tools/` | 9 py | `ast/`, `lsp/`, `mcp/`, `overflow/`, `standard/`, `terminal/`, `web/` | Tool subsystem — concrete `InMemoryToolManager` (manager.py, C2), filtering, MCP, terminal (pexpect/tmux/winpty), overflow, standard tools (see `tools/AGENTS.md`) |
 | `sandbox/` | 17 py | `adapters/` | Sandboxed execution — Subprocess, Docker, E2B, Landlock, guards, environment builder (see `sandbox/AGENTS.md`) |
 | `pipeline/` | 7 py | — | `AgentPipeline` orchestration, `InputAdapter` ABC (B4: output side moved to `adapters/`), approval renderer, snapshot handling (see `pipeline/AGENTS.md`) |
 | `runtime/` | 9 py | — | `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, codec, snapshot policy (see `runtime/AGENTS.md`) |
@@ -48,7 +48,6 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `utils/` | 12 py | — | tokenizer, context_builder, deduplicator, sanitizer, helpers, process-tree termination, `time` (`now_ms`/`now_s` — ADR-0029 single source of truth) |
 | `adapters/` | 6 py | — | Platform I/O contracts + emitter bridge — `PlatformAdapter` ABC, `AdapterRegistry`, `StreamingMode`, `OutputAdapter` family (output.py), `StreamingAwareEmitter` (emitter.py), `ContentFilter` family (filters.py); moved from pipeline/core in B4 (see `adapters/AGENTS.md`) |
 | `media/` | 6 py | — | Concrete media implementation (ADR-0013) — `LocalFileMediaStore` filesystem storage, MIME classification, security gate. Contracts (`Attachment`, `MediaStore` ABC, `StoredFile`) live in `core/media.py` (C1) (see `media/AGENTS.md`) |
-| `registry/` | 1 py | — | Shared registry utilities |
 
 ## Key Files
 
@@ -91,7 +90,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 - `memory/` — Three-layer persistent memory with scope isolation. Split store ABCs + `MemoryStoreBundle` are the storage contract.
 - `persistence/` — Hybrid persistence (ADR-0023). SQLite `ConnectionManager`/`MigrationRunner` + adapters for the split store and runtime-state ABCs. `PersistenceBackend` (`FILE`/`SQLITE`) drives IOC selection.
 - `multi_agent/` — Star-topology subagent orchestration.
-- `tools/` — Tool registry, executor, MCP, terminal backends.
+- `tools/` — Concrete tool manager (InMemoryToolManager), MCP, terminal backends.
 - `pipeline/` — End-to-end orchestration pipeline.
 - `runtime/` — Runtime state and services assembly.
 - `hook/` + `interceptor/` — Extension layers for lifecycle observation and AOP.
@@ -116,7 +115,7 @@ From `modex_agent`'s perspective:
 - `persistence/` depends on `core/` (scope) and `memory/` (split store ABCs); implements the SQLite adapters.
 - `multi_agent/` depends on `core/` (agent ABC), `memory/` (isolated memory), `messaging/` (bus), `persistence/` (InboxMQ, routing stores).
 - `pipeline/` depends on `core/`, `agents/`, `runtime/`, `commands/`.
-- `tools/` depends on `core/` (Tool ABC, ToolManager).
+- `tools/` depends on `core/` (Tool ABC, ToolManager ABC); owns the concrete InMemoryToolManager (C2).
 - `sandbox/` depends on `core/` (types) only; NOT wired into `tools/` — opt-in capability per ADR-0007.
 
 ### External

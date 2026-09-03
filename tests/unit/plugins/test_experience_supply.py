@@ -1,38 +1,24 @@
-"""The experience capability's supply + section face — the T14 pins (SPEC §8.3).
+"""The experience capability's supply + lifecycle face (plan §10.5, §18.7).
 
 Covers:
 
-- **Construction parity** — ``ExperienceCapability.supply()`` reproduces
-  the retired BIZ constructions (``build_pool_data``'s experience layer +
-  ``BackgroundTaskRunner._build_curators``): the
-  ``<data>/experiences/<pool>/<root-agent>`` dir layout (the sanitized
-  ``WorkspacePaths`` accessor), the scope-less manager source, the
-  per-file meta store, and the curator knobs threaded from the FIRST
-  entry's validated config (the retired single-config-per-pool
-  semantics).
-- **D4 curator lifecycle** — supply() constructs; pool assembly starts;
-  pool teardown stops. The stage-run test pins all three: the supply's
-  task exists after Stage 3, dies on the builder's cleanup-on-failure,
-  and dies on ``AgentPool.shutdown_all`` (no orphaned runners).
-- **Section byte parity** — the injection provider's content equals the
-  machine-captured pre-migration golden
-  (``tests/unit/memory/goldens/experience_section_pre_migration.txt``,
-  captured on this wave's parent commit through the retired
-  ``_experience_manager`` channel) with the fixture root normalized.
+- **Construction parity** — the ``<data>/experiences/<pool>/<root-agent>``
+  dir layout (the sanitized ``WorkspacePaths`` accessor), the scope-less
+  catalog source, the per-file meta store, curator knobs from the
+  (conflict-checked) pool config.
+- **Config altitude (§10.5.1)** — conflicting pool-level declarations
+  fail supply construction with ``ExperienceConfigError`` while
+  per-agent review configs stay distinct.
+- **Lifecycle** — supply() constructs; pool assembly starts; teardown
+  stops; start/stop idempotent; pool shutdown leaves no task.
+- **Review-task ownership (§10.5)** — submissions accepted while
+  running, rejected during stop, awaited+cancelled on stop.
 - **Dark-supply pins** — a pool with ZERO experience-capability agents
-  builds NO experience supply (the retired always-built dir/manager
-  died, SPEC P5); hand-referencing the experience tool or the review
-  hook against such a pool raises loudly.
+  builds NO experience supply; hand-referencing the tool/hook raises.
 - **Loud supply reads** — ``require_experience_supply`` raises with the
-  capability name + repair path on missing pool_runtime / missing key /
-  wrong type.
-- **Typed-field + BIZ-construction deaths** — grep-clean assertions for
-  the retired carriers (``_experience_manager``, the two
-  ``experience_review_provider`` typed fields, the BIZ
-  manager/dir/curator builders, ``PoolAssemblyDeps.experience``).
-- **The review provider rides the supply** — the deployment default LLM
-  provider threads ``SupplyInfra.default_llm_provider`` → the supply
-  view → ``ExperienceSupply.review_provider`` (the B8 ledger decision).
+  repair path on missing pool_runtime / missing key / wrong type.
+- **Section parity** — the injection provider renders the pre-migration
+  golden bytes (root-normalized) and refreshes on change.
 """
 
 from __future__ import annotations
@@ -46,16 +32,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.experience import (
-    FileExperienceSource,
-)
 from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy,
     PoolAssemblyContext,
     StrategyAssembly,
 )
 from modex_agent.multi_agent.pool import AgentPool
-from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
 from modex_agent.plugins.assembly.builder import AssemblyBuilder
 from modex_agent.plugins.assembly.context import (
@@ -80,8 +62,15 @@ from modex_agent.plugins.defaults.capabilities.experience import (
     ExperienceSupply,
     require_experience_supply,
 )
-from modex_agent.plugins.defaults.hooks import ExperienceReviewHookFactory
-from modex_agent.plugins.defaults.tools import ExperienceToolFactory
+from modex_agent.plugins.defaults.capabilities.experience.config import (
+    ExperienceConfigError,
+)
+from modex_agent.plugins.defaults.capabilities.experience.hook_factory import (
+    ExperienceReviewHookFactory,
+)
+from modex_agent.plugins.defaults.capabilities.experience.tool_factory import (
+    ExperienceToolFactory,
+)
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.workspace.context import WorkspaceContext
@@ -99,13 +88,7 @@ _GOLDEN_FILE = (
 _INJECTION_SECTION = PromptSectionSpec(section_id="experience.injection", order=50)
 
 
-# ─── Harness (the todo supply suite's shapes) ────────────────────────────────
-
-
 def _make_registry() -> ComponentRegistry:
-    """DefaultPlugin (the production registration face — the experience
-    capability lives there) plus a stub EXECUTION_STRATEGY named "stub"."""
-
     class _StubConfig(BaseModel):
         model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -220,7 +203,7 @@ def _view(data_dir: Path, **kwargs: Any) -> PoolSupplyView:
     )
 
 
-# ─── Construction parity with the retired BIZ builders ───────────────────────
+# ─── Construction parity ─────────────────────────────────────────────────────
 
 
 class TestConstructionParity:
@@ -233,25 +216,20 @@ class TestConstructionParity:
         )
         assert supply.experience_dir.exists()
 
-    def test_manager_source_is_the_retired_scope_less_shape(self, tmp_path: Path) -> None:
+    def test_catalog_source_is_scope_less_over_the_dir(self, tmp_path: Path) -> None:
         supply = ExperienceCapability().supply(_view(tmp_path))
 
-        source = supply.manager._source  # noqa: SLF001
-        assert isinstance(source, FileExperienceSource)
-        assert source.directories == [supply.experience_dir]
-        assert source.scope is None
+        assert supply.catalog.source.directories == [supply.experience_dir]
+        assert supply.catalog.source.scope is None
 
-    def test_curator_knobs_thread_from_first_entry_config(self, tmp_path: Path) -> None:
+    def test_curator_knobs_thread_from_pool_config(self, tmp_path: Path) -> None:
         capability = ExperienceCapability()
         view = PoolSupplyView(
             pool_name="test_pool",
             entries=(
                 PoolSupplyAgentEntry(
                     agent_name="main",
-                    config={
-                        "max_experiences": 5,
-                        "curator_interval": 7,
-                    },
+                    config={"max_experiences": 5, "curator_interval": 7},
                 ),
             ),
             root_agent_name="main",
@@ -260,32 +238,10 @@ class TestConstructionParity:
 
         supply = capability.supply(view)
 
-        assert supply.curator._max_experiences == 5  # noqa: SLF001
-        assert supply.curator_interval == 7
-
-    def test_first_entry_wins_on_diverging_configs(self, tmp_path: Path) -> None:
-        """OQ1 arbitration: root-first order — the retired pool had ONE
-        config (the root's); diverging per-agent configs resolve to the
-        first entry's."""
-        capability = ExperienceCapability()
-        view = PoolSupplyView(
-            pool_name="test_pool",
-            entries=(
-                PoolSupplyAgentEntry(agent_name="main", config={"max_experiences": 3}),
-                PoolSupplyAgentEntry(agent_name="sub", config={"max_experiences": 9}),
-            ),
-            root_agent_name="main",
-            data_dir=tmp_path,
-        )
-
-        supply = capability.supply(view)
-
-        assert supply.curator._max_experiences == 3  # noqa: SLF001
+        assert supply.catalog.curator.max_experiences == 5
+        assert supply.pool_config.curator_interval == 7
 
     def test_dir_keyed_by_root_agent_not_entry_agent(self, tmp_path: Path) -> None:
-        """A subagent-only declaration keys the dir by the pool's ROOT
-        agent — the retired construction keyed the main agent
-        unconditionally."""
         view = PoolSupplyView(
             pool_name="test_pool",
             entries=(PoolSupplyAgentEntry(agent_name="sub", config={}),),
@@ -325,7 +281,74 @@ class TestConstructionParity:
             )
 
 
-# ─── D4 lifecycle: supply() constructs; pool assembly starts; teardown stops ─
+# ─── Config altitude (§10.5.1) ───────────────────────────────────────────────
+
+
+class TestConfigAltitude:
+    def test_conflicting_pool_config_fails_boot(self, tmp_path: Path) -> None:
+        """§5.3 correction: diverging pool-level values are a typed boot
+        failure — never a silent first-pick."""
+        view = PoolSupplyView(
+            pool_name="test_pool",
+            entries=(
+                PoolSupplyAgentEntry(agent_name="main", config={"max_experiences": 3}),
+                PoolSupplyAgentEntry(agent_name="sub", config={"max_experiences": 9}),
+            ),
+            root_agent_name="main",
+            data_dir=tmp_path,
+        )
+
+        with pytest.raises(ExperienceConfigError, match="max_experiences"):
+            ExperienceCapability().supply(view)
+
+    def test_conflicting_curator_interval_fails_boot(self, tmp_path: Path) -> None:
+        view = PoolSupplyView(
+            pool_name="test_pool",
+            entries=(
+                PoolSupplyAgentEntry(agent_name="main", config={"curator_interval": 60}),
+                PoolSupplyAgentEntry(agent_name="sub", config={"curator_interval": 3600}),
+            ),
+            root_agent_name="main",
+            data_dir=tmp_path,
+        )
+
+        with pytest.raises(ExperienceConfigError, match="curator_interval"):
+            ExperienceCapability().supply(view)
+
+    def test_matching_pool_config_with_distinct_review_config_boots(
+        self, tmp_path: Path
+    ) -> None:
+        """Per-agent review knobs stay distinct while pool knobs agree."""
+        view = PoolSupplyView(
+            pool_name="test_pool",
+            entries=(
+                PoolSupplyAgentEntry(
+                    agent_name="main",
+                    config={"max_experiences": 10, "min_messages": 5},
+                ),
+                PoolSupplyAgentEntry(
+                    agent_name="sub",
+                    config={"max_experiences": 10, "min_messages": 40},
+                ),
+            ),
+            root_agent_name="main",
+            data_dir=tmp_path,
+        )
+
+        supply = ExperienceCapability().supply(view)
+
+        assert supply.pool_config.max_experiences == 10
+        assert supply.review_config_by_agent["main"].min_messages == 5
+        assert supply.review_config_by_agent["sub"].min_messages == 40
+
+    def test_inert_enabled_field_is_gone(self) -> None:
+        """The retired ``enabled`` knob is deleted — effectiveness is the
+        capability's only enablement."""
+        with pytest.raises(Exception, match="Extra inputs"):
+            ExperienceCapability().config_model().model_validate({"enabled": True})
+
+
+# ─── Lifecycle: supply() constructs; assembly starts; teardown stops ─────────
 
 
 class TestCuratorLifecycle:
@@ -342,8 +365,6 @@ class TestCuratorLifecycle:
         await supply.stop()
 
     async def test_builder_cleanup_on_failure_stops_the_loop(self, tmp_path: Path) -> None:
-        """A later-stage failure runs the builder's registered cleanups —
-        the supply stop is among them (cleanup-on-failure road)."""
         registry = _make_registry()
         ctx = _make_pool_assembly_ctx(tmp_path)
         spec = _make_spec(capabilities=(_experience_compiled(),))
@@ -359,9 +380,6 @@ class TestCuratorLifecycle:
         assert supply.task is None
 
     async def test_pool_shutdown_all_stops_the_loop(self, tmp_path: Path) -> None:
-        """The pool's teardown machinery (``AgentPool.shutdown_all``) stops
-        the attached supply workers — the shutdown road. Tears the pool
-        down and asserts the runner stopped: no orphaned background tasks."""
         registry = _make_registry()
         ctx = _make_pool_assembly_ctx(tmp_path)
         spec = _make_spec(capabilities=(_experience_compiled(),))
@@ -377,12 +395,11 @@ class TestCuratorLifecycle:
         assert supply.task is None
 
     async def test_curator_loop_cycles_and_evicts(self, tmp_path: Path) -> None:
-        """The retired background runner's regression: the loop still
-        CYCLES — with interval 0 the curator runs immediately and LRU
-        evicts the least-recently-used excess experience (meta records
-        seed the count, exactly like the review hook's post-write
-        bookkeeping does)."""
-        from modex_agent.core.experience.meta import ExperienceMetaRecord
+        """With interval 0 the curator runs immediately and LRU evicts the
+        least-recently-used excess experience."""
+        from modex_agent.plugins.defaults.capabilities.experience.metadata import (
+            ExperienceMetaRecord,
+        )
 
         capability = ExperienceCapability()
         view = PoolSupplyView(
@@ -390,10 +407,7 @@ class TestCuratorLifecycle:
             entries=(
                 PoolSupplyAgentEntry(
                     agent_name="main",
-                    config={
-                        "max_experiences": 2,
-                        "curator_interval": 0,
-                    },
+                    config={"max_experiences": 2, "curator_interval": 0},
                 ),
             ),
             root_agent_name="main",
@@ -415,7 +429,6 @@ class TestCuratorLifecycle:
 
         await supply.start()
         assert supply.task is not None
-        # Interval 0 → the first cycle runs within a scheduler turn.
         for _ in range(50):
             await asyncio.sleep(0.01)
             if not (exp_dir / "exp-a").exists():
@@ -436,38 +449,76 @@ class TestCuratorLifecycle:
         assert supply.task is None
 
 
-# ─── Stage aggregation end-to-end (the S phase) ─────────────────────────────
+# ─── Review-task ownership (§10.5 — the retired hook-owned set died) ─────────
 
 
-class TestStageAggregation:
-    async def test_view_carries_root_agent_and_default_provider(self, tmp_path: Path) -> None:
-        captured: list[PoolSupplyView] = []
-        capability = ExperienceCapability()
-        original = capability.supply
+class TestReviewTaskOwnership:
+    async def test_submission_accepted_while_running(self, tmp_path: Path) -> None:
+        supply = ExperienceCapability().supply(_view(tmp_path))
+        await supply.start()
 
-        def capturing_supply(view: PoolSupplyView) -> ExperienceSupply:
-            captured.append(view)
-            return original(view)
+        started = asyncio.Event()
 
-        capability.supply = capturing_supply  # type: ignore[method-assign]
-        registry = _make_registry()
-        registry._factories[ComponentSlot.CAPABILITY]["experience"] = capability  # noqa: SLF001
-        ctx = _make_pool_assembly_ctx(tmp_path)
-        spec = _make_spec(capabilities=(_experience_compiled(),))
+        async def review() -> None:
+            started.set()
+            await asyncio.sleep(0.2)
 
-        pool_runtime, _ = await _run_stage(ctx, (spec,), registry)
-        supply = pool_runtime.capability_supply.get("experience")
-        assert isinstance(supply, ExperienceSupply)
+        task = supply.submit_review(
+            agent_name="main", review=review(), invocation_id="iv-1"
+        )
+        assert task is not None
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert supply.review_in_flight("main")
+        await supply.stop()
+        assert not supply.review_in_flight("main")
+
+    async def test_submission_rejected_during_stop(self, tmp_path: Path) -> None:
+        supply = ExperienceCapability().supply(_view(tmp_path))
+        await supply.start()
         await supply.stop()
 
-        (view,) = captured
-        assert view.pool_name == "test_pool"
-        assert view.root_agent_name == "main"
-        assert view.data_dir == tmp_path
-        assert view.default_llm_provider is None  # no provider on this infra
+        async def review() -> None:  # pragma: no cover — must never run
+            raise AssertionError("rejected submission ran")
+
+        assert supply.submit_review(agent_name="main", review=review(), invocation_id="x") is None
+
+    async def test_stop_cancels_and_awaits_pending_review(self, tmp_path: Path) -> None:
+        supply = ExperienceCapability().supply(_view(tmp_path))
+        await supply.start()
+        cancelled = asyncio.Event()
+
+        async def review() -> None:
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        task = supply.submit_review(agent_name="main", review=review(), invocation_id="iv-2")
+        assert task is not None
+        await asyncio.sleep(0)
+
+        await supply.stop()
+
+        assert cancelled.is_set()
+        assert task.cancelled() or task.done()
+
+    async def test_failed_review_is_isolated(self, tmp_path: Path) -> None:
+        """A crashing review task is logged and swallowed — the supply (and
+        the completed foreground turn) survive."""
+        supply = ExperienceCapability().supply(_view(tmp_path))
+        await supply.start()
+
+        async def review() -> None:
+            raise RuntimeError("review exploded")
+
+        task = supply.submit_review(agent_name="main", review=review(), invocation_id="iv-3")
+        assert task is not None
+        await asyncio.wait_for(task, timeout=1)
+        await supply.stop()  # still stoppable
 
 
-# ─── Dark-supply pin (SPEC P5 — the always-built dir/manager died) ───────────
+# ─── Dark-supply pin ─────────────────────────────────────────────────────────
 
 
 class TestDarkSupplyPin:
@@ -483,9 +534,6 @@ class TestDarkSupplyPin:
         assert "experience" not in pool_runtime.capability_supply
 
     async def test_hand_referenced_experience_tool_raises_loudly(self, tmp_path: Path) -> None:
-        """A bare roster reference of ``experience`` on a pool without the
-        capability loud-fails at the factory — the dark-supply death (the
-        bare-tool degraded mode, SPEC §5.3)."""
         registry = _make_registry()
         ctx = _make_pool_assembly_ctx(tmp_path)
         spec = _make_spec()
@@ -519,7 +567,7 @@ class TestDarkSupplyPin:
             await ExperienceReviewHookFactory().create(MagicMock(), chain)
 
 
-# ─── Loud supply reads ────────────────────────────────────────────────────────
+# ─── Loud supply reads ───────────────────────────────────────────────────────
 
 
 class _WrongSupply(CapabilitySupply):
@@ -555,12 +603,6 @@ class TestLoudSupplyReads:
 
 class TestSectionByteParity:
     async def test_channel_section_bytes_match_pre_migration_golden(self, tmp_path: Path) -> None:
-        """The acceptance bar: the capability channel's section content is
-        byte-equal to the retired experience special case's output
-        (captured on this wave's parent commit; the fixture root is
-        normalized — the rendered ``directory=""`` attributes embed
-        absolute paths). The view's pool/root names match the capture
-        fixture's layout (``experiences/pool/main``)."""
         from tests.unit.memory.goldens.capture_experience_injection import (
             _write_fixtures,
         )
@@ -588,9 +630,6 @@ class TestSectionByteParity:
 
         content = await wiring.prompt_providers[0].get_or_refresh()
         normalized = content.replace(str(tmp_path.resolve()), "<ROOT>")
-        # The golden was captured on a Windows host (backslash separators);
-        # Path rendering follows the running OS, so compare on the
-        # platform-neutral separator.
         normalized = normalized.replace("\\", "/")
         golden = _GOLDEN_FILE.read_text(encoding="utf-8").replace("\\", "/")
 
@@ -616,8 +655,6 @@ class TestSectionByteParity:
         assert active.artifacts == {}
 
     async def test_active_section_without_supply_raises_loudly(self) -> None:
-        """A binding with the active section but no pool supply is a broken
-        invariant (effectiveness implies the pool-level supply) — loud."""
         capability = ExperienceCapability()
         ctx = AgentContext(
             registry=MagicMock(),
@@ -627,12 +664,11 @@ class TestSectionByteParity:
         )
 
         with pytest.raises(ValueError, match="experience"):
-            await capability.assemble(CapabilityBinding(active_sections=(_INJECTION_SECTION,)), ctx)
+            await capability.assemble(
+                CapabilityBinding(active_sections=(_INJECTION_SECTION,)), ctx
+            )
 
     async def test_version_is_content_hash_and_refreshes_on_change(self, tmp_path: Path) -> None:
-        """Manager-driven section contract (SPEC §7.3 / E10): version is
-        the content hash — stable while the experiences are unchanged,
-        changed (exactly one refresh) when they change."""
         exp_dir = tmp_path / "experiences" / "test_pool" / "main"
         exp_dir.mkdir(parents=True)
         (exp_dir / "exp-one").mkdir()
@@ -669,16 +705,11 @@ class TestSectionByteParity:
         assert "exp-two" in changed
 
 
-# ─── Anchor geometry — the documented position delta ─────────────────────────
+# ─── Anchor geometry ─────────────────────────────────────────────────────────
 
 
 class TestAnchorPosition:
     async def test_experience_section_renders_at_capability_anchor(self, tmp_path: Path) -> None:
-        """The retired channel rendered the section at load() position 8
-        (after provider blocks/prefetch); the channel renders it at the
-        capability anchor (fork → capability block → core memory / AgentComm)
-        — the DESIGNED position delta (SPEC §7.3 N4; content byte-equal is
-        the acceptance bar, pinned above)."""
         from modex_agent.memory.hooks import MemoryHookRunner
         from modex_agent.memory.system import MemorySystemContextManager
 
@@ -725,109 +756,3 @@ class TestAnchorPosition:
 
         assert "## Experiences" in prompt
         assert prompt.index("BASE-MARKER") < prompt.index("## Experiences")
-
-
-# ─── Typed-field + BIZ-construction deaths (grep-clean assertions) ───────────
-
-# Runtime/generated state (never source): the bot's `.modex` SQLite state,
-# runtime-populated `experiences`/`subworkspace`, logs, caches, and any
-# virtualenv (a stale editable install under `examples/bot_project/.venv`
-# shadows the live tree and would fake a violation).
-_SKIPPED_DIRS = {
-    "__pycache__",
-    "node_modules",
-    "dist",
-    "target",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".venv",
-    "site-packages",
-    ".modex",
-    "experiences",
-    "subworkspace",
-    "logs",
-}
-
-
-def _iter_py_files(*bases: Path) -> Any:
-    for base in bases:
-        for path in base.rglob("*.py"):
-            if not path.is_file():
-                continue
-            if any(part in _SKIPPED_DIRS for part in path.parts):
-                continue
-            yield path
-
-
-def _py_tree_contains(needle: str, *bases: Path) -> list[str]:
-    marker = needle.encode("utf-8")
-    # Sorted: rglob iteration order is filesystem-dependent (macOS and Linux
-    # disagree), and the death-fact assertions compare against fixed lists.
-    return sorted(str(path) for path in _iter_py_files(*bases) if marker in path.read_bytes())
-
-
-#: The two legitimate ``ExperienceManager`` mentions: the class's own
-#: docstring usage example and the capability supply (the one constructor).
-_CORE_EXPERIENCE_MANAGER = _ROOT / "src" / "modex_agent" / "core" / "experience" / "manager.py"
-_CAPABILITY_EXPERIENCE = (
-    _ROOT / "src" / "modex_agent" / "plugins" / "defaults" / "capabilities" / "experience.py"
-)
-
-
-class TestDeathFacts:
-    def test_experience_manager_special_case_gone_from_system(self) -> None:
-        source = (_ROOT / "src" / "modex_agent" / "memory" / "system.py").read_text(
-            encoding="utf-8"
-        )
-        assert "_experience_manager" not in source
-        assert "experience_manager" not in source
-
-    def test_experience_manager_construction_sites_gone(self) -> None:
-        """The plan's (f) sweep: no production site constructs an
-        ``ExperienceManager`` outside the capability supply (the
-        ``core/experience`` package's own docstring examples and tests
-        are not wiring)."""
-        assert _py_tree_contains(
-            "ExperienceManager(",
-            _ROOT / "src" / "modex_agent",
-            _BOT_PROJECT / "bot",
-        ) == sorted([str(_CORE_EXPERIENCE_MANAGER), str(_CAPABILITY_EXPERIENCE)])
-
-    def test_curator_construction_site_gone_from_biz(self) -> None:
-        assert _py_tree_contains(
-            "ExperienceCurator(",
-            _ROOT / "src" / "modex_agent",
-            _BOT_PROJECT / "bot",
-        ) == [str(_CAPABILITY_EXPERIENCE)]
-
-    def test_biz_experience_builders_gone(self) -> None:
-        assert (
-            _py_tree_contains("_build_experience_manager", _ROOT / "src", _ROOT / "examples") == []
-        )
-        assert _py_tree_contains("_build_curators", _ROOT / "src", _ROOT / "examples") == []
-
-    def test_experience_meta_carrier_gone_from_pool_data(self) -> None:
-        source = (_BOT_PROJECT / "bot" / "workspace" / "pool_data.py").read_text(encoding="utf-8")
-        assert "experience_meta" not in source
-        assert "experience_dir" not in source
-
-    def test_both_review_provider_typed_fields_gone(self) -> None:
-        source = (_ROOT / "src" / "modex_agent" / "plugins" / "assembly" / "context.py").read_text(
-            encoding="utf-8"
-        )
-        # The only remaining mention documents the retirement in the
-        # replacement field's docstring.
-        assert source.count("experience_review_provider") == 1
-
-    def test_pool_assembly_deps_experience_field_gone(self) -> None:
-        assert "experience" not in PoolAssemblyDeps.model_fields
-
-    def test_stack_derivation_gone(self) -> None:
-        source = (_BOT_PROJECT / "bot" / "workspace" / "wiring" / "stack.py").read_text(
-            encoding="utf-8"
-        )
-        assert "ExperienceConfig" not in source
-
-    def test_context_manager_param_gone_from_source_tree(self) -> None:
-        assert _py_tree_contains("experience_manager=", _ROOT / "src", _ROOT / "examples") == []

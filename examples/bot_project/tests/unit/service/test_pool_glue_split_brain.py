@@ -165,7 +165,9 @@ async def test_declared_glue_components_are_roster_dispatched(
     factory code-wired constructions never run for this pool."""
     instance, pool_data, broker = await _declared_boot(tmp_path)
     try:
-        from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
+        from modex_agent.plugins.defaults.capabilities.experience.review_hook import (
+            ExperienceReviewHook,
+        )
 
         main_instance = instance.pool._agents.get(  # noqa: SLF001
             instance.root_agent_name
@@ -175,14 +177,14 @@ async def test_declared_glue_components_are_roster_dispatched(
         review_hooks = [h for h in react_hooks if isinstance(h, ExperienceReviewHook)]
         assert len(review_hooks) == 1, "exactly one ExperienceReviewHook (Stage-4 dispatch)"
         hook = review_hooks[0]
-        # The chain-supplied infra: the bot-global default provider (not any
-        # pool provider) + the pool's memory system + the experience
-        # capability supply's dir (the retired pool_data carrier died with
-        # the supply face, SPEC §8.3).
-        assert hook._agent._provider is not None  # noqa: SLF001
+        # The chain-supplied infra: the pool's memory system + the experience
+        # capability supply (the retired pool_data carrier died with the
+        # supply face, SPEC §8.3). The reviewer is registered on the supply
+        # (built on the bot-global default provider).
         assert hook._memory_system is pool_data.context_manager.memory_system  # noqa: SLF001
         supply = instance.pool.materialize_deps.capability_supply["experience"]  # noqa: SLF001
-        assert hook._get_dir() == supply.experience_dir  # noqa: SLF001
+        assert supply.review_agent_for(instance.root_agent_name) is not None
+        assert hook._catalog.experience_dir == supply.experience_dir  # noqa: SLF001
 
         memory_hooks = dump_memory_hooks(pool_data)
         # The default pool's MAIN does not declare the todo capability:

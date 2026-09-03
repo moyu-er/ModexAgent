@@ -89,6 +89,7 @@ from modex_agent.plugins.registry import (
 )
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.tools.manager import InMemoryToolManager
 
 from ..builders import build_inbox, resolve_declared_root_prompt
 from ..external_strategy import ProviderUnavailableError
@@ -657,9 +658,9 @@ async def create_pool(
         context_manager = _fallback_context_manager(main_spec, system_prompt)
 
     if tool_manager is None:
-        from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+        from modex_agent.tools.manager import InMemoryToolManager
 
-        tool_manager = InMemoryToolManager(config=ToolManagerConfig())
+        tool_manager = InMemoryToolManager()
 
     subagent_store_registry = None
     if pool_data is not None:

@@ -30,7 +30,6 @@ from bot.webui.server import WebUIServer
 from bot.webui.workspace_providers import resolve_runtime_stores
 
 from modex_agent.core.agent import AgentContext, current_agent_context
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.plugins.assembly.context import PoolContext, PoolRuntimeDeps
@@ -39,6 +38,7 @@ from modex_agent.plugins.defaults.tools import TodoToolFactory, ToolConfig
 from modex_agent.runtime.store import JsonFileTodoStore
 from modex_agent.tools.standard.todo_tool import TodoWriteTool
 from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _stack_with_pool(pool: str, supply: TodoSupply | None) -> Any:

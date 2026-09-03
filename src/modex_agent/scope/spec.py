@@ -104,8 +104,7 @@ class MemoryDeclaration(BaseModel):
     Field face is the union of the legacy roster memory blocks: the
     ``MemoryToggle`` archive/core gates (pool.yml main agents) plus the
     subagent session token override (templates). Position fixes the preset
-    FAMILY (root → archive/core/experience eligible, non-root →
-    session-only); this block overrides layer toggles within the eligible
+    FAMILY (root — archive/core eligible, non-root — session-only); this block overrides layer toggles within the eligible
     family. The AND gate mirrors ``MemoryToggle``: core memory is fed by
     archive consolidation.
     """

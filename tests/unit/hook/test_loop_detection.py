@@ -14,6 +14,7 @@ from modex_agent.hook.builtin.loop_detection import (
     _trailing_repeat_run,
 )
 from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 class TestToolFingerprint:
@@ -250,7 +251,6 @@ def _make_ctx(messages=None):
     from modex_agent.agents.react.state import ReActTurnState
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.session_id import SessionInfo
-    from modex_agent.core.tool_manager import InMemoryToolManager
     from modex_agent.memory.history import ListMessageHistory
     from modex_agent.runtime.enums import AgentKind, TurnPhase
     from modex_agent.runtime.models import TurnIdentity
@@ -487,7 +487,6 @@ class TestLoopDetectionHook:
         # Clean mode / non-ReAct context: get_react_state is None — skip.
         from modex_agent.core.agent import AgentContext
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.core.tool_manager import InMemoryToolManager
         from modex_agent.memory.history import ListMessageHistory
 
         ctx = AgentContext(

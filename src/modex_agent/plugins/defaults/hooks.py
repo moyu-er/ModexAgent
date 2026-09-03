@@ -66,7 +66,6 @@ from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
 from modex_agent.hook.builtin.env_injection import NativeEnvInjectionHook
-from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
 from modex_agent.hook.builtin.inbox_flush import InboxFlushHook
 from modex_agent.hook.builtin.length_guard import LengthGuardHook
 from modex_agent.hook.builtin.logging import RunLoggingHook
@@ -76,10 +75,6 @@ from modex_agent.hook.builtin.todo_continuation import TodoContinuationHook
 from modex_agent.hook.builtin.todo_planning_nudge import TodoPlanningNudgeHook
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.memory.cleanup_hooks import TodoReorientationHook
-from modex_agent.memory.snapshot import (
-    DEFAULT_SNAPSHOT_MAX_CONTENT_LEN,
-    DEFAULT_SNAPSHOT_MAX_MESSAGES,
-)
 from modex_agent.multi_agent.communication.peer_resolution import (
     build_agent_pool_map,
     build_routable_targets,
@@ -94,7 +89,6 @@ from modex_agent.plugins.abc import (
 )
 from modex_agent.plugins.defaults.capabilities.todo import require_todo_supply
 from modex_agent.plugins.defaults.capabilities.tracing import require_tracing_supply
-from modex_agent.tools.presets import EXPERIENCE_REVIEW_HOOK_NAME
 
 if TYPE_CHECKING:
     from modex_agent.plugins.assembly.context import AgentContext, PoolContext
@@ -105,8 +99,6 @@ __all__ = [
     "TRACE_PRIORITY",
     "DeliverRetryHookConfig",
     "DeliverRetryHookFactory",
-    "ExperienceReviewHookConfig",
-    "ExperienceReviewHookFactory",
     "InboxFlushHookConfig",
     "InboxFlushHookFactory",
     "LengthGuardHookFactory",
@@ -240,25 +232,6 @@ class TodoReorientationHookConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class ExperienceReviewHookConfig(BaseModel):
-    """Config for ``ExperienceReviewHookFactory`` — trigger thresholds.
-
-    The hook's runtime deps (the review agent's LLM provider, the memory
-    system, the experience dir + meta store) are SUPPLIED INFRASTRUCTURE:
-    ``create()`` reads them from the context chain — the provider, the
-    dir, and the meta store from the pool's ``experience`` capability
-    supply (``capability_supply['experience']``), the memory system from
-    ``pool_runtime.pool_assembly_ctx.pool_data``. Only serializable
-    thresholds live in config.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    min_messages: int = 10
-    exp_cooldown_turns: int = 3
-    max_iterations: int = 50
-    snapshot_max_messages: int = DEFAULT_SNAPSHOT_MAX_MESSAGES
-    snapshot_max_content_len: int = DEFAULT_SNAPSHOT_MAX_CONTENT_LEN
 
 
 # ---------------------------------------------------------------------------
@@ -539,77 +512,6 @@ class TodoReorientationHookFactory(MemoryHookFactory):
         )
 
 
-class ExperienceReviewHookFactory(ReactHookFactory):
-    """Factory for ``ExperienceReviewHook`` — background conversation review.
-
-    Main-agent only (``applies_to={native_main}``). The hook spawns an
-    ``ExperienceReviewAgent`` after graph execution to create/update
-    EXPERIENCE.md files.
-
-    Ticket 09 (supplied infra): ``create()`` assembles the hook from the
-    context chain — the review agent is built on the experience
-    capability supply's ``review_provider`` (the deployment's bot-global
-    default provider, converged from the retired
-    ``PoolRuntimeDeps.experience_review_provider`` typed field), the
-    memory system comes from ``pool_assembly_ctx.pool_data``, and the
-    experience dir + meta store come from the same supply. Missing supply
-    raises loudly — a roster-referenced component is never silently
-    skipped.
-    """
-
-    config_model: ClassVar[type[BaseModel]] = ExperienceReviewHookConfig
-    applies_to: ClassVar[set[AgentType] | None] = {AgentType.native_main}
-
-    async def create(  # type: ignore[override]
-        self, config: ExperienceReviewHookConfig, ctx: PoolContext
-    ) -> ExperienceReviewHook:
-        from modex_agent.agents.experience.review_agent import ExperienceReviewAgent
-        from modex_agent.plugins.defaults.capabilities.experience import (
-            require_experience_supply,
-        )
-
-        pool_runtime = ctx.pool_runtime
-        if pool_runtime is None:
-            raise ValueError(
-                "experience_review requires pool_runtime; reference it from "
-                "a pool roster assembled through the pipeline"
-            )
-        supply = require_experience_supply(pool_runtime)
-        provider = supply.review_provider
-        if provider is None:
-            raise ValueError(
-                "experience_review requires the deployment's default LLM "
-                "provider (the experience supply's review_provider); the "
-                "orchestrator resolves it at pool assembly"
-            )
-        pool_data = (
-            pool_runtime.pool_assembly_ctx.pool_data
-            if pool_runtime.pool_assembly_ctx is not None
-            else None
-        )
-        if pool_data is None:
-            raise ValueError(
-                "experience_review requires the pool's pool_data "
-                "(memory system); configure the pool's memory resources"
-            )
-        memory_system = pool_data.context_manager.memory_system
-        if memory_system is None:
-            raise ValueError("experience_review requires the pool's memory system")
-        review_agent = ExperienceReviewAgent(
-            provider=provider,
-            max_iterations=config.max_iterations,
-        )
-        return ExperienceReviewHook(
-            review_agent=review_agent,
-            memory_system=memory_system,
-            experience_dir=supply.experience_dir,
-            meta_store=supply.meta_store,
-            min_messages=config.min_messages,
-            exp_cooldown_turns=config.exp_cooldown_turns,
-            snapshot_max_messages=config.snapshot_max_messages,
-            snapshot_max_content_len=config.snapshot_max_content_len,
-        )
-
 
 # ---------------------------------------------------------------------------
 # Trace span-hook factories (the `tracing` capability's roster resolvers)
@@ -886,7 +788,6 @@ def register_default_hooks(ctx: PluginRegistrationContext) -> None:
     ctx.register_hook("subagent_auto_send", SubagentAutoSendHookFactory())
     ctx.register_hook("memory_trace", MemoryTraceHookFactory())
     ctx.register_hook("todo_reorientation", TodoReorientationHookFactory())
-    ctx.register_hook(EXPERIENCE_REVIEW_HOOK_NAME, ExperienceReviewHookFactory())
     # The `tracing` capability's seven span-hook resolvers (priority
     # -500; construction authority: TracingCapability.assemble).
     ctx.register_hook("trace_root", TraceRootHookFactory())

@@ -26,6 +26,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.plugins.abc import ComponentSlot
+from modex_agent.tools.manager import InMemoryToolManager
 
 # ── Models ──────────────────────────────────────────────────────────────
 

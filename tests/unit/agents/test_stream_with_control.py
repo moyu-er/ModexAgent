@@ -17,6 +17,7 @@ from modex_agent.agents.react.agent import ReActEvent, ReActAgent
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.interceptor.abc import InterceptorScope
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _StreamingEmitter:
@@ -56,7 +57,7 @@ class _StreamingEmitter:
 def _make_fake_ctx(*, interceptor_chain=None, control_channel=None):
     from modex_agent.core.agent import AgentContext
     from modex_agent.memory.history import ListMessageHistory
-    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.tools.manager import InMemoryToolManager
     from modex_agent.agents.react.state import ReActTurnState
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
     from modex_agent.runtime.models import TurnIdentity

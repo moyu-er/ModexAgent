@@ -52,6 +52,7 @@ from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import ToolOrigin, compile_scope
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 from tests.unit.scope.goldens.assertor import (
@@ -376,7 +377,6 @@ class TestRuntimeGateDeath:
         from modex_agent.core.constants import StopReason
         from modex_agent.core.emitter import AgentResult
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.core.tool_manager import InMemoryToolManager
         from modex_agent.core.types import TodoStatus
         from modex_agent.memory.history import ListMessageHistory
         from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase

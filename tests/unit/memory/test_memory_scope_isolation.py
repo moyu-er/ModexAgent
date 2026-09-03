@@ -29,8 +29,8 @@ from modex_agent.memory.layers.config import (
     MemoryLayerConfigSet,
     SessionMemoryConfig,
 )
-from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.layers.core import ScopedCoreMemoryManager
+from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
 from tests.unit.memory.conftest import FixedTokenEstimator
@@ -1038,17 +1038,20 @@ class TestExperienceScopePath:
     """
 
     async def test_experience_global_scope_no_extra_subdir(self, tmp_path: Path) -> None:
-        """ExperienceManager with GlobalScope uses base directory directly.
+        """A GlobalScope source renders the base directory's experiences.
 
         This represents the current single-user bot behavior.
         """
-        from modex_agent.core.experience.manager import ExperienceManager
-        from modex_agent.core.experience.source import FileExperienceSource
         from modex_agent.core.scope import GlobalScope
+        from modex_agent.plugins.defaults.capabilities.experience.catalog import (
+            render_index_xml,
+        )
+        from modex_agent.plugins.defaults.capabilities.experience.source import (
+            FileExperienceSource,
+        )
 
         base_dir = tmp_path / "experiences" / "main" / "agent"
         source = FileExperienceSource(directories=[base_dir], scope=GlobalScope())
-        mgr = ExperienceManager(source=source)
 
         # Write an experience via the source
         exp_dir = base_dir / "test-exp"
@@ -1057,14 +1060,18 @@ class TestExperienceScopePath:
             "---\nname: test-exp\ndescription: A test\n---\n# Test\n", encoding="utf-8"
         )
 
-        prompt = await mgr.build_prompt()
+        prompt = render_index_xml(await source.list_experiences())
         assert "test-exp" in prompt, f"Experience should appear in prompt: {prompt[:200]}"
 
     async def test_experience_user_scope_isolated(self, tmp_path: Path) -> None:
         """Experience with UserScope: user A must NOT see user B's data."""
-        from modex_agent.core.experience.manager import ExperienceManager
-        from modex_agent.core.experience.source import FileExperienceSource
         from modex_agent.core.scope import MemoryContext, UserScope
+        from modex_agent.plugins.defaults.capabilities.experience.catalog import (
+            render_index_xml,
+        )
+        from modex_agent.plugins.defaults.capabilities.experience.source import (
+            FileExperienceSource,
+        )
 
         base_dir = tmp_path / "experiences" / "main" / "agent"
 
@@ -1079,23 +1086,22 @@ class TestExperienceScopePath:
         )
 
         source = FileExperienceSource(directories=[base_dir], scope=UserScope())
-        mgr = ExperienceManager(source=source)
 
         ctx_a = MemoryContext(session_id="sess-a.main", user_id="user-a")
-        prompt = await mgr.build_prompt(context=ctx_a)
+        prompt = render_index_xml(await source.list_experiences(context=ctx_a))
         assert "test-exp" in prompt, "User A should see their experience"
         assert "other-exp" not in prompt, "User A must NOT see user B's experience"
 
         # User B should only see their experience
         ctx_b = MemoryContext(session_id="sess-b.main", user_id="user-b")
-        prompt_b = await mgr.build_prompt(context=ctx_b)
+        prompt_b = render_index_xml(await source.list_experiences(context=ctx_b))
         assert "other-exp" in prompt_b, "User B should see their experience"
         assert "test-exp" not in prompt_b, "User B must NOT see user A's experience"
 
     async def test_experience_user_scope_stores_in_user_dir(self, tmp_path: Path) -> None:
         """Experience files with UserScope are written to {base}/{user_id}/."""
-        from modex_agent.core.experience.source import FileExperienceSource
         from modex_agent.core.scope import UserScope
+        from modex_agent.plugins.defaults.capabilities.experience.source import FileExperienceSource
 
         base_dir = tmp_path / "experiences" / "main" / "agent"
         source = FileExperienceSource(directories=[base_dir], scope=UserScope())

@@ -688,7 +688,7 @@ async def test_benchmark_arm_uses_file_prompt_as_single_source(tmp_path: Path) -
     assert "## Delegating To Subagents" in prompt
     for marker in ("SOUL", "your_identity", "user_profile", "known_facts"):
         assert marker not in prompt
-    assert "## Task Tracking" in prompt
+    assert "## Task Discipline" in prompt
 
 
 @pytest.mark.asyncio
@@ -735,7 +735,7 @@ async def test_default_arm_live_prompt_carries_delegation_guidance_and_roster(
 
     assert provider.system_prompts, "default-arm turn never reached the LLM"
     prompt = provider.system_prompts[0]
-    assert "## Task Tracking" in prompt
+    assert "## Task Discipline" in prompt
     assert "## Delegating To Subagents" in prompt
     assert "all six elements" in prompt
     assert provider.tools, "no tool schemas reached the LLM"

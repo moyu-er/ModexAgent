@@ -15,7 +15,6 @@ from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import LLMResponse
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnPhase
@@ -25,6 +24,7 @@ from modex_agent.runtime.services import (
     AgentRuntimeServices,
     require_runtime_state,
 )
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_graph import (
     GraphPersistenceCoordinator,
     NullDeliverStoreFactory,

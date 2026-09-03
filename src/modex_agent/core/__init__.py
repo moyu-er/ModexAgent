@@ -76,12 +76,13 @@ from .stream_events import (
     UsageSnapshot,
 )
 from .tool_manager import (
-    InMemoryToolManager,
+    ExecutionMode,
+    ExclusiveTool,
+    ParallelTool,
     Tool,
     ToolConfig,
     ToolExecutionContext,
     ToolManager,
-    ToolManagerConfig,
     ToolResult,
     get_tool_execution_context,
 )
@@ -141,12 +142,13 @@ __all__ = [
     "ContentEmitter",
     # V2 新架构 - 工具管理
     "ToolManager",
-    "InMemoryToolManager",
     "Tool",
     "ToolConfig",
     "ToolExecutionContext",
-    "ToolManagerConfig",
     "get_tool_execution_context",
+    "ExecutionMode",
+    "ParallelTool",
+    "ExclusiveTool",
     "Modality",
     "ModelCapabilities",
     "ModelInfo",

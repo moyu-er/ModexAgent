@@ -11,7 +11,6 @@ from modex_agent.approval.constants import ApprovalTier
 from modex_agent.core.context import ContextState, InMemoryContextManager
 from modex_agent.core.emitter import AgentResult
 from modex_graph.exceptions import GraphInterrupt
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage, ToolCall
 from modex_agent.runtime.enums import AgentKind, ApprovalSubjectType, SnapshotReason, TurnPhase
 from modex_agent.runtime.models import (
@@ -23,6 +22,7 @@ from modex_agent.runtime.models import (
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.runtime.store import InMemoryTurnStateStore
+from modex_agent.tools.manager import InMemoryToolManager
 
 from tests.unit.pipeline._helpers import _make_react_pipeline
 

@@ -30,15 +30,6 @@ if str(_BOT_PROJECT) not in sys.path:
 from bot.tools.custom import SendFileToUserTool  # noqa: E402
 from bot.tools.kb import KbTool  # noqa: E402
 
-from modex_agent.memory.tools.experience import (  # noqa: E402
-    ExperienceDeleteTool,
-    ExperienceEditTool,
-    ExperienceListTool,
-    ExperienceReadTool,
-    ExperienceRenameDirTool,
-    ExperienceTool,
-    ExperienceWriteTool,
-)
 from modex_agent.memory.tools.scoped_edit import ScopedEditFileTool  # noqa: E402
 from modex_agent.memory.tools.scoped_list import ScopedListTool  # noqa: E402
 from modex_agent.memory.tools.scoped_read import ScopedReadFileTool  # noqa: E402
@@ -47,6 +38,15 @@ from modex_agent.multi_agent.tools import (  # noqa: E402
     SendToAgentTool,
     SendToPeerTool,
     TaskDispatchTool,
+)
+from modex_agent.plugins.defaults.capabilities.experience.catalog import (  # noqa: E402
+    ExperienceDeleteTool,
+    ExperienceEditTool,
+    ExperienceListTool,
+    ExperienceReadTool,
+    ExperienceRenameDirTool,
+    ExperienceRouterTool,
+    ExperienceWriteTool,
 )
 from modex_agent.tools.aci.edit_tool import AciEditTool  # noqa: E402
 from modex_agent.tools.ast.ast_replace import AstGrepReplaceTool  # noqa: E402
@@ -121,7 +121,7 @@ EXPECTED_MODES: dict[str, tuple[type[Tool], ExecutionMode]] = {
     "experience_rename_dir": (ExperienceRenameDirTool, ExecutionMode.EXCLUSIVE),
     "experience_delete": (ExperienceDeleteTool, ExecutionMode.EXCLUSIVE),
     # Errata (plan ticket 2): unified multi-action routers are fail-closed
-    "experience": (ExperienceTool, ExecutionMode.EXCLUSIVE),
+    "experience": (ExperienceRouterTool, ExecutionMode.EXCLUSIVE),
     "kb": (KbTool, ExecutionMode.EXCLUSIVE),
     "send_file_to_user": (SendFileToUserTool, ExecutionMode.EXCLUSIVE),
     # MCPTool: classvar default EXCLUSIVE; instance override is the adapter's

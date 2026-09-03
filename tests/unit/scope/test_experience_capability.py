@@ -30,7 +30,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.capability import (
@@ -45,6 +45,9 @@ from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.capabilities.experience import (
     EXPERIENCE_TOOL_NAME,
     ExperienceCapability,
+)
+from modex_agent.plugins.defaults.capabilities.experience.config import (
+    ExperienceCapabilityConfig,
 )
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
@@ -304,18 +307,25 @@ class TestProtocolShape:
             ExperienceCapability().config_model.model_validate({"bogus": 1})
 
     def test_config_carries_the_reviewer_knobs(self) -> None:
-        config = ExperienceCapability().config_model.model_validate({"min_messages": 5})
-        assert isinstance(config, BaseModel)
+        config = ExperienceCapability().config_model().model_validate({"min_messages": 5})
+        assert isinstance(config, ExperienceCapabilityConfig)
         assert config.min_messages == 5
 
     def test_contributed_tool_name_matches_constructed_tool(self, tmp_path: Path) -> None:
         """Drift guard: the contributed roster name equals a constructed
-        ExperienceTool's ``.name`` (the tool is factory-built at assembly
+        router tool's ``.name`` (the tool is factory-built at assembly
         — the name is the only compile-time contract)."""
-        from modex_agent.core.experience import PerFileExperienceMetaStore
-        from modex_agent.memory.tools.experience import ExperienceTool
+        from modex_agent.plugins.defaults.capabilities.experience.catalog import (
+            ExperienceCatalog,
+            ExperienceRouterTool,
+        )
+        from modex_agent.plugins.defaults.capabilities.experience.metadata import (
+            PerFileExperienceMetaStore,
+        )
 
-        tool = ExperienceTool(tmp_path, PerFileExperienceMetaStore(tmp_path))
+        tool = ExperienceRouterTool(
+            ExperienceCatalog(experience_dir=tmp_path, meta_store=PerFileExperienceMetaStore(tmp_path))
+        )
         assert tool.name == EXPERIENCE_TOOL_NAME
 
 

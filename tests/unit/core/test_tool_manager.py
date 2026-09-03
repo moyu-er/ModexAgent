@@ -1,4 +1,4 @@
-"""Unit tests for core/tool_manager.py.
+"""Unit tests for core/tool_manager.py + tools/manager.py (C2).
 
 Verify Tool, InMemoryToolManager, ToolResult behaviors including
 registration, execution, and schema generation.
@@ -7,10 +7,11 @@ registration, execution, and schema generation.
 import pytest
 
 from modex_agent.core.tool_manager import (
-    InMemoryToolManager,
     Tool,
+    ToolConfig,
     ToolResult,
 )
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _DummyTool(Tool):
@@ -176,7 +177,7 @@ class TestInMemoryToolManagerRegistration:
 
     def test_disabled_tool_excluded_from_descriptions(self, tm):
         t = _DummyTool()
-        t.config.enabled = False
+        t.config = ToolConfig(enabled=False)
         tm.register(t)
         assert tm.get_tool_descriptions() == []
 
@@ -206,7 +207,7 @@ class TestInMemoryToolManagerExecution:
     @pytest.mark.asyncio
     async def test_execute_disabled_tool(self, tm):
         t = _DummyTool()
-        t.config.enabled = False
+        t.config = ToolConfig(enabled=False)
         tm.register(t)
         result = await tm.execute("dummy", {"value": 1})
         assert result.success is False

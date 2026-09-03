@@ -68,7 +68,6 @@ from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.session_registry import InMemorySessionRegistry
 from modex_agent.core.session_store import LocalFileSessionStore
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.turn_events import (
     TurnEvent,
     TurnTextEvent,
@@ -76,6 +75,7 @@ from modex_agent.core.turn_events import (
     TurnToolResultEvent,
 )
 from modex_agent.core.types import MessageRole
+from modex_agent.tools.manager import InMemoryToolManager
 
 # ---------------------------------------------------------------------------
 # Constants

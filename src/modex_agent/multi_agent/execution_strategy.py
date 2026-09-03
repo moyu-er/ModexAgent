@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any, assert_never
 from modex_agent.core.constants import ExecutionStrategyKind
 
 if TYPE_CHECKING:
+    from modex_agent.adapters.output import OutputAdapter
     from modex_agent.agents.external.agent import StreamingProviderBackend
     from modex_agent.agents.external.session_store import ExternalSessionMapStore
     from modex_agent.commands.models import CommandProcessor
@@ -75,7 +76,6 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
     from modex_agent.multi_agent.router import AgentMessageRouter
     from modex_agent.multi_agent.tools import CommunicationTargetStore
-    from modex_agent.adapters.output import OutputAdapter
     from modex_agent.pipeline.snapshot import PoolDataSnapshot
     from modex_agent.pipeline.turn_runner_abc import TurnRunner
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry

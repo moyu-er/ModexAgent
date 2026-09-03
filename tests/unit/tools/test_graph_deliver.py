@@ -11,7 +11,6 @@ from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.history import MessageHistory
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.session_registry import InMemorySessionRegistry, SessionRegistry
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity, TurnStateBase
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
@@ -21,6 +20,7 @@ from modex_agent.tools.graph_deliver import (
     GraphDeliverTargetStore,
     GraphDeliverTool,
 )
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_graph.constants import GraphNode
 from modex_graph.context import GraphContext
 from modex_graph.graph import Graph

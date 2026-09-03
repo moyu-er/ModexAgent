@@ -11,7 +11,7 @@ from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.scope import MemoryAgentRole
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool
+from modex_agent.core.tool_manager import Tool
 from modex_agent.hook import Hook
 from modex_agent.ioc.factories.governance import create_governance
 from modex_agent.ioc.factories.memory import create_memory
@@ -36,6 +36,7 @@ from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import CompiledAgent
 from modex_agent.scope.defaults import memory_config_for_position
 from modex_agent.scope.derivation import _DEFAULT_LLM_PROVIDER
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths

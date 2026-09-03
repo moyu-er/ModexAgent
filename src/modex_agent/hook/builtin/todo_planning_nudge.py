@@ -1,7 +1,7 @@
 """Todo planning nudge — one-shot reminder to plan multi-step work.
 
 Behavior-level backstop for the ``todo`` capability's ``todo.discipline``
-prompt section (``## Task Tracking``): when an agent that owns
+prompt section (``## Task Discipline``): when an agent that owns
 ``todo_write`` has a completely empty todo list and has accumulated
 three assistant steps in the current logical turn without touching the
 todo tools, inject a one-shot ``system-reminder`` nudging the model to

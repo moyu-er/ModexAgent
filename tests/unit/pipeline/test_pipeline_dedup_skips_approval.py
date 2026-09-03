@@ -23,9 +23,9 @@ from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.core.context import InMemoryContextManager
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage
 from modex_agent.utils.deduplicator import MessageDeduplicator
+from modex_agent.tools.manager import InMemoryToolManager
 
 from tests.unit.pipeline._helpers import _make_react_pipeline
 

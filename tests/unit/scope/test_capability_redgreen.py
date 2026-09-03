@@ -53,7 +53,7 @@ from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind
 from modex_agent.core.prompt import SystemPromptProvider
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool
+from modex_agent.core.tool_manager import Tool
 from modex_agent.hook.abc import Hook
 from modex_agent.hook.runner import HookRunner
 from modex_agent.memory.hooks import MemoryHookRunner
@@ -105,6 +105,7 @@ from modex_agent.scope import (
 )
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.tools.manager import InMemoryToolManager
 
 # The default toolset a bare root compiles to — the native-dispatch registry
 # must resolve every roster name the real compiler emits.

@@ -7,7 +7,6 @@ from modex_agent.core.constants import FinishReason, StopReason
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
 from modex_agent.hook.builtin import SubagentAutoSendHook
@@ -159,3 +158,4 @@ async def test_subagent_loop_routes_to_parent_inbox():
 
 # Import ReActTurnState here to avoid a top-level import cycle in some test runners.
 from modex_agent.agents.react.state import ReActTurnState  # noqa: E402
+from modex_agent.tools.manager import InMemoryToolManager

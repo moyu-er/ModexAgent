@@ -35,7 +35,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.context import (
     PoolRuntimeDeps,
@@ -57,6 +56,7 @@ from modex_agent.tools.terminal import (
 from modex_agent.tools.terminal.managers import TerminalManagerBase
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 async def _load_default_registry() -> ComponentRegistry:
@@ -72,7 +72,7 @@ def _trio_tool_manager(
     manager: TerminalManagerBase, registry: ProcessRegistry
 ) -> InMemoryToolManager:
     """A strategy-supplied trio registration (the pre-ticket-05 shape)."""
-    tm = InMemoryToolManager(config=ToolManagerConfig())
+    tm = InMemoryToolManager()
     tm.register(CommandTool(manager=manager, registry=registry))
     tm.register(ProcessTool(registry=registry, manager=manager))
     tm.register(TerminalTool(manager, registry=registry))
@@ -128,7 +128,7 @@ async def test_fw_resolved_bash_type_survives_overwrite_order() -> None:
         PoolRuntimeDeps(terminal_manager=terminal_manager, process_registry=pool_registry),
     )
 
-    tm = InMemoryToolManager(config=ToolManagerConfig())
+    tm = InMemoryToolManager()
     factory = component_registry.resolve(ComponentSlot.TOOL, "bash")
     tm.register(await factory.create(ToolConfig(), ctx))
     for tool in (

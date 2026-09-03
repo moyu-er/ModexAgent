@@ -7,7 +7,7 @@ Abstract base classes and shared types forming the framework's type-safe foundat
 
 ## Purpose
 
-The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMProvider`, `ContextManager`, `ContentEmitter[E]`), type system (`MessageRole`, `MessageType`, `ToolCall`), runtime context (`AgentContext`), session identity (`SessionInfo`, `SessionRegistry`, `SessionStore`), and sub-systems (skills, experience). Every other framework module imports from `core/`. The graph engine was extracted to the standalone `modex_graph` package (ADR-0033); the old `core/graph/` directory is deleted.
+The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMProvider`, `ContextManager`, `ContentEmitter[E]`), type system (`MessageRole`, `MessageType`, `ToolCall`), runtime context (`AgentContext`), session identity (`SessionInfo`, `SessionRegistry`, `SessionStore`), and sub-systems (skills; the Experience vertical slice moved to the `experience` capability package, plan §10). Every other framework module imports from `core/`. The graph engine was extracted to the standalone `modex_graph` package (ADR-0033); the old `core/graph/` directory is deleted.
 
 ## Key Files
 
@@ -34,8 +34,7 @@ The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMP
 | `session_registry.py` | `SessionRegistry` — async write-through cache over `SessionStore` for `SessionInfo` resolution (guarded by `asyncio.Lock`) |
 | `session_store.py` | `SessionStore` ABC + JSON-file `LocalFileSessionStore` — authoritative persistent session storage (one JSON per session_id, I/O via `asyncio.to_thread`) |
 | `stream_events.py` | `LLMStreamEvent` — six-variant closed discriminated union (ADR-0046): `TextDelta` / `ReasoningDelta` / `ToolCallComplete` / `UsageSnapshot` / `Finish` / `StreamFailure`. `ReplayFields` (`Finish.replay`) is the event layer's only reasoning-replay channel. `EventAssembler` (folded here from providers/http in B3) folds an event sequence into one `LLMResponse` and enforces the terminal-event invariant — every stream ends with exactly one `Finish` or `StreamFailure`, synthesized as a TIMEOUT failure on EOF without terminal |
-| `tool.py` | `DynamicSchemaProvider` ABC — context-aware tool schema. **`Tool` class lives in `tool_manager.py`** |
-| `tool_manager.py` | `Tool` class (dual-mode: `__init__` args OR `@property` name/description/parameters; declarative modalities per ADR-0014), `ExecutionMode`, `ParallelTool`, `ExclusiveTool`, `ToolManager` ABC, `InMemoryToolManager`, `ToolResult`, `ToolExecutionContext`, `ToolConfig`, `ToolManagerConfig`. `Tool.execution_mode` is a read-only property that resolves the instance `_execution_mode_override` before the fail-closed class `_default_execution_mode`; `Tool.on_cancel()` owns external-state recovery and `Tool.cancel_note` adds context to synthesized cancellation results. |
+| `tool_manager.py` | Tool contracts + shared execution behavior (C2: concrete `InMemoryToolManager` moved to `tools/manager.py`; `DynamicSchemaProvider` folded into `Tool` — `core/tool.py` deleted): `Tool` class (dual-mode: `__init__` args OR `@property` name/description/parameters; declarative modalities per ADR-0014; dynamic schema via `get_dynamic_schema()`/`get_dynamic_schema_for()`), `ExecutionMode`, `ParallelTool`, `ExclusiveTool`, `ToolManager` ABC (with shared `execute()` — timeout-free result normalization, ctx delivery via contextvar, `get_tool_descriptions` visibility filtering), `ToolResult`, `ToolExecutionContext`, `ToolConfig` (frozen Pydantic — toggle `enabled` by replacing the config object). `Tool.execution_mode` is a read-only property that resolves the instance `_execution_mode_override` before the fail-closed class `_default_execution_mode`; `Tool.on_cancel()` owns external-state recovery and `Tool.cancel_note` adds context to synthesized cancellation results. |
 | `types.py` | `InputMessage`, `OutputMessage` (frozen Pydantic `BaseModel`, B5), `LLMResponse`, `ToolCall` (Pydantic `BaseModel`, ADR-0033 D14 Stage 2), `MessageRole` (StrEnum: SYSTEM/USER/ASSISTANT/TOOL/AGENT/PENDING), `MessageType` (Enum), `OutputMessageType` (StrEnum, B1) |
 | `utils.py` | Core utility helpers |
 
@@ -44,7 +43,6 @@ The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMP
 | Directory | Files | Purpose |
 |-----------|-------|---------|
 | `skills/` | 7 py | Skill loading, filtering, caching, progressive prompt building — `SkillManager`, `SkillSource` ABCs, `SkillPromptBuilder`, `SkillFilter` hierarchy (see `skills/AGENTS.md`) |
-| `experience/` | 10 py | Experience layer — `ExperienceManager`, `FileExperienceSource`, `ExperiencePromptBuilder`, `ExperienceCurator`, validation, metadata tracking (see `experience/AGENTS.md`) |
 
 ## For AI Agents
 
@@ -52,7 +50,7 @@ The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMP
 - New ABCs: `Protocol` or `ABC` + `@abstractmethod`
 - `AgentContext` is a dataclass — new fields must have `None` defaults
 - Event enums: `class MyEvent(AgentEvent, Enum)`
-- **`Tool` is in `tool_manager.py` (not `tool.py`)**. Dual-mode: pass args to `__init__` OR define `@property` name/description/parameters
+- **`Tool` is in `tool_manager.py` (not `tool.py` — deleted in C2)**. Dual-mode: pass args to `__init__` OR define `@property` name/description/parameters
 - `from __future__ import annotations` in all modules
 
 ### Type Safety

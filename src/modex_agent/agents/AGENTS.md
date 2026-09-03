@@ -22,7 +22,6 @@ The `agents/` module provides concrete agent implementations: the `ReActAgent` (
 | `react/` | 14 py (incl. `nodes/`) | `ReActAgent` — 6-node graph (START→BEFORE→LLM→TOOL→AFTER→END) built on `modex_graph`, `TieredToolApprovalClassifier`, `ReActTurnState` (GraphState), `ReactGraphRuntime` adapter, approval suspend/resume (see `react/AGENTS.md`) |
 | `external/` | 21 py (incl. `providers/`) | `ExternalAgent` — provider-neutral streaming harness, Pi/OpenCode adapters, session-map ABC, env/prompt/path/OS process seams (see `external/AGENTS.md`, ADR-0022) |
 | `summarizer/` | 7 py | `ArchiveSummarizer` (MD archive generation), `CoreMemoryConsolidator` (ReAct-based core memory consolidation; renamed from `KnowledgeConsolidator` per ADR-0035), `SessionCompactorAgent` (tool-less single-LLM-call compact summary), `ScopedFileAgent` base class (see `summarizer/AGENTS.md`). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). |
-| `experience/` | 2 py | `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files using experience tools (see `experience/AGENTS.md`) |
 
 ### react/ Submodule Details
 
@@ -55,12 +54,6 @@ The ReAct module is the primary agent runtime. Key components:
 | `emitter.py` | `SummarizerTrajectoryEmitter` — JSONL trace file writer for agent observability |
 | `abc.py` | `ArchiveGenerator` ABC, `CoreMemoryConsolidatorBase` ABC (renamed from `KnowledgeConsolidatorBase` per ADR-0035), `ArchiveSummarizerResult`, lazy prompt loader |
 
-### experience/ Submodule Details
-
-| File | Description |
-|------|-------------|
-| `review_agent.py` | `ExperienceReviewAgent(ScopedFileAgent)` — ReAct agent with 6 experience tools, 2-attempt retry, JSONL trace observability |
-
 ### external/ Submodule Details
 
 | File | Description |
@@ -79,13 +72,9 @@ Persistent and per-turn differences stay inside adapters. Cleanup failure must
 propagate so `ExternalAgent` and `AgentPool` retain the owner for retry;
 never mark an agent stopped or remove it from a pool before close succeeds.
 
-The `ExperienceReviewAgent`:
-1. Receives a conversation snapshot + existing experiences XML
-2. Builds system prompt from `experience/review` prompt template
-3. Assembles a standalone `ReActAgent` with 6 experience tools: Read, Write, Edit, List, RenameDir, Delete
-4. Runs up to 100 iterations (configurable) with `SummarizerTrajectoryEmitter` for tracing
-5. Retries once on failure (2 attempts total)
-6. All file operations are scoped to `experience_dir`
+The ExperienceReviewAgent (conversation → EXPERIENCE.md) moved to the
+`experience` capability package
+(`plugins/defaults/capabilities/experience/reviewer.py`, plan §10).
 
 ### Agent Hierarchy
 
@@ -97,8 +86,7 @@ Agent[E]
 └── ScopedFileAgent          (ReAct with scoped file tools)
     ├── ArchiveSummarizer    (pruned → archive files)
     ├── CoreMemoryConsolidator (archive → core memory files; renamed from KnowledgeConsolidator per ADR-0035)
-    └── ExperienceReviewAgent (conversation → EXPERIENCE.md, in agents/experience/)
-```
+    ```
 
 ## For AI Agents
 
@@ -158,7 +146,7 @@ class MyAgent(Agent[MyEvent]):
 - `modex_agent.core.session_id` — `SessionInfo`
 - `modex_agent.runtime` — `AgentRuntime`, `AgentRuntimeServices`, `ReActTurnState`
 - `modex_agent.memory.prompts` — `SummarizerPromptRegistry`
-- `modex_agent.memory.tools.experience` — Experience tools (for ExperienceReviewAgent)
+- `modex_agent.plugins.defaults.capabilities.experience` — the Experience capability package (reviewer + tools)
 - `modex_agent.utils.helpers` — `strip_think`
 - `modex_agent.hook` — `HookRunner`, `HookPoint`
 - `modex_agent.interceptor` — `InterceptorChain`

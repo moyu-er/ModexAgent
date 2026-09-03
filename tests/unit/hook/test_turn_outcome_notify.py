@@ -14,9 +14,9 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.hook.notification import TurnOutcomeNotifyHook
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.tools.manager import InMemoryToolManager
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -37,7 +37,7 @@ def _make_context(comm_kind: AgentCommKind | None = AgentCommKind.NORMAL) -> Age
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
-        tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
+        tool_manager=InMemoryToolManager(),
         session=SessionInfo.from_str("s.main"),
         comm_kind=comm_kind,
     )

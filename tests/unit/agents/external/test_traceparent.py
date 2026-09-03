@@ -38,8 +38,8 @@ from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.history import ListMessageHistory
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.turn_events import TurnEvent
+from modex_agent.tools.manager import InMemoryToolManager
 
 _TRACEPARENT_RE = re.compile(r"^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$")
 

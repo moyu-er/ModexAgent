@@ -6,11 +6,11 @@ from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClas
 from modex_agent.approval.constants import ApprovalTier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import ToolCall
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.ioc.factories.approval import build_approval_runtime
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 def test_returns_none_when_config_disabled():

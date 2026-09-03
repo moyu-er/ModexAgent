@@ -37,7 +37,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook import Hook, HookRunner
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.plugins.abc import (
@@ -67,6 +66,7 @@ from modex_agent.scope.compiler import compile_scope
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _modexctl_resolvable() -> bool:

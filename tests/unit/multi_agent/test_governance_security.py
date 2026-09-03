@@ -4,7 +4,6 @@ import pytest
 
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.tool_manager import (
-    InMemoryToolManager,
     Tool,
 )
 from modex_agent.messaging.broker import Address, BrokerMessage
@@ -17,6 +16,7 @@ from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.tools.filter import FilteredToolManager
 from modex_agent.utils.sanitizer import ContentSanitizer
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _DummyTool(Tool):

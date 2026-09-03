@@ -16,13 +16,13 @@ from modex_agent.core.context import ContextManager, InMemoryContextManager
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.skills.filter import AllowListFilter
 from modex_agent.core.skills.manager import SkillManager
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook import HookRunner
 from modex_agent.hook.builtin import InboxFlushHook
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.runtime.context import RuntimeContextManager
 from modex_agent.tools.filter import FilteredToolManager
+from modex_agent.tools.manager import InMemoryToolManager
 
 from .comm_kind import AgentCommKind
 from .descriptor import AgentDescriptor, AgentInstance

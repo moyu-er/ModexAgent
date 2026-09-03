@@ -10,7 +10,6 @@ from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
@@ -20,6 +19,7 @@ from modex_agent.trace.root_span_hook import RootSpanHook
 from modex_agent.trace.score_injector import L2ScoreInjector
 from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
 from modex_agent.trace.session_state import TraceSessionState
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _make_context(
@@ -40,7 +40,7 @@ def _make_context(
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory([{"role": "user", "content": "hello"}]),
-        tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
+        tool_manager=InMemoryToolManager(),
         session=session,
         runtime=AgentRuntime(services=AgentRuntimeServices(), state=state),
     )

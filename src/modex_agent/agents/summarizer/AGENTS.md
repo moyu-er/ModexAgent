@@ -29,8 +29,7 @@ Agent[E]
 └── ScopedFileAgent           (ReAct with scoped file tools)
     ├── ArchiveSummarizer     (pruned → archive files)
     ├── CoreMemoryConsolidator (archive → core memory files; renamed from KnowledgeConsolidator per ADR-0035)
-    └── ExperienceReviewAgent (conversation → EXPERIENCE.md, in agents/experience/)
-```
+    ```
 
 ## For AI Agents
 

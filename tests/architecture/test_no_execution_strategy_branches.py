@@ -150,10 +150,10 @@ def test_execution_strategy_compare_only_in_allowed_files() -> None:
     offenders = _files_with_execution_strategy_compare(_FRAMEWORK_SRC)
     unexpected = offenders - {p.resolve() for p in _ALLOWED_EXECUTION_STRATEGY_FILES}
     assert not unexpected, (
-        f"`execution_strategy ==` found in unexpected framework files "
-        f"(ADR-0025 D5 allows only the runtime per-target / runtime dispatch / "
-        f"runtime validation / docstring sites listed in "
-        f"_ALLOWED_EXECUTION_STRATEGY_FILES):\n"
+        "`execution_strategy ==` found in unexpected framework files "
+        "(ADR-0025 D5 allows only the runtime per-target / runtime dispatch / "
+        "runtime validation / docstring sites listed in "
+        "_ALLOWED_EXECUTION_STRATEGY_FILES):\n"
         + "\n".join(f"  {p.relative_to(_REPO_ROOT)}" for p in sorted(unexpected))
     )
 

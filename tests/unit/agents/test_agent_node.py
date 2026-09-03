@@ -17,7 +17,7 @@ from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.session_registry import InMemorySessionRegistry, SessionRegistry
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool
+from modex_agent.core.tool_manager import Tool
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.message_type import AgentMessageType
@@ -27,6 +27,7 @@ from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.graph_deliver import GraphDeliverTool
 from modex_agent.tools.graph_tool_preset import GraphToolPreset
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_graph.constants import (
     DeliverConsumptionStatus,
     FrameworkPayloadSource,

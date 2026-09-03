@@ -19,7 +19,7 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy, TurnTimeoutPolicy
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolExecutionContext, ToolResult
+from modex_agent.core.tool_manager import ToolExecutionContext, ToolResult
 from modex_agent.core.types import ToolCall
 from modex_agent.interceptor.abc import ToolCallContext
 from modex_agent.media.store import LocalFileMediaStore
@@ -27,6 +27,7 @@ from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.tools.manager import InMemoryToolManager
 
 if TYPE_CHECKING:
     from modex_agent.core.capabilities import ModelCapabilities

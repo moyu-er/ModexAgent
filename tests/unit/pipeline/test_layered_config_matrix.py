@@ -28,7 +28,6 @@ from modex_agent.core.agent import AgentContext, AgentCommKind
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.history import ListMessageHistory
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
 from modex_agent.hook.builtin.knowledge_hook import KnowledgeHook, _has_knowledge_config
 from modex_agent.memory.history import ListMessageHistory
@@ -76,7 +75,8 @@ from modex_agent.multi_agent.comm_kind import AgentCommKind as CommKind
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult
-from modex_agent.core.tool_manager import Tool, ToolConfig, InMemoryToolManager
+from modex_agent.core.tool_manager import Tool, ToolConfig
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 # ---------------------------------------------------------------------------

@@ -67,7 +67,8 @@ def subagent_memory() -> MemoryConfig:
     """Canonical subagent memory: session + pruned + governance only.
 
     No archive/core/dream — subagents are short-lived task workers.
-    No experience preset: experience review is main-agent-only.
+    No memory preset enables Experience on any position — the
+    ``experience`` capability is its sole enablement.
     """
     return MemoryConfig(
         session=SessionConfig(max_token_ratio=0.85, keep_ratio=0.3),

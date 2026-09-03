@@ -1,15 +1,26 @@
-import pytest
 from pathlib import Path
+
+import pytest
 
 
 @pytest.mark.integration
 async def test_full_pipeline_no_experiences(tmp_path: Path):
     """Full pipeline with no experiences — should not crash."""
-    from modex_agent.core.experience.source import FileExperienceSource
-    from modex_agent.core.experience.manager import ExperienceManager
-    from modex_agent.core.experience.meta import PerFileExperienceMetaStore
-    from modex_agent.core.experience.curator import ExperienceCurator
-    from modex_agent.memory.tools.experience import ExperienceReadTool, ExperienceListTool
+    from modex_agent.plugins.defaults.capabilities.experience.catalog import (
+        ExperienceCatalog,
+    )
+    from modex_agent.plugins.defaults.capabilities.experience.curator import (
+        ExperienceCurator,
+    )
+    from modex_agent.plugins.defaults.capabilities.experience.metadata import (
+        PerFileExperienceMetaStore,
+    )
+    from modex_agent.plugins.defaults.capabilities.experience.source import (
+        FileExperienceSource,
+    )
+    from modex_agent.plugins.defaults.capabilities.experience.tools import (
+        ExperienceReadTool,
+    )
 
     exp_dir = tmp_path / "experiences"
     exp_dir.mkdir()
@@ -19,17 +30,16 @@ async def test_full_pipeline_no_experiences(tmp_path: Path):
     summaries = await source.list_experiences()
     assert len(summaries) == 0
 
-    # Build prompt — should be empty
-    manager = ExperienceManager(source=source)
-    prompt = await manager.build_prompt()
+    # Render the index — should be empty
+    catalog = ExperienceCatalog(experience_dir=exp_dir, meta_store=PerFileExperienceMetaStore(exp_dir))
+    prompt = await catalog.render_index()
     assert prompt == ""
 
     # Curator on empty should not crash
-    usage_file = exp_dir / ".usage.json"
     meta_store = PerFileExperienceMetaStore(exp_dir)
     curator = ExperienceCurator(exp_dir, meta_store)
     counts = await curator.run()
-    assert counts["checked"] == 0
+    assert counts.checked == 0
 
     # Trackers should not crash on empty / nonexistent entries
     meta_store.bump_use("nonexistent")  # should not raise

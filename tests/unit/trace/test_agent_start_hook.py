@@ -6,7 +6,7 @@ from pathlib import Path
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool, ToolManagerConfig
+from modex_agent.core.tool_manager import Tool
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
@@ -16,6 +16,7 @@ from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.prompt_capture import FullPromptCapture
 from modex_agent.trace.semconv import GenAiAttr, LangfuseObservationType, SpanKind, SpanName
 from modex_agent.trace.session_state import TraceSessionState
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _SearchTool(Tool):
@@ -33,7 +34,7 @@ def _make_context(*, with_trace: bool = True, with_tool: bool = False) -> AgentC
     if with_trace:
         state.custom[TurnCustomKey.TRACE_ID] = "trace-1"
         state.custom[TurnCustomKey.ROOT_SPAN_ID] = "root-1"
-    tool_manager = InMemoryToolManager(config=ToolManagerConfig())
+    tool_manager = InMemoryToolManager()
     if with_tool:
         tool_manager.register(
             _SearchTool(
