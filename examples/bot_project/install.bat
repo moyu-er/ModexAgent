@@ -299,6 +299,12 @@ if exist "%BOT_PID_FILE%" (
 
 set "NEEDS_PIP=0"
 if not exist "%VENV_MARKER%" set "NEEDS_PIP=1"
+:: A framework-only uv sync can remove the bot package without changing
+:: either pyproject timestamp. Both console scripts must live in ROOT_VENV.
+if not exist "%ROOT_VENV%\Scripts\modexbot.exe" set "NEEDS_PIP=1"
+if not exist "%ROOT_VENV%\Scripts\modexctl.exe" set "NEEDS_PIP=1"
+"%VENV_PYTHON%" -c "import importlib.metadata as m; m.distribution('modex-bot-project')" >nul 2>&1
+if errorlevel 1 set "NEEDS_PIP=1"
 
 :: Fingerprint BOTH pyproject files: most framework deps live in the root
 :: project (..\..\), so a change there must also trigger a reinstall — the bot

@@ -371,6 +371,13 @@ for sp in site.getsitepackages():
 CUR_HASH="$(file_hash pyproject.toml)#$(file_hash ../../pyproject.toml)"
 
 NEEDS_PIP=0
+# A framework-only sync can remove the bot package while the marker stays valid.
+if [ ! -x "$ROOT_VENV/bin/modexbot" ] || [ ! -x "$ROOT_VENV/bin/modexctl" ]; then
+    NEEDS_PIP=1
+fi
+if ! "$VENV_PYTHON" -c "import importlib.metadata as m; m.distribution('modex-bot-project')" >/dev/null 2>&1; then
+    NEEDS_PIP=1
+fi
 if [ ! -f "$VENV_MARKER" ]; then
     NEEDS_PIP=1
 else
@@ -436,7 +443,7 @@ if [ "$HAS_NODE" -eq 1 ]; then
         echo ""
         echo "[WARNING] modexbot install encountered errors."
         echo "  You can retry after fixing the issues above:"
-        echo "    $VENV_PYTHON" -m modexbot install"
+        echo "    $VENV_PYTHON -m modexbot install"
     }
 else
     echo ""

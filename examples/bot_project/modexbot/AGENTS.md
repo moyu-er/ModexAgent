@@ -32,7 +32,7 @@ CLI entry point for the ModexAgent bot. Provides start/stop/restart/install comm
 - `cli.py` uses 3-layer process discovery: (1) PID file check, (2) `psutil` process scan, (3) port probe.
 - `main.py` is the actual runtime entry — it constructs `BotService`, calls `initialize()`, and starts `WebUIService` (which auto-discovers every IM adapter: QQ / Telegram / WebSocket).
 - `_build_webui()` in `cli.py` compares `bot/web/dist/index.html` mtime against `webui/src/` and config files to decide whether to rebuild.
-- The CLI recently had changes (check git status for current modifications).
+- Source startup uses only the repository-root `.venv`, matching `install.bat`/`install.sh`. Missing Python or bot console scripts fail before spawning a restart worker, with installer repair instructions; nested environments are never fallback candidates. Packaged installations retain their bundled interpreter. `debug_main.py` reuses the in-process CLI startup and requires the same root interpreter.
 
 ### Common Patterns
 - Process lifecycle: PID file at `.modex/bot.pid`, logs at `logs/`.

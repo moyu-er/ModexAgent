@@ -169,7 +169,11 @@ Both scripts perform the same automated steps:
 | **PATH registration** | Prompts to add the venv `Scripts`/`bin` directory to your **system-wide PATH**, so `modexbot` works from any terminal — no activation needed |
 
 > [!NOTE]
-> Both scripts are **idempotent** — re-running skips already-complete steps. They cache the `pyproject.toml` hash so Python dependencies are only reinstalled when project requirements change. Missing prerequisites trigger interactive y/n prompts. **You can run the scripts from any directory** — they locate the project via their own file path.
+> Both scripts are **idempotent** — re-running skips already-complete steps. They cache the `pyproject.toml` fingerprint and reinstall when requirements change or the bot package/console scripts are missing. Missing prerequisites trigger interactive y/n prompts. **You can run the scripts from any directory** — they locate the project via their own file path.
+
+Source installations use **one Python environment: `ModexAgent/.venv`**. Both framework and bot packages, including `modexbot` and `modexctl`, must be installed there. `examples/bot_project` holds application code/configuration, not a fallback environment. Start/restart report an incomplete root environment instead of selecting a nested `.venv`; configure the same root interpreter when running `debug_main.py` in an IDE. Packaged installations use their bundled Python.
+
+A root-only `uv sync` can remove the separately installed bot package. Run the installer again, or restore it explicitly from the repository root with `uv pip install --python .venv/Scripts/python.exe -e "examples/bot_project[webui,dev]"` (Windows; use `.venv/bin/python` on Linux/macOS). Do not recreate a bot-local environment to work around missing entry points.
 
 After the script completes:
 
