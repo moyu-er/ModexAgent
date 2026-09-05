@@ -340,8 +340,8 @@ class TestWindow6InterruptPauseSplit:
         seeds = bootstrap(ctx, compiled, mode=BootstrapMode.RECOVERY)
         assert len(seeds) > 0
 
-    async def test_recovery_mode_seeds_crashed_interrupted_node(self) -> None:
-        """After crash-between recovery, the CRASHED node is seeded by RECOVERY bootstrap."""
+    async def test_recovery_mode_seeds_canceled_interrupted_node(self) -> None:
+        """An interrupted invocation re-executes even without input delivers."""
         gid = 9303
         interrupt_node = InterruptNode()
         compiled = _compile_pair(interrupt_node, _RecordingTarget())
@@ -354,8 +354,7 @@ class TestWindow6InterruptPauseSplit:
 
         ctx = _make_ctx(coordinator, gid)
         seeds = bootstrap(ctx, compiled, mode=BootstrapMode.RECOVERY)
-        # CANCELED is skipped by bootstrap; node has no PENDING delivers -> empty seeds -> entry
-        assert seeds == [compiled.entry_node]
+        assert seeds == ["a"]
 
 
 # ── W7: REMOVED snapshot window ─────────────────────────────────────────────

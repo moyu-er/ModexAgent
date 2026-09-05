@@ -203,7 +203,7 @@ class TestRecoveryFromCoordinator:
     """bootstrap queries the store -> scheduler rebuilds state from seeds."""
 
     async def test_recovery_restores_counters(self) -> None:
-        """RECOVERY on all-COMPLETED graph re-invokes from entry (empty-seed fallback)."""
+        """RECOVERY on all-COMPLETED work creates no new invocations."""
         g = make_linear_graph()
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
         node_ids = {name: node.node_id for name, node in compiled.nodes.items()}
@@ -221,11 +221,11 @@ class TestRecoveryFromCoordinator:
         scheduler = ParallelScheduler(compiled)
         await scheduler.run_async(ctx, mode=BootstrapMode.RECOVERY)
 
-        assert scheduler._iteration_count > 0
-        assert scheduler._instance_seq > 0
+        assert scheduler._iteration_count == 0
+        assert scheduler._instance_seq == 0
 
     async def test_recovery_skips_completed_nodes(self) -> None:
-        """RECOVERY on all-COMPLETED graph re-invokes from entry (empty-seed fallback)."""
+        """Re-invoking completed work requires FRESH, not RECOVERY."""
         g = make_linear_graph()
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
         node_ids = {name: node.node_id for name, node in compiled.nodes.items()}
@@ -243,7 +243,9 @@ class TestRecoveryFromCoordinator:
         scheduler = ParallelScheduler(compiled)
         await scheduler.run_async(ctx, mode=BootstrapMode.RECOVERY)
 
-        assert len(scheduler._instances) > 0
+        assert scheduler._instances == {}
+        assert ctx.state.count == 0
+        await scheduler.run_async(ctx, mode=BootstrapMode.FRESH)
         assert ctx.state.count == 3
 
     async def test_recovery_redispatches_crashed(self) -> None:
@@ -270,8 +272,8 @@ class TestRecoveryFromCoordinator:
         assert ctx.state.count == 10
         assert scheduler._iteration_count == 2
 
-    async def test_recovery_skips_canceled(self) -> None:
-        """RECOVERY on CANCELED entry re-invokes from entry (empty-seed fallback)."""
+    async def test_recovery_reexecutes_canceled(self) -> None:
+        """RECOVERY seeds the CANCELED invocation directly, without entry replay."""
         g: Graph[CounterState] = Graph()
         g.add_node("a", DispatchAddNode(amount=10, target=GraphNode.END))
         g.add_edge(GraphNode.START, "a")

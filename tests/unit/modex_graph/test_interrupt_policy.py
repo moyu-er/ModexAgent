@@ -34,11 +34,13 @@ class TestGraphInstanceStatus:
 
         assert issubclass(GraphInstanceStatus, StrEnum)
 
-    def test_seven_states(self) -> None:
+    def test_lifecycle_states(self) -> None:
         expected = {
             "pending",
             "running",
+            "pausing",
             "paused",
+            "stopping",
             "stopped",
             "crashed",
             "completed",
@@ -77,7 +79,10 @@ class TestGraphInstanceStatus:
         recoverable = {GraphInstanceStatus.CRASHED}
         manual_only = {GraphInstanceStatus.PAUSED, GraphInstanceStatus.STOPPED}
         terminal = {GraphInstanceStatus.COMPLETED, GraphInstanceStatus.FAILED}
-        active = {GraphInstanceStatus.PENDING, GraphInstanceStatus.RUNNING}
+        active = {
+            GraphInstanceStatus.PENDING, GraphInstanceStatus.RUNNING,
+            GraphInstanceStatus.PAUSING, GraphInstanceStatus.STOPPING,
+        }
 
         all_states = set(GraphInstanceStatus)
         assert recoverable | manual_only | terminal | active == all_states

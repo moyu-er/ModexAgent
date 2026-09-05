@@ -29,10 +29,12 @@ import pytest
 from modex_graph import (
     GraphInstanceStatus,
     GraphInstanceStore,
+    GraphIORecord,
     GraphMetadata,
     InMemoryGraphInstanceStore,
     NullGraphInstanceStore,
     SqliteGraphInstanceStore,
+    SqliteGraphIORecordStore,
 )
 
 # ── Test helpers ──────────────────────────────────────────────────────────
@@ -239,7 +241,9 @@ class TestGraphInstanceStoreCRUD:
         store = _store_factory(kind)()
         store.save(_make_metadata(status=GraphInstanceStatus.RUNNING))
         for status in (
+            GraphInstanceStatus.PAUSING,
             GraphInstanceStatus.PAUSED,
+            GraphInstanceStatus.STOPPING,
             GraphInstanceStatus.STOPPED,
             GraphInstanceStatus.CRASHED,
             GraphInstanceStatus.COMPLETED,
@@ -249,6 +253,28 @@ class TestGraphInstanceStoreCRUD:
             loaded = store.load(_GRAPH_INSTANCE_ID)
             assert loaded is not None
             assert loaded.status == status
+
+    def test_suspend_after_pause_request(self, kind: str) -> None:
+        store = _store_factory(kind)()
+        store.save(_make_metadata())
+        invocation = store.begin_invocation(_GRAPH_INSTANCE_ID)
+        store.update_status(_GRAPH_INSTANCE_ID, GraphInstanceStatus.PAUSING)
+        store.suspend_invocation(invocation)
+        loaded = store.load(_GRAPH_INSTANCE_ID)
+        assert loaded is not None and loaded.status == GraphInstanceStatus.PAUSED
+        store.finalize_invocation(invocation)
+        loaded = store.load(_GRAPH_INSTANCE_ID)
+        assert loaded is not None and loaded.status == GraphInstanceStatus.PAUSED
+
+    @pytest.mark.parametrize("status", ["pausing", "stopping"])
+    def test_finalize_abandoned_drain_is_crashed(self, kind: str, status: str) -> None:
+        store = _store_factory(kind)()
+        store.save(_make_metadata())
+        invocation = store.begin_invocation(_GRAPH_INSTANCE_ID)
+        store.update_status(_GRAPH_INSTANCE_ID, GraphInstanceStatus(status))
+        store.finalize_invocation(invocation)
+        loaded = store.load(_GRAPH_INSTANCE_ID)
+        assert loaded is not None and loaded.status == GraphInstanceStatus.CRASHED
 
     def test_update_status_nonexistent_is_noop(self, kind: str) -> None:
         store = _store_factory(kind)()
@@ -308,6 +334,55 @@ class TestGraphInstanceStoreCRUD:
 
 
 class TestSqliteGraphInstanceStoreSpecifics:
+    @pytest.mark.parametrize("foreign_keys", [False, True])
+    def test_existing_status_constraint_migrates_without_losing_versions(
+        self, foreign_keys: bool,
+    ) -> None:
+        conn = sqlite3.connect(":memory:")
+        conn.execute("""
+            CREATE TABLE graph_instances (
+                graph_instance_id INTEGER NOT NULL, spec_id INTEGER NOT NULL,
+                version INTEGER NOT NULL DEFAULT 0,
+                parent_instance_id INTEGER, parent_node TEXT,
+                status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN
+                    ('pending','running','paused','stopped','crashed','completed','failed')),
+                node_id_map_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(node_id_map_json)),
+                attrs_json TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                PRIMARY KEY (graph_instance_id, version)
+            )
+        """)
+        for version in (0, 1):
+            conn.execute(
+                "INSERT INTO graph_instances VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (42, 7, version, 11, "parent", "paused", '{"work":"node-1"}',
+                 '{"executor_process_id":"test"}', 100, 200),
+            )
+        conn.commit()
+        io_store = SqliteGraphIORecordStore(conn)
+        io_record = GraphIORecord(
+            record_id=91, graph_instance_id=42, spec_id=7, version=1, created_at=100,
+        )
+        io_store.save(io_record)
+        conn.execute(f"PRAGMA foreign_keys = {int(foreign_keys)}")
+        store = SqliteGraphInstanceStore(conn)
+        assert io_store.get(91) == io_record
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == int(foreign_keys)
+        for status in ("pausing", "stopping"):
+            store.update_status(42, GraphInstanceStatus(status))
+            assert store.load_by_status(GraphInstanceStatus(status))[0].version == 1
+        latest = store.load(42)
+        assert latest is not None
+        assert latest.node_id_map == {"work": "node-1"}
+        assert latest.attrs == {"executor_process_id": "test"}
+        assert latest.parent_instance_id == 11 and latest.parent_node == "parent"
+        assert latest.created_at == 100
+        assert conn.execute(
+            "SELECT status, created_at, updated_at FROM graph_instances WHERE version = 0"
+        ).fetchone() == ("paused", 100, 200)
+        SqliteGraphInstanceStore(conn)
+        assert len(conn.execute("SELECT * FROM graph_instances").fetchall()) == 2
+        conn.close()
+
     def test_node_id_map_round_trip(self) -> None:
         conn = sqlite3.connect(":memory:")
         store = SqliteGraphInstanceStore(conn)
