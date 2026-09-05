@@ -1,40 +1,33 @@
-"""ToolNode: classify tools, suspend for approval, then batch execute."""
+"""ToolNode: classify tools once, suspend for approval, then batch execute."""
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import logging
-from collections import Counter
-from dataclasses import dataclass
 from uuid import uuid4
 
 from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
-from modex_agent.agents.react.constants import (
-    ReActHookPoint,
-    ReActNode,
-    ToolCallEndPayload,
-)
+from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.context import get_agent_ctx
 from modex_agent.agents.react.ids import next_call_id
-from modex_agent.agents.react.message_builder import build_tool_message
-from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.agents.react.tool_dedup import (
-    StreakAction,
-    StreakDecision,
-    ToolCallDeduplicator,
+from modex_agent.agents.react.nodes.tool_classification import (
+    decisions_of,
+    record_guard_audit,
 )
+from modex_agent.agents.react.nodes.tool_settlement import (
+    apply_decisions_to_batch,
+    normalize_batch_decisions,
+    run_tool_batch,
+)
+from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.agents.react.tool_dedup import ToolCallDeduplicator
 from modex_agent.agents.react.tool_executor import ToolExecutor
+from modex_agent.approval.classification import ToolClassification
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
-from modex_agent.control.exceptions import AgentCancelledError
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.message import ChatMessage, MessageRole, TextPart, ToolCall
-from modex_agent.core.tool_manager import ExecutionMode, ToolResult
+from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
+from modex_agent.core.tool_manager import ToolResult
 from modex_agent.runtime.enums import (
-    ApprovalDenyPolicy,
     ApprovalSubjectType,
-    MessageDeltaSource,
-    OperationStatus,
     SnapshotReason,
     ToolBatchStatus,
     ToolCallStatus,
@@ -44,42 +37,15 @@ from modex_agent.runtime.enums import (
 from modex_agent.runtime.models import (
     ApprovalRequestState,
     ApprovalTransaction,
-    MessageDelta,
     ToolArguments,
     ToolBatchState,
     ToolCallState,
 )
-
-_DEFAULT_MAX_PARALLEL_TOOL_CALLS = 5
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class _SettledResult:
-    result: ToolResult
-
-
-@dataclass(frozen=True, slots=True)
-class _SettledCancellation:
-    error: AgentCancelledError | asyncio.CancelledError
-
-
-@dataclass(frozen=True, slots=True)
-class _SettledFailure:
-    error: Exception
-
-
-type _SettledSlot = _SettledResult | _SettledCancellation | _SettledFailure
-
-
-@dataclass(frozen=True, slots=True)
-class _ToolSegment:
-    mode: ExecutionMode
-    indices: tuple[int, ...]
 
 
 class ToolNode(Node[ReActTurnState]):
@@ -91,8 +57,11 @@ class ToolNode(Node[ReActTurnState]):
         deduplicator: ToolCallDeduplicator | None = None,
     ) -> None:
         self.name = ReActNode.TOOL
-        self._tool_executor = tool_executor
-        self._deduplicator = deduplicator
+        self.tool_executor = tool_executor
+        self.deduplicator = deduplicator
+
+    def agent_ctx_of(self, ctx: GraphContext[ReActTurnState]) -> AgentContext:
+        return get_agent_ctx(ctx)
 
     async def execute(
         self,
@@ -149,8 +118,14 @@ class ToolNode(Node[ReActTurnState]):
             self.deliver(None, ReActNode.AFTER, ctx)
             return None
 
-        decisions = self._classify_all(tool_calls, agent_ctx)
+        # THE single classification pass: one classify per tool call. Every
+        # downstream artifact — decisions, denial copy, audit rows — derives
+        # from these stored values; nothing re-classifies.
+        classifications = self._classify_all(tool_calls, agent_ctx)
+        decisions = decisions_of(classifications)
+        await record_guard_audit(classifications, tool_calls, ctx)
         await self._emit_batch(ctx, GraphReActEvent.TOOL_CALL_START, tool_calls)
+        # A hard denial is already a result; persist it before any sibling suspends.
         call_states = [
             ToolCallState(
                 # Canonicalized above; the fallback only guards against future
@@ -158,20 +133,32 @@ class ToolNode(Node[ReActTurnState]):
                 call_id=tc.call_id or next_call_id(),
                 tool_name=tc.tool_name,
                 arguments=ToolArguments(values=tc.arguments or {}),
+                result=ToolResult(
+                    tool_name=tc.tool_name,
+                    call_id=tc.call_id,
+                    error=classification.reason
+                    or f"Denied by policy: '{tc.tool_name}' is not allowed.",
+                )
+                if classification.tier is ApprovalTier.HARDLINE
+                else None,
             )
-            for tc in tool_calls
+            for tc, classification in zip(tool_calls, classifications, strict=True)
         ]
         batch = state.create_tool_batch(iteration=state.iteration, calls=call_states)
-        self._apply_decisions_to_batch(batch, decisions)
+        apply_decisions_to_batch(batch, decisions)
 
         if ApprovalDecision.PENDING in decisions:
-            await self._suspend_for_approval(batch, tool_calls, decisions, ctx)
+            await self._suspend_for_approval(batch, tool_calls, decisions, classifications, ctx)
             return None
 
-        await self._execute_batch(
-            tool_calls,
-            self._normalize_batch_decisions(decisions),
+        await run_tool_batch(
+            self,
             ctx,
+            tool_calls=tool_calls,
+            decisions=decisions,
+            deny_reasons=[
+                call.result.error if call.result is not None else None for call in batch.calls
+            ],
         )
         return None
 
@@ -180,6 +167,7 @@ class ToolNode(Node[ReActTurnState]):
         batch: ToolBatchState,
         tool_calls: list[ToolCall],
         decisions: list[ApprovalDecision],
+        classifications: list[ToolClassification],
         ctx: GraphContext[ReActTurnState],
     ) -> None:
         state = ctx.state
@@ -192,7 +180,9 @@ class ToolNode(Node[ReActTurnState]):
 
         approval_id = uuid4().hex
         requests: list[ApprovalRequestState] = []
-        for tc, call_state, decision in zip(tool_calls, batch.calls, decisions, strict=False):
+        for tc, call_state, decision, classification in zip(
+            tool_calls, batch.calls, decisions, classifications, strict=False
+        ):
             if decision != ApprovalDecision.PENDING:
                 continue
             call_state.approval_id = approval_id
@@ -204,7 +194,7 @@ class ToolNode(Node[ReActTurnState]):
                     tool_call_id=call_state.call_id,
                     tool_name=tc.tool_name,
                     arguments=ToolArguments(values=tc.arguments or {}),
-                    tier=self._get_tier(tc, agent_ctx),
+                    tier=classification.tier,
                     iteration=state.iteration,
                 )
             )
@@ -259,570 +249,77 @@ class ToolNode(Node[ReActTurnState]):
             )
             for call in batch.calls
         ]
-        decisions = self._normalize_batch_decisions(
+        decisions = normalize_batch_decisions(
             [
-                state.approval.decisions.get(call.call_id, ApprovalDecision.ALLOWED)
+                call.decision
+                if call.decision is ApprovalDecision.DENIED
+                or call.decision is ApprovalDecision.PREEMPTED
+                else state.approval.decisions.get(
+                    call.call_id, call.decision or ApprovalDecision.ALLOWED
+                )
                 for call in batch.calls
             ]
         )
-        self._apply_decisions_to_batch(batch, decisions)
+        apply_decisions_to_batch(batch, decisions)
 
         state.phase = TurnPhase.RUNNING
         state.current_node = ReActNode.TOOL
-        await self._execute_batch(tool_calls, decisions, ctx)
+        await run_tool_batch(
+            self,
+            ctx,
+            tool_calls=tool_calls,
+            decisions=decisions,
+            deny_reasons=[
+                call.result.error if call.result is not None else None for call in batch.calls
+            ],
+        )
         return None
 
     def _classify_all(
         self,
         tool_calls: list[ToolCall],
         ctx: AgentContext,
-    ) -> list[ApprovalDecision]:
-        decisions: list[ApprovalDecision] = []
-        for tc in tool_calls:
-            tier = self._get_tier(tc, ctx)
-            if tier == ApprovalTier.NORMAL:
-                decisions.append(ApprovalDecision.ALLOWED)
-            elif tier == ApprovalTier.HARDLINE:
-                decisions.append(ApprovalDecision.DENIED)
-            else:
-                decisions.append(ApprovalDecision.PENDING)
-        return decisions
-
-    def _get_tier(self, tc: ToolCall, ctx: AgentContext) -> ApprovalTier:
+    ) -> list[ToolClassification]:
+        """One classification per call; NORMAL when no approval runtime exists."""
         runtime = ctx.runtime
-        if runtime and runtime.approval:
-            return ApprovalTier(runtime.approval.classifier.classify(tc, ctx))
-        return ApprovalTier.NORMAL
+        if runtime is None or runtime.approval is None:
+            return [ToolClassification.tier_result(ApprovalTier.NORMAL) for _ in tool_calls]
+        classifier = runtime.approval.classifier
+        return [classifier.classify(tc, ctx) for tc in tool_calls]
 
     @staticmethod
-    def _normalize_batch_decisions(decisions: list[ApprovalDecision]) -> list[ApprovalDecision]:
-        has_denial = any(
-            decision in (ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED)
-            for decision in decisions
-        )
-        if not has_denial:
-            return decisions
-        return [
-            ApprovalDecision.PREEMPTED if decision == ApprovalDecision.ALLOWED else decision
-            for decision in decisions
-        ]
-
-    @staticmethod
-    def _apply_decisions_to_batch(
-        batch: ToolBatchState,
-        decisions: list[ApprovalDecision],
-    ) -> None:
-        for call_state, decision in zip(batch.calls, decisions, strict=False):
-            call_state.decision = decision
-            if decision == ApprovalDecision.ALLOWED:
-                call_state.status = ToolCallStatus.ALLOWED
-            elif decision == ApprovalDecision.DENIED:
-                call_state.status = ToolCallStatus.DENIED
-            elif decision == ApprovalDecision.PREEMPTED:
-                call_state.status = ToolCallStatus.PREEMPTED
-
-    async def _execute_batch(
-        self,
-        tool_calls: list[ToolCall],
-        decisions: list[ApprovalDecision],
-        ctx: GraphContext[ReActTurnState],
-    ) -> None:
-        decisions = self._normalize_batch_decisions(decisions)
-        state = ctx.state
-        agent_ctx = get_agent_ctx(ctx)
-        batch = state.active_tool_batch()
-        if batch is not None:
-            self._apply_decisions_to_batch(batch, decisions)
-        next_seq = state.custom.get(TurnCustomKey.TOOL_SEQ_COUNTER, 0)
-        seq_for_index = {
-            index: next_seq + index for index in range(len(tool_calls))
-        }
-        state.custom[TurnCustomKey.TOOL_SEQ_COUNTER] = next_seq + len(tool_calls)
-        slots: list[_SettledSlot | None] = [None] * len(tool_calls)
-        leader_for_index = list(range(len(tool_calls)))
-        followers: dict[int, list[int]] = {}
-        streak_actions: dict[int, StreakAction] = {}
-        completed_indices: set[int] = set()
-        active_indices: set[int] = set()
-        cancellation_cleanup_indices: set[int] = set()
-        completion_queue: asyncio.Queue[int] = asyncio.Queue()
-        committed_results: list[ToolResult] = []
-        commit_cursor = 0
-
-        if self._deduplicator is not None:
-            self._deduplicator.begin_step()
-
-        async def commit_ready() -> None:
-            nonlocal commit_cursor
-            while commit_cursor < len(tool_calls):
-                if commit_cursor not in completed_indices:
-                    break
-                match slots[commit_cursor]:
-                    case _SettledResult(result=result):
-                        tc = tool_calls[commit_cursor]
-                        if result.call_id != tc.call_id:
-                            msg = f"tool result call_id mismatch for {tc.tool_name}"
-                            raise RuntimeError(msg)
-                        tool_msg = build_tool_message(result, tc.call_id)
-                        await agent_ctx.history.append(tool_msg)
-                        state.message_delta.append(
-                            MessageDelta(message=tool_msg, source=MessageDeltaSource.TOOL)
-                        )
-                        committed_results.append(result)
-                        commit_cursor += 1
-                    case None | _SettledCancellation() | _SettledFailure():
-                        break
-
-        async def settle_result(
-            index: int,
-            result: ToolResult,
-            *,
-            status: ToolCallStatus | None = None,
-            propagate_followers: bool = True,
-            register_result: bool = False,
-        ) -> None:
-            tc = tool_calls[index]
-            stamped = (
-                result
-                if result.call_id == tc.call_id
-                else result.model_copy(update={"call_id": tc.call_id})
-            )
-            slots[index] = _SettledResult(stamped)
-            completed_indices.add(index)
-            if batch is not None:
-                call_state = batch.calls[index]
-                call_state.result = stamped
-                call_state.status = status or (
-                    ToolCallStatus.COMPLETED
-                    if stamped.error is None
-                    else ToolCallStatus.FAILED
-                )
-            await ctx.runtime.emit(
-                GraphReActEvent.TOOL_CALL_END,
-                ToolCallEndPayload(
-                    tool_call=tc,
-                    result=stamped,
-                    seq=seq_for_index[index],
-                ),
-                ctx,
-            )
-            if register_result and self._deduplicator is not None:
-                self._deduplicator.register_result(
-                    tc.tool_name,
-                    tc.arguments or {},
-                    stamped,
-                )
-            if propagate_followers:
-                for follower_index in followers.get(index, []):
-                    follower = tool_calls[follower_index]
-                    follower_result = stamped.model_copy(
-                        update={"call_id": follower.call_id}
-                    )
-                    await settle_result(
-                        follower_index,
-                        follower_result,
-                        status=status,
-                        propagate_followers=False,
-                    )
-            await commit_ready()
-
-        def cancelled_result(index: int) -> ToolResult:
-            tc = tool_calls[index]
-            text = "<tool_cancelled>Tool call cancelled.</tool_cancelled>"
-            tool = agent_ctx.tool_manager.get_tool(tc.tool_name)
-            if tool is not None and tool.cancel_note:
-                text = f"{text}\n{tool.cancel_note}"
-            return ToolResult.from_text(tc.tool_name, text, call_id=tc.call_id)
-
-        async def worker(index: int) -> None:
-            active_indices.add(index)
-            try:
-                if batch is not None:
-                    batch.calls[index].status = ToolCallStatus.EXECUTING
-                tc = tool_calls[index]
-                result = await self._tool_executor.execute(tc, agent_ctx)
-                streak_action = streak_actions.get(index)
-                if (
-                    streak_action is not None
-                    and streak_action.action == StreakDecision.REMIND
-                ):
-                    existing = result.message_content()
-                    appended = (
-                        f"{existing}\n{streak_action.reminder}"
-                        if existing
-                        else streak_action.reminder
-                    )
-                    result = result.model_copy(update={"content": [TextPart(text=appended)]})
-                slots[index] = _SettledResult(result)
-            except AgentCancelledError as error:
-                slots[index] = _SettledCancellation(error)
-                cancellation_cleanup_indices.add(index)
-            except asyncio.CancelledError as error:
-                slots[index] = _SettledCancellation(error)
-                cancellation_cleanup_indices.add(index)
-            except Exception as error:  # noqa: BLE001
-                slots[index] = _SettledFailure(error)
-            finally:
-                active_indices.discard(index)
-                completion_queue.put_nowait(index)
-
-        async def handle_settled(indices: list[int]) -> tuple[bool, Exception | None]:
-            cancellation_seen = False
-            first_failure: Exception | None = None
-            for index in indices:
-                match slots[index]:
-                    case _SettledResult(result=result):
-                        await settle_result(index, result, register_result=True)
-                    case _SettledCancellation():
-                        cancellation_seen = True
-                    case _SettledFailure(error=error):
-                        if batch is not None:
-                            batch.calls[index].status = ToolCallStatus.FAILED
-                        if first_failure is None:
-                            first_failure = error
-                    case None:
-                        msg = f"tool worker {index} settled without an outcome"
-                        raise RuntimeError(msg)
-            return cancellation_seen, first_failure
-
-        async def invoke_on_cancel(indices: set[int]) -> None:
-            for index in sorted(indices):
-                tool = agent_ctx.tool_manager.get_tool(tool_calls[index].tool_name)
-                if tool is None:
-                    continue
-                try:
-                    await tool.on_cancel()
-                except Exception:  # noqa: BLE001
-                    logger.exception("Tool on_cancel failed for %s", tool.name)
-
-        async def drain_failure(
-            in_flight: dict[int, asyncio.Task[None]],
-            first_failure: Exception,
-        ) -> None:
-            while in_flight:
-                index = await completion_queue.get()
-                task = in_flight.pop(index)
-                await task
-                try:
-                    cancellation_seen, _ = await handle_settled([index])
-                    if cancellation_seen:
-                        cleanup_indices = set(cancellation_cleanup_indices)
-                        await invoke_on_cancel(cleanup_indices)
-                        cancellation_cleanup_indices.difference_update(cleanup_indices)
-                except Exception:  # noqa: BLE001
-                    logger.exception("Tool worker failed while draining batch failure")
-            if batch is not None:
-                if batch.operation_id:
-                    state.update_operation(batch.operation_id, OperationStatus.FAILED)
-                batch.status = ToolBatchStatus.FAILED
-            state.phase = TurnPhase.FAILED
-            raise first_failure
-
-        async def cancel_in_flight(
-            in_flight: dict[int, asyncio.Task[None]],
-        ) -> None:
-            # A worker cancelled between create_task() and its first step
-            # never runs its finally block, so it never queues a completion
-            # entry. Settle strictly from the task map (every cancelled task
-            # is awaitable to completion) — waiting on queue entries that no
-            # task will produce would hang the unified cancellation path.
-            for task in in_flight.values():
-                task.cancel()
-            for index in sorted(in_flight):
-                await in_flight[index]
-                if index in completed_indices:
-                    continue
-                match slots[index]:
-                    case _SettledResult(result=result):
-                        await settle_result(index, result, register_result=True)
-                    case _SettledCancellation() | _SettledFailure() | None:
-                        continue
-            in_flight.clear()
-            while not completion_queue.empty():
-                completion_queue.get_nowait()
-            cleanup_indices = active_indices | cancellation_cleanup_indices
-            await invoke_on_cancel(cleanup_indices)
-            cancellation_cleanup_indices.difference_update(cleanup_indices)
-            for index in range(len(tool_calls)):
-                if index not in completed_indices:
-                    await settle_result(
-                        index,
-                        cancelled_result(index),
-                        status=ToolCallStatus.CANCELLED,
-                        propagate_followers=False,
-                    )
-
-        async def finish_cancelled() -> None:
-            if self._deduplicator is not None:
-                self._deduplicator.end_step()
-            if batch is not None:
-                if batch.operation_id:
-                    state.update_operation(batch.operation_id, OperationStatus.CANCELLED)
-                batch.status = ToolBatchStatus.CANCELLED
-            state.phase = TurnPhase.CANCELLED
-            await ctx.runtime.dispatch_hook(
-                ReActHookPoint.AFTER_TOOL_EXECUTION,
-                ctx,
-                data={"results": committed_results},
-            )
-            await ctx.runtime.emit(
-                GraphReActEvent.ITERATION_END,
-                {"iteration": state.iteration, "has_tool_calls": True},
-                ctx,
-            )
-            self.deliver(None, ReActNode.AFTER, ctx)
-
-        await ctx.runtime.emit(
-            GraphReActEvent.PROGRESS,
-            {"hint": self._format_hint(tool_calls), "tool_hint": True},
-            ctx,
-        )
-        await ctx.runtime.dispatch_hook(
-            ReActHookPoint.BEFORE_TOOL_EXECUTION,
-            ctx,
-            data={"tool_calls": tool_calls},
-        )
-        try:
-            await ctx.runtime.drain_control(ctx)
-        except AgentCancelledError:
-            await cancel_in_flight({})
-            await finish_cancelled()
-            return None
-
-        denied_encountered = False
-        if self._deduplicator is not None:
-            name_counts = Counter(tc.tool_name for tc in tool_calls)
-            grouped_leaders: dict[tuple[str, ApprovalDecision], int] = {}
-            for index, (tc, decision) in enumerate(
-                zip(tool_calls, decisions, strict=False)
-            ):
-                if name_counts[tc.tool_name] < 2:
-                    continue
-                key = self._deduplicator.make_key(tc.tool_name, tc.arguments or {})
-                group_key = (key, decision)
-                leader = grouped_leaders.get(group_key)
-                if leader is None:
-                    grouped_leaders[group_key] = index
-                    continue
-                leader_for_index[index] = leader
-                followers.setdefault(leader, []).append(index)
-
-        streak_stop = False
-        for index, (tc, decision) in enumerate(
-            zip(tool_calls, decisions, strict=False)
-        ):
-            if leader_for_index[index] != index:
-                continue
-            if decision in (ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED):
-                denied_encountered = True
-                await settle_result(
-                    index,
-                    ToolResult(
-                        tool_name=tc.tool_name,
-                        error=self._denial_message(decision, tc, state),
-                    ),
-                )
-                continue
-            if self._deduplicator is None:
-                continue
-            streak_action = self._deduplicator.check_streak(
-                tc.tool_name,
-                tc.arguments or {},
-            )
-            streak_actions[index] = streak_action
-            match streak_action.action:
-                case StreakDecision.CONTINUE | StreakDecision.REMIND:
-                    continue
-                case StreakDecision.SKIP:
-                    await settle_result(
-                        index,
-                        ToolResult.from_text(tc.tool_name, streak_action.reminder),
-                        register_result=True,
-                    )
-                case StreakDecision.STOP:
-                    await settle_result(
-                        index,
-                        ToolResult.from_text(tc.tool_name, streak_action.reminder),
-                        propagate_followers=False,
-                        register_result=True,
-                    )
-                    streak_stop = True
-                    break
-
-        if streak_stop:
-            await cancel_in_flight({})
-            await finish_cancelled()
-            return None
-
-        segments: list[_ToolSegment] = []
-        parallel_indices: list[int] = []
-        for index, tc in enumerate(tool_calls):
-            if leader_for_index[index] != index or slots[index] is not None:
-                continue
-            tool = agent_ctx.tool_manager.get_tool(tc.tool_name)
-            mode = tool.execution_mode if tool is not None else ExecutionMode.EXCLUSIVE
-            match mode:
-                case ExecutionMode.PARALLEL:
-                    parallel_indices.append(index)
-                case ExecutionMode.EXCLUSIVE:
-                    if parallel_indices:
-                        segments.append(
-                            _ToolSegment(
-                                mode=ExecutionMode.PARALLEL,
-                                indices=tuple(parallel_indices),
-                            )
-                        )
-                        parallel_indices = []
-                    segments.append(
-                        _ToolSegment(mode=ExecutionMode.EXCLUSIVE, indices=(index,))
-                    )
-        if parallel_indices:
-            segments.append(
-                _ToolSegment(
-                    mode=ExecutionMode.PARALLEL,
-                    indices=tuple(parallel_indices),
-                )
-            )
-
-        configured_max = (
-            agent_ctx.runtime.state.custom.get(TurnCustomKey.MAX_PARALLEL_TOOL_CALLS)
-            if agent_ctx.runtime is not None
-            else None
-        )
-        if configured_max is None:
-            max_parallel = _DEFAULT_MAX_PARALLEL_TOOL_CALLS
-        elif (
-            isinstance(configured_max, bool)
-            or not isinstance(configured_max, int)
-            or configured_max < 1
-        ):
-            msg = "max_parallel_tool_calls must be an integer >= 1"
-            raise ValueError(msg)
-        else:
-            max_parallel = configured_max
-
-        for segment_index, segment in enumerate(segments):
-            if segment_index > 0:
-                try:
-                    await ctx.runtime.drain_control(ctx)
-                except AgentCancelledError:
-                    await cancel_in_flight({})
-                    await finish_cancelled()
-                    return None
-            limit = max_parallel if segment.mode == ExecutionMode.PARALLEL else 1
-            next_to_start = 0
-            in_flight: dict[int, asyncio.Task[None]] = {}
-            try:
-                while next_to_start < len(segment.indices) or in_flight:
-                    while (
-                        next_to_start < len(segment.indices)
-                        and len(in_flight) < limit
-                    ):
-                        index = segment.indices[next_to_start]
-                        task = asyncio.create_task(worker(index))
-                        in_flight[index] = task
-                        next_to_start += 1
-                    settled_index = await completion_queue.get()
-                    task = in_flight[settled_index]
-                    await task
-                    in_flight.pop(settled_index)
-                    cancellation_seen = False
-                    first_failure: Exception | None = None
-                    try:
-                        cancellation_seen, first_failure = await handle_settled(
-                            [settled_index]
-                        )
-                    except Exception as error:  # noqa: BLE001
-                        await drain_failure(in_flight, error)
-                    if first_failure is not None:
-                        await drain_failure(in_flight, first_failure)
-                    if cancellation_seen:
-                        await cancel_in_flight(in_flight)
-                        await finish_cancelled()
-                        return None
-            except asyncio.CancelledError:
-                # `/stop`, WebUI pause, and busy-input interruption wake the
-                # owning turn task. Converge that active cancellation with the
-                # channel/streak path so tool-owned resources are interrupted
-                # and every pending tool_call receives a result message.
-                await cancel_in_flight(in_flight)
-                with contextlib.suppress(AgentCancelledError):
-                    await ctx.runtime.drain_control(ctx)
-                await finish_cancelled()
-                return None
-            finally:
-                for task in in_flight.values():
-                    task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await asyncio.gather(*in_flight.values(), return_exceptions=True)
-
-        if self._deduplicator is not None:
-            self._deduplicator.end_step()
-
-        if batch is not None:
-            if batch.operation_id:
-                state.update_operation(batch.operation_id, OperationStatus.COMPLETED)
-            batch.status = (
-                ToolBatchStatus.FAILED if denied_encountered else ToolBatchStatus.COMPLETED
-            )
-
-        await ctx.runtime.dispatch_hook(
-            ReActHookPoint.AFTER_TOOL_EXECUTION,
-            ctx,
-            data={"results": committed_results},
-        )
-        await ctx.runtime.emit(
-            GraphReActEvent.ITERATION_END,
-            {"iteration": state.iteration, "has_tool_calls": True},
-            ctx,
-        )
-
-        if denied_encountered:
-            # EXTENSION POINT: whether denial cancels the ReAct turn is
-            # configurable per-agent or per-batch via ApprovalDenyPolicy.
-            # Default TOOL_RESULT_ONLY keeps the loop running so the agent
-            # can respond with denial context (e.g. "unrelated input: xxx").
-            # To cancel the turn on any denied tool, set
-            # ctx.runtime.approval.default_deny_policy to CANCEL_TURN.
-            deny_policy: ApprovalDenyPolicy = ApprovalDenyPolicy.TOOL_RESULT_ONLY
-            if agent_ctx.runtime and agent_ctx.runtime.approval:
-                deny_policy = agent_ctx.runtime.approval.default_deny_policy
-            if deny_policy == ApprovalDenyPolicy.CANCEL_TURN:
-                state.phase = TurnPhase.CANCELLED
-                self.deliver(None, ReActNode.AFTER, ctx)
-                return None
-
-        self.deliver(None, ReActNode.LLM, ctx)
-        return None
-
-    @staticmethod
-    def _denial_message(
+    def denial_message(
         decision: ApprovalDecision,
         tc: ToolCall,
         state: ReActTurnState,
+        captured_reason: str | None = None,
     ) -> str:
         """Clear, firm message for a denied/preempted tool call.
 
         Fed back to the agent as the tool result so it understands THIS
-        SPECIFIC INVOCATION was rejected by the user and must not be retried.
-        The old ``"Error: denied"`` rendered as ``"Error: Error: denied"``,
-        which looked like a generic tool error and left the agent unable to
-        tell it had been rejected -- so it re-issued the same dangerous tool,
-        re-suspended, and the user saw "deny all 后卡住 / 又冒出一个待审批卡
-        片". The wording also clarifies that the tool itself is not banned,
-        only this specific invocation is disallowed.
+        SPECIFIC INVOCATION was rejected and must not be retried.
 
-        ``error`` is the bare message; ``ToolResult.to_message`` prepends a
-        single ``"Error: "`` so the final history content reads cleanly.
+        Two denial origins (unified-security Ticket 05b): a USER decision
+        (post-suspension, ``state.approval`` carries the deny_reason) keeps
+        the user-addressed copy below. A CLASSIFICATION denial (HARDLINE
+        tier decided pre-execution, no suspension ever happened —
+        ``state.approval`` is None) renders the classification's deny
+        reason (``captured_reason``): the guard's boundary/deny copy (or
+        the delegation two-part message on subagents) is the actionable
+        text, and claiming "rejected by the user" would be false.
         """
-        reason = state.approval.deny_reason if state.approval is not None else None
+        if captured_reason:
+            return captured_reason
         if decision == ApprovalDecision.PREEMPTED:
             return (
                 f"Skipped: this specific call to '{tc.tool_name}' was not "
                 f"allowed because another tool call in the same batch was "
-                f"denied by the user. The tool itself is not banned, but do "
+                f"denied. The tool itself is not banned, but do "
                 f"not retry this invocation."
             )
+        if state.approval is None:
+            return f"Denied by policy: '{tc.tool_name}' is not allowed."
+        reason = state.approval.deny_reason
         detail = f" Reason: {reason}." if reason else ""
         return (
             f"Denied by user: this specific call to '{tc.tool_name}' was "
@@ -832,8 +329,7 @@ class ToolNode(Node[ReActTurnState]):
             f"proceed."
         )
 
-    @staticmethod
-    def _format_hint(tool_calls: list[ToolCall]) -> str:
+    def format_hint(self, tool_calls: list[ToolCall]) -> str:
         if not tool_calls:
             return "preparing tools..."
         if len(tool_calls) == 1:
@@ -841,8 +337,8 @@ class ToolNode(Node[ReActTurnState]):
         names = ", ".join(tc.tool_name for tc in tool_calls)
         return f"calling tools: {names}..."
 
-    @staticmethod
     async def _emit_batch(
+        self,
         ctx: GraphContext[ReActTurnState],
         event: GraphReActEvent,
         items: list[ToolCall],

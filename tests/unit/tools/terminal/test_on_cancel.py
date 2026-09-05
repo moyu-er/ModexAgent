@@ -33,7 +33,7 @@ class _AlivePersistentProcess:
 
 class _FakePersistentSession(PersistentShellSession):
     def __init__(self) -> None:
-        super().__init__(shell="/bin/bash")
+        super().__init__(shell_argv=["/bin/bash"])
         self._proc = _AlivePersistentProcess()
         self.collect_started = asyncio.Event()
         self.collect_count = 0

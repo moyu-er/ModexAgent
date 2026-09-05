@@ -37,6 +37,11 @@ from modex_agent.plugins.abc import ComponentFactory, PrototypeFactory
 from modex_agent.plugins.assembly.context import PoolContext, PoolRuntimeDeps
 from modex_agent.plugins.defaults.capabilities.todo import require_todo_supply
 from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.sandbox.shell_plan import (
+    ShellAssemblyDeps,
+    build_bash_tool,
+    resolved_binding,
+)
 from modex_agent.tools.presets import (
     make_aci_edit_tool,
     make_ast_grep_replace_tool,
@@ -52,15 +57,12 @@ from modex_agent.tools.standard import (
 )
 from modex_agent.tools.standard.todo_tool import TodoReadTool, TodoWriteTool
 from modex_agent.tools.terminal import (
-    CommandTool,
     ProcessRegistry,
     ProcessTool,
     TerminalTool,
 )
-from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.managers import TerminalManagerBase
 from modex_agent.tools.terminal.persistent_bash import (
-    PersistentBashTool,
     persistent_bash_supported,
 )
 from modex_agent.tools.web import WebReaderTool, WebSearchTool
@@ -117,42 +119,26 @@ def _pool_terminal_pair(
     return pool_runtime.terminal_manager, pool_runtime.process_registry
 
 
-def _fallback_persistent_bash(pool_runtime: PoolRuntimeDeps | None) -> Tool:
-    """No-terminal-manager bash fallback: the pool's persistent shell.
+async def _shell_assembly_deps(
+    pool_runtime: PoolRuntimeDeps | None,
+    pty_supported: bool,
+    terminal_pair: tuple[TerminalManagerBase, ProcessRegistry] | None,
+) -> ShellAssemblyDeps:
+    """Group the pool's bash-slot assembly inputs into the typed carrier.
 
-    ``pool_runtime.persistent_bash`` (a strategy-supplied pool shell) is
-    returned when present; otherwise a fresh lazy shell rooted at the
-    pool's workspace when known. Hosts without a POSIX pty (Windows) get
-    the stateless :class:`SubprocessTool` instead — the persistent shell
-    cannot spawn there.
-
-    ``initial_cwd`` is a birth parameter, not per-call resolution: the
-    shell's own ``cd`` state must survive across calls, so the root is
-    read once at assembly. A ``None`` root provider spawns the shell in
-    the process CWD — that path exists for bare test contexts only;
-    production assemblies always carry a root_provider (PoolAssembleStage
-    fills it).
+    ``resolved_binding`` reads the chain's shared execution owner, so a
+    confirmed startup fallback is visible to both tools and telemetry.
     """
-    if not persistent_bash_supported():
-        logger.warning(
-            "bash fallback: POSIX pty unavailable on this host; "
-            "bash falls back to SubprocessTool (stateless)"
-        )
-        from modex_agent.tools.terminal.subprocess_tool import (
-            SubprocessTool,
-            create_subprocess_executor,
-        )
-
-        return SubprocessTool(executor=create_subprocess_executor(), timeout=300)
-    if pool_runtime is not None and pool_runtime.persistent_bash is not None:
-        return pool_runtime.persistent_bash
-    root_provider = pool_runtime.root_provider if pool_runtime is not None else None
-    initial_cwd = str(root_provider.current()) if root_provider is not None else None
-    # max_output_chars=None: truncation is interceptor-owned — every
-    # assembly road wires ToolResultLimitInterceptor (50K), and a self-
-    # clipping shell would truncate BEFORE the interceptor sees the full
-    # output (the 16K class default is for direct constructors only).
-    return PersistentBashTool(initial_cwd=initial_cwd, max_output_chars=None)
+    binding = None
+    if pool_runtime is not None:
+        binding = await resolved_binding(pool_runtime.interceptor_chain)
+    return ShellAssemblyDeps(
+        binding=binding,
+        terminal_pair=terminal_pair,
+        persistent_bash=(pool_runtime.persistent_bash if pool_runtime is not None else None),
+        root_provider=(pool_runtime.root_provider if pool_runtime is not None else None),
+        pty_supported=pty_supported,
+    )
 
 
 class TodoToolFactory(ComponentFactory):
@@ -178,36 +164,32 @@ class TodoToolFactory(ComponentFactory):
 
 
 class BashToolFactory(ComponentFactory):
-    """Terminal-manager-aware bash tool (presets.py bash gating).
+    """The roster ``bash`` slot, delegated to the shell execution plan.
 
     Declares ``PoolContext`` — the terminal manager and its pool-unique
     process registry are pool-layer data.
 
-    Produces ``CommandTool`` bound to the POOL-UNIQUE ``ProcessRegistry``
-    (``pool_runtime.process_registry``) when the pool runtime supplies a
-    terminal manager — sharing the pool registry with the process/terminal
-    tools is what keeps interactive writes resolvable (a private registry
-    here previously forked the process bookkeeping: bash registered
-    commands in one registry, ``process write`` consulted another).
-    Without a terminal manager the bash slot is the pool's persistent
-    shell (:class:`PersistentBashTool`) — stateful cwd/env across calls,
-    with the strategy-registered ``bash_input`` companion answering
-    stdin-waiting commands.
+    The construction decision lives in
+    :func:`modex_agent.sandbox.shell_plan.build_bash_tool` (the single
+    factory): a FULL sandbox substrate never reuses the host terminal
+    trio or the strategy-supplied host persistent shell — the tool runs
+    through the resolved sandbox argv or assembly fails. HOST / no-guard
+    keeps the historical host behavior: prefer a terminal pair; without
+    one, use a stateless subprocess on hosts without POSIX PTY support,
+    otherwise reuse or create a persistent shell. Only a persistent shell
+    carries cwd/env across calls and receives a matching ``bash_input``
+    companion through native assembly.
     """
 
     config_model = ToolConfig
 
     async def create(self, config: BaseModel, ctx: PoolContext) -> Tool:
         del config
-        pair = _pool_terminal_pair(ctx.pool_runtime)
-        if pair is None:
-            return _fallback_persistent_bash(ctx.pool_runtime)
-        terminal_manager, process_registry = pair
-        return CommandTool(
-            manager=terminal_manager,
-            registry=process_registry,
-            config=TerminalRuntimeConfig(),
+        terminal_pair = _pool_terminal_pair(ctx.pool_runtime)
+        deps = await _shell_assembly_deps(
+            ctx.pool_runtime, persistent_bash_supported(), terminal_pair
         )
+        return build_bash_tool(deps)
 
 
 class ProcessToolFactory(ComponentFactory):
@@ -219,6 +201,12 @@ class ProcessToolFactory(ComponentFactory):
     ``process`` in ``tools``. Terminal unavailable → ValueError (the
     roster explicitly asked for the tool; silent degradation would hide
     the mistake).
+
+    This trio companion stays bound to the host terminal manager even
+    under a FULL sandbox substrate — its ``bash``-slot sibling is the
+    sandboxed shell (see ``BashToolFactory``); this tool answers the
+    host trio's own tabs and never represents the sandboxed bash
+    session.
     """
 
     config_model = ToolConfig
@@ -242,6 +230,8 @@ class TerminalToolFactory(ComponentFactory):
 
     Same availability contract as :class:`ProcessToolFactory`; injects the
     pool registry so ``terminal list``/``current`` report running commands.
+    Like ``process``, stays host-bound under a FULL sandbox substrate —
+    its tabs are the host trio's, never the sandboxed bash session.
     """
 
     config_model = ToolConfig

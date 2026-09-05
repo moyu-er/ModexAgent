@@ -121,7 +121,7 @@ class TestCommandPatternGuardAllow:
 
 
 class TestCommandPatternGuardAllowPatterns:
-    """allow_patterns should bypass deny checks."""
+    """allow_patterns exempt DANGEROUS findings, never CRITICAL ones."""
 
     def test_allow_sudo(self) -> None:
         config = CommandPatternGuardConfig(allow_patterns=[r"\bsudo\b"])
@@ -129,13 +129,12 @@ class TestCommandPatternGuardAllowPatterns:
         result = guard.check("sudo apt install something")
         assert result.allowed
 
-    def test_allow_overrides_deny(self) -> None:
-        config = CommandPatternGuardConfig(allow_patterns=[r"\bgit\b"])
+    def test_allow_cannot_exempt_critical(self) -> None:
+        config = CommandPatternGuardConfig(allow_patterns=[r".*"])
         guard = CommandPatternGuard(config)
-        # A command matching deny but also matching allow should pass
-        # (git itself doesn't match deny, but this tests the priority)
-        result = guard.check("git commit -m 'test'")
-        assert result.allowed
+        result = guard.check("rm -rf /")
+        assert not result.allowed
+        assert any(m.severity == CommandSeverity.CRITICAL for m in result.matches)
 
 
 class TestCommandPatternGuardExtraDeny:
@@ -197,12 +196,18 @@ class TestCommandPatternGuardAllowlistEnforcement:
         assert result.allowed
 
     def test_allowlisted_denied_command_passes(self) -> None:
-        """Allow patterns take priority over deny patterns."""
-        config = CommandPatternGuardConfig(allow_patterns=[r"\brm\b"])
+        """DANGEROUS findings are the exemption tier; a hit passes."""
+        config = CommandPatternGuardConfig(allow_patterns=[r"\bsudo\b"])
+        guard = CommandPatternGuard(config)
+        result = guard.check("sudo apt install something")
+        assert result.allowed
+
+    def test_allowlisted_critical_command_still_denied(self) -> None:
+        """CRITICAL findings survive any allow-list hit."""
+        config = CommandPatternGuardConfig(allow_patterns=[r".*"])
         guard = CommandPatternGuard(config)
         result = guard.check("rm -rf /")
-        # rm is in allowlist -> passes despite matching deny
-        assert result.allowed
+        assert not result.allowed
 
     def test_empty_allowlist_means_no_enforcement(self) -> None:
         """Empty allow_patterns means normal deny-only mode."""

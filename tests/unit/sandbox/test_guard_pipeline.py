@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from modex_agent.sandbox.guard import CommandPatternGuard, CommandPatternGuardConfig
 from modex_agent.sandbox.guard_pipeline import GuardPipeline
 from modex_agent.sandbox.guard_traversal import PathTraversalGuard
@@ -71,3 +74,19 @@ class TestGuardPipeline:
         result = pipeline.check("rm -rf /")
         assert not result.allowed
         assert "destructive" in result.reason
+
+
+class TestGuardPipelinePydantic:
+    """GuardPipeline is a frozen pydantic model (rule 12) — not @dataclass."""
+
+    def test_positional_guard_list_construction(self) -> None:
+        pipeline = GuardPipeline([CommandPatternGuard()])
+        assert len(pipeline.guards) == 1
+
+    def test_empty_default(self) -> None:
+        assert GuardPipeline().guards == []
+
+    def test_frozen(self) -> None:
+        pipeline = GuardPipeline([CommandPatternGuard()])
+        with pytest.raises(ValidationError):
+            pipeline.guards = []

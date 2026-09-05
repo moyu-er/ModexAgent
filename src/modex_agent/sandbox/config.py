@@ -12,12 +12,12 @@ from .workspace_policy import WorkspacePolicyConfig
 
 
 def _get_default_temp_dir() -> str:
-    """获取系统默认临时目录（跨平台）"""
+    """Return the platform's default temporary directory."""
     return tempfile.gettempdir()
 
 
 def _get_default_workspace_dir() -> str:
-    """获取默认工作目录（跨平台）"""
+    """Return the default workspace path under the temporary directory."""
     return os.path.join(tempfile.gettempdir(), "sandbox_workspace")
 
 
@@ -29,10 +29,6 @@ class SandboxConfig(BaseModel):
     )
 
     allowed_dirs: list[str] = Field(default_factory=lambda: [_get_default_temp_dir()])
-    deny_dirs: list[str] = Field(
-        default_factory=lambda: ["/home", "/root", "/etc", "/var"] if os.name != "nt" else []
-    )
-    max_file_size_mb: int = 100
     max_execution_time_seconds: int = 60
     workspace_dir: str = Field(default_factory=_get_default_workspace_dir)
     enable_network: bool = False
@@ -87,7 +83,12 @@ class SandboxConfig(BaseModel):
             raise ValueError(f"artifact_max_size must be positive, got {v}")
         return v
 
-    @model_validator(mode="after")
-    def _normalize_workspace_dir(self) -> SandboxConfig:
-        object.__setattr__(self, "workspace_dir", str(Path(self.workspace_dir).absolute()))
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_workspace_dir(cls, values: dict) -> dict:
+        """Absolutize workspace_dir before validation (rule 17: no
+        object.__setattr__ on the frozen instance)."""
+        if isinstance(values, dict) and "workspace_dir" in values:
+            values = dict(values)
+            values["workspace_dir"] = str(Path(values["workspace_dir"]).absolute())
+        return values

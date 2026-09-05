@@ -256,6 +256,7 @@ _SKIPPED_DIRS = {
     ".pytest_cache",
     ".ruff_cache",
     ".modex",
+    ".venv",
     "experiences",
     "subworkspace",
     "logs",
@@ -264,12 +265,13 @@ _SKIPPED_DIRS = {
 
 def _iter_source_files() -> Any:
     for base in (_ROOT / "src", _ROOT / "examples"):
-        for path in base.rglob("*"):
-            if not path.is_file():
-                continue
-            if any(part in _SKIPPED_DIRS for part in path.parts):
-                continue
-            yield path
+        # Prune generated trees before descending, especially on WSL mounts.
+        for root, directories, filenames in base.walk():
+            directories[:] = [name for name in directories if name not in _SKIPPED_DIRS]
+            for name in filenames:
+                path = root / name
+                if path.is_file():
+                    yield path
 
 
 def _source_tree_contains(needle: str) -> list[str]:

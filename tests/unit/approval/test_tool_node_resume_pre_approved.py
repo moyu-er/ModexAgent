@@ -4,6 +4,7 @@ import pytest
 
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
+from modex_agent.approval.classification import ToolClassification
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import ContentEmitter
@@ -29,7 +30,7 @@ from modex_graph.exceptions import GraphInterrupt
 
 class _AlwaysDangerousClassifier:
     def classify(self, tool_call, ctx):
-        return ApprovalTier.DANGEROUS
+        return ToolClassification.tier_result(ApprovalTier.DANGEROUS)
 
 
 class _RecordTool(Tool):

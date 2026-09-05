@@ -103,17 +103,24 @@ class TestCommandGuardPattern:
         result = guard.check("")
         assert result.allowed
 
-    def test_allow_patterns_bypass_deny(self) -> None:
+    def test_allow_patterns_bypass_dangerous(self) -> None:
         config = CommandPatternGuardConfig(allow_patterns=[r"\bsudo\b"])
         guard = CommandPatternGuard(config)
         result = guard.check("sudo apt install something")
         assert result.allowed
 
-    def test_allow_overrides_deny(self) -> None:
-        config = CommandPatternGuardConfig(allow_patterns=[r"\bgit\b"])
+    def test_allow_patterns_cannot_exempt_critical(self) -> None:
+        config = CommandPatternGuardConfig(allow_patterns=[r".*"])
         guard = CommandPatternGuard(config)
-        result = guard.check("git commit -m 'test'")
-        assert result.allowed
+        result = guard.check("rm -rf /")
+        assert not result.allowed
+        assert any(m.severity == CommandSeverity.CRITICAL for m in result.matches)
+
+    def test_allow_patterns_cannot_exempt_fork_bomb(self) -> None:
+        config = CommandPatternGuardConfig(allow_patterns=[r".*"])
+        guard = CommandPatternGuard(config)
+        result = guard.check(":(){ :|:& };:")
+        assert not result.allowed
 
     def test_custom_deny(self) -> None:
         config = CommandPatternGuardConfig(extra_deny_patterns=[r"\bdangerous_tool\b"])
@@ -160,10 +167,18 @@ class TestCommandGuardPattern:
         assert result.allowed
 
     def test_allowlisted_denied_command_passes(self) -> None:
-        config = CommandPatternGuardConfig(allow_patterns=[r"\brm\b"])
+        # DANGEROUS severity is the documented exemption tier — an allow
+        # hit downgrades it.
+        config = CommandPatternGuardConfig(allow_patterns=[r"\bsudo\b"])
+        guard = CommandPatternGuard(config)
+        result = guard.check("sudo apt install something")
+        assert result.allowed
+
+    def test_allowlisted_critical_command_still_denied(self) -> None:
+        config = CommandPatternGuardConfig(allow_patterns=[r".*"])
         guard = CommandPatternGuard(config)
         result = guard.check("rm -rf /")
-        assert result.allowed
+        assert not result.allowed
 
     def test_empty_allowlist_no_enforcement(self) -> None:
         config = CommandPatternGuardConfig(allow_patterns=[])

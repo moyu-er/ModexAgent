@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.session_tree.session_binding import (
         SessionBindingStore,
     )
+    from modex_agent.sandbox.settings import SandboxSettings
     from modex_graph.context import GraphContext
 
 from bot.service.model_config import BotModelConfig
@@ -46,6 +47,26 @@ def _add_hook(pipeline: Any, hook: Any) -> None:
         pipeline.hooks.append(hook)
 
 
+def _declared_sandbox_settings(main_spec: AgentSpec) -> SandboxSettings | None:
+    """The root's declared ``sandbox_guard`` sandbox section, if any.
+
+    Reads the SAME ``interceptor_configs["sandbox_guard"]`` declaration the
+    interceptor factory consumes — one declaration, two assemblies (the
+    guard interceptor at execution time, the composite approval classifier
+    at classification time) sharing the identical settings. A missing or
+    DEFAULT-tier section returns None: the approval assembly stays the
+    plain tiered classifier (unified-security Ticket 02 double-gate).
+    """
+    from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
+
+    raw = (main_spec.interceptor_configs or {}).get("sandbox_guard")
+    if raw is None:
+        return None
+    section = raw.get("sandbox", {}) if isinstance(raw, dict) else {}
+    settings = SandboxSettings.model_validate(section)
+    return None if settings.backend is SandboxBackend.DEFAULT else settings
+
+
 def _wire_main_pipeline(
     pool: AgentPool,
     root_agent_name: str,
@@ -68,6 +89,7 @@ def _wire_main_pipeline(
     graph_context_resolver: Callable[[int], GraphContext[Any] | None] | None = None,
     session_binding_store: SessionBindingStore | None = None,
     component_hook_specs: tuple[HookSpec, ...] = (),
+    approval_audit_store: Any | None = None,
 ) -> None:
     """Wire interceptors, governance, and command processor on the main pipeline.
 
@@ -128,8 +150,12 @@ def _wire_main_pipeline(
     from modex_agent.ioc.factories.approval import build_approval_runtime
     from modex_agent.runtime.services import AgentRuntimeServices
 
+    sandbox_settings = _declared_sandbox_settings(main_spec)
     approval_runtime = build_approval_runtime(
-        main_spec.approval, project_root=project_dir, root_provider=root_provider
+        main_spec.approval,
+        project_root=project_dir,
+        root_provider=root_provider,
+        sandbox=sandbox_settings,
     )
     resolved_cfg = _resolved_or_placeholder(bot_model_config)
     default_resolved = resolved_cfg.default_resolved()
@@ -143,6 +169,23 @@ def _wire_main_pipeline(
     }
     if approval_runtime is not None:
         services_kwargs["approval"] = approval_runtime
+        if approval_audit_store is not None:
+            # Guard decisions ride the unified audit timeline (Ticket 06);
+            # the sink is wired only when the guard composite exists, so
+            # plain deployments write nothing extra.
+            services_kwargs["approval_audit"] = approval_audit_store
+    if sandbox_settings is not None:
+        # Graph turns swap approval for the escalate-off guard composite
+        # (unified-security Ticket 05b: 勿置 None — the guard HARDLINE
+        # verdicts must survive the graph's arbitration shutdown). Built
+        # from the SAME declared settings/root provider as the composite
+        # above — one declaration, one decision service shape.
+        from modex_agent.sandbox.security_classifier import guard_only_runtime
+
+        assert root_provider is not None  # build_approval_runtime raised otherwise
+        services_kwargs["guard_only_approval"] = guard_only_runtime(
+            settings=sandbox_settings, root_provider=root_provider
+        )
     if builder is not None:
         builder.runtime_services = AgentRuntimeServices(**services_kwargs)
 

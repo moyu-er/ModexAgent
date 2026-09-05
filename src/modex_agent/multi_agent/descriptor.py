@@ -17,6 +17,7 @@ from modex_agent.multi_agent.address import AgentAddress
 
 if TYPE_CHECKING:
     from modex_agent.pipeline.pipeline import AgentPipeline
+    from modex_agent.sandbox.delegation import DelegationSnapshot
 
 
 class AgentLLMConfig(BaseModel):
@@ -112,6 +113,13 @@ class AgentDescriptor(BaseModel):
     are allowed. ``compare=False`` excludes this field from the auto-generated
     ``__eq__`` / ``__hash__`` because roles are metadata, not identity —
     pool registration dedup is unaffected by role changes."""
+    depth: int = 0
+    """Delegation depth (unified-security ticket 05b): root = 0, spawn +1.
+
+    Computed from the declared tree at materialization and carried for
+    identity/audit; the runtime budget check reads the live
+    ``AgentRuntimeServices.delegation`` snapshot (the task dispatch
+    tool), not this static field."""
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, AgentDescriptor):
@@ -132,6 +140,8 @@ class AgentInstance:
     descriptor: AgentDescriptor
     context_manager: ContextManager
     pipeline: AgentPipeline | None = None
+    delegation: DelegationSnapshot | None = None
+    """Spawn-time permissions and effective capability limits, including external runners."""
 
     async def stop(self) -> None:
         """优雅停止该实例并释放资源。"""

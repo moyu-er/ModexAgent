@@ -263,18 +263,34 @@ def test_approval_does_not_apply_when_graph_instance_id_none() -> None:
     assert configurator.applies(desc) is False
 
 
-def test_approval_clears_runtime_approval_when_runtime_present() -> None:
-    # Given
+def test_approval_swaps_to_guard_only_composite_when_present() -> None:
+    """unified-security 05b: graph turns must NOT kill the guard verdicts —
+    approval swaps to the escalate-off guard-only composite when one was
+    assembled, instead of None."""
+    configurator = GraphApprovalConfigurator()
+    desc = make_graph_descriptor(graph_instance_id=1)
+    ctx = make_runtime_context()
+    guard_only = object()
+    ctx.runtime.services.guard_only_approval = guard_only  # type: ignore[assignment]
+    sentinel_approval = object()
+    ctx.runtime.services.approval = sentinel_approval  # type: ignore[assignment]
+
+    configurator.configure(ctx, desc)
+
+    assert ctx.runtime.services.approval is guard_only
+
+
+def test_approval_clears_runtime_approval_when_no_guard_layer() -> None:
+    """Deployments without a guard layer (plain approval / no approval)
+    keep the historical behavior: the human channel goes off → None."""
     configurator = GraphApprovalConfigurator()
     desc = make_graph_descriptor(graph_instance_id=1)
     ctx = make_runtime_context()
     sentinel_approval = object()
     ctx.runtime.services.approval = sentinel_approval  # type: ignore[assignment]
 
-    # When
     configurator.configure(ctx, desc)
 
-    # Then
     assert ctx.runtime.services.approval is None
 
 

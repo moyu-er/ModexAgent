@@ -184,9 +184,11 @@ def _field_value(
     layer: ProvenanceLayer,
     profile: str | None,
     compiled: CompiledAgent,
+    agent_spec: AgentSpec,
 ) -> ScopeFieldValue:
     """The effective value paired with one provenance field entry, pulled
-    from the compiled artifacts."""
+    from the compiled artifacts (declaration-carried fields from
+    ``agent_spec``)."""
     match field:
         case "toolset":
             return compiled.defaults.toolset_profile.value
@@ -207,6 +209,9 @@ def _field_value(
             return compiled.spec.max_iterations
         case "memory":
             return compiled.spec.memory_overrides.model_dump(mode="json")
+        case "allowed_dirs":
+            # Declaration face (05a); runtime consumption lands in 05b.
+            return [str(d) for d in (agent_spec.allowed_dirs or [])]
     raise KeyError(f"unknown provenance field {field!r}")
 
 
@@ -220,7 +225,7 @@ def _agent_bill(spec: ScopeSpec, compiled: CompiledAgent) -> ScopeAgentBill:
         fields=[
             ScopeFieldBill(
                 field=fp.field,
-                value=_field_value(fp.field, fp.layer, fp.profile, compiled),
+                value=_field_value(fp.field, fp.layer, fp.profile, compiled, agent_spec),
                 layer=fp.layer,
                 profile=fp.profile,
             )

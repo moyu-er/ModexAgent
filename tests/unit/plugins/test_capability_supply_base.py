@@ -623,6 +623,9 @@ class TestSubagentMaterializeThreading:
 
         fake_instance = MagicMock()
         fake_instance.pipeline = MagicMock()
+        from modex_agent.runtime.services import AgentRuntimeServices
+
+        fake_instance.pipeline._turn_runner.turn_context_builder.runtime_services = AgentRuntimeServices()
         fake_instance.stop = AsyncMock()
         pool = MagicMock()
         pool.register_resident = AsyncMock()

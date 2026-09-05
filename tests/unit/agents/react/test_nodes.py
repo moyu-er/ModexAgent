@@ -16,7 +16,7 @@ from modex_agent.agents.react.nodes.start import StartNode
 from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.tool_executor import ToolExecutor
-from modex_agent.approval.constants import ApprovalDecision
+from modex_agent.approval.constants import ApprovalTier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.llm_struct import FinishReason
@@ -402,6 +402,29 @@ class TestLLMNode:
         assert delivers[0].content is not None and "error" in delivers[0].content
 
 
+
+class _TierByNameClassifier:
+    """t1 -> NORMAL, everything else HARDLINE."""
+
+    def classify(self, tc, ctx):
+        from modex_agent.approval.classification import ToolClassification
+        from modex_agent.approval.constants import ApprovalTier
+
+        if tc.tool_name == "t1":
+            return ToolClassification.tier_result(ApprovalTier.NORMAL)
+        return ToolClassification.tier_result(ApprovalTier.HARDLINE)
+
+
+class _AlwaysHardlineClassifier:
+    """Every call HARDLINE."""
+
+    def classify(self, tc, ctx):
+        from modex_agent.approval.classification import ToolClassification
+        from modex_agent.approval.constants import ApprovalTier
+
+        return ToolClassification.tier_result(ApprovalTier.HARDLINE)
+
+
 class TestToolNode:
     @pytest.mark.asyncio
     async def test_execute_batch_all_allowed(
@@ -518,11 +541,7 @@ class TestToolNode:
         runtime = make_runtime()
         runtime.state.iteration = 1
         runtime.services.approval = ApprovalRuntime(
-            classifier=type(
-                "_Cls",
-                (),
-                {"classify": lambda s, tc, c: "normal" if tc.tool_name == "t1" else "hardline"},
-            )(),  # type: ignore[arg-type]
+            classifier=_TierByNameClassifier(),
             default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN,
         )
         ctx = make_graph_ctx(runtime=runtime)
@@ -557,7 +576,7 @@ class TestToolNode:
         runtime = make_runtime()
         runtime.state.iteration = 1
         runtime.services.approval = ApprovalRuntime(
-            classifier=type("_Cls", (), {"classify": lambda s, tc, c: "hardline"})(),  # type: ignore[arg-type]
+            classifier=_AlwaysHardlineClassifier(),
             default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN,
         )
         ctx = make_graph_ctx(runtime=runtime)
@@ -598,11 +617,7 @@ class TestToolNode:
         runtime = make_runtime()
         runtime.state.iteration = 1
         runtime.services.approval = ApprovalRuntime(
-            classifier=type(
-                "_Cls",
-                (),
-                {"classify": lambda s, tc, c: "normal" if tc.tool_name == "t1" else "hardline"},
-            )(),  # type: ignore[arg-type]
+            classifier=_TierByNameClassifier(),
         )
         emitter = _MockEmitter()
         agent_ctx = AgentContext(
@@ -673,5 +688,8 @@ class TestToolNode:
             session=SessionInfo.from_str("test.agent"),
         )
 
-        decisions = node._classify_all(tool_calls, agent_ctx)
-        assert decisions == [ApprovalDecision.ALLOWED, ApprovalDecision.ALLOWED]
+        classifications = node._classify_all(tool_calls, agent_ctx)
+        assert [c.tier for c in classifications] == [
+            ApprovalTier.NORMAL,
+            ApprovalTier.NORMAL,
+        ]

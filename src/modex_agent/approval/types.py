@@ -1,4 +1,4 @@
-"""审批相关的枚举类型。"""
+"""Approval outcome and response-policy enums."""
 
 from __future__ import annotations
 

@@ -29,7 +29,7 @@ class TestTieredToolApprovalClassifier:
         config = AgentApprovalConfig(enabled=False)
         c = TieredToolApprovalClassifier(config=config)
         tc = ToolCall(tool_name="bash", call_id="1", arguments={})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
+        assert c.classify(tc, make_ctx()).tier is ApprovalTier.NORMAL
 
     def test_tool_not_in_config_returns_normal(self):
         config = AgentApprovalConfig(
@@ -38,7 +38,7 @@ class TestTieredToolApprovalClassifier:
         )
         c = TieredToolApprovalClassifier(config=config)
         tc = ToolCall(tool_name="bash", call_id="1", arguments={})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
+        assert c.classify(tc, make_ctx()).tier is ApprovalTier.NORMAL
 
     def test_path_in_allowed_returns_normal(self):
         config = AgentApprovalConfig(
@@ -48,7 +48,7 @@ class TestTieredToolApprovalClassifier:
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
         tc = ToolCall(tool_name="write", call_id="1", arguments={"path": "./file.txt"})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
+        assert c.classify(tc, make_ctx()).tier is ApprovalTier.NORMAL
 
     def test_path_not_in_allowed_returns_dangerous(self):
         config = AgentApprovalConfig(
@@ -58,7 +58,7 @@ class TestTieredToolApprovalClassifier:
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
         tc = ToolCall(tool_name="write", call_id="1", arguments={"path": "/etc/passwd"})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.DANGEROUS
+        assert c.classify(tc, make_ctx()).tier is ApprovalTier.DANGEROUS
 
     def test_empty_allowed_paths_all_dangerous(self):
         config = AgentApprovalConfig(
@@ -68,7 +68,7 @@ class TestTieredToolApprovalClassifier:
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
         tc = ToolCall(tool_name="bash", call_id="1", arguments={"command": "ls"})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.DANGEROUS
+        assert c.classify(tc, make_ctx()).tier is ApprovalTier.DANGEROUS
 
     def test_star_allowed_paths_all_normal(self):
         config = AgentApprovalConfig(
@@ -78,7 +78,7 @@ class TestTieredToolApprovalClassifier:
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
         tc = ToolCall(tool_name="bash", call_id="1", arguments={"command": "ls"})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
+        assert c.classify(tc, make_ctx()).tier is ApprovalTier.NORMAL
 
 
 class TestApprovalRuntime:

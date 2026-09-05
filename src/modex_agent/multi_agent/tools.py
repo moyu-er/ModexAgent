@@ -107,6 +107,32 @@ def _normalize_invocation_id(value: Any) -> str | None:
     return text
 
 
+def _delegation_depth_denial(context: AgentContext) -> str | None:
+    """Delegation-depth budget check (unified-security ticket 05b).
+
+    The sender's depth rides its ``AgentRuntimeServices.delegation``
+    snapshot (root mains have none — depth 0). Delegation is always
+    parent→child, so the target's depth is sender+1; a target depth
+    above ``MAX_DELEGATION_DEPTH`` is refused with actionable copy
+    before any session is minted. ``None`` = within budget.
+    """
+    from modex_agent.sandbox.delegation import MAX_DELEGATION_DEPTH
+
+    runtime = context.runtime
+    if runtime is None or runtime.services.delegation is None:
+        return None
+    sender_depth = runtime.services.delegation.depth
+    if sender_depth + 1 <= MAX_DELEGATION_DEPTH:
+        return None
+    return (
+        f"Error: 委派深度超限({MAX_DELEGATION_DEPTH}) — "
+        f"{context.session.agent_name or '该 agent'} 已在委托链第 "
+        f"{sender_depth} 层，不能再向下委派（下一层将是第 "
+        f"{sender_depth + 1} 层，超过预算 {MAX_DELEGATION_DEPTH}）。"
+        "请在主会话直接执行该任务，或由主 agent 重新分派。"
+    )
+
+
 _NORMAL_PARAMS: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -741,6 +767,10 @@ class TaskDispatchTool(ParallelTool):
                 f"Error: You are {caller_name!r} — you cannot dispatch a task "
                 f"to yourself. Choose a different target."
             )
+
+        depth_denial = _delegation_depth_denial(context)
+        if depth_denial is not None:
+            return depth_denial
 
         target = next(
             (t for t in self._store.list_subagents() if t.name == target_agent),

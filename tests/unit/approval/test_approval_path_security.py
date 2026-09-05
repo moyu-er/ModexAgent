@@ -91,8 +91,8 @@ def _call(path: str, call_id: str = "c1") -> ToolCall:
 def test_in_project_paths_are_normal(tmp_path: Path, path: str) -> None:
     # Anchor an absolute in-project path so it resolves under tmp_path.
     abs_inside = (tmp_path / "real.txt").resolve()
-    assert _classifier(tmp_path).classify(_call(str(abs_inside)), _ctx()) == ApprovalTier.NORMAL
-    assert _classifier(tmp_path).classify(_call(path), _ctx()) == ApprovalTier.NORMAL
+    assert _classifier(tmp_path).classify(_call(str(abs_inside)), _ctx()).tier is ApprovalTier.NORMAL
+    assert _classifier(tmp_path).classify(_call(path), _ctx()).tier is ApprovalTier.NORMAL
 
 
 @pytest.mark.parametrize(
@@ -105,7 +105,7 @@ def test_in_project_paths_are_normal(tmp_path: Path, path: str) -> None:
     ],
 )
 def test_outside_and_traversal_paths_are_dangerous(tmp_path: Path, path: str) -> None:
-    assert _classifier(tmp_path).classify(_call(path), _ctx()) == ApprovalTier.DANGEROUS
+    assert _classifier(tmp_path).classify(_call(path), _ctx()).tier is ApprovalTier.DANGEROUS
 
 
 def test_matcher_dotdot_escape_is_not_allowed(tmp_path: Path) -> None:
@@ -230,8 +230,8 @@ def test_classifier_absolute_allowed_paths_end_to_end(tmp_path: Path) -> None:
         arguments={"path": str(tmp_path / "leak.txt")},
         call_id="c2",
     )
-    assert classifier.classify(inside, _ctx()) == ApprovalTier.NORMAL
-    assert classifier.classify(outside, _ctx()) == ApprovalTier.DANGEROUS
+    assert classifier.classify(inside, _ctx()).tier is ApprovalTier.NORMAL
+    assert classifier.classify(outside, _ctx()).tier is ApprovalTier.DANGEROUS
 
 
 # ---------------------------------------------------------------------------
@@ -269,8 +269,8 @@ def test_classifier_anchors_to_live_workspace_not_static_project_root(
         argument_matcher=ArgumentMatcher(root_provider=_StubRootProvider(workspace)),
     )
 
-    assert classifier.classify(_call(str(workspace / "f.txt")), _ctx()) == ApprovalTier.NORMAL
-    assert classifier.classify(_call(str(bot_project_dir / "f.txt")), _ctx()) == ApprovalTier.DANGEROUS
+    assert classifier.classify(_call(str(workspace / "f.txt")), _ctx()).tier is ApprovalTier.NORMAL
+    assert classifier.classify(_call(str(bot_project_dir / "f.txt")), _ctx()).tier is ApprovalTier.DANGEROUS
 
 
 def test_matcher_follows_workspace_switch(tmp_path: Path) -> None:

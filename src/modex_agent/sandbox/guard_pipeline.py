@@ -10,19 +10,24 @@ Usage::
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .guard import CommandGuard, GuardMatch, GuardResult
 
 
-@dataclass
-class GuardPipeline:
+class GuardPipeline(BaseModel):
     """Run a list of guards in order, short-circuiting on first denial.
 
-    Each guard implements :class:`CommandGuard`.
+    Each guard implements :class:`CommandGuard`. ``check`` traverses the
+    configured list without changing it; guards may resolve filesystem paths.
     """
 
-    guards: list[CommandGuard] = field(default_factory=list)
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
+
+    guards: list[CommandGuard] = Field(default_factory=list)
+
+    def __init__(self, guards: list[CommandGuard] | None = None) -> None:
+        super().__init__(guards=guards if guards is not None else [])
 
     def check(self, command: str) -> GuardResult:
         """Run all guards in order.

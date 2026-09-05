@@ -23,9 +23,16 @@ from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.runtime.approval_decision import (
     ApprovalAuditDecision,
     ApprovalAuditEntry,
+    DecisionActor,
 )
 from modex_agent.runtime.enums import SnapshotReason, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import StateQueryScope, TurnSnapshot
+from modex_agent.runtime.models import (
+    ApprovalRequestState,
+    StateQueryScope,
+    TurnSnapshot,
+)
+from modex_agent.sandbox.decision import approval_anchor
+from modex_agent.workspace.runtime import resolve_workspace_root
 
 if TYPE_CHECKING:
     from modex_agent.approval.ui import ApprovalUserInterface
@@ -38,6 +45,31 @@ logger = logging.getLogger(__name__)
 
 class MissingApprovalTurnUuidError(ValueError):
     pass
+
+
+def _mark_human_approved(snapshot: TurnSnapshot, req: ApprovalRequestState) -> None:
+    """Bind an allowed call ID to its target when approval is applied.
+
+    Resolve the displayed arguments using the active workspace provider.
+    The marker survives partial saves and final state restoration. Before
+    execution the interceptor recomputes the target and waives BOUNDARY
+    only on an exact match; hard findings are never waived. This does not
+    capture the filesystem state at the earlier card-rendering time.
+    """
+    anchor = approval_anchor(
+        req.tool_name,
+        dict(req.arguments.values),
+        resolve_workspace_root(),
+    )
+    if anchor is None:
+        return
+    custom = snapshot.state_payload.get("custom")
+    if not isinstance(custom, dict):
+        return
+    marked = custom.get(TurnCustomKey.HUMAN_APPROVED_CALLS.value)
+    marked = dict(marked) if isinstance(marked, dict) else {}
+    marked[req.tool_call_id] = anchor
+    custom[TurnCustomKey.HUMAN_APPROVED_CALLS.value] = marked
 
 
 class ApprovalResumer:
@@ -132,6 +164,8 @@ class ApprovalResumer:
                     continue  # leave non-target requests pending
                 approval.apply_decision(req.tool_call_id, decision)
                 decided_request = req
+                if decision is ApprovalDecision.ALLOWED:
+                    _mark_human_approved(snapshot, req)
                 break
 
         snapshot = ReActSnapshotPolicy.replace_approval(snapshot, approval)
@@ -173,7 +207,7 @@ class ApprovalResumer:
                     if audit_decision is ApprovalAuditDecision.DENIED
                     else None,
                     decided_at=datetime.now(UTC).isoformat(),
-                    decided_by="user",
+                    decided_by=DecisionActor.USER,
                 ),
             )
 

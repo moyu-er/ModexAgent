@@ -25,8 +25,10 @@ if TYPE_CHECKING:
     from modex_agent.hook import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.memory.context_governance import ContextGovernance
+    from modex_agent.sandbox.delegation import DelegationSnapshot
     from modex_agent.trace.otel_store import OtelSpanTraceStore
 
+    from .approval_decision import ApprovalAuditStore
     from .context import RuntimeContext, RuntimeContextManager
     from .store import TurnStateStore
 
@@ -42,8 +44,27 @@ class AgentRuntimeServices:
     hooks: HookRunner | None = None
     interceptors: InterceptorChain | None = None
     approval: ApprovalRuntime | None = None
+    guard_only_approval: ApprovalRuntime | None = None
+    """Escalate-off guard composite for channels that must not arbitrate.
+
+    Graph turns swap ``approval`` for this runtime
+    (``GraphApprovalConfigurator``, unified-security Ticket 05b) instead
+    of ``None`` — guard HARDLINE verdicts keep denying when the human
+    channel is off. ``None`` when no guard layer exists (plain approval
+    or none at all)."""
+    delegation: DelegationSnapshot | None = None
+    """The subagent's delegation-boundary snapshot (Ticket 05b). Set by
+    ``AgentTemplate.materialize``; ``None`` on the pool's main agent.
+    The task dispatch tool reads ``depth`` for the recursion budget."""
     governance: ContextGovernance | None = None
     turn_store: TurnStateStore | None = None
+    approval_audit: ApprovalAuditStore | None = None
+    """Audit sink for guard-made decisions (unified-security Ticket 06).
+
+    ``ToolNode`` appends ``decided_by="sandbox_guard"`` rows here when the
+    guard classifier denies/escalates a call. ``None`` → no audit (the
+    decision still happens, just unrecorded). Human decisions keep flowing
+    through the :class:`ApprovalDecisionCoordinator` unchanged."""
     trace_store: OtelSpanTraceStore | None = None
     pending_input_queue: asyncio.Queue[str] | None = None
     safety: RuntimeSafetyPolicy = field(default_factory=RuntimeSafetyPolicy)

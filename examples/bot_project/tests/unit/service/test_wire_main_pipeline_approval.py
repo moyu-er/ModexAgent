@@ -15,7 +15,6 @@ contract; the function has no role-based branching to regress.
 
 from __future__ import annotations
 
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -29,11 +28,16 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 from bot.service.model_config import BotModelConfig
 from bot.service.pool.pipeline_wiring import _wire_main_pipeline
 
+from modex_agent.agents.react.nodes.tool_classification import decision_of
+from modex_agent.approval.constants import ApprovalDecision
 from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
+from modex_agent.core.agent import AgentCommKind, ExecutionStrategyKind
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
+from modex_agent.memory.context import ContextState, InMemoryContextManager
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
@@ -47,17 +51,15 @@ from modex_agent.pipeline.turn_context_config import (
     GraphToolConfigurator,
     GraphTopologyConfigurator,
     TurnContextConfigPipeline,
+    TurnContextDescriptor,
 )
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.services import AgentRuntimeServices
+from modex_agent.sandbox.settings import SandboxBackend, SandboxPolicy, SandboxSettings
 from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.tools.manager import InMemoryToolManager
-
-pytestmark = pytest.mark.skipif(
-    shutil.which("modexctl") is None,
-    reason="modexctl CLI not available",
-)
+from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 _YML = """
 models:
@@ -181,10 +183,18 @@ def _make_main_spec(*, approval: ApprovalConfig | None) -> AgentSpec:
     return AgentSpec(name="main", approval=approval)
 
 
-def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:
+def _wire(
+    *, approval: ApprovalConfig | None,
+    sandbox: SandboxSettings | None = None,
+    root_provider: WorkspaceRootProvider | None = None,
+) -> AgentPipeline:
     pipeline = _make_pipeline()
     pool = _StandInPool("main", pipeline)
     main_spec = _make_main_spec(approval=approval)
+    if sandbox is not None:
+        main_spec = main_spec.model_copy(update={
+            "interceptor_configs": {"sandbox_guard": {"sandbox": sandbox.model_dump(mode="json")}}
+        })
     _wire_main_pipeline(
         pool=pool,
         root_agent_name="main",
@@ -200,6 +210,7 @@ def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:
         tool_manager=InMemoryToolManager(),
         pool_spec=PoolSpec(name="main", agents=[main_spec]),
         bot_model_config=_BOT_CFG,
+        root_provider=root_provider,
     )
     return pipeline
 
@@ -303,7 +314,7 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
         classifier.classify(
             ToolCall(tool_name="write", arguments={"path": str(workspace / "f.txt")}, call_id="c1"),
             ctx,
-        )
+        ).tier
         == ApprovalTier.NORMAL
     )
     assert (
@@ -312,7 +323,7 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
                 tool_name="write", arguments={"path": str(project_dir / "f.txt")}, call_id="c2"
             ),
             ctx,
-        )
+        ).tier
         == ApprovalTier.DANGEROUS
     )
 
@@ -366,3 +377,64 @@ def test_leaves_graph_wiring_unset_when_resolver_not_passed() -> None:
     assert builder is not None
     assert builder.graph_context_resolver is None
     assert builder.config_pipeline is None
+
+
+@pytest.mark.parametrize("backend", [None, SandboxBackend.DEFAULT, SandboxBackend.HOST])
+@pytest.mark.parametrize(
+    "approval",
+    [None, ApprovalConfig(enabled=False), ApprovalConfig(enabled=True),
+     ApprovalConfig(enabled=True, tools={"write": ToolApprovalEntry(allowed_paths=["./*"])})],
+    ids=["missing", "disabled", "enabled-empty", "workspace-allowed"],
+)
+def test_main_and_graph_approval_wiring_matrix(
+    tmp_path: Path, backend: SandboxBackend | None, approval: ApprovalConfig | None,
+) -> None:
+    class Root(WorkspaceRootProvider):
+        def current(self) -> Path:
+            return tmp_path
+
+    pipeline = _wire(
+        approval=approval,
+        sandbox=SandboxSettings(backend=backend, policy=SandboxPolicy.WORKSPACE_WRITE)
+        if backend is not None else None,
+        root_provider=Root(),
+    )
+    builder = pipeline._turn_runner.turn_context_builder
+    assert builder is not None
+    services = builder.runtime_services
+    assert services is not None
+    builder.config_pipeline = TurnContextConfigPipeline([GraphApprovalConfigurator()])
+    main_ctx, _ = builder.build_runtime_and_context(
+        SessionInfo.from_str("main.main"), ContextState(), InMemoryContextManager(),
+    )
+    graph_ctx, _ = builder.build_runtime_and_context(
+        SessionInfo.from_str("graph.main"), ContextState(), InMemoryContextManager(),
+        turn_descriptor=TurnContextDescriptor(
+            agent_kind=AgentCommKind.NORMAL, execution_strategy=ExecutionStrategyKind.REACT,
+            graph_instance_id=1,
+        ),
+    )
+    assert main_ctx.runtime is not None and graph_ctx.runtime is not None
+    outside = ToolCall(tool_name="write", arguments={"path": str(tmp_path.parent / "outside.txt")}, call_id="out")
+    if backend is not SandboxBackend.HOST:
+        if approval is not None and approval.enabled and approval.tools:
+            assert main_ctx.runtime.approval is not None
+            assert decision_of(main_ctx.runtime.approval.classifier.classify(outside, main_ctx)) is ApprovalDecision.PENDING
+        else:
+            assert services.approval is None
+        assert services.guard_only_approval is None
+        assert graph_ctx.runtime.approval is None
+        return
+    assert main_ctx.runtime.approval is not None
+    assert graph_ctx.runtime.approval is services.guard_only_approval
+    assert graph_ctx.runtime.approval is not None
+    expected = ApprovalDecision.PENDING if approval is not None and approval.enabled else ApprovalDecision.DENIED
+    assert decision_of(main_ctx.runtime.approval.classifier.classify(outside, main_ctx)) is expected
+    assert decision_of(graph_ctx.runtime.approval.classifier.classify(outside, graph_ctx)) is ApprovalDecision.DENIED
+
+
+def test_explicit_default_sandbox_needs_no_root_provider() -> None:
+    pipeline = _wire(approval=None, sandbox=SandboxSettings(backend=SandboxBackend.DEFAULT))
+    builder = pipeline._turn_runner.turn_context_builder
+    assert builder is not None and builder.runtime_services is not None
+    assert builder.runtime_services.guard_only_approval is None

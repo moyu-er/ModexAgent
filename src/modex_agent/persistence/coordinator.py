@@ -229,8 +229,8 @@ class SqliteDecisionCoordinator(ApprovalDecisionCoordinator):
             await tx.execute(
                 "INSERT INTO approval_audit_log "
                 "(turn_uuid, session_id, scope_key, agent_id, turn_id, tool_name, "
-                " tool_call_id, decision, deny_reason, decided_at, decided_by) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " tool_call_id, decision, deny_reason, decided_at, decided_by, source) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     entry.turn_uuid,
                     entry.session_id,
@@ -243,5 +243,6 @@ class SqliteDecisionCoordinator(ApprovalDecisionCoordinator):
                     entry.deny_reason,
                     decided_at_ms,
                     entry.decided_by,
+                    entry.source,
                 ),
             )

@@ -17,6 +17,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.adapters.output import OutputAdapter
+from modex_agent.approval.config import AgentApprovalConfig
+from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.commands.constants import CommandAction, CommandDispatchPolicy, CommandParseStatus
 from modex_agent.commands.models import (
     CommandHandlingResult,
@@ -27,16 +29,20 @@ from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrateg
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.memory.context import ContextState, InMemoryContextManager
+from modex_agent.memory.context_governance import CompositeGovernance
 from modex_agent.messaging.models import ApprovalAction, InputMessage
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder, TurnRequest
 from modex_agent.pipeline.turn_context_config import (
+    GraphApprovalConfigurator,
     TurnContextConfigPipeline,
     TurnContextDescriptor,
 )
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+from modex_agent.runtime.approval_decision import ApprovalAuditStore
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
+from modex_agent.sandbox.delegation import DelegationSnapshot
 from modex_agent.tools.manager import InMemoryToolManager
 
 
@@ -654,3 +660,40 @@ async def test_assemble_delegates_to_context_assembler() -> None:
     history = await state.history.to_list()
     # The user message was appended (append_user_message defaults True, not approval cmd).
     assert any(m.get("role") == "user" for m in history)
+@pytest.mark.parametrize("persisted", [False, True])
+@pytest.mark.parametrize("graph", [False, True])
+@pytest.mark.parametrize("governed", [False, True])
+def test_builder_retains_approval_audit_and_policy_services(persisted: bool, graph: bool, governed: bool) -> None:
+    audit = MagicMock(spec=ApprovalAuditStore)
+    approval = ApprovalRuntime(TieredToolApprovalClassifier(AgentApprovalConfig(enabled=True)))
+    guard_only = ApprovalRuntime(TieredToolApprovalClassifier(AgentApprovalConfig(enabled=False)))
+    delegation = DelegationSnapshot(workspace_root=Path.cwd())
+    base = AgentRuntimeServices(
+        approval=approval,
+        guard_only_approval=guard_only,
+        approval_audit=audit,
+        delegation=delegation,
+        governance=CompositeGovernance([]) if governed else None,
+    )
+    builder = _make_builder(
+        runtime_services=base,
+        turn_store=InMemoryTurnStateStore() if persisted else None,
+    )
+    builder.config_pipeline = TurnContextConfigPipeline([GraphApprovalConfigurator()])
+    ctx, _ = builder.build_runtime_and_context(
+        SessionInfo.from_str("s.main"),
+        ContextState(),
+        InMemoryContextManager(),
+        turn_descriptor=TurnContextDescriptor(
+            agent_kind=AgentCommKind.NORMAL,
+            execution_strategy=ExecutionStrategyKind.REACT,
+            graph_instance_id=1 if graph else None,
+        ),
+    )
+    assert ctx.runtime is not None
+    assert ctx.runtime.services.approval_audit is audit
+    assert ctx.runtime.services.delegation is delegation
+    assert ctx.runtime.services.guard_only_approval is guard_only
+    assert ctx.runtime.services.approval is (guard_only if graph else approval)
+    assert ctx.runtime.services is not base
+    assert base.approval is approval

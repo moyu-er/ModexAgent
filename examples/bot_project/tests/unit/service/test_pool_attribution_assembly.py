@@ -30,6 +30,56 @@ from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
 
 
+async def test_create_pool_shares_audit_sink_with_native_materialization(tmp_path: Path) -> None:
+    from bot.scope import BotRecordScope
+
+    from modex_agent.persistence import ConnectionManager, DatabaseKind
+    from modex_agent.persistence.adapters.approval_audit_store import SqliteApprovalAuditStore
+
+    manager = ConnectionManager(tmp_path / "audit.db", DatabaseKind.WORKSPACE)
+    await manager.open()
+    broker = InMemoryMessageBroker()
+    await broker.start()
+    instance = None
+    try:
+        audit = SqliteApprovalAuditStore(manager, BotRecordScope(pool="audited"))
+        declaration = _POOL_DECLARATION.format(pool_name="audited") + """\
+      hooks: [-native_env]
+      approval:
+        enabled: true
+        tools:
+          write:
+            allowed_paths: ["./*"]
+"""
+        with patch("bot.service.pool.factory.build_approval_audit_store", return_value=audit) as build_audit:
+            instance = await create_pool(
+                pool_name="audited",
+                declared=build_declared(
+                    declaration, project_dir=tmp_path, data_dir=tmp_path / "data", pool_name="audited",
+                ),
+                assembly_deps=PoolAssemblyDeps(), project_dir=tmp_path, data_dir=tmp_path / "data",
+                workspace_registry=object(), workspace_resources=object(),
+                broker=broker, output_adapter=MagicMock(spec=OutputAdapter),
+                safety=RuntimeSafetyPolicy(), retention=SessionRetentionPolicy(), im_ui=MagicMock(),
+                shared_hooks=[], shared_hook_runner=HookRunner(), shared_interceptor_chain=InterceptorChain(),
+                bot_model_config=None, model_choice_registry=ModelChoiceRegistry(),
+            )
+        build_audit.assert_called_once()
+        deps = instance.pool.materialize_deps
+        assert deps is not None
+        assert deps.approval_audit is audit
+        main = instance.pool.get("main")
+        assert main is not None and main.pipeline is not None
+        builder = main.pipeline._turn_runner.turn_context_builder
+        assert builder is not None and builder.runtime_services is not None
+        assert builder.runtime_services.approval_audit is audit
+    finally:
+        if instance is not None:
+            await instance.pool.shutdown_all()
+        await broker.stop()
+        await manager.close()
+
+
 async def test_create_pool_binds_pool_at_single_assembly_point(tmp_path: Path) -> None:
     pool_name = "attributed-pool"
     emitter_pools: list[str] = []

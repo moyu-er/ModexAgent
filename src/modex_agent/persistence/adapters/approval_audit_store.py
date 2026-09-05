@@ -8,45 +8,18 @@ store participates in workspace-persistence atomic writes via the
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from modex_agent.approval.constants import ApprovalAuditSource, DecisionActor
 from modex_agent.persistence.connection import SqlParameter
-from modex_agent.runtime.approval_decision import ApprovalAuditEntry
+from modex_agent.runtime.approval_decision import ApprovalAuditEntry, ApprovalAuditStore
 
 if TYPE_CHECKING:
     from modex_agent.core.scope import RecordScope
     from modex_agent.persistence.connection import ConnectionManager
 
-
-class ApprovalAuditStore(ABC):
-    """Append-only audit log for approval decisions.
-
-    The ABC defines two operations: :meth:`record` (append one entry) and
-    :meth:`query` (filter by session and optional timestamp). Implementations
-    MUST NOT expose update or delete — the log is append-only.
-    """
-
-    @abstractmethod
-    async def record(self, entry: ApprovalAuditEntry) -> None:
-        """Append *entry* to the audit log."""
-        ...
-
-    @abstractmethod
-    async def query(
-        self,
-        session_id: str,
-        since: datetime | None = None,
-        limit: int = 100,
-    ) -> list[ApprovalAuditEntry]:
-        """Return audit entries for *session_id*, optionally filtered by *since*.
-
-        Entries are returned in ascending ``decided_at`` order. When *since*
-        is given, only entries at or after that moment are returned. *limit*
-        caps the number of entries.
-        """
-        ...
+__all__ = ["ApprovalAuditEntry", "ApprovalAuditStore", "SqliteApprovalAuditStore"]
 
 
 # ---------------------------------------------------------------------------
@@ -96,8 +69,8 @@ class SqliteApprovalAuditStore(ApprovalAuditStore):
         await self._connection.execute(
             "INSERT INTO approval_audit_log "
             "(turn_uuid, session_id, scope_key, agent_id, turn_id, tool_name, "
-            " tool_call_id, decision, deny_reason, decided_at, decided_by) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " tool_call_id, decision, deny_reason, decided_at, decided_by, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 entry.turn_uuid,
                 entry.session_id,
@@ -110,6 +83,7 @@ class SqliteApprovalAuditStore(ApprovalAuditStore):
                 entry.deny_reason,
                 decided_at_ms,
                 entry.decided_by,
+                entry.source,
             ),
         )
 
@@ -118,11 +92,13 @@ class SqliteApprovalAuditStore(ApprovalAuditStore):
         session_id: str,
         since: datetime | None = None,
         limit: int = 100,
+        decided_by: DecisionActor | None = None,
+        source: ApprovalAuditSource | None = None,
     ) -> list[ApprovalAuditEntry]:
         """Return entries for *session_id*, optionally filtered and capped."""
         query = (
             "SELECT turn_uuid, session_id, agent_id, turn_id, tool_name, "
-            "tool_call_id, decision, deny_reason, decided_at, decided_by "
+            "tool_call_id, decision, deny_reason, decided_at, decided_by, source "
             "FROM approval_audit_log WHERE session_id = ?"
         )
         params: list[SqlParameter] = [session_id]
@@ -130,6 +106,12 @@ class SqliteApprovalAuditStore(ApprovalAuditStore):
             since_ms = int(since.timestamp() * 1000)
             query += " AND decided_at >= ?"
             params.append(since_ms)
+        if decided_by is not None:
+            query += " AND decided_by = ?"
+            params.append(decided_by)
+        if source is not None:
+            query += " AND source = ?"
+            params.append(source)
         query += " ORDER BY decided_at ASC, id ASC LIMIT ?"
         params.append(limit)
 
@@ -146,6 +128,7 @@ class SqliteApprovalAuditStore(ApprovalAuditStore):
                 deny_reason=row["deny_reason"],
                 decided_at=_epoch_ms_to_iso(row["decided_at"]),
                 decided_by=row["decided_by"],
+                source=row["source"],
             )
             for row in rows
         ]

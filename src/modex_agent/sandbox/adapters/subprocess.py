@@ -10,7 +10,7 @@ from pathlib import Path
 
 from ..config import SandboxConfig
 from ..env_builder import EnvironmentBuilder
-from ..exceptions import CommandRejectedError
+from ..exceptions import WorkspaceBoundaryError
 from ..guard import CommandPatternGuard
 from ..isolation import (
     FilesystemIsolationConfig,
@@ -218,7 +218,7 @@ class SubprocessSandbox(SandboxAdapter):
         if workspace and cwd:
             try:
                 workspace.require_within(cwd)
-            except CommandRejectedError as e:
+            except WorkspaceBoundaryError as e:
                 return SandboxResult(success=False, error=str(e))
 
         try:

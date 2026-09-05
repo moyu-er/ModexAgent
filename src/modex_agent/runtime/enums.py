@@ -233,3 +233,13 @@ class TurnCustomKey(StrEnum):
     # model order regardless of completion order. Turn-scoped (not
     # batch-scoped) so a turn with multiple batches stays globally ordered.
     TOOL_SEQ_COUNTER = "_tool_seq_counter"
+    # Per-turn SandboxEnforcementSnapshot: backend, enforcement and reason.
+    # Diagnostic data only, not authorization. Written for an explicit
+    # sandbox binding and absent under the DEFAULT dormant tier.
+    SANDBOX_ENFORCEMENT = "_sandbox_enforcement"
+    # Per-turn {call_id: approval_anchor} captured when approval is applied.
+    # Known file tools use a canonical target; commands bind their text and
+    # any explicit canonical cwd; URL tools bind their URL. Unknown tools
+    # receive no anchor. The execution backstop waives only a matching
+    # BOUNDARY finding, never hard denies. The map survives snapshot restore.
+    HUMAN_APPROVED_CALLS = "_human_approved_calls"

@@ -8,23 +8,32 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from modex_agent.core import AgentCommKind
+from modex_agent.core.agent import AgentContext
 from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.llm_struct import FinishReason, LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.memory.cleanup_hooks import TodoReorientationHook
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
+from modex_agent.multi_agent.descriptor import AgentInstance
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.scope.compiler import compile_scope
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.scope_path import ScopePath
+
+
+@pytest.fixture(autouse=True)
+def _modexctl_location(monkeypatch, tmp_path):
+    # These assembly tests do not invoke modexctl; its installation is unrelated.
+    monkeypatch.setattr("modex_agent.plugins.defaults.hooks.resolve_modexctl_bin_dir", lambda: tmp_path)
 
 
 class _StaticRootProvider(WorkspaceRootProvider):
@@ -43,6 +52,11 @@ async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
 
     fake_instance = MagicMock()
     fake_instance.pipeline = MagicMock()
+    from modex_agent.runtime.services import AgentRuntimeServices
+
+    fake_instance.pipeline._turn_runner.turn_context_builder.runtime_services = (
+        AgentRuntimeServices()
+    )
     fake_instance.stop = AsyncMock()
     pool = MagicMock()
     pool.register_resident = AsyncMock()
@@ -401,6 +415,7 @@ async def test_materialize_subagent_wires_hooks_to_hook_runner():
     fake_instance = MagicMock()
     fake_instance.pipeline = MagicMock()
     fake_instance.pipeline.hook_runner = HookRunner()
+    fake_instance.pipeline._turn_runner.turn_context_builder.runtime_services = AgentRuntimeServices()
     fake_instance.stop = AsyncMock()
     deps, factory = await _make_deps()
     factory.create_agent = AsyncMock(return_value=fake_instance)
@@ -430,6 +445,7 @@ async def test_materialize_roster_todo_continuation_hook_receives_tree():
     fake_instance = MagicMock()
     fake_instance.pipeline = MagicMock()
     fake_instance.pipeline.hook_runner = HookRunner()
+    fake_instance.pipeline._turn_runner.turn_context_builder.runtime_services = AgentRuntimeServices()
     fake_instance.stop = AsyncMock()
     deps, factory = await _make_deps()
     factory.create_agent = AsyncMock(return_value=fake_instance)
@@ -508,7 +524,6 @@ async def test_materialize_external_injects_emitter_factory_into_turn_runner():
         ExecutionStrategyRegistry,
         SubagentAssembly,
     )
-    from modex_agent.plugins.assembly.context import AgentContext
 
     sentinel_emitter_factory = MagicMock(name="webui_emitter_factory")
     fake_turn_runner = MagicMock()
@@ -587,7 +602,6 @@ async def test_materialize_external_injects_pool_context_into_turn_runner():
         ExecutionStrategyRegistry,
         SubagentAssembly,
     )
-    from modex_agent.plugins.assembly.context import AgentContext
 
     sentinel_workspace_manager = MagicMock(name="workspace_resolver_cell")
     fake_turn_runner = MagicMock()
@@ -661,7 +675,6 @@ async def test_materialize_external_skips_emitter_injection_when_deps_emitter_no
         ExecutionStrategyRegistry,
         SubagentAssembly,
     )
-    from modex_agent.plugins.assembly.context import AgentContext
 
     fake_turn_runner = MagicMock()
     fake_pipeline = MagicMock()
@@ -879,3 +892,222 @@ async def test_materialize_subagent_roster_without_bash_gets_no_companion():
     tm = factory.create_agent.call_args.kwargs["tool_manager"]
     assert tm.get_tool("bash") is None
     assert tm.get_tool("bash_input") is None
+
+
+# ---------------------------------------------------------------------------
+# Delegation boundary (unified-security Ticket 05b)
+# ---------------------------------------------------------------------------
+
+
+def _wired_services(instance: AgentInstance) -> AgentRuntimeServices:
+    """The delegation wiring landing site: the turn context builder's
+    runtime services after materialization."""
+    assert instance.pipeline is not None
+    builder = instance.pipeline._turn_runner.turn_context_builder
+    assert builder is not None
+    services = builder.runtime_services
+    assert isinstance(services, AgentRuntimeServices)
+    return services
+
+
+def _classify_ctx() -> AgentContext:
+    from modex_agent.memory.history import ListMessageHistory
+    from modex_agent.tools.manager import InMemoryToolManager
+
+    return AgentContext(
+        system_prompt="test",
+        history=ListMessageHistory(),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("inv1.scout"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_materialize_lands_delegation_snapshot_and_guard_only_approval():
+    """PRD #5 anchor: materialization installs the frozen delegation
+    snapshot and the guard-only (escalate=False) approval runtime — a
+    subagent never owns a card channel."""
+    from modex_agent.approval.runtime import ApprovalRuntime
+    from modex_agent.sandbox.delegation import DelegationSnapshot
+    from modex_agent.sandbox.security_classifier import SecurityClassifier
+
+    deps, factory = await _make_deps()
+    template = _compiled_template("scout")
+    parent = SessionIdFactory().create(agent_name="main")
+    instance = await template.materialize(
+        parent_session=parent, invocation_id="inv1", deps=deps
+    )
+
+    services = _wired_services(instance)
+    snapshot = services.delegation
+    assert isinstance(snapshot, DelegationSnapshot)
+    assert snapshot.workspace_root == Path("/ws").resolve()
+    assert snapshot.depth == 1  # main(0) -> scout(1)
+    assert snapshot.source == "delegation"
+
+    approval = services.approval
+    assert isinstance(approval, ApprovalRuntime)
+    assert isinstance(approval.classifier, SecurityClassifier)
+    assert approval.classifier.escalate_enabled is False
+    assert services.guard_only_approval is approval
+
+
+@pytest.mark.asyncio
+async def test_materialize_subagent_write_boundary_classification():
+    """PRD #5: workspace-external write → HARDLINE (拒绝型 ToolResult via
+    ToolNode) with the two-part delegation copy on last_deny_reason;
+    in-workspace write → NORMAL."""
+    from modex_agent.approval.constants import ApprovalTier
+    from modex_agent.core.message import ToolCall
+
+    deps, factory = await _make_deps()
+    template = _compiled_template("scout")
+    parent = SessionIdFactory().create(agent_name="main")
+    instance = await template.materialize(
+        parent_session=parent, invocation_id="inv1", deps=deps
+    )
+    services = _wired_services(instance)
+    approval = services.approval
+    assert approval is not None
+    classifier = approval.classifier
+    ctx = _classify_ctx()
+
+    outside = ToolCall(tool_name="write", arguments={"path": "/etc/hosts"}, call_id="c1")
+    classification = classifier.classify(outside, ctx)
+    assert classification.tier is ApprovalTier.HARDLINE
+    reason = classification.deny_reason
+    assert reason is not None
+    assert reason.startswith(
+        "This operation is outside the subagent boundary:"
+    )
+    assert services.delegation is not None
+    assert str(services.delegation.workspace_root) in reason
+    assert "Allowed roots:" in reason
+    assert (
+        "request this operation in the main session." in reason
+    )
+
+    inside = ToolCall(tool_name="write", arguments={"path": "src/a.py"}, call_id="c2")
+    assert classifier.classify(inside, ctx).tier is ApprovalTier.NORMAL
+
+
+@pytest.mark.asyncio
+async def test_materialize_allowed_dirs_extend_the_write_envelope():
+    """PRD #5: allowed_dirs 内写 → NORMAL (the dirs join the envelope)."""
+    from modex_agent.approval.constants import ApprovalTier
+    from modex_agent.core.message import ToolCall
+
+    deps, factory = await _make_deps()
+    template = _compiled_template("scout", allowed_dirs=[Path("/ws/shared")])
+    parent = SessionIdFactory().create(agent_name="main")
+    instance = await template.materialize(
+        parent_session=parent, invocation_id="inv1", deps=deps
+    )
+    services = _wired_services(instance)
+    snapshot = services.delegation
+    assert snapshot is not None
+    assert Path("/ws/shared").resolve() in snapshot.envelope
+
+    approval = services.approval
+    assert approval is not None
+    shared = ToolCall(
+        tool_name="write", arguments={"path": "/ws/shared/lib.ts"}, call_id="c1"
+    )
+    assert approval.classifier.classify(shared, _classify_ctx()).tier is ApprovalTier.NORMAL
+
+
+@pytest.mark.asyncio
+async def test_materialize_allowed_dirs_outside_pool_envelope_fails_fast():
+    """T05a's pure check is consumed here: a declared allowed_dir escaping
+    the workspace root aborts materialization."""
+    deps, factory = await _make_deps()
+    template = _compiled_template("scout", allowed_dirs=[Path("/elsewhere")])
+    parent = SessionIdFactory().create(agent_name="main")
+
+    with pytest.raises(ValueError, match="allowed_dirs"):
+        await template.materialize(
+            parent_session=parent, invocation_id="inv1", deps=deps
+        )
+
+
+@pytest.mark.asyncio
+async def test_materialize_descriptor_carries_declared_depth():
+    """The descriptor carries the delegation depth from the declared tree."""
+    deps, factory = await _make_deps()
+    template = _compiled_template("scout")
+    parent = SessionIdFactory().create(agent_name="main")
+    await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
+    call_kwargs = factory.create_agent.call_args.kwargs
+    descriptor = call_kwargs.get("descriptor") or factory.create_agent.call_args.args[0]
+    assert descriptor.depth == 1
+
+
+@pytest.mark.asyncio
+async def test_materialize_without_root_provider_raises_for_boundary():
+    """The delegation boundary needs a workspace-root source — neither a
+    live provider nor a scope path is a loud wiring error, never a
+    silent no-boundary fallback."""
+    deps, factory = await _make_deps()
+    deps.root_provider = None
+    deps.scope_path = None
+    template = _compiled_template("scout")
+    parent = SessionIdFactory().create(agent_name="main")
+
+    with pytest.raises(ValueError, match="root_provider"):
+        await template.materialize(
+            parent_session=parent, invocation_id="inv1", deps=deps
+        )
+
+
+@pytest.mark.asyncio
+async def test_materialize_pool_sandbox_on_narrows_to_subagent_envelope():
+    """A pool with sandbox on (backend=host, danger-full-access) still
+    narrows the subagent to workspace + allowed_dirs write scope — the
+    delegation boundary does not follow the pool's no-boundary policy,
+    and the snapshot records the pool backend for audit."""
+    from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
+
+    deps, factory = await _make_deps()
+    root = AgentSpec(
+        name="main",
+        interceptors=["sandbox_guard"],
+        interceptor_configs={
+            "sandbox_guard": {
+                "sandbox": {"backend": "host", "policy": "danger-full-access"}
+            }
+        },
+    )
+    pool_assembly = MagicMock(spec=PoolAssemblyContext)
+    pool_assembly.pool_name = "main"
+    pool_assembly.pool_spec = PoolSpec(
+        name="main",
+        agents=[root, AgentSpec(name="scout", parent="main")],
+    )
+    pool_assembly.pool_data = None
+    pool_assembly.project_dir = Path("/ws")
+    pool_assembly.peer_links = ()
+    pool_assembly.control_origin = ""
+    deps.pool_assembly_ctx = pool_assembly
+    template = _compiled_template("scout")
+    parent = SessionIdFactory().create(agent_name="main")
+    instance = await template.materialize(
+        parent_session=parent, invocation_id="inv1", deps=deps
+    )
+
+    services = _wired_services(instance)
+    snapshot = services.delegation
+    assert snapshot is not None
+    assert snapshot.backend == "host"
+    assert snapshot.enforcement == "none"
+    assert snapshot.policy == "workspace-write"
+
+    approval = services.approval
+    assert approval is not None
+    ctx = _classify_ctx()
+    from modex_agent.approval.constants import ApprovalTier
+    from modex_agent.core.message import ToolCall
+
+    inside = ToolCall(tool_name="write", arguments={"path": "src/a.py"}, call_id="c1")
+    assert approval.classifier.classify(inside, ctx).tier is ApprovalTier.NORMAL
+    outside = ToolCall(tool_name="write", arguments={"path": "/etc/hosts"}, call_id="c2")
+    assert approval.classifier.classify(outside, ctx).tier is ApprovalTier.HARDLINE

@@ -244,7 +244,7 @@ def test_cancel_note_defaults_to_none() -> None:
 
 
 def test_max_parallel_tool_calls_constant() -> None:
-    from modex_agent.agents.react.nodes.tool import _DEFAULT_MAX_PARALLEL_TOOL_CALLS
+    from modex_agent.agents.react.nodes.tool_settlement import _DEFAULT_MAX_PARALLEL_TOOL_CALLS
 
     assert _DEFAULT_MAX_PARALLEL_TOOL_CALLS == 5
 

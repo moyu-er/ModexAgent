@@ -165,7 +165,7 @@ async def test_bash_factory_fallback_fresh_instance_uses_workspace_root(
     assert isinstance(tool, PersistentBashTool)
     # v3: initial_cwd lives on the tool's PersistentShellManager (the
     # constructor forwards it there when no manager is supplied).
-    assert tool.manager._initial_cwd == str(Path("/pool/workspace"))  # noqa: SLF001
+    assert tool.manager._initial_cwd == str(Path("/pool/workspace").resolve())  # noqa: SLF001
 
 
 @pytest.mark.asyncio

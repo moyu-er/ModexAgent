@@ -94,7 +94,11 @@ from modex_agent.plugins.registry import (
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
-from ..builders import build_inbox, resolve_declared_root_prompt
+from ..builders import (
+    build_approval_audit_store,
+    build_inbox,
+    resolve_declared_root_prompt,
+)
 from ..external_strategy import ProviderUnavailableError
 from ..model_config import _resolved_or_placeholder
 from .agent_factory import (
@@ -712,6 +716,9 @@ async def create_pool(
         if propagated is not None and propagated.pool_runtime is not None
         else {}
     )
+    approval_audit_store = build_approval_audit_store(
+        app_config, persistence, BotRecordScope(pool=pool_name),
+    )
     deps = AgentMaterializeDeps(
         agent_factory=factory,
         pool=pool,
@@ -754,6 +761,7 @@ async def create_pool(
         pool_assembly_ctx=ctx,
         graph_context_resolver=graph_context_resolver,
         capability_supply=capability_supply,
+        approval_audit=approval_audit_store,
     )
     pool.materialize_deps = deps
     pool.pool_name = pool_name
@@ -882,6 +890,7 @@ async def create_pool(
             graph_context_resolver=graph_context_resolver,
             session_binding_store=session_binding_store,
             component_hook_specs=component_hook_specs,
+            approval_audit_store=approval_audit_store,
         )
     else:
         # external path: the external agent has no tool surface (it

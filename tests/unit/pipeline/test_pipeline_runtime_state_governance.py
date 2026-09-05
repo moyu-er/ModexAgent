@@ -6,6 +6,7 @@ import pytest
 
 from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
+from modex_agent.approval.classification import ToolClassification
 from modex_agent.approval.constants import ApprovalTier
 from modex_agent.approval.runtime import ApprovalRuntime
 from modex_agent.core.emitter import AgentResult
@@ -64,8 +65,8 @@ class _SuspendingAgent:
 
 
 class _DangerousClassifier:
-    def classify(self, tool_call: ToolCall, ctx) -> str:
-        return ApprovalTier.DANGEROUS
+    def classify(self, tool_call: ToolCall, ctx) -> ToolClassification:
+        return ToolClassification.tier_result(ApprovalTier.DANGEROUS)
 
 
 def _pipeline(

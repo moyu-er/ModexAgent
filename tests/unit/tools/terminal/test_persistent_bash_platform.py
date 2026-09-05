@@ -53,13 +53,14 @@ def test_persistent_bash_supported_true_on_linux(monkeypatch: pytest.MonkeyPatch
 
 
 def test_explicit_shell_path_is_used() -> None:
-    session = PersistentShellSession(shell="/opt/custom/bash")
+    session = PersistentShellSession(shell_argv=["/opt/custom/bash"])
     assert session.shell_path == "/opt/custom/bash"
+    assert session.shell_argv == ("/opt/custom/bash",)
     assert session._is_bash_shell is True  # noqa: SLF001
 
 
 def test_explicit_non_bash_shell_uses_plain_spawn_mode() -> None:
-    session = PersistentShellSession(shell="/bin/zsh")
+    session = PersistentShellSession(shell_argv=["/bin/zsh"])
     assert session.shell_path == "/bin/zsh"
     assert session._is_bash_shell is False  # noqa: SLF001
 

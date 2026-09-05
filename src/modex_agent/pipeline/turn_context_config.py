@@ -190,12 +190,12 @@ class GraphContextBindingConfigurator(TurnContextConfigurator):
 
 
 class GraphApprovalConfigurator(TurnContextConfigurator):
-    """Disable per-turn approval for graph-context turns.
+    """Disable human escalation while retaining guards for graph turns.
 
-    Graph nodes run inside a pre-defined workflow — tools execute as designed
-    intent, not user-interacted agent actions. Approval suspension would
-    deadlock the graph (no user to approve, no way to resume). Per-turn
-    override on AgentRuntimeServices; pool-level base services are unaffected.
+    Noninteractive graph turns have no human decision channel. Use the
+    assembled guard-only runtime so boundary and hard findings still deny
+    without cards. Without a guard, use None. Only the turn's services are
+    changed; the pool-level approval configuration remains intact.
     """
 
     def applies(self, desc: TurnContextDescriptor) -> bool:
@@ -204,7 +204,7 @@ class GraphApprovalConfigurator(TurnContextConfigurator):
     def configure(self, ctx: AgentContext, desc: TurnContextDescriptor) -> None:
         if ctx.runtime is None:
             return
-        ctx.runtime.services.approval = None
+        ctx.runtime.services.approval = ctx.runtime.services.guard_only_approval
 
 
 class GraphMaxTurnsConfigurator(TurnContextConfigurator):

@@ -51,8 +51,9 @@ class SandboxAdapter(ABC):
     def _get_command_guard(self) -> CommandPatternGuard | None:
         """Optional hook: return a CommandPatternGuard for pre-execution checks.
 
-        Default returns None. Local adapters override to provide a guard.
-        Cloud/container adapters return None (isolation is their job).
+        Default returns None. Subprocess, Landlock, and Docker adapters
+        override this hook; E2B retains the default. Kernel isolation and
+        command-pattern checks are separate concerns.
         """
         return None
 

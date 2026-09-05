@@ -79,8 +79,12 @@ _EXPECTED_LLM_PROVIDER_NAMES: frozenset[str] = frozenset({"default"})
 #: SYSTEM_PROMPT_PROVIDER slot — single ``file_prompt`` factory (task 13).
 _EXPECTED_PROMPT_PROVIDER_NAMES: frozenset[str] = frozenset({"file_prompt"})
 
-#: INTERCEPTOR slot — single ``tool_timeout`` factory (task 13).
-_EXPECTED_INTERCEPTOR_NAMES: frozenset[str] = frozenset({"tool_timeout"})
+#: INTERCEPTOR slot — ``tool_timeout`` (task 13) + the opt-in
+#: ``sandbox_guard`` policy layer (sandbox-integration Ticket 08; refuses
+#: to build under the dormant DEFAULT tier).
+_EXPECTED_INTERCEPTOR_NAMES: frozenset[str] = frozenset(
+    {"tool_timeout", "sandbox_guard"}
+)
 
 #: COMMAND_HANDLER slot — 6 built-in slash command handlers (task 13).
 #: Names are bare (no leading ``/``) — matching register_default_commands.

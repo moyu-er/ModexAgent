@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -483,7 +483,7 @@ class TurnContextBuilder:
             media_store = self._media_store_resolver()
 
         # ---- typed AgentRuntime with ReActTurnState (new) ----
-        if snapshot_turn_store is not None:
+        if snapshot_turn_store is not None or governance is not None or base_services is not None:
             from modex_agent.agents.react.state import ReActTurnState
             from modex_agent.runtime.enums import AgentKind, TurnCustomKey
             from modex_agent.runtime.enums import TurnPhase as RTurnPhase
@@ -494,12 +494,12 @@ class TurnContextBuilder:
                 agent_kind=AgentKind.REACT,
                 phase=RTurnPhase.CREATED,
             )
-            services = AgentRuntimeServices(
+            services = replace(
+                base_services if base_services is not None else AgentRuntimeServices(),
                 hooks=(base_services.hooks if base_services is not None else None)
                 or self._hook_runner,
                 interceptors=(base_services.interceptors if base_services is not None else None)
                 or self._interceptor_chain,
-                approval=base_services.approval if base_services is not None else None,
                 governance=governance,
                 turn_store=(
                     base_services.turn_store
@@ -521,30 +521,9 @@ class TurnContextBuilder:
                 media_store=media_store,
             )
             agent_context.runtime = AgentRuntime(services=services, state=react_state)
-            agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
-            agent_context.runtime.state.custom[TurnCustomKey.MAX_TURNS] = 3
-        elif governance is not None:
-            # Lightweight runtime for governance-only mode (no turn_store)
-            from modex_agent.agents.react.state import ReActTurnState
-            from modex_agent.runtime.enums import AgentKind
-            from modex_agent.runtime.enums import TurnPhase as RTurnPhase
-            from modex_agent.runtime.services import AgentRuntime
-
-            agent_context.runtime = AgentRuntime(
-                services=AgentRuntimeServices(
-                    governance=governance,
-                    trace_store=snapshot_trace_store,
-                    control_channel=self._control_channel
-                    or (base_services.control_channel if base_services is not None else None),
-                    model_info=(base_services.model_info if base_services is not None else None),
-                    media_store=media_store,
-                ),
-                state=ReActTurnState(
-                    identity=turn_identity,
-                    agent_kind=AgentKind.REACT,
-                    phase=RTurnPhase.CREATED,
-                ),
-            )
+            if snapshot_turn_store is not None:
+                agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
+                agent_context.runtime.state.custom[TurnCustomKey.MAX_TURNS] = 3
 
         # Trace linkage metadata for the turn's spans (subagent parentage).
         if agent_context.runtime is not None and input_metadata is not None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from modex_agent.core import AgentCommKind
@@ -364,3 +366,74 @@ class TestTaskDispatchToolDescription:
         )
 
         assert expected_dispatch_modes in desc
+
+
+# -- 13. delegation depth budget (unified-security 05b) -----------------------
+
+
+def _runtime_with_delegation(depth: int) -> object:
+    from modex_agent.runtime.enums import AgentKind, TurnPhase
+    from modex_agent.runtime.models import TurnIdentity, TurnStateBase
+    from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+    from modex_agent.sandbox.delegation import DelegationSnapshot
+
+    snapshot = DelegationSnapshot(workspace_root=Path("/ws"), depth=depth)
+    state = TurnStateBase(
+        identity=TurnIdentity(
+            agent_id="agent",
+            session=SessionInfo.from_str("test.agent"),
+            turn_id="t1",
+        ),
+        agent_kind=AgentKind.REACT,
+        phase=TurnPhase.CREATED,
+    )
+    return AgentRuntime(services=AgentRuntimeServices(delegation=snapshot), state=state)
+
+
+class TestTaskDispatchDepthBudget:
+    @pytest.mark.asyncio
+    async def test_depth_three_sender_can_still_dispatch(self) -> None:
+        """Sender at the budget edge (target would be depth 3) passes."""
+        service = _RecordingService()
+        tool = _task_tool(_store_with_subagent_target(), service)
+        context = _context()
+        context.runtime = _runtime_with_delegation(depth=2)  # type: ignore[assignment]
+        token = current_agent_context.set(context)
+        try:
+            result = await tool.execute(target_agent="office-expert", content="do work")
+        finally:
+            current_agent_context.reset(token)
+        assert result == "ok"
+        assert service.last_target is not None
+
+    @pytest.mark.asyncio
+    async def test_depth_four_target_is_refused_with_actionable_copy(self) -> None:
+        """Sender at depth 3 dispatching (target would be depth 4 > budget 3)
+        is refused before any session is minted; the copy names the budget
+        and the main-session alternative."""
+        service = _RecordingService()
+        tool = _task_tool(_store_with_subagent_target(), service)
+        context = _context()
+        context.runtime = _runtime_with_delegation(depth=3)  # type: ignore[assignment]
+        token = current_agent_context.set(context)
+        try:
+            result = await tool.execute(target_agent="office-expert", content="do work")
+        finally:
+            current_agent_context.reset(token)
+        assert result.startswith("Error: 委派深度超限(3)")
+        assert "请在主会话直接执行" in result
+        assert service.last_target is None  # never reached the service
+
+    @pytest.mark.asyncio
+    async def test_no_delegation_snapshot_means_root_and_passes(self) -> None:
+        """Root mains carry no delegation snapshot (depth 0) — dispatch is
+        never depth-gated for them."""
+        service = _RecordingService()
+        tool = _task_tool(_store_with_subagent_target(), service)
+        context = _context()  # no runtime → no snapshot
+        token = current_agent_context.set(context)
+        try:
+            result = await tool.execute(target_agent="office-expert", content="do work")
+        finally:
+            current_agent_context.reset(token)
+        assert result == "ok"

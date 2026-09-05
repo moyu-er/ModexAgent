@@ -1,27 +1,10 @@
-"""OS-level sandbox isolation for command execution.
+"""Legacy platform wrappers used by the dormant subprocess adapter.
 
-This module provides cross-platform OS-level isolation using native mechanisms:
-- Linux: bubblewrap (bwrap) for namespace/container isolation
-- macOS: sandbox-exec (Seatbelt) for profile-based isolation
-- Windows: Restricted Token + Job Objects + Low Integrity Level
-
-Example:
-    from framework.sandbox.isolation import IsolationManager
-
-    # Create isolation manager
-    isolation = IsolationManager(
-        filesystem_config={
-            "allow_read": ["/workspace"],
-            "allow_write": ["/workspace/output"],
-        },
-        network_config={
-            "allow_domains": ["pypi.org", "github.com"],
-        }
-    )
-
-    # Execute command in isolated environment
-    with isolation.isolated_shell() as shell:
-        result = shell.execute("pip install requests")
+These are not the current LOCAL/OCI substrate selection path. The Linux
+wrapper emits bwrap arguments; the macOS profile is permissive and the
+Windows wrapper provides no kernel isolation. Availability here does not
+certify enforcement. Current substrate assembly uses ``selection.py`` and
+the concrete runtime modules instead.
 """
 
 import abc
@@ -214,10 +197,13 @@ class BubblewrapProvider(IsolationProvider):
 class SandboxExecProvider(IsolationProvider):
     """macOS sandbox-exec-based isolation provider.
 
-    Uses sandbox-exec with Seatbelt profiles to enforce:
-    - Filesystem access restrictions
-    - Network access restrictions
-    - Mach service restrictions
+    .. deprecated::
+        DEPRECATED — this provider generates a permissive ``(allow default)``
+        profile that enforces almost nothing (fake isolation). It must not be
+        used in any new code path. Current LOCAL assembly uses ``SeatbeltRuntime``.
+
+    The profile broadly allows operations and optionally denies networking;
+    it does not implement the declared filesystem or Mach restrictions.
     """
 
     def is_available(self) -> bool:
@@ -262,12 +248,11 @@ class SandboxExecProvider(IsolationProvider):
 class WindowsIsolationProvider(IsolationProvider):
     """Windows native isolation provider.
 
-    Uses Windows security mechanisms:
-    - Restricted Token (CreateRestrictedToken)
-    - Low Integrity Level
-    - Job Objects for resource limits
-
-    Reference: Trae/AgentBox implementation
+    .. deprecated::
+        DEPRECATED — this provider is a self-acknowledged stub: it only
+        prefixes the command with PowerShell and enforces no actual
+        isolation. It must not be used in any new code path. Native Windows
+        LOCAL isolation is not implemented by this wrapper.
     """
 
     def is_available(self) -> bool:
@@ -278,20 +263,15 @@ class WindowsIsolationProvider(IsolationProvider):
         return "windows-native"
 
     def wrap_command(self, command: list[str]) -> list[str]:
-        """Wrap command with Windows isolation.
-
-        Note: Full implementation requires ctypes/CFFI for Win32 API calls.
-        This is a simplified version using PowerShell constraints.
-        """
-        # For now, use PowerShell Constrained Language Mode as fallback
-        # Full implementation would use CreateRestrictedToken + Job Objects
+        """Wrap a command in PowerShell without adding kernel containment."""
+        # ExecutionPolicy is not Constrained Language Mode or token isolation.
 
         logger.warning(
             "Windows isolation using basic PowerShell constraints. "
             "Full Restricted Token + Job Objects implementation requires Win32 API."
         )
 
-        # Build a constrained execution environment
+        # Build the PowerShell invocation.
         ps_script = [
             "powershell.exe",
             "-ExecutionPolicy",
@@ -299,9 +279,7 @@ class WindowsIsolationProvider(IsolationProvider):
             "-Command",
         ]
 
-        # Add filesystem restrictions via ACL checks
-
-        # Build the constrained command.
+        # Build the command; no filesystem ACL restrictions are applied here.
         # NOTE: Do NOT add Set-Location here. subprocess.Popen(cwd=...) handles
         # working directory correctly. Adding Set-Location would override it and
         # cause files to be created in the wrong directory.

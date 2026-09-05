@@ -104,13 +104,13 @@ async def test_wrapped_ls_absolute_path_untouched(
 async def test_wrapped_ls_home_path_untouched(
     home_and_ws: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``~`` expansions are left for the inner tool to resolve."""
+    """``~`` expansions match the permission resolver, without a workspace prefix."""
     _, ws = home_and_ws
     monkeypatch.chdir(ws)
 
     tool = WorkspaceScopedFileTool(ListDirTool(), _StaticProvider(ws))
     args = tool._scoped_args({"path": "~/anything"})
-    assert args["path"] == "~/anything"
+    assert args["path"] == str((Path.home() / "anything").resolve())
 
 
 @pytest.mark.asyncio
@@ -337,3 +337,50 @@ async def test_wrapped_glob_workspace_switch(
     result_b = await wrapped.execute(pattern="*.py")
     assert "file_b.py" in result_b
     assert "file_a.py" not in result_b
+
+
+def test_scoped_path_preserves_the_approved_spelling(tmp_path: Path) -> None:
+    from modex_agent.sandbox.tool_matrix import approval_anchor
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    raw = " ../outside.txt"
+    wrapped = WorkspaceScopedFileTool(WriteFileTool(), _StaticProvider(workspace))
+
+    rewritten = wrapped._scoped_args({"path": raw, "content": "changed"})
+
+    assert rewritten["path"] == approval_anchor("write", {"path": raw}, workspace)
+    assert Path(rewritten["path"]) != tmp_path / "outside.txt"
+
+
+def test_explicit_relative_shell_cwd_tracks_workspace_switch(tmp_path: Path) -> None:
+    provider = _MutableProvider()
+    provider.set_root(tmp_path / "old")
+    wrapped = wrap_standard_tools([SubprocessTool(working_dir=str(tmp_path / "old"))], provider)[0]
+    assert isinstance(wrapped, WorkspaceScopedShellTool)
+    provider.set_root(tmp_path / "current")
+
+    rewritten = wrapped._scoped_args({"command": "pwd", "working_dir": "sub"})
+
+    assert rewritten["working_dir"] == str(tmp_path / "current" / "sub")
+
+
+async def test_shared_scoping_keeps_ast_writes_in_checked_workspace(
+    home_and_ws: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from modex_agent.tools.ast.ast_replace import AstGrepReplaceTool
+
+    home, workspace = home_and_ws
+    source = "x = 1\n"
+    (home / "sample.py").write_text(source, encoding="utf-8")
+    (workspace / "sample.py").write_text(source, encoding="utf-8")
+    monkeypatch.chdir(home)
+    wrapped = wrap_standard_tools([AstGrepReplaceTool()], _StaticProvider(workspace))[0]
+
+    result = await wrapped.execute(
+        pattern="(integer) @value", replacement="2", language="python",
+        path="sample.py", dry_run=False,
+    )
+
+    assert (workspace / "sample.py").read_text(encoding="utf-8") == "x = 2\n", result
+    assert (home / "sample.py").read_text(encoding="utf-8") == source

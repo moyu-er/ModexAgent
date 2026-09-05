@@ -34,6 +34,7 @@ from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.scope.spec import AgentSpec
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.presets import ContextMode, ToolPreset
+from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_agent.workspace.scope_path import resolve_scope_path
 
 if TYPE_CHECKING:
@@ -44,6 +45,10 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
     from modex_agent.plugins.assembly.context import AssemblyContext
     from modex_agent.plugins.assembly.spec import AssemblySpec
+    from modex_agent.runtime.approval_decision import ApprovalAuditStore
+    from modex_agent.sandbox.delegation import DelegationSnapshot
+    from modex_agent.sandbox.settings import SandboxSettings
+    from modex_agent.scope.spec import PoolSpec
     from modex_agent.tools.manager import InMemoryToolManager
 
 
@@ -91,7 +96,69 @@ def _subagent_workspace_root(deps: AgentMaterializeDeps) -> Path:
     )
 
 
+def _declared_depth(pool_spec: PoolSpec, agent_name: str) -> int:
+    """Delegation depth from the declared tree (root = 0, spawn +1).
+
+    Walks the ``parent`` chain up to the root; the chain length IS the
+    generation. An unknown name or a broken chain stops at 0 — the
+    runtime budget check (task dispatch) reads the snapshot's depth, so
+    a hand-built context without a declared tree simply reports depth 0.
+    """
+    depth = 0
+    seen: set[str] = set()
+    current: str | None = agent_name
+    while current is not None and current not in seen:
+        seen.add(current)
+        parent = next(
+            (agent.parent for agent in pool_spec.agents if agent.name == current),
+            None,
+        )
+        if parent is None:
+            return depth
+        depth += 1
+        current = parent
+    return depth
+
+
+def _pool_sandbox_settings(deps: AgentMaterializeDeps) -> SandboxSettings | None:
+    """The pool root's declared sandbox settings, including dormant policy.
+
+    Reads the same ``interceptor_configs["sandbox_guard"]`` declaration
+    the interceptor factory consumes (one declaration, two assemblies —
+    the ``_declared_sandbox_settings`` pattern from the bot's pipeline
+    wiring). ``None`` only when no section is declared. DEFAULT does not
+    activate a substrate, but an explicit READ_ONLY policy is preserved.
+    """
+    from modex_agent.sandbox.settings import SandboxSettings
+
+    pool_assembly = deps.pool_assembly_ctx
+    if pool_assembly is None:
+        return None
+    raw = (pool_assembly.pool_spec.root_agent.interceptor_configs or {}).get(
+        "sandbox_guard"
+    )
+    if raw is None:
+        return None
+    section = raw.get("sandbox", {}) if isinstance(raw, dict) else {}
+    settings = SandboxSettings.model_validate(section)
+    return settings
+
+
 logger = logging.getLogger(__name__)
+
+
+class _StaticRootProvider(WorkspaceRootProvider):
+    """Frozen workspace-root provider — the delegation snapshot's anchor.
+
+    Both tools and guards use the spawn-time root. Later changes to the
+    pool's live provider must not move an already-delegated file boundary.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+
+    def current(self) -> Path:
+        return self._root
 
 
 @dataclass
@@ -132,6 +199,37 @@ class AgentTemplate:
         invocation_id: str | None,
         deps: AgentMaterializeDeps,
     ) -> AgentInstance:
+        """Validate before building; every strategy shares post-build delegation metadata."""
+        from modex_agent.sandbox.delegation import DelegationSnapshot, delegation_sandbox_settings
+        from modex_agent.sandbox.settings import SandboxBackend
+        from modex_agent.scope.compiler import validate_allowed_dirs
+
+        root = _subagent_workspace_root(deps)
+        pool_settings = _pool_sandbox_settings(deps)
+        allowed = tuple(self.spec.allowed_dirs or ())
+        validate_allowed_dirs(allowed, root, *(pool_settings.writable_roots if pool_settings else ()))
+        snapshot = DelegationSnapshot(
+            workspace_root=root, allowed_dirs=allowed, depth=self._declared_depth(deps),
+            requested_backend=pool_settings.backend if pool_settings else SandboxBackend.DEFAULT,
+        )
+        settings = delegation_sandbox_settings(snapshot.allowed_dirs, pool=pool_settings)
+        if strategy_name_of(self.spec.execution_strategy) == ExecutionStrategyKind.EXTERNAL.value:
+            instance = await self._materialize_external(parent_session, invocation_id, deps)
+        else:
+            instance = await self._materialize_native(parent_session, invocation_id, deps, snapshot, settings)
+        await self._wire_delegation_boundary(
+            instance, snapshot, settings, approval_audit=deps.approval_audit,
+        )
+        return instance
+
+    async def _materialize_native(
+        self,
+        parent_session: SessionInfo | str | None,
+        invocation_id: str | None,
+        deps: AgentMaterializeDeps,
+        snapshot: DelegationSnapshot,
+        settings: SandboxSettings,
+    ) -> AgentInstance:
         """Build a subagent AgentInstance from this template (ADR-0015 D3, Design B).
 
         subagent-only construction; ``parent_session`` gates the FORK
@@ -146,15 +244,9 @@ class AgentTemplate:
         agent regardless (its factory derives the parent from the declared
         tree).
 
-        ``EXTERNAL`` subagents dispatch early to
-        :meth:`_materialize_external`, skipping react-specific assembly
-        (memory, tool manager, skill resolver, hooks) — the external strategy
-        owns that assembly. React/pipeline/single-turn subagents take the
-        existing path below.
+        The public materialize entry selects this native-only assembly or
+        the external strategy, then applies shared delegation metadata.
         """
-        if strategy_name_of(self.spec.execution_strategy) == ExecutionStrategyKind.EXTERNAL.value:
-            return await self._materialize_external(parent_session, invocation_id, deps)
-
         name = self.spec.name
 
         # ── System prompt (from agents/{type}.md) ──
@@ -186,7 +278,8 @@ class AgentTemplate:
         # ── Scope-path resolution (needed by both branches) ──
         pool_data = resolve_scope_path(deps.workspace_manager, deps.scope_path)
         runtime_dir: Path | None = pool_data.runtime_dir if pool_data is not None else None
-        subagent_workspace_root = _subagent_workspace_root(deps)
+        subagent_workspace_root = snapshot.workspace_root
+        root_provider = _StaticRootProvider(subagent_workspace_root)
 
         assembly_spec: AssemblySpec | None = self.compiled_spec
         component_ctx: AssemblyContext | None = None
@@ -208,7 +301,7 @@ class AgentTemplate:
                 workspace_ctx,
                 PoolRuntimeDeps(
                     session_tree_manager=deps.tree,
-                    root_provider=deps.root_provider,
+                    root_provider=root_provider,
                     mcp_registry=deps.mcp_registry,
                     emitter_factory=deps.emitter_factory,
                     pool_assembly_ctx=deps.pool_assembly_ctx,
@@ -225,6 +318,29 @@ class AgentTemplate:
                 "Native subagent materialization requires a compiled_spec "
                 "(the scope-declaration assembly input) and a "
                 "component_registry in AgentMaterializeDeps"
+            )
+
+        # Feed the scoped substrate into the SAME bash factory as main agents.
+        # DEFAULT remains host execution without a sandbox probe or interceptor.
+        from modex_agent.interceptor.chain import InterceptorChain
+        from modex_agent.plugins.assembly.context import agent_context_chain
+        from modex_agent.plugins.defaults.interceptors import (
+            SandboxGuardConfig,
+            SandboxGuardInterceptorFactory,
+        )
+        from modex_agent.sandbox.settings import SandboxBackend
+
+        guard_chain: InterceptorChain | None = None
+        if snapshot.requested_backend is not SandboxBackend.DEFAULT:
+            assert component_ctx.pool_runtime is not None
+            sandbox_guard = await SandboxGuardInterceptorFactory().create(
+                SandboxGuardConfig(sandbox=settings),
+                agent_context_chain(component_ctx, spec=assembly_spec),
+            )
+            guard_chain = InterceptorChain([sandbox_guard])
+            component_ctx = dataclass_replace(
+                component_ctx,
+                pool_runtime=dataclass_replace(component_ctx.pool_runtime, interceptor_chain=guard_chain),
             )
 
         # ── Build session-scoped memory + preset tools (subagent-only, Design B) ──
@@ -357,18 +473,27 @@ class AgentTemplate:
                 llm_provider=llm_provider,
                 tool_manager=tool_manager,
                 skill_resolver=skill_resolver,
-                root_provider=deps.root_provider,
+                root_provider=root_provider,
                 safety=deps.safety,
                 project_dir=deps.project_dir,
                 on_subagent_created=deps.on_subagent_created,
                 extra_hooks=(),
                 execution_strategy=ExecutionStrategyKind(self.spec.execution_strategy),
+                depth=self._declared_depth(deps),
             ),
             ctx=component_ctx,
             parent_session=str(parent_session) if parent_session is not None else None,
             invocation_id=invocation_id,
         )
         instance = result.instance
+        if guard_chain is not None and instance.pipeline is not None:
+            builder = instance.pipeline._turn_runner.turn_context_builder
+            if builder is not None:
+                existing = instance.pipeline.interceptor_chain
+                builder._interceptor_chain = InterceptorChain([
+                    *(i for i in existing.interceptors if i.name != "sandbox_guard"),
+                    *guard_chain.interceptors,
+                ]) if existing is not None else guard_chain
 
         # The bash_input companion is ensured inside assemble_native_agent
         # (right after roster registration) — the single convergence point
@@ -398,6 +523,82 @@ class AgentTemplate:
             )
 
         return instance
+
+    async def _wire_delegation_boundary(
+        self,
+        instance: AgentInstance,
+        snapshot: DelegationSnapshot,
+        settings: SandboxSettings,
+        *,
+        approval_audit: ApprovalAuditStore | None,
+    ) -> None:
+        """Report real capabilities; install checks only where the runner executes them."""
+        from dataclasses import replace as _replace
+
+        from modex_agent.runtime.services import AgentRuntimeServices
+        from modex_agent.sandbox.delegation import (
+            delegation_denial_message,
+        )
+        from modex_agent.sandbox.security_classifier import guard_only_runtime
+        from modex_agent.sandbox.settings import SandboxBackend
+        from modex_agent.sandbox.shell_plan import resolved_substrate
+        from modex_agent.sandbox.types import EnforcementLevel
+
+        builder = instance.pipeline._turn_runner.turn_context_builder if instance.pipeline else None
+        native = strategy_name_of(self.spec.execution_strategy) != ExecutionStrategyKind.EXTERNAL.value
+        checks_run = native and builder is not None
+        resolved = await resolved_substrate(instance.pipeline.interceptor_chain) if checks_run and instance.pipeline else None
+        limits = (
+            "Shell/input guards are best effort, not containment of dynamic code; HOST has no kernel isolation.",
+            "Only catalogued file targets are checked; custom/MCP tools and secondary tool effects are not contained.",
+        ) if checks_run else (
+            "Provider-hosted tools bypass framework guards; no provider-neutral permission capability is available. "
+            "Declared roots/policy are metadata only, not enforced; provider kernel enforcement is unknown.",
+        )
+        snapshot = snapshot.model_copy(update={
+            "policy": settings.policy,
+            "backend": resolved.backend if resolved else (SandboxBackend.HOST if checks_run else None),
+            "enforcement": resolved.enforcement if resolved else (EnforcementLevel.NONE if checks_run else None),
+            "file_guards": checks_run,
+            "limitations": (*limits, *((resolved.degraded_reason,) if resolved and resolved.degraded_reason else ())),
+        })
+        instance.delegation = snapshot
+        if not checks_run:
+            logger.warning("Delegation %s: %s", self.spec.name, limits[0])
+            return
+
+        guard_only = guard_only_runtime(
+            settings=settings,
+            root_provider=_StaticRootProvider(snapshot.workspace_root),
+            deny_message_builder=lambda reason, tool_name, target: delegation_denial_message(
+                tool_name, target, snapshot
+            ),
+        )
+        assert builder is not None
+        base = builder.runtime_services
+        builder.runtime_services = (
+            _replace(
+                base,
+                approval=guard_only,
+                guard_only_approval=guard_only,
+                delegation=snapshot,
+                approval_audit=approval_audit,
+            )
+            if base is not None
+            else AgentRuntimeServices(
+                approval=guard_only,
+                guard_only_approval=guard_only,
+                delegation=snapshot,
+                approval_audit=approval_audit,
+            )
+        )
+
+    def _declared_depth(self, deps: AgentMaterializeDeps) -> int:
+        """This subagent's delegation depth from the declared pool tree."""
+        pool_assembly = deps.pool_assembly_ctx
+        if pool_assembly is None:
+            return 0
+        return _declared_depth(pool_assembly.pool_spec, self.spec.name)
 
     async def _materialize_external(
         self,

@@ -102,13 +102,21 @@ def test_retired_pool_runtime_supply_fields_stay_dead() -> None:
     assert field_names.isdisjoint(_DEAD_POOL_RUNTIME_FIELDS)
     assert set(dir(PoolRuntimeDeps())).isdisjoint(_DEAD_POOL_RUNTIME_FIELDS)
 
-    source_hits = [
-        f"{path.relative_to(_ROOT)}:{line_number}:{line.strip()}"
-        for source_root in (_ROOT / "src", _ROOT / "examples")
-        for path in source_root.rglob("*.py")
-        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
-        if any(f"pool_runtime.{field}" in line for field in _DEAD_POOL_RUNTIME_FIELDS)
-    ]
+    source_hits: list[str] = []
+    for source_root in (_ROOT / "src", _ROOT / "examples"):
+        for root, directories, files in source_root.walk():
+            # Installed dependencies and runtime data are not project source.
+            directories[:] = [
+                name for name in directories
+                if not name.startswith(".") and name not in {"node_modules", "__pycache__"}
+            ]
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                path = root / name
+                for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                    if any(f"pool_runtime.{field}" in line for field in _DEAD_POOL_RUNTIME_FIELDS):
+                        source_hits.append(f"{path.relative_to(_ROOT)}:{line_number}:{line.strip()}")
     assert source_hits == []
 
 

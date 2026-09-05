@@ -15,7 +15,12 @@ from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.tool_dedup import ToolCallDeduplicator
 from modex_agent.agents.react.tool_executor import ToolExecutor
-from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
+from modex_agent.approval.classification import (
+    ClassificationSource,
+    GuardAuditFact,
+    ToolClassification,
+)
+from modex_agent.approval.constants import ApprovalAuditDecision, ApprovalDecision, ApprovalTier
 from modex_agent.approval.runtime import ApprovalClassifier, ApprovalRuntime
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.control.exceptions import AgentCancelledError
@@ -129,10 +134,10 @@ class _CancellingParallelTool(ParallelTool):
 
 
 class _DecisionClassifier(ApprovalClassifier):
-    def classify(self, tool_call: ToolCall, ctx: AgentContext) -> ApprovalTier:
+    def classify(self, tool_call: ToolCall, ctx: AgentContext) -> ToolClassification:
         if tool_call.call_id == "c1":
-            return ApprovalTier.HARDLINE
-        return ApprovalTier.NORMAL
+            return ToolClassification.tier_result(ApprovalTier.HARDLINE)
+        return ToolClassification.tier_result(ApprovalTier.NORMAL)
 
 
 class _InjectedToolExecutor(ToolExecutor):
@@ -1063,6 +1068,85 @@ async def test_same_key_with_different_decisions_is_not_pruned(
         ApprovalDecision.PREEMPTED,
     ]
     assert [payload.result.call_id for payload in ends] == ["c1", "c2"]
-    assert "Denied by user" in str(tool_messages[0].content)
+    assert "Denied by policy" in str(tool_messages[0].content)
     assert "Skipped" in str(tool_messages[1].content)
+    assert log.started == []
+
+
+class _ReasoningDenyClassifier(ApprovalClassifier):
+    """HARDLINE with a classification-time deny reason."""
+
+    def __init__(self, reason: str) -> None:
+        self._reason = reason
+
+    def classify(self, tool_call: ToolCall, ctx: AgentContext) -> ToolClassification:
+        if tool_call.call_id == "c1":
+            return ToolClassification(
+                tier=ApprovalTier.HARDLINE,
+                source=ClassificationSource.GUARD,
+                reason=self._reason,
+                audit=GuardAuditFact(decision=ApprovalAuditDecision.DENIED),
+            )
+        return ToolClassification.tier_result(ApprovalTier.NORMAL)
+
+
+async def test_classification_denial_uses_classifier_deny_reason(
+    make_runtime, make_graph_ctx
+) -> None:
+    """unified-security 05b: a HARDLINE denial decided at classification
+    (no suspension — state.approval stays None) renders the classifier's
+    classification reason as the ToolResult error, NOT the user-addressed
+    "Denied by user" copy (no user was involved)."""
+    log = _RunLog()
+    tool = _ImmediateParallelTool("read", log)
+    reason = (
+        "This operation is outside the subagent boundary: write '/etc/hosts' "
+        "is not allowed.\n\n"
+        "The subagent permission scope is fixed at startup and cannot be "
+        "expanded from within this session; request this operation in the "
+        "main session."
+    )
+    classifier = _ReasoningDenyClassifier(reason)
+    calls = [
+        ToolCall(tool_name="read", arguments={"id": "1"}, call_id="c1"),
+        ToolCall(tool_name="read", arguments={"id": "2"}, call_id="c2"),
+    ]
+    ctx, _events, _hooks, task = await _start_batch(
+        make_runtime,
+        make_graph_ctx,
+        [tool],
+        calls,
+        approval_runtime=ApprovalRuntime(classifier=classifier),
+    )
+
+    await task
+
+    history = await ctx.agent_ctx.history.to_list()
+    tool_messages = [message for message in history if message.role == MessageRole.TOOL]
+    first = str(tool_messages[0].content)
+    assert reason in first
+    assert "Denied by user" not in first
+    assert log.started == []
+
+
+async def test_classification_denial_without_reason_is_not_attributed_to_user(
+    make_runtime, make_graph_ctx
+) -> None:
+    """A policy denial without a reason is still not a human decision."""
+    log = _RunLog()
+    tool = _ImmediateParallelTool("read", log)
+    calls = [ToolCall(tool_name="read", arguments={"id": "1"}, call_id="c1")]
+    ctx, _events, _hooks, task = await _start_batch(
+        make_runtime,
+        make_graph_ctx,
+        [tool],
+        calls,
+        approval_runtime=ApprovalRuntime(classifier=_DecisionClassifier()),
+    )
+
+    await task
+
+    history = await ctx.agent_ctx.history.to_list()
+    tool_messages = [message for message in history if message.role == MessageRole.TOOL]
+    assert "Denied by policy" in str(tool_messages[0].content)
     assert log.started == []

@@ -100,6 +100,7 @@ class NativeAssemblyInputs:
         extra_hooks: tuple[Hook, ...] = (),
         execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
         tool_transform: Callable[[Tool], Tool] | None = None,
+        depth: int = 0,
     ) -> None:
         self.agent_factory = agent_factory
         self.broker = broker
@@ -119,6 +120,7 @@ class NativeAssemblyInputs:
         self.extra_hooks = extra_hooks
         self.execution_strategy = execution_strategy
         self.tool_transform = tool_transform
+        self.depth = depth
 
 
 class NativeAssemblyResult:
@@ -462,6 +464,7 @@ async def assemble_native_agent(
         memory_config=memory_config,
         roles=list(spec.roles),
         role_description=spec.description,
+        depth=inputs.depth,
     )
     instance = await inputs.agent_factory.create_agent(
         descriptor,

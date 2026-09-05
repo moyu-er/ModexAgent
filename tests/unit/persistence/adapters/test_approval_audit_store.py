@@ -9,6 +9,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from modex_agent.approval.constants import (
+    ApprovalAuditDecision,
+    ApprovalAuditSource,
+    DecisionActor,
+)
 from modex_agent.core.scope import RecordScope
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.approval_audit_store import (
@@ -48,10 +53,11 @@ def _entry(
     turn_id: str = "t1",
     tool_name: str = "write_file",
     tool_call_id: str = "call1",
-    decision: str = "approved",
+    decision: ApprovalAuditDecision = ApprovalAuditDecision.APPROVED,
     deny_reason: str | None = None,
     decided_at: str = "2026-01-15T10:30:00+00:00",
-    decided_by: str = "user",
+    decided_by: DecisionActor = DecisionActor.USER,
+    source: ApprovalAuditSource = ApprovalAuditSource.RUNTIME,
 ) -> ApprovalAuditEntry:
     return ApprovalAuditEntry(
         turn_uuid=turn_uuid,
@@ -64,6 +70,7 @@ def _entry(
         deny_reason=deny_reason,
         decided_at=decided_at,
         decided_by=decided_by,
+        source=source,
     )
 
 
@@ -85,10 +92,10 @@ async def test_record_then_query_roundtrip(store: SqliteApprovalAuditStore) -> N
     assert got.turn_id == "t1"
     assert got.tool_name == "write_file"
     assert got.tool_call_id == "call1"
-    assert got.decision == "approved"
+    assert got.decision is ApprovalAuditDecision.APPROVED
     assert got.deny_reason is None
     assert got.decided_at == "2026-01-15T10:30:00+00:00"
-    assert got.decided_by == "user"
+    assert got.decided_by is DecisionActor.USER
 
 
 async def test_query_missing_session_returns_empty(
@@ -185,13 +192,50 @@ async def test_query_with_limit(store: SqliteApprovalAuditStore) -> None:
 
 
 async def test_deny_reason_preserved(store: SqliteApprovalAuditStore) -> None:
-    entry = _entry(decision="denied", deny_reason="too dangerous")
+    entry = _entry(decision=ApprovalAuditDecision.DENIED, deny_reason="too dangerous")
     await store.record(entry)
 
     results = await store.query("s1.main")
     assert len(results) == 1
-    assert results[0].decision == "denied"
+    assert results[0].decision is ApprovalAuditDecision.DENIED
     assert results[0].deny_reason == "too dangerous"
+
+
+# ---------------------------------------------------------------------------
+# query with decided_by filter (unified-security Ticket 06)
+# ---------------------------------------------------------------------------
+
+
+async def test_query_filters_by_decided_by(
+    store: SqliteApprovalAuditStore,
+) -> None:
+    await store.record(
+        _entry(turn_uuid="u1", decision=ApprovalAuditDecision.DENIED, decided_by=DecisionActor.SANDBOX_GUARD)
+    )
+    await store.record(_entry(turn_uuid="u2", decided_by=DecisionActor.USER))
+    await store.record(
+        _entry(
+            turn_uuid="u3",
+            decision=ApprovalAuditDecision.DENIED,
+            deny_reason="boundary",
+            decided_by=DecisionActor.SANDBOX_GUARD,
+        )
+    )
+
+    guard_rows = await store.query("s1.main", decided_by=DecisionActor.SANDBOX_GUARD)
+    assert [r.turn_uuid for r in guard_rows] == ["u1", "u3"]
+    assert all(r.decided_by is DecisionActor.SANDBOX_GUARD for r in guard_rows)
+    assert guard_rows[1].deny_reason == "boundary"
+
+    user_rows = await store.query("s1.main", decided_by=DecisionActor.USER)
+    assert [r.turn_uuid for r in user_rows] == ["u2"]
+
+
+async def test_query_decided_by_no_match_returns_empty(
+    store: SqliteApprovalAuditStore,
+) -> None:
+    await store.record(_entry(decided_by=DecisionActor.USER))
+    assert await store.query("s1.main", decided_by=DecisionActor.SANDBOX_GUARD) == []
 
 
 # ---------------------------------------------------------------------------
