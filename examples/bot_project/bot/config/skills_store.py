@@ -47,7 +47,8 @@ Semantics:
 * ``list_agent_skills`` marks each entry ``source=SkillSource.GLOBAL`` if it resolves to
   either global source, else ``source=SkillSource.LOCAL`` (a manually-placed copy).
 
-All names validated by ``^[a-z][a-z0-9_-]+$`` (path-traversal guard).
+Skill names use the Agent Skills lowercase-hyphen grammar; pool and agent
+segments use ``^[a-z][a-z0-9_-]+$``. Both rules reject traversal.
 """
 
 from __future__ import annotations
@@ -60,6 +61,7 @@ import subprocess
 from pathlib import Path
 
 from bot.config import SkillEntry, SkillOrigin, SkillSource
+from modex_agent.plugins.defaults.capabilities.skills import validate_skill_name
 from modex_agent.utils.frontmatter import parse_frontmatter
 
 logger = logging.getLogger(__name__)
@@ -75,7 +77,14 @@ class SkillValidationError(ValueError):
     """Raised on a bad skill/pool/agent name or traversal attempt."""
 
 
-def _validate_name(name: str, kind: str) -> None:
+def _validate_skill_name(name: str) -> None:
+    try:
+        validate_skill_name(name)
+    except ValueError as exc:
+        raise SkillValidationError(f"Invalid skill name {name!r}: {exc}") from exc
+
+
+def _validate_segment(name: str, kind: str) -> None:
     if not isinstance(name, str) or not _NAME_RE.match(name):
         raise SkillValidationError(f"Invalid {kind} name {name!r}: must match {_NAME_RE.pattern}")
     if name in {".", ".."} or "/" in name or "\\" in name:
@@ -259,7 +268,7 @@ class SkillsStore:
 
     def _local_skill_dir(self, name: str) -> Path:
         """The REPO-side skill dir (CRUD target). Always ``local_skills/<name>``."""
-        _validate_name(name, "skill")
+        _validate_skill_name(name)
         return self.local_dir / name
 
     def _resolve_global_source(self, name: str) -> Path | None:
@@ -271,7 +280,7 @@ class SkillsStore:
         resolves to the repo copy. User-home skills may themselves be links —
         the path is returned as-is (the per-agent link points at it).
         """
-        _validate_name(name, "skill")
+        _validate_skill_name(name)
         repo = self.local_dir / name
         if self._dir_exists_following_links(repo):
             return repo
@@ -347,7 +356,7 @@ class SkillsStore:
         so deletions in the tree propagate. Uploading shadows a same-named
         user-home skill (repo wins).
         """
-        _validate_name(name, "skill")
+        _validate_skill_name(name)
         skill_dir = self._local_skill_dir(name)
         if skill_dir.exists():
             shutil.rmtree(skill_dir)
@@ -378,9 +387,9 @@ class SkillsStore:
     # ─── per-agent links ────────────────────────────────────────────────────
 
     def _agent_skill_dir(self, pool: str, agent: str, name: str) -> Path:
-        _validate_name(pool, "pool")
-        _validate_name(agent, "agent")
-        _validate_name(name, "skill")
+        _validate_segment(pool, "pool")
+        _validate_segment(agent, "agent")
+        _validate_skill_name(name)
         return self.skills_dir / pool / agent / name
 
     def _remove_link(self, dst: Path) -> None:
@@ -440,8 +449,8 @@ class SkillsStore:
         when the resolved source is the repo library, or ``"user"`` when it is
         the user-home directory.
         """
-        _validate_name(pool, "pool")
-        _validate_name(agent, "agent")
+        _validate_segment(pool, "pool")
+        _validate_segment(agent, "agent")
         agent_root = self.skills_dir / pool / agent
         if not agent_root.exists():
             return []
@@ -468,7 +477,7 @@ class SkillsStore:
         the per-pool ``skills/`` subtree is touched — the global libraries
         (``local_skills/`` and ``~/.agents/skills/``) are never modified.
         """
-        _validate_name(pool, "pool")
+        _validate_segment(pool, "pool")
         src = self.skills_dir / pool
         if not src.exists():
             return False

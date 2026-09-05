@@ -102,14 +102,11 @@ class MemorySystemContextManager(ContextManager):
     Prompt assembly order (in :meth:`load`):
       1. Runtime metadata (date, platform)
       2. Base system prompt (agent personality / system.md)
-      2a. Capability sections (fixed anchor: fork context → capability
-          block → core memory) — the ``experience.injection`` section
-          renders here for experience-capability agents (the retired
-          position-8 experience special case died with the capability
-          migration, SPEC §7.3/§8.3)
+      2a. HEAD capability sections (fork context → capability block → core memory)
       3. Memory layers via ``injection_policy.assemble()`` — session, archive,
           core memory (subject to budget & pruning)
-      4. Skills — persistent reference knowledge (NOT a memory layer)
+      4. Business providers, role contracts, and graph guidance
+      5. TAIL capability sections — Skills renders as the final block
 
     Skills and experiences are intentionally kept OUTSIDE the memory
     injection pipeline because they are static reference content — they
@@ -150,14 +147,20 @@ class MemorySystemContextManager(ContextManager):
         self._fork_context_spec = fork_context_spec
         self._roles: list[str] = list(roles) if roles else []
         self._capability_sections: tuple[SystemPromptProvider, ...] = ()
+        self._capability_tail_sections: tuple[SystemPromptProvider, ...] = ()
         self._capability_sections_locked = False
 
-    def set_capability_sections(self, sections: tuple[SystemPromptProvider, ...]) -> None:
-        """Inject the capability section providers (once-only seam, SPEC §7.3).
+    def set_capability_sections(
+        self,
+        sections: tuple[SystemPromptProvider, ...],
+        *,
+        tail_sections: tuple[SystemPromptProvider, ...] = (),
+    ) -> None:
+        """Inject HEAD and TAIL capability providers through a once-only seam.
 
-        The native assembly core calls this exactly once after resolving the
-        context manager — the one and only injection point for capability
-        prompt sections (setter-only by design: the construction sites stay
+        Native assembly calls this exactly once after resolving the context
+        manager. The two fixed anchors share one lock so prompt geometry cannot
+        change after construction (setter-only by design: construction sites stay
         untouched). A second call raises ``RuntimeError``: the sections back
         the KV-cache prefix-stability contract, so replacing them
         mid-lifetime is a bug, never a feature.
@@ -168,6 +171,7 @@ class MemorySystemContextManager(ContextManager):
                 "is a once-only seam (KV-cache prefix stability)"
             )
         self._capability_sections = tuple(sections)
+        self._capability_tail_sections = tuple(tail_sections)
         self._capability_sections_locked = True
 
     def wrap_governance(
@@ -324,25 +328,16 @@ class MemorySystemContextManager(ContextManager):
             except Exception:
                 pass
 
-        # 8. Experience — RETIRED with the capability migration (SPEC
-        # §8.3): the ``experience.injection`` section now renders through
-        # the capability-section anchor above for experience-capability
-        # agents (content byte-equal; the anchor position is the
-        # documented designed delta, SPEC §7.3 N4).
-
-        # 9. Skills — RETIRED with the capability migration (plan §11.5):
-        # the ``skills.injection`` section now renders through the
-        # capability-section anchor above for skills-capability agents.
-        # Command resolution stays available independently of prompt
-        # assembly (a custom MEMORY_SYSTEM owns its whole prompt and simply
-        # gets no capability sections).
-
         # 10. Agent role contracts (after business providers; near end).
         if self._roles:
             providers.append(AgentRoleContractProvider(self._roles))
 
         # 11. Graph workflow guidance (only fires when graph_context is set).
         providers.append(GraphWorkflowProvider())
+
+        # 12. Tail capability sections — fixed final anchor for dynamic
+        # reference catalogs such as Skills.
+        providers.extend(self._capability_tail_sections)
 
         pipeline = SystemPromptPipeline(providers)
 

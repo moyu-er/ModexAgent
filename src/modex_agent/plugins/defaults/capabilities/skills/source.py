@@ -11,6 +11,7 @@ from pathlib import Path
 from modex_agent.utils.frontmatter import parse_frontmatter
 
 from .models import Skill, SkillMetadata, SkillResource, SkillSummary
+from .validation import validate_skill_description, validate_skill_name
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +148,11 @@ class FileSkillSource(SkillSource):
                 continue
             for path in self._iter_skill_paths(directory):
                 try:
-                    text = path.read_text(encoding="utf-8")
+                    # newline='' keeps \r sequences intact for
+                    # parse_frontmatter's normalization — universal-
+                    # newline reading would double translated \r\r\n.
+                    with path.open(encoding="utf-8", newline="") as handle:
+                        text = handle.read()
                     frontmatter, _ = parse_frontmatter(text)
                     # Default name: directory name in directory layout, filename stem in flat layout
                     default_name = (
@@ -155,8 +160,11 @@ class FileSkillSource(SkillSource):
                         if self._layout is SkillLayout.DIRECTORY
                         else path.stem
                     )
-                    raw_name = frontmatter.get("name", default_name)
-                    meta = SkillMetadata.from_dict(frontmatter)
+                    name = validate_skill_name(frontmatter.get("name", default_name))
+                    description = validate_skill_description(
+                        frontmatter.get("description")
+                    )
+                    meta = SkillMetadata.from_frontmatter(frontmatter)
 
                     # Auto-scan bundled resources
                     skill_dir = path.parent
@@ -176,8 +184,8 @@ class FileSkillSource(SkillSource):
                     resources = tuple(resources_by_name.values())
 
                     summary = SkillSummary(
-                        name=str(raw_name),
-                        description=frontmatter.get("description", ""),
+                        name=name,
+                        description=description,
                         metadata=meta,
                         source=self.name,
                         location=str(path),
@@ -186,8 +194,8 @@ class FileSkillSource(SkillSource):
                     summaries.append(summary)
                     if self._cache:
                         self._contents[summary.name] = text
-                except Exception as exc:  # pragma: no cover
-                    logger.warning("Skipping malformed skill file %s: %s", path, exc)
+                except Exception as exc:
+                    logger.warning("Skipping invalid skill file %s: %s", path, exc)
         if self._cache:
             self._listing = list(summaries)
             self._summary_map = {s.name: s for s in summaries}
@@ -227,27 +235,15 @@ class FileSkillSource(SkillSource):
                 summary = summary_map.get(name)
             if summary is None or summary.location is None:
                 return None
-            text = Path(summary.location).read_text(encoding="utf-8")
+            with Path(summary.location).open(encoding="utf-8", newline="") as handle:
+                text = handle.read()
             if self._cache:
                 self._contents[name] = text
 
-        frontmatter, content = parse_frontmatter(text)
-        if summary is not None:
-            return summary.to_skill(content)
-
-        # Fallback if summary somehow missing (shouldn't happen)
-        meta = SkillMetadata.from_dict(frontmatter)
-        return Skill(
-            name=name,
-            description=frontmatter.get("description", ""),
-            content=content,
-            metadata=meta,
-            source=self.name,
-            location=None,
-            resources=tuple(
-                SkillResource.model_validate(r) for r in frontmatter.get("resources", [])
-            ),
-        )
+        if summary is None:
+            return None
+        _, content = parse_frontmatter(text)
+        return summary.to_skill(content)
 
 
 class InlineSkillSource(SkillSource):

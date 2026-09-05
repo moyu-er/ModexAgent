@@ -40,6 +40,7 @@ from modex_agent.plugins.capability import (
     FinalRosterView,
     PoolSupplyView,
     PromptSectionSpec,
+    SectionPlacement,
     TreePositionView,
 )
 from modex_agent.plugins.loader import PluginRegistrationContext
@@ -257,6 +258,20 @@ class TestFrozenModelDiscipline:
             section.order = 99
         with pytest.raises(ValidationError):
             _VIEW.pool_name = "other"
+
+    def test_prompt_section_placement_defaults_to_head(self) -> None:
+        section = PromptSectionSpec(section_id="cap.section", order=10)
+
+        assert section.placement is SectionPlacement.HEAD
+
+    def test_prompt_section_accepts_tail_placement(self) -> None:
+        section = PromptSectionSpec(
+            section_id="cap.section",
+            order=10,
+            placement=SectionPlacement.TAIL,
+        )
+
+        assert section.placement is SectionPlacement.TAIL
 
     def test_extra_fields_rejected_at_construction(self) -> None:
         with pytest.raises(ValidationError):

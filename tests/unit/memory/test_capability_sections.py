@@ -70,7 +70,10 @@ from modex_agent.plugins.capability import (
     AgentDeclarationView,
     Capability,
     CapabilityBinding,
+    CapabilityContribution,
     CapabilityWiring,
+    PromptSectionSpec,
+    SectionPlacement,
 )
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
@@ -153,14 +156,31 @@ class _SectionCapability(Capability):
         *,
         name: str = "sectioned",
         applies_to: bool = False,
+        placement: SectionPlacement = SectionPlacement.HEAD,
+        order: int = 10,
     ) -> None:
         self.name = name
         self._applies_to = applies_to
         self.providers = providers
+        self.placement = placement
+        self.order = order
         self.assemble_calls = 0
 
     def applies(self, view: AgentDeclarationView) -> bool:
         return self._applies_to
+
+    def contribute(self, tree: object, config: object) -> CapabilityContribution:
+        del tree, config
+        return CapabilityContribution(
+            sections=tuple(
+                PromptSectionSpec(
+                    section_id=f"{self.name}.section-{index}",
+                    order=self.order + index,
+                    placement=self.placement,
+                )
+                for index in range(len(self.providers))
+            )
+        )
 
     async def assemble(self, binding: CapabilityBinding, ctx: object) -> CapabilityWiring:
         self.assemble_calls += 1
@@ -173,10 +193,17 @@ class _RecordingContextManager(MemorySystemContextManager):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.recorded_sections: tuple[SystemPromptProvider, ...] | None = None
+        self.recorded_tail_sections: tuple[SystemPromptProvider, ...] | None = None
 
-    def set_capability_sections(self, sections: tuple[SystemPromptProvider, ...]) -> None:
+    def set_capability_sections(
+        self,
+        sections: tuple[SystemPromptProvider, ...],
+        *,
+        tail_sections: tuple[SystemPromptProvider, ...] = (),
+    ) -> None:
         self.recorded_sections = tuple(sections)
-        super().set_capability_sections(sections)
+        self.recorded_tail_sections = tuple(tail_sections)
+        super().set_capability_sections(sections, tail_sections=tail_sections)
 
 
 class _MemorySystemFactory(ComponentFactory):
@@ -357,6 +384,23 @@ class TestAnchorPosition:
 # ---- (b) Byte-identity baseline ------------------------------------------------
 
 
+class TestTailAnchorPosition:
+    async def test_tail_section_renders_after_graph_guidance(self) -> None:
+        mgr = _ctx_mgr()
+        mgr.set_capability_sections(
+            (_SectionProvider("## Head Capability"),),
+            tail_sections=(_SectionProvider("## Tail Capability"),),
+        )
+
+        prompt = await _assembled_prompt(
+            mgr,
+            runtime_info={"graph_context": {"node_id": "node-a"}},
+        )
+
+        assert prompt.index("## Head Capability") < prompt.index("## Tail Capability")
+        assert prompt.rstrip().endswith("## Tail Capability")
+
+
 class TestByteIdentityBaseline:
     async def test_no_capabilities_prompt_is_byte_identical_to_prechange(self) -> None:
         golden = _GOLDEN_PATH.read_text(encoding="utf-8")
@@ -492,8 +536,16 @@ class TestNativeDispatch:
         )
         ctx, inputs = _native_harness(registry, ctx_mgr)
 
+        expected_llm_provider = registry.resolve(
+            ComponentSlot.LLM_PROVIDER, "default"
+        ).probe()
+
         result = await assemble_native_agent(spec, registry, inputs, ctx=ctx)
 
+        assert (
+            inputs.agent_factory.create_agent.await_args.kwargs["llm_provider"]
+            is expected_llm_provider
+        )
         assert capability.assemble_calls == 1
         assert ctx_mgr.recorded_sections == (section_provider,)
         assert result.capability_wirings is not None
@@ -503,6 +555,71 @@ class TestNativeDispatch:
         # end-to-end: the dispatched section renders through load()
         prompt = await _assembled_prompt(ctx_mgr)
         assert "## Native Section Marker" in prompt
+
+    async def test_tail_capability_dispatches_to_tail_anchor(self) -> None:
+        provider = _SectionProvider("## Tail Section")
+        capability = _SectionCapability(
+            (provider,),
+            applies_to=True,
+            placement=SectionPlacement.TAIL,
+        )
+        registry = _capability_registry(capability)
+        _register_native_slots(registry)
+        compilation = compile_scope(
+            _pool_spec(AgentSpec(name="root")), workspace_ctx=_workspace(), registry=registry
+        )
+        ctx_mgr = _RecordingContextManager(
+            memory_system=_mock_memory_system(), base_system_prompt="native base"
+        )
+        ctx, inputs = _native_harness(registry, ctx_mgr)
+
+        await assemble_native_agent(compilation.agents[0].spec, registry, inputs, ctx=ctx)
+
+        assert ctx_mgr.recorded_sections == ()
+        assert ctx_mgr.recorded_tail_sections == (provider,)
+        assert (await _assembled_prompt(ctx_mgr)).rstrip().endswith("## Tail Section")
+
+    async def test_sections_are_sorted_by_order_within_each_anchor(self) -> None:
+        late_provider = _SectionProvider("## Late Head")
+        early_provider = _SectionProvider("## Early Head")
+        late = _SectionCapability(
+            (late_provider,), name="alpha-late", applies_to=True, order=90
+        )
+        early = _SectionCapability(
+            (early_provider,), name="zulu-early", applies_to=True, order=10
+        )
+        registry = _capability_registry(late, early)
+        _register_native_slots(registry)
+        compilation = compile_scope(
+            _pool_spec(AgentSpec(name="root")), workspace_ctx=_workspace(), registry=registry
+        )
+        ctx_mgr = _RecordingContextManager(
+            memory_system=_mock_memory_system(), base_system_prompt="native base"
+        )
+        ctx, inputs = _native_harness(registry, ctx_mgr)
+
+        await assemble_native_agent(compilation.agents[0].spec, registry, inputs, ctx=ctx)
+
+        assert ctx_mgr.recorded_sections == (early_provider, late_provider)
+
+    async def test_provider_count_must_match_active_section_count(self) -> None:
+        provider = _SectionProvider("## Unexpected")
+        capability = _SectionCapability((), applies_to=True)
+        registry = _capability_registry(capability)
+        _register_native_slots(registry)
+        compilation = compile_scope(
+            _pool_spec(AgentSpec(name="root")), workspace_ctx=_workspace(), registry=registry
+        )
+        capability.providers = (provider,)
+        ctx_mgr = _RecordingContextManager(
+            memory_system=_mock_memory_system(), base_system_prompt="native base"
+        )
+        ctx, inputs = _native_harness(registry, ctx_mgr)
+
+        with pytest.raises(ValueError, match="prompt providers"):
+            await assemble_native_agent(
+                compilation.agents[0].spec, registry, inputs, ctx=ctx
+            )
 
     async def test_two_capabilities_merge_in_spec_iteration_order(self) -> None:
         alpha_provider = _SectionProvider("## Alpha Section")

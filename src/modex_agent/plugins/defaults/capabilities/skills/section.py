@@ -4,7 +4,7 @@ SkillsCapability
   -> SkillsSupply catalog_for(agent)
   -> SkillSectionProvider
   -> CapabilityWiring.prompt_providers
-  -> capability-section anchor
+  -> TAIL capability-section anchor
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ import hashlib
 from modex_agent.core.prompt import SystemPromptProvider
 
 from .catalog import SkillCatalog
-from .models import ResolutionContext
 
 
 class SkillSectionProvider(SystemPromptProvider):
@@ -34,6 +33,4 @@ class SkillSectionProvider(SystemPromptProvider):
         return await self._render_prompt()
 
     async def _render_prompt(self) -> str:
-        return await self._catalog.render_prompt(
-            ResolutionContext.from_runtime(tool_manager=None)
-        )
+        return await self._catalog.render_prompt()

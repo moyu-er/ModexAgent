@@ -9,7 +9,7 @@ from modex_agent.plugins.defaults.capabilities.skills.builder import (
     DefaultSkillBuilder,
     build_skill_command_xml,
 )
-from modex_agent.plugins.defaults.capabilities.skills.models import Skill
+from modex_agent.plugins.defaults.capabilities.skills.models import Skill, SkillMetadata
 
 
 class TestDefaultSkillBuilder:
@@ -36,6 +36,10 @@ class TestDefaultSkillBuilder:
         assert 'name="s1"' in out
         assert "<description>d1</description>" in out
         assert "BODY_SHOULD_NOT_APPEAR" not in out
+        assert (
+            "When a skill file references a relative path, resolve it against "
+            "the skill's directory."
+        ) in out
 
     @pytest.mark.asyncio
     async def test_multiple_skills(self):
@@ -47,6 +51,43 @@ class TestDefaultSkillBuilder:
         assert out.count("<skill ") == 2
         assert 'name="a"' in out
         assert 'name="b"' in out
+
+    @pytest.mark.asyncio
+    async def test_hidden_skill_is_absent_from_model_visible_metadata(self) -> None:
+        skills = [
+            Skill(
+                name="visible",
+                description="Visible description",
+                location="/skills/visible/SKILL.md",
+            ),
+            Skill(
+                name="hidden",
+                description="Hidden description",
+                location="/skills/hidden/SKILL.md",
+                metadata=SkillMetadata(disable_model_invocation=True),
+            ),
+        ]
+
+        output = await DefaultSkillBuilder().build(skills)
+
+        assert 'name="visible"' in output
+        assert "Visible description" in output
+        assert 'name="hidden"' not in output
+        assert "Hidden description" not in output
+        assert "/skills/hidden" not in output
+
+    @pytest.mark.asyncio
+    async def test_all_hidden_skills_remove_the_entire_section(self) -> None:
+        skills = [
+            Skill(
+                name="hidden",
+                description="Hidden description",
+                location="/skills/hidden/SKILL.md",
+                metadata=SkillMetadata(disable_model_invocation=True),
+            )
+        ]
+
+        assert await DefaultSkillBuilder().build(skills) == ""
 
     @pytest.mark.asyncio
     async def test_no_description_element_when_empty(self):

@@ -1,5 +1,6 @@
-"""Unit tests for core/skills/models.py."""
+"""Unit tests for skill value models."""
 
+import os
 
 from modex_agent.plugins.defaults.capabilities.skills.models import (
     ResolutionContext,
@@ -9,112 +10,75 @@ from modex_agent.plugins.defaults.capabilities.skills.models import (
 )
 
 
-class TestSkillMetadataFromDict:
-    def test_flat_yaml_frontmatter(self):
-        data = {
-            "requires_tools": ["weather"],
-            "requires_bins": ["git"],
-            "requires_env": ["API_KEY"],
-            "always": True,
-            "tags": ["utils"],
-            "author": "alice",
-            "version": "1.0",
-        }
-        meta = SkillMetadata.from_dict(data)
-        assert list(meta.requires_tools) == ["weather"]
-        assert list(meta.requires_bins) == ["git"]
-        assert list(meta.requires_env) == ["API_KEY"]
-        assert meta.always is True
-        assert list(meta.tags) == ["utils"]
-        assert meta.author == "alice"
-        assert meta.version == "1.0"
+class TestSkillMetadataFromFrontmatter:
+    def test_native_true_enables_model_invocation_disable(self) -> None:
+        metadata = SkillMetadata.from_frontmatter(
+            {"disable-model-invocation": True}
+        )
 
-    def test_nested_requires_expansion(self):
-        data = {
-            "requires": {
-                "tools": ["calc"],
-                "bins": ["node"],
-                "env": ["NODE_ENV"],
-            },
-        }
-        meta = SkillMetadata.from_dict(data)
-        assert list(meta.requires_tools) == ["calc"]
-        assert list(meta.requires_bins) == ["node"]
-        assert list(meta.requires_env) == ["NODE_ENV"]
+        assert metadata.disable_model_invocation is True
+        assert metadata.extra == {}
 
-    def test_nested_requires_does_not_override_explicit(self):
-        data = {
-            "requires_tools": ["explicit_tool"],
-            "requires": {
-                "tools": ["nested_tool"],
-            },
-        }
-        meta = SkillMetadata.from_dict(data)
-        assert list(meta.requires_tools) == ["explicit_tool"]
+    def test_non_boolean_values_do_not_enable_model_invocation_disable(self) -> None:
+        for value in ("true", 1, "yes", None):
+            metadata = SkillMetadata.from_frontmatter(
+                {"disable-model-invocation": value}
+            )
+            assert metadata.disable_model_invocation is False
 
-    def test_nanobot_json_in_yaml_string(self):
-        data = {
-            "metadata": '{"nanobot": {"requires_tools": ["t1"], "custom_key": "v1"}}',
-        }
-        meta = SkillMetadata.from_dict(data)
-        assert list(meta.requires_tools) == ["t1"]
-        assert meta.extra.get("nanobot.custom_key") == "v1"
+    def test_document_fields_are_not_duplicated_in_extra(self) -> None:
+        metadata = SkillMetadata.from_frontmatter(
+            {
+                "name": "demo",
+                "description": "A demo skill",
+                "resources": [{"name": "guide", "type": "reference"}],
+                "disable-model-invocation": False,
+                "homepage": "https://example.test",
+            }
+        )
 
-    def test_openclaw_json_in_yaml_string(self):
-        data = {
-            "metadata": '{"openclaw": {"requires_bins": ["gh"], "flag": true}}',
-        }
-        meta = SkillMetadata.from_dict(data)
-        assert list(meta.requires_bins) == ["gh"]
-        assert meta.extra.get("openclaw.flag") is True
+        assert metadata.extra == {"homepage": "https://example.test"}
 
-    def test_invalid_json_string_treated_as_empty(self):
-        data = {"metadata": "not-json{"}
-        meta = SkillMetadata.from_dict(data)
-        assert meta.extra == {}
+    def test_unknown_nested_metadata_remains_opaque(self) -> None:
+        payload = {"vendor": {"requires": {"bins": ["curl"]}}}
 
-    def test_partial_dict(self):
-        data = {"always": True}
-        meta = SkillMetadata.from_dict(data)
-        assert meta.always is True
-        assert meta.requires_tools == ()
-        assert meta.extra == {}
+        metadata = SkillMetadata.from_frontmatter({"metadata": payload})
 
-    def test_unknown_keys_collected_to_extra(self):
-        data = {"foo": 1, "bar": "baz"}
-        meta = SkillMetadata.from_dict(data)
-        assert meta.extra == {"foo": 1, "bar": "baz"}
+        assert metadata.extra == {"metadata": payload}
 
 
 class TestSkillSummary:
-    def test_to_skill_hydrates_full_object(self):
+    def test_to_skill_hydrates_full_object(self) -> None:
         summary = SkillSummary(
             name="demo",
             description="A demo skill",
-            metadata=SkillMetadata(always=True),
+            metadata=SkillMetadata(disable_model_invocation=True),
             source="file:/tmp",
             location="/tmp/demo.md",
             resources=[],
         )
+
         skill = summary.to_skill("skill content")
+
         assert isinstance(skill, Skill)
         assert skill.name == "demo"
         assert skill.description == "A demo skill"
         assert skill.content == "skill content"
-        assert skill.metadata.always is True
+        assert skill.metadata.disable_model_invocation is True
         assert skill.source == "file:/tmp"
         assert skill.location == "/tmp/demo.md"
 
 
 class TestResolutionContext:
-    def test_from_runtime_captures_env(self):
-        import os
-
+    def test_from_runtime_captures_env(self) -> None:
         ctx = ResolutionContext.from_runtime()
+
         assert ctx.tool_manager is None
         assert ctx.env_vars == dict(os.environ)
 
-    def test_from_runtime_with_tool_manager(self):
-        tm = object()
-        ctx = ResolutionContext.from_runtime(tool_manager=tm)
-        assert ctx.tool_manager is tm
+    def test_from_runtime_with_tool_manager(self) -> None:
+        tool_manager = object()
+
+        ctx = ResolutionContext.from_runtime(tool_manager=tool_manager)
+
+        assert ctx.tool_manager is tool_manager

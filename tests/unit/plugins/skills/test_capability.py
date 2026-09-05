@@ -8,6 +8,7 @@ from modex_agent.plugins.capability import (
     CapabilitySupply,
     PoolSupplyAgentEntry,
     PoolSupplyView,
+    SectionPlacement,
 )
 from modex_agent.plugins.defaults.capabilities.skills.capability import (
     SkillsCapability,
@@ -20,8 +21,17 @@ def _write_skill(root: Path, name: str, body: str) -> None:
     directory = root / name
     directory.mkdir(parents=True)
     (directory / "SKILL.md").write_text(
-        f"---\nname: {name}\n---\n{body}", encoding="utf-8"
+        f"---\nname: {name}\ndescription: {name} skill\n---\n{body}", encoding="utf-8"
     )
+
+
+def test_skills_section_uses_tail_anchor() -> None:
+    contribution = SkillsCapability().contribute(
+        None,  # type: ignore[arg-type]
+        SkillsCapability.config_model(),
+    )
+
+    assert contribution.sections[0].placement is SectionPlacement.TAIL
 
 
 async def test_supply_builds_one_isolated_catalog_per_effective_agent(
@@ -49,6 +59,75 @@ async def test_supply_builds_one_isolated_catalog_per_effective_agent(
     assert await supply.catalog_for("alpha").get_skill("alpha-only") is not None
     assert await supply.catalog_for("alpha").get_skill("beta-only") is None
     assert await supply.catalog_for("beta").get_skill("beta-only") is not None
+
+
+async def test_supply_merges_per_agent_custom_roots(tmp_path: Path) -> None:
+    shared_root = tmp_path / "shared-skills"
+    _write_skill(shared_root, "shared", "shared body")
+    supply = SkillsCapability().supply(
+        PoolSupplyView(
+            pool_name="pool-a",
+            project_dir=tmp_path,
+            entries=(
+                PoolSupplyAgentEntry(
+                    agent_name="alpha",
+                    config={"roots": ["shared-skills"]},
+                ),
+                PoolSupplyAgentEntry(agent_name="beta", config={}),
+            ),
+        )
+    )
+
+    assert await supply.catalog_for("alpha").get_skill("shared") is not None
+    assert await supply.catalog_for("beta").get_skill("shared") is None
+
+
+async def test_conventional_assignment_overrides_custom_root(tmp_path: Path) -> None:
+    shared_root = tmp_path / "shared-skills"
+    assigned_root = tmp_path / "skills" / "pool-a" / "alpha"
+    _write_skill(shared_root, "shared", "shared body")
+    _write_skill(assigned_root, "shared", "assigned body")
+    supply = SkillsCapability().supply(
+        PoolSupplyView(
+            pool_name="pool-a",
+            project_dir=tmp_path,
+            entries=(
+                PoolSupplyAgentEntry(
+                    agent_name="alpha",
+                    config={"roots": ["shared-skills"]},
+                ),
+            ),
+        )
+    )
+
+    skill = await supply.catalog_for("alpha").get_skill("shared")
+
+    assert skill is not None
+    assert skill.content == "assigned body"
+
+
+async def test_missing_custom_root_is_watched_for_later_creation(tmp_path: Path) -> None:
+    custom_root = tmp_path / "later-skills"
+    supply = SkillsCapability().supply(
+        PoolSupplyView(
+            pool_name="pool-a",
+            project_dir=tmp_path,
+            entries=(
+                PoolSupplyAgentEntry(
+                    agent_name="alpha",
+                    config={"roots": ["later-skills"]},
+                ),
+            ),
+        )
+    )
+    catalog = supply.catalog_for("alpha")
+    assert await catalog.list_skills() == ()
+
+    _write_skill(custom_root, "late", "late body")
+
+    skill = await catalog.get_skill("late")
+    assert skill is not None
+    assert skill.content == "late body"
 
 
 async def test_missing_directory_keeps_empty_catalog_wired(tmp_path: Path) -> None:

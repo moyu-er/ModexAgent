@@ -33,7 +33,7 @@ def test_skills_facade_is_import_light_and_avoids_multi_agent() -> None:
     subprocess.run([sys.executable, "-c", probe], check=True, capture_output=True, text=True)
 
 
-def test_skills_facade_exports_only_registration_and_supply_access() -> None:
+def test_skills_facade_exports_registration_supply_and_validation() -> None:
     probe = (
         "import modex_agent.plugins.defaults.capabilities.skills as skills\n"
         "expected = [\n"
@@ -41,6 +41,8 @@ def test_skills_facade_exports_only_registration_and_supply_access() -> None:
         "    'SkillsSupply',\n"
         "    'register_skills_feature',\n"
         "    'require_skills_supply',\n"
+        "    'validate_skill_description',\n"
+        "    'validate_skill_name',\n"
         "]\n"
         "assert skills.__all__ == expected, skills.__all__\n"
         "try:\n"

@@ -76,9 +76,10 @@ class TestUploadSkill:
         with pytest.raises(SkillValidationError):
             store.upload_skill("alpha", {bad: "x"})
 
-    def test_bad_name_rejected(self, store: SkillsStore) -> None:
+    @pytest.mark.parametrize("bad", ["Bad-Name", "has_underscore", "two--hyphens"])
+    def test_bad_name_rejected(self, store: SkillsStore, bad: str) -> None:
         with pytest.raises(SkillValidationError):
-            store.upload_skill("Bad-Name", {"f": "x"})
+            store.upload_skill(bad, {"f": "x"})
 
 
 # ─── delete_skill ────────────────────────────────────────────────────────────

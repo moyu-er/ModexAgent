@@ -46,7 +46,7 @@ class TestDirectorySkillCache:
         d = parent / name
         d.mkdir(parents=True, exist_ok=True)
         (d / "SKILL.md").write_text(
-            f"---\nname: {name}\n---\n{content}", encoding="utf-8",
+            f"---\nname: {name}\ndescription: {name} skill\n---\n{content}", encoding="utf-8",
         )
         return d
 
@@ -101,7 +101,7 @@ class TestDirectorySkillCache:
 
         first = await cache.get_skills(source, builder, None, None)
         (skill_dir / "SKILL.md").write_text(
-            "---\nname: alpha\n---\nv2 changed", encoding="utf-8"
+            "---\nname: alpha\ndescription: alpha skill\n---\nv2 changed", encoding="utf-8"
         )
         second = await cache.get_skills(source, builder, None, None)
 
@@ -137,9 +137,9 @@ class TestDirectorySkillCache:
         dir_a = tmp_dir / "a"
         dir_b = tmp_dir / "b"
         self._add_skill(dir_a, "shared", "from_a")
-        self._add_skill(dir_a, "only_a")
+        self._add_skill(dir_a, "only-a")
         self._add_skill(dir_b, "shared", "from_b")
-        self._add_skill(dir_b, "only_b")
+        self._add_skill(dir_b, "only-b")
 
         source = self._make_source([dir_a, dir_b])
         cache = DirectorySkillCache(
@@ -149,7 +149,7 @@ class TestDirectorySkillCache:
 
         skills = await cache.get_skills(source, builder, None, None)
         names = [s.name for s in skills]
-        assert names == ["only_a", "shared", "only_b"]
+        assert names == ["only-a", "shared", "only-b"]
         shared = next(s for s in skills if s.name == "shared")
         assert shared.content == "from_b"
 

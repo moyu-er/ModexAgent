@@ -34,7 +34,9 @@ def build_skill_catalog(
     simply yields no skills but keeps the catalog (and therefore prompt
     injection and command resolution) wired.
     """
-    directories = [Path(d).expanduser().resolve() for d in skill_roots]
+    directories = list(
+        dict.fromkeys(Path(root).expanduser().resolve() for root in skill_roots)
+    )
     source = FileSkillSource(
         directories=directories,
         cache=True,

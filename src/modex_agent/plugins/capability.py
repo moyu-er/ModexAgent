@@ -73,6 +73,7 @@ __all__ = [
     "PoolSupplyAgentEntry",
     "PoolSupplyView",
     "PromptSectionSpec",
+    "SectionPlacement",
     "ToolReplacementSpec",
     "TreePositionView",
 ]
@@ -356,20 +357,26 @@ class DerivedToolSpec(BaseModel):
     targets: tuple[str, ...] = ()
 
 
+class SectionPlacement(StrEnum):
+    """Fixed system-prompt anchor for a capability section."""
+
+    HEAD = "head"
+    TAIL = "tail"
+
+
 class PromptSectionSpec(BaseModel):
     """One contributed prompt section (SPEC §4).
 
     ``section_id`` is namespaced ``"<capability>.<section>"`` by
-    convention (e.g. ``"todo.discipline"``) — the capability-name prefix
-    keeps section ids collision-free across bundles. ``order`` positions
-    the section inside the capability anchor block (between the fork
-    section and core memory, ascending).
+    convention (e.g. ``"todo.discipline"``). ``placement`` selects one of
+    two fixed anchors; ``order`` sorts sections within that anchor.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     section_id: str
     order: int
+    placement: SectionPlacement = SectionPlacement.HEAD
     # Open extension payload (rule 14): per-section config is genuinely
     # open — keys are capability-private and feed assemble().
     config: dict[str, Any] = Field(default_factory=dict)
@@ -590,8 +597,8 @@ class PoolSupplyView(BaseModel):
 class CapabilityWiring(BaseModel):
     """A-phase output: per-agent wiring (SPEC §4).
 
-    ``prompt_providers`` feed the capability section anchor in the
-    memory context manager (ascending section ``order``);
+    ``prompt_providers`` map positionally to ``active_sections`` and feed
+    their fixed memory-context anchors (ascending section ``order``);
     ``artifacts`` carry per-agent runtime objects (e.g. communication
     target stores) to the factories that consume them.
     """

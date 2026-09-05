@@ -42,7 +42,8 @@ def _render_skill_xml(skills: Sequence[Skill]) -> str:
         "and a short description. **The XML only carries metadata, not the full "
         "instructions.** To use a skill, first read its `SKILL.md` file (e.g., via "
         "a file-reading tool pointed at the skill's directory), then follow the "
-        "instructions exactly.",
+        "instructions exactly. When a skill file references a relative path, "
+        "resolve it against the skill's directory.",
         "",
         "<available_skills>",
     ]
@@ -100,6 +101,11 @@ class DefaultSkillBuilder(SkillPromptBuilder):
     async def build(
         self, skills: Sequence[Skill], context: ResolutionContext | None = None
     ) -> str:
-        if not skills:
+        visible_skills = tuple(
+            skill
+            for skill in skills
+            if not skill.metadata.disable_model_invocation
+        )
+        if not visible_skills:
             return ""
-        return _render_skill_xml(skills)
+        return _render_skill_xml(visible_skills)

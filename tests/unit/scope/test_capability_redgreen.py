@@ -494,9 +494,14 @@ class _RecordingContextManager(MemorySystemContextManager):
         super().__init__(**kwargs)
         self.recorded_sections: tuple[SystemPromptProvider, ...] | None = None
 
-    def set_capability_sections(self, sections: tuple[SystemPromptProvider, ...]) -> None:
+    def set_capability_sections(
+        self,
+        sections: tuple[SystemPromptProvider, ...],
+        *,
+        tail_sections: tuple[SystemPromptProvider, ...] = (),
+    ) -> None:
         self.recorded_sections = tuple(sections)
-        super().set_capability_sections(sections)
+        super().set_capability_sections(sections, tail_sections=tail_sections)
 
 
 def _mock_memory_system() -> MagicMock:

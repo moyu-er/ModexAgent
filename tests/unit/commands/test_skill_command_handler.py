@@ -28,7 +28,7 @@ def _setup_skill_dir(tmp: Path) -> Path:
     skill_dir = skills_root / "test-skill"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
-        "---\nname: test-skill\ndescription: A test skill\n---\n\n# Test Skill\nHello.",
+        "---\nname: test-skill\ndescription: A test skill\ndisable-model-invocation: true\n---\n\n# Test Skill\nHello.",
         encoding="utf-8",
     )
     return skills_root
@@ -74,8 +74,12 @@ async def test_handle_returns_skill_content_when_found() -> None:
 
         result = await handler.handle(invocation, context)
         assert result.action == CommandAction.TRANSFORM_TO_USER_INPUT
-        assert "test-skill" in (result.user_content or "")
-        assert "do something" in (result.user_content or "")
+        content = result.user_content or ""
+        assert 'name="test-skill"' in content
+        assert "<skill>\n\n# Test Skill\nHello.\n</skill>" in content
+        assert "do something" in content
+        assert "description:" not in content
+        assert "disable-model-invocation:" not in content
 
 
 @pytest.mark.asyncio

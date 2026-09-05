@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from modex_agent.plugins.defaults.capabilities.skills.builder import DefaultSkillBuilder
 from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
@@ -29,39 +30,45 @@ class TestFileSkillSourceEdgeCases:
     async def test_ignores_readme_and_index(self, tmp_dir):
         (tmp_dir / "README.md").write_text("---\nname: readme\n---\nBody", encoding="utf-8")
         (tmp_dir / "index.md").write_text("---\nname: index\n---\nBody", encoding="utf-8")
-        (tmp_dir / "SKILL.md").write_text("---\nname: real\n---\nBody", encoding="utf-8")
+        (tmp_dir / "SKILL.md").write_text(
+            "---\nname: real\ndescription: Real skill\n---\nBody", encoding="utf-8"
+        )
         source = FileSkillSource(directories=[tmp_dir])
         summaries = await source.list_skills()
         assert len(summaries) == 1
         assert summaries[0].name == "real"
 
     @pytest.mark.asyncio
-    async def test_malformed_frontmatter_gracefully_degrades(self, tmp_dir):
-        (tmp_dir / "bad.md").write_text("---\nnot_yaml: [\n---\nBody", encoding="utf-8")
-        source = FileSkillSource(directories=[tmp_dir])
-        summaries = await source.list_skills()
-        # Malformed frontmatter is caught and treated as empty; file is still discovered
-        assert len(summaries) == 1
-        assert summaries[0].name == "bad"
-        assert summaries[0].description == ""
+    async def test_malformed_frontmatter_is_not_discovered(self, tmp_dir, caplog):
+        path = tmp_dir / "bad.md"
+        path.write_text("---\nnot_yaml: [\n---\nBody", encoding="utf-8")
+
+        summaries = await FileSkillSource(directories=[tmp_dir]).list_skills()
+
+        assert summaries == ()
+        assert str(path) in caplog.text
+        assert "description" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_no_frontmatter_uses_filename_as_name(self, tmp_dir):
-        (tmp_dir / "implicit.md").write_text("No frontmatter here", encoding="utf-8")
-        source = FileSkillSource(directories=[tmp_dir])
-        summaries = await source.list_skills()
-        assert len(summaries) == 1
-        assert summaries[0].name == "implicit"
+    async def test_no_frontmatter_is_not_discovered(self, tmp_dir, caplog):
+        path = tmp_dir / "implicit.md"
+        path.write_text("No frontmatter here", encoding="utf-8")
+
+        summaries = await FileSkillSource(directories=[tmp_dir]).list_skills()
+
+        assert summaries == ()
+        assert str(path) in caplog.text
+        assert "description" in caplog.text
 
     @pytest.mark.asyncio
     async def test_nested_directory_discovery(self, tmp_dir):
         nested = tmp_dir / "deep" / "nested"
         nested.mkdir(parents=True)
-        (nested / "SKILL.md").write_text("---\nname: nested_skill\n---\nBody", encoding="utf-8")
+        (nested / "SKILL.md").write_text("---\nname: nested-skill\ndescription: Nested skill\n---\nBody", encoding="utf-8")
         source = FileSkillSource(directories=[tmp_dir])
         summaries = await source.list_skills()
         assert len(summaries) == 1
-        assert summaries[0].name == "nested_skill"
+        assert summaries[0].name == "nested-skill"
 
     @pytest.mark.asyncio
     async def test_multiple_directories_merge(self, tmp_dir):
@@ -69,8 +76,8 @@ class TestFileSkillSourceEdgeCases:
         d2 = tmp_dir / "dir2"
         d1.mkdir()
         d2.mkdir()
-        (d1 / "a.md").write_text("---\nname: a\n---\nA", encoding="utf-8")
-        (d2 / "b.md").write_text("---\nname: b\n---\nB", encoding="utf-8")
+        (d1 / "a.md").write_text("---\nname: a\ndescription: A skill\n---\nA", encoding="utf-8")
+        (d2 / "b.md").write_text("---\nname: b\ndescription: B skill\n---\nB", encoding="utf-8")
         source = FileSkillSource(directories=[d1, d2])
         summaries = await source.list_skills()
         names = {s.name for s in summaries}
@@ -79,13 +86,13 @@ class TestFileSkillSourceEdgeCases:
     @pytest.mark.asyncio
     async def test_cache_refresh_after_file_change(self, tmp_dir):
         path = tmp_dir / "mutant.md"
-        path.write_text("---\nname: mutant\n---\nV1", encoding="utf-8")
+        path.write_text("---\nname: mutant\ndescription: Mutable skill\n---\nV1", encoding="utf-8")
         source = FileSkillSource(directories=[tmp_dir], cache=True)
         await source.list_skills()
         skill = await source.load_skill("mutant")
         assert skill is not None
         assert skill.content == "V1"
-        path.write_text("---\nname: mutant\n---\nV2", encoding="utf-8")
+        path.write_text("---\nname: mutant\ndescription: Mutable skill\n---\nV2", encoding="utf-8")
         source.invalidate_cache()
         await source.list_skills()
         skill2 = await source.load_skill("mutant")
@@ -95,12 +102,12 @@ class TestFileSkillSourceEdgeCases:
     @pytest.mark.asyncio
     async def test_load_skill_without_cache_reads_disk(self, tmp_dir):
         path = tmp_dir / "dynamic.md"
-        path.write_text("---\nname: dynamic\n---\nOld", encoding="utf-8")
+        path.write_text("---\nname: dynamic\ndescription: Dynamic skill\n---\nOld", encoding="utf-8")
         source = FileSkillSource(directories=[tmp_dir], cache=False)
         skill1 = await source.load_skill("dynamic")
         assert skill1 is not None
         assert skill1.content == "Old"
-        path.write_text("---\nname: dynamic\n---\nNew", encoding="utf-8")
+        path.write_text("---\nname: dynamic\ndescription: Dynamic skill\n---\nNew", encoding="utf-8")
         skill2 = await source.load_skill("dynamic")
         assert skill2 is not None
         assert skill2.content == "New"
@@ -110,7 +117,7 @@ class TestFileSkillSourceEdgeCases:
         skill_dir = tmp_dir / "override"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
-            "---\nname: override\nresources:\n  - name: scripts\n    type: custom\n    path: /custom\n---\nBody",
+            "---\nname: override\ndescription: Override resources\nresources:\n  - name: scripts\n    type: custom\n    path: /custom\n---\nBody",
             encoding="utf-8",
         )
         (skill_dir / "scripts").mkdir()
@@ -174,36 +181,18 @@ class TestSkillCatalogEdgeCases:
 
 
 class TestSkillMetadataEdgeCases:
-    def test_from_dict_with_none_input(self):
-        meta = SkillMetadata.from_dict(None)  # type: ignore[arg-type]
-        assert meta.requires_tools == ()
-        assert meta.extra == {}
+    def test_empty_frontmatter_uses_defaults(self) -> None:
+        metadata = SkillMetadata.from_frontmatter({})
 
-    def test_from_dict_with_empty_string_metadata(self):
-        meta = SkillMetadata.from_dict({"metadata": ""})
-        assert meta.extra == {}
+        assert metadata.disable_model_invocation is False
+        assert metadata.extra == {}
 
-    def test_from_dict_with_nanobot_and_requires(self):
-        data = {
-            "metadata": '{"nanobot": {"requires": {"tools": ["t1"], "env": ["E1"]}}}',
-        }
-        meta = SkillMetadata.from_dict(data)
-        assert list(meta.requires_tools) == ["t1"]
-        assert list(meta.requires_env) == ["E1"]
+    def test_nested_unknown_fields_are_preserved_without_interpretation(self) -> None:
+        requires = {"tools": ["explicit"], "env": ["API_KEY"]}
 
-    def test_from_dict_prefers_explicit_over_nested(self):
-        data = {
-            "requires_tools": ["explicit"],
-            "requires": {"tools": ["nested"]},
-        }
-        meta = SkillMetadata.from_dict(data)
-        assert list(meta.requires_tools) == ["explicit"]
+        metadata = SkillMetadata.from_frontmatter({"requires": requires})
 
-    def test_from_dict_collects_unknown_to_extra(self):
-        data = {"custom_field": {"nested": 1}, "number": 42}
-        meta = SkillMetadata.from_dict(data)
-        assert meta.extra["custom_field"] == {"nested": 1}
-        assert meta.extra["number"] == 42
+        assert metadata.extra == {"requires": requires}
 
 
 class TestBuilderEdgeCases:
@@ -213,8 +202,8 @@ class TestBuilderEdgeCases:
 
     @pytest.mark.asyncio
     async def test_never_inlines_body_content(self):
-        """Content must never appear — XML metadata only, regardless of metadata.always."""
-        skills = [Skill(name="s", content="SECRET_BODY", metadata=SkillMetadata(always=True))]
+        """Content must never appear in the metadata-only system section."""
+        skills = [Skill(name="s", content="SECRET_BODY")]
         out = await DefaultSkillBuilder().build(skills)
         assert "<available_skills>" in out
         assert "SECRET_BODY" not in out
@@ -241,7 +230,7 @@ class TestSkillSummaryEdgeCases:
         summary = SkillSummary(
             name="s",
             description="d",
-            metadata=SkillMetadata(always=True),
+            metadata=SkillMetadata(disable_model_invocation=True),
             source="src",
             location="loc",
             resources=(SkillResource(name="r", type="t"),),
@@ -249,7 +238,7 @@ class TestSkillSummaryEdgeCases:
         skill = summary.to_skill("content")
         assert skill.name == "s"
         assert skill.description == "d"
-        assert skill.metadata.always is True
+        assert skill.metadata.disable_model_invocation is True
         assert skill.source == "src"
         assert skill.location == "loc"
         assert len(skill.resources) == 1
@@ -260,6 +249,6 @@ class TestSkillSummaryEdgeCases:
         skill = summary.to_skill("c")
         # Pydantic frozen model: the resources tuple is immutable; a new
         # skill cannot be mutated through the shared summary.
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             skill.resources[0].name = "mutated"  # type: ignore[misc]
         assert len(summary.resources) == 1

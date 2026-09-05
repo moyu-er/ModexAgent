@@ -130,7 +130,7 @@ class TestSkillCatalogWithDirectoryCache:
         parent: Path,
         name: str,
         content: str = "",
-        description: str = "",
+        description: str = "A skill",
     ) -> Path:
         d = parent / name
         d.mkdir(parents=True, exist_ok=True)

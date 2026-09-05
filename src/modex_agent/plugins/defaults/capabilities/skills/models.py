@@ -9,7 +9,6 @@ runtime state, not a value (rule 11/12).
 
 from __future__ import annotations
 
-import json
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -31,100 +30,22 @@ class SkillResource(BaseModel):
 
 
 class SkillMetadata(BaseModel):
-    """Structured metadata for a skill."""
+    """Behavior-bearing skill metadata plus an opaque extension payload."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    requires_tools: tuple[str, ...] = ()
-    requires_bins: tuple[str, ...] = ()
-    requires_env: tuple[str, ...] = ()
-    always: bool = False
-    tags: tuple[str, ...] = ()
-    author: str = ""
-    version: str = ""
-    # Unknown third-party frontmatter is an intentionally open extension payload.
+    disable_model_invocation: bool = False
+    # Third-party frontmatter is preserved but never interpreted by the framework.
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> SkillMetadata:
-        """Parse metadata from a dict with dual-format compatibility.
-
-        Supports flat YAML frontmatter, nested ``requires: {tools: []}``,
-        and nanobot JSON-in-YAML ``metadata:`` blocks.
-        Unknown keys are collected into ``extra``.
-        """
-        if not isinstance(data, dict):
-            data = {}
+    def from_frontmatter(cls, data: dict[str, Any]) -> SkillMetadata:
+        """Extract framework metadata from parsed SKILL.md frontmatter."""
         raw = dict(data)
-
-        # Step 1: handle metadata JSON-in-YAML
-        metadata_raw = raw.pop("metadata", None)
-        nanobot_prefix = None
-        if isinstance(metadata_raw, str):
-            try:
-                metadata_raw = json.loads(metadata_raw)
-            except (json.JSONDecodeError, TypeError):
-                metadata_raw = {}
-        if isinstance(metadata_raw, dict):
-            payload = metadata_raw.get("nanobot")
-            if payload is not None:
-                nanobot_prefix = "nanobot"
-            else:
-                payload = metadata_raw.get("openclaw")
-                if payload is not None:
-                    nanobot_prefix = "openclaw"
-                else:
-                    payload = metadata_raw
-            if isinstance(payload, dict):
-                merged = dict(payload)
-                merged.update(raw)
-                raw = merged
-
-        # Step 2: expand nested requires
-        requires = raw.pop("requires", None)
-        if isinstance(requires, dict):
-            if "tools" in requires and "requires_tools" not in raw:
-                raw["requires_tools"] = requires["tools"]
-            if "bins" in requires and "requires_bins" not in raw:
-                raw["requires_bins"] = requires["bins"]
-            if "env" in requires and "requires_env" not in raw:
-                raw["requires_env"] = requires["env"]
-
-        # Known fields
-        known = {
-            "requires_tools",
-            "requires_bins",
-            "requires_env",
-            "always",
-            "tags",
-            "author",
-            "version",
-            "extra",
-        }
-        kwargs: dict[str, Any] = {}
-        for key in known:
-            if key in raw:
-                kwargs[key] = raw.pop(key)
-
-        # Sequence-typed fields accept lists from YAML; coerce defensively
-        # at this parse boundary only.
-        for seq_key in ("requires_tools", "requires_bins", "requires_env", "tags"):
-            value = kwargs.get(seq_key)
-            if isinstance(value, list):
-                kwargs[seq_key] = tuple(str(v) for v in value)
-            elif value is None:
-                kwargs.pop(seq_key, None)
-
-        # Whatever remains goes into extra
-        extra = kwargs.get("extra", {})
-        if not isinstance(extra, dict):
-            extra = {}
-        if nanobot_prefix:
-            extra.update({f"{nanobot_prefix}.{k}": v for k, v in raw.items()})
-        else:
-            extra.update(raw)
-        kwargs["extra"] = extra
-        return cls(**kwargs)
+        disabled = raw.pop("disable-model-invocation", None) is True
+        for document_key in ("name", "description", "resources"):
+            raw.pop(document_key, None)
+        return cls(disable_model_invocation=disabled, extra=raw)
 
 
 class Skill(BaseModel):

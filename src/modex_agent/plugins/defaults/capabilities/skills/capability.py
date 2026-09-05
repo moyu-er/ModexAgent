@@ -5,14 +5,14 @@ excluded by the compiler's V12 rule — they never run the C0 predicate).
 The normal ADR-0047 override applies: ``capabilities: {skills: false}``
 explicitly removes prompt injection AND command resolution for that agent.
 
-Contributes one prompt section (``skills.injection``, order=60 — after
-the todo discipline (30), the subagents briefs (40-42), and the
-experience injection (50)).
+Contributes one prompt section (``skills.injection``) at the fixed TAIL
+anchor so the volatile catalog is the final system-prompt block.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import BaseModel, ConfigDict
@@ -24,7 +24,9 @@ from modex_agent.plugins.capability import (
     CapabilitySupply,
     CapabilityWiring,
     PromptSectionSpec,
+    SectionPlacement,
 )
+from modex_agent.workspace.parse import parse_user_path
 
 if TYPE_CHECKING:
     from modex_agent.plugins.assembly.context import AgentContext
@@ -44,9 +46,11 @@ SKILLS_CAPABILITY_NAME = "skills"
 
 
 class SkillsCapabilityConfig(BaseModel):
-    """The ``capabilities: {skills: {...}}`` face — no knobs (frozen, closed)."""
+    """The ``capabilities: {skills: {...}}`` declaration face."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    roots: tuple[str, ...] = ()
 
 
 class SkillsCapability(Capability):
@@ -68,7 +72,13 @@ class SkillsCapability(Capability):
     def contribute(self, tree: TreePositionView, config: BaseModel) -> CapabilityContribution:
         del config  # knob-free at contribute time
         return CapabilityContribution(
-            sections=(PromptSectionSpec(section_id=SKILLS_SECTION_ID, order=60),),
+            sections=(
+                PromptSectionSpec(
+                    section_id=SKILLS_SECTION_ID,
+                    order=60,
+                    placement=SectionPlacement.TAIL,
+                ),
+            ),
         )
 
     def bind(
@@ -97,14 +107,15 @@ class SkillsCapability(Capability):
                 pool_name=view.pool_name,
                 skill_root_for_agent={entry.agent_name: [] for entry in view.entries},
             )
+        skill_root_for_agent: dict[str, list[Path]] = {}
+        for entry in view.entries:
+            config = SkillsCapabilityConfig.model_validate(entry.config)
+            roots = [parse_user_path(root, project_dir) for root in config.roots]
+            roots.append(project_dir / "skills" / view.pool_name / entry.agent_name)
+            skill_root_for_agent[entry.agent_name] = roots
         return build_skills_supply(
             pool_name=view.pool_name,
-            skill_root_for_agent={
-                entry.agent_name: [
-                    project_dir / "skills" / view.pool_name / entry.agent_name
-                ]
-                for entry in view.entries
-            },
+            skill_root_for_agent=skill_root_for_agent,
         )
 
     async def assemble(self, binding: CapabilityBinding, ctx: AgentContext) -> CapabilityWiring:

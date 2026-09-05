@@ -15,6 +15,7 @@ from modex_agent.commands.skill import ResolvedSkillCommand, SkillResolver
 from modex_agent.core.message import ContentFormat
 from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
+from modex_agent.plugins.defaults.capabilities.skills.supply import build_skill_catalog
 
 
 class _FakeResolver(SkillResolver):
@@ -78,6 +79,42 @@ async def test_valid_skill_sets_xml_and_keeps_raw_content() -> None:
     assert env.metadata[RoutingMeta.SKILL_CONTENT_FORMAT] is ContentFormat.XML
     assert env.metadata[RoutingMeta.SKILL_TRUNCATABLE_PATHS] == ["user_input"]
     assert env.command_status is CommandStatus.RESOLVED
+
+
+@pytest.mark.asyncio
+async def test_hidden_skill_uses_body_only_through_bot_onramp(tmp_path: Path) -> None:
+    root = tmp_path / "skills"
+    skill_dir = root / "hidden-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: hidden-skill\n"
+        "description: Hidden workflow\n"
+        "disable-model-invocation: true\n"
+        "---\n"
+        "# Hidden Workflow\n"
+        "Follow this body.\n",
+        encoding="utf-8",
+    )
+    catalog = build_skill_catalog([root])
+    stage = SkillParseStage(
+        PoolSkillResolverRegistry(
+            lambda _workspace, pool: catalog if pool == "main" else None
+        )
+    )
+    envelope = UserInputEnvelope(
+        external_id="u1", content="/hidden-skill run now", channel="qq"
+    )
+
+    result = await stage.process(envelope, _ctx())
+
+    assert result.should_continue()
+    xml = str(envelope.metadata[RoutingMeta.SKILL_XML])
+    assert "<skill>\n# Hidden Workflow\nFollow this body.\n\n</skill>" in xml
+    assert "run now" in xml
+    assert "description:" not in xml
+    assert "disable-model-invocation:" not in xml
+    assert envelope.command_status is CommandStatus.RESOLVED
 
 
 @pytest.mark.asyncio

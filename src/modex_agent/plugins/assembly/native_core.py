@@ -37,7 +37,7 @@ from modex_agent.plugins.assembly.context import (
     agent_context_chain,
 )
 from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
-from modex_agent.plugins.capability import CapabilityWiring
+from modex_agent.plugins.capability import CapabilityWiring, SectionPlacement
 from modex_agent.tools.manager import InMemoryToolManager
 
 if TYPE_CHECKING:
@@ -390,25 +390,48 @@ async def assemble_native_agent(
         hook_runner.add(HookSpec(hook=hook))
         seen_hook_names.add(hook.name)
 
-    # Capability-section anchor (SPEC §7.3): the merged prompt providers
-    # (spec.capabilities iteration order; within one wiring, the
-    # capability's own section order) feed the capability-section anchor
-    # of the native memory context manager — the sections must be set
-    # before the first load(), which happens at runtime after this
-    # assembly returns.
-    merged_sections: list[SystemPromptProvider] = [
+    # Capability sections have a one-to-one positional relationship with
+    # prompt providers. Validate it before placement and stable ordering.
+    placed_sections: dict[
+        SectionPlacement, list[tuple[int, SystemPromptProvider]]
+    ] = {SectionPlacement.HEAD: [], SectionPlacement.TAIL: []}
+    for compiled_cap in spec.capabilities:
+        active_sections = compiled_cap.binding.active_sections
+        providers = capability_wirings[compiled_cap.name].prompt_providers
+        if len(active_sections) != len(providers):
+            raise ValueError(
+                f"capability {compiled_cap.name!r} produced {len(providers)} prompt providers "
+                f"for {len(active_sections)} active sections; each active section must "
+                "produce exactly one prompt provider"
+            )
+        for section, section_provider in zip(active_sections, providers, strict=True):
+            placed_sections[section.placement].append(
+                (section.order, section_provider)
+            )
+
+    head_sections = tuple(
         provider
-        for compiled_cap in spec.capabilities
-        for provider in capability_wirings[compiled_cap.name].prompt_providers
-    ]
-    if merged_sections:
+        for _, provider in sorted(
+            placed_sections[SectionPlacement.HEAD], key=lambda item: item[0]
+        )
+    )
+    tail_sections = tuple(
+        provider
+        for _, provider in sorted(
+            placed_sections[SectionPlacement.TAIL], key=lambda item: item[0]
+        )
+    )
+    if head_sections or tail_sections:
         # isinstance is justified at this extension boundary: a custom
         # MEMORY_SYSTEM replaces the whole prompt assembly (SPEC Errata-7
         # replacement-face semantics — the same class of loss as
         # Errata-8(c)), so capability sections are native-only. The custom
         # owner opted out of native prompt assembly; skip, never raise.
         if isinstance(context_manager, MemorySystemContextManager):
-            context_manager.set_capability_sections(tuple(merged_sections))
+            context_manager.set_capability_sections(
+                head_sections,
+                tail_sections=tail_sections,
+            )
         else:
             logger.debug(
                 "Capability sections for agent %r skipped: context manager "

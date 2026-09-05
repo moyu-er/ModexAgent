@@ -1,5 +1,5 @@
 <!-- Parent: ../../../AGENTS.md -->
-<!-- Updated: 2026-09-02 | D2 Skills vertical slice -->
+<!-- Updated: 2026-09-04 | strict parsing, visibility, roots, and tail injection -->
 
 # skills
 
@@ -33,16 +33,21 @@ depend on `modex_agent.commands.skill.SkillResolver`; the concrete
 - `SkillsSupply` is built once per pool and owns exactly one `SkillCatalog` per
   effective agent. Main and subagent assembly perform lookup only; missing
   assignment directories yield an empty catalog, not missing wiring.
-- Disk is the assignment authority: `skills/<pool>/<agent>/<skill>/`. The Bot
-  `SkillsStore` owns library precedence, upload/delete, assign/unassign, and
-  symlink/junction handling; the capability only reads assigned directories.
-- Prompt injection flows through `CapabilityWiring.prompt_providers` and the
-  generic capability-section anchor. Command resolution is independent of the
-  selected memory-system implementation.
+- Disk is the assignment authority: the conventional root is
+  `skills/<pool>/<agent>/`; `capabilities: {skills: {roots: [...]}}` prepends
+  per-agent roots, and the conventional root wins duplicate names. Missing
+  roots stay watched so later directory creation is detected.
+- `SKILL.md` frontmatter is parsed once into metadata. `Skill.content` is always
+  body-only; canonical slash XML must never contain frontmatter.
+- `disable-model-invocation: true` filters only the `TAIL` system-prompt view.
+  The complete catalog remains available to explicit `/name` invocation; an
+  all-hidden catalog emits no Skills section.
 - The two command onramps share one resolver contract and canonical XML path:
   Bot `SkillParseStage` uses the root resolver exposed by
   `PoolInstance.skill_resolver`; framework `SkillCommandHandler` uses the bound
   resolver in `CommandContext`. Subagents retain their own bound resolver.
+- Full design and acceptance matrix:
+  `docs/design/skills/skill-system.md`.
 
 ## Testing
 
