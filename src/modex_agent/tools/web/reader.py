@@ -1,4 +1,4 @@
-"""WebReaderTool — fetch and read URL content."""
+"""WebReaderTool — fetch and read URL content through the guarded transport."""
 
 from __future__ import annotations
 
@@ -6,14 +6,26 @@ import logging
 import re
 from typing import Any
 
+import httpcore
 import httpx
 
 from modex_agent.core.tool_manager import ParallelTool, ToolConfig
+from modex_agent.sandbox.guard_network import NetworkGuard, NetworkGuardConfig
+from modex_agent.tools.web.guarded_http import (
+    GuardedHttpError,
+    PolicyBlockedError,
+    guarded_fetch,
+)
+from modex_agent.tools.web.guarded_transport import (
+    AsyncResolver,
+    ValidatingNetworkBackend,
+)
 
 logger = logging.getLogger(__name__)
 
 _MAX_CONTENT_LENGTH = 50_000
 _USER_AGENT = "Mozilla/5.0 (compatible; ModexAgent/0.1)"
+_MAX_REDIRECT_HOPS = 5
 
 
 class WebReaderTool(ParallelTool):
@@ -21,9 +33,20 @@ class WebReaderTool(ParallelTool):
 
     Supports HTML-to-markdown conversion via *markdownify*.
     Only reads static HTML — JavaScript-rendered pages may not return full content.
+
+    Every fetch goes through the guarded transport: DNS answers are
+    validated at connect time (fail closed) and each redirect hop is
+    policy-checked before sending — execution-time SSRF protection the
+    static NetworkGuard layer defers to.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        guard: NetworkGuard | None = None,
+        resolver: AsyncResolver | None = None,
+        dialer: httpcore.AsyncNetworkBackend | None = None,
+    ) -> None:
         super().__init__(
             name="web_reader",
             description=(
@@ -54,6 +77,14 @@ class WebReaderTool(ParallelTool):
             },
             config=ToolConfig(),
         )
+        self._guard = guard if guard is not None else NetworkGuard(NetworkGuardConfig())
+        self._resolver = resolver
+        self._dialer = dialer
+
+    def _make_backend(self) -> ValidatingNetworkBackend:
+        return ValidatingNetworkBackend(
+            guard=self._guard, resolver=self._resolver, dialer=self._dialer
+        )
 
     async def execute(
         self, url: str = "", format: str = "markdown", timeout: int = 20, **kwargs: Any
@@ -72,18 +103,25 @@ class WebReaderTool(ParallelTool):
         except ImportError:
             return "Error: markdownify package not installed. Install with: pip install markdownify"
 
-        # --- fetch --------------------------------------------------------------
+        # --- guarded fetch ------------------------------------------------------
         try:
-            async with httpx.AsyncClient(
-                follow_redirects=True,
-                timeout=timeout,
+            response = await guarded_fetch(
+                url,
+                timeout=float(timeout),
+                backend=self._make_backend(),
+                max_hops=_MAX_REDIRECT_HOPS,
                 headers={"User-Agent": _USER_AGENT},
-            ) as client:
-                response = await client.get(url)
+            )
+        except PolicyBlockedError as exc:
+            return f"Error: {exc}. Request blocked by SSRF policy."
         except httpx.TimeoutException:
             return f"Error: Request timed out after {timeout}s for URL: {url}"
+        except httpx.InvalidURL:
+            return f"Error: Invalid URL: {url}"
         except httpx.RequestError as exc:
             return f"Error fetching URL: {exc}"
+        except GuardedHttpError as exc:
+            return f"Error: {exc}"
 
         if response.status_code >= 400:
             return f"Error: HTTP {response.status_code} for URL: {url}"
