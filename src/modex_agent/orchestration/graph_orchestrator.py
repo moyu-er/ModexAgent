@@ -1,55 +1,21 @@
 # ruff: noqa: ANN401
 
-"""`GraphOrchestrator` — framework-level graph orchestration service.
+"""Graph lifecycle owner: synchronous admission, execution, drain and recovery.
 
-Wires the full graph lifecycle:
-
-    GraphSpec → GraphSpecCompiler → CompiledGraph → GraphInstance → GraphEngine
-
-The orchestrator is the framework-level service that the bot factory
-(``examples/bot_project/``) calls. It does NOT know about specific node
-types; callers inject a node registry and a state-class mapping. This is the
-second consumer of
-``GraphSpecCompiler`` after the compiler's own tests — a real seam).
-
-Provides:
-
-- ``create_instance(spec_id)`` — load spec, compile, create instance (PENDING),
-  register in ``_active_instances``, return ``graph_instance_id``. Returns
-  immediately without executing — the caller runs the graph separately via
-  ``run_instance``.
-- ``run_instance(graph_instance_id)`` — execute a created instance. Sets
-  status to RUNNING, runs the engine, emits ``GraphOutput`` in finally,
-  and removes terminal instances from ``_active_instances``.
-- ``create_and_run(spec_id)`` — convenience: ``create_instance`` +
-  ``run_instance``. Retained for backward compatibility with tests.
-- ``get_state(graph_instance_id)`` — delegate to ``coordinator.get_graph_state``
-  for active instances; for inactive (evicted) instances, load metadata
-  from ``instance_store`` and query via a temporary coordinator.
-- ``pause`` / ``stop`` / ``resume`` / ``deliver_to_node`` — external control,
-  all delegated to ``GraphControlService`` via ``ControlCommand`` (rule 15:
-  single control path — REST / CLI / orchestrator all converge on the same
-  ``GraphControlService.handle`` path).
-- ``recover_crashed`` — fault recovery, delegated to ``GraphRecoveryService``.
-
-``GraphRecoveryService`` calls ``_run_existing_instance`` directly
-(rule 15: converge — single recovery path, no adapter indirection).
-The orchestrator IS the engine factory; recovery delegates to the
-internal 7-step re-registration path.
+Every entry point reserves the same per-instance execution before scheduling a
+task. Pause/stop signal that execution and shield their wait for its real exit;
+only the owner finalizes status and releases runtime resources. Recovery selects
+instances but never prewrites status or assembles a parallel execution path.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from modex_agent.control.graph_control import (
-    GraphControlService,
-    LiveGraphEngineController,
-)
+from modex_agent.control.graph_control import GraphControlService
 from modex_agent.control.graph_recovery import GraphRecoveryService
 from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
 from modex_agent.runtime.constants import EXECUTOR_PROCESS_ID_KEY
@@ -67,74 +33,66 @@ from modex_graph import (
     GraphIORecord,
     GraphIORecordStore,
     GraphMetadata,
+    GraphNode,
     GraphOutput,
     GraphOutputAdapter,
     GraphOutputKind,
     GraphPayload,
     GraphPersistenceCoordinator,
+    GraphRunControl,
     GraphRuntime,
     GraphSpec,
     GraphSpecCompiler,
     GraphSpecStore,
     GraphState,
     GraphStateSnapshot,
+    InvocationStatus,
     NodeRegistry,
     NullCoordinatorFactory,
     NullGraphIORecordStore,
     default_id_generator,
 )
 from modex_graph.persistence._time import now_ms
-from modex_graph.scheduler.bootstrap import BootstrapMode
+from modex_graph.persistence.graph_metadata import GraphInvocationContext
+from modex_graph.scheduler.bootstrap import (
+    GRAPH_RUN_VERSION_KEY,
+    BootstrapMode,
+    graph_run_version,
+)
 
 logger = logging.getLogger(__name__)
-
-# ControlScope.session_id placeholder for orchestrator-issued commands.
-# The graph control path (GraphControlService._pause / _stop / _resume /
-# _deliver) uses only scope.graph_instance_id; session_id is required by the
-# ControlScope dataclass but unused for graph-scoped commands.
-_ORCHESTRATOR_SESSION_ID = "_orchestrator"
 _NULL_COORDINATOR_FACTORY = NullCoordinatorFactory()
 _NULL_IO_STORE = NullGraphIORecordStore()
+_TERMINAL = frozenset(
+    {
+        GraphInstanceStatus.COMPLETED,
+        GraphInstanceStatus.FAILED,
+        GraphInstanceStatus.CRASHED,
+        GraphInstanceStatus.STOPPED,
+    }
+)
+
+
+class _Execution:
+    """One run's task, control and finalization resources, never request-owned."""
+
+    task: asyncio.Task[None]
+
+    def __init__(self, control: GraphRunControl) -> None:
+        self.control = control
+        self.context: GraphContext[Any] | None = None
+        self.outcome: GraphInstanceStatus | None = None
+        self.status_output: asyncio.Task[None] | None = None
 
 
 class GraphOrchestrator:
-    """Framework-level graph orchestration service.
+    """Compile and execute graphs with one admitted execution per instance.
 
-    Wires ``GraphSpec`` → ``CompiledGraph`` → ``GraphInstance`` →
-    ``GraphEngine`` execution. Provides external control via
-    ``GraphControlService``. Provides recovery via ``GraphRecoveryService``.
-
-    The orchestrator does not know specific node or state implementations;
-    callers inject the node registry and state-class mapping.
-
-    Registry:
-
-    - ``_active_instances: dict[int, GraphInstance]`` — tracks live
-      ``GraphInstance`` objects keyed by ``graph_instance_id``. The
-      coordinator lifecycle is bound to the ``GraphInstance`` lifecycle,
-      not to the ``run_instance`` call stack.
-    - ``create_instance`` creates the coordinator, registers nodes,
-      constructs the ``GraphInstance`` (with ``compiled`` + ``user_input``),
-      and registers it. Status is ``PENDING``.
-    - ``run_instance`` sets status to ``RUNNING``, executes, and in
-      ``finally`` emits ``GraphOutput`` + removes terminal instances
-      (COMPLETED/CRASHED/STOPPED removed, PAUSED retained for resume).
-    - ``unregister_instance`` closes the coordinator's resources
-      (SQLite connections) and removes the instance from the registry.
-    - ``GraphControlService._deliver`` converges on
-      ``coordinator.route_deliver`` via ``_lookup_coordinator`` —
-      no shared ``deliver_store``.
-
-    Lifecycle management (``run_instance``):
-
-    - Normal completion → ``COMPLETED`` (terminal, evicted).
-    - ``GraphInterrupt`` (HITL suspend) → ``PAUSED``, re-raise. The
-      ``GraphInstance`` stays in the registry (coordinator alive for resume).
-    - ``GraphDrained`` (external pause/stop) → expected exit; status was
-      already written by ``GraphControlService``. PAUSED retained, STOPPED
-      evicted.
-    - Any other exception → ``CRASHED`` (terminal, evicted), re-raise.
-    - Always unregister the engine controller (cleanup) + emit output.
+    ``start_run``, ``start_invoke`` and ``start_resume`` validate synchronously
+    and return the owned task. ``run_instance`` and ``resume`` wait for execution.
+    ``pause``/``stop`` wait for drain, not merely signal delivery. PAUSED runtimes
+    retain their coordinator; after restart the same IDs/stores are reconstructed
+    through the normal run assembly. No process liveness is inferred here.
     """
 
     def __init__(
@@ -148,50 +106,8 @@ class GraphOrchestrator:
         output_adapter: GraphOutputAdapter | None = None,
         io_store: GraphIORecordStore = _NULL_IO_STORE,
         process_identity: ProcessIdentity | None = None,
-        state_schema_compiler: Callable[[dict[str, FieldSpec]], type[GraphState]]
-        | None = None,
+        state_schema_compiler: Callable[[dict[str, FieldSpec]], type[GraphState]] | None = None,
     ) -> None:
-        """Initialize the orchestrator with the required registries + stores.
-
-        Args:
-            node_registry: pre-populated by the bot factory with
-                ``AgentNodeFactory``, ``FunctionNodeFactory``, etc.
-            state_classes: registry names mapped to concrete graph state classes.
-            spec_store: persistence for ``GraphSpec`` records.
-            instance_store: persistence for ``GraphInstance`` records.
-            coordinator_factory: creates the ``GraphPersistenceCoordinator``
-                for each graph instance. The factory receives this
-                orchestrator's ``instance_store`` and assembles the remaining
-                stores internally. Defaults to ``NullCoordinatorFactory``
-                (no-op persistence); business layers substitute a
-                SQLite-backed factory for crash recovery.
-            output_adapter: optional adapter notified when execution completes
-                or crashes.
-            io_store: persistence for ``GraphIORecord`` (input/output payloads
-                per graph instance). A record is saved on ``create_instance``
-                with the ``user_input``; its ``output`` is updated when
-                ``run_instance`` completes. Defaults to
-                ``NullGraphIORecordStore`` (no-op); business layers substitute
-                an ``InMemoryGraphIORecordStore`` or
-                ``SqliteGraphIORecordStore`` for I/O tracking.
-            process_identity: optional process identity used for graph
-                instance ownership. When injected, the orchestrator writes
-                ``executor_process_id`` into ``instance.attrs`` on
-                ``begin_invocation`` and the recovery path so a sweeper can
-                detect stale-RUNNING instances whose executor process has
-                died. ``None`` (default) disables tracking — backwards
-                compatible with callers that do not inject a identity.
-            state_schema_compiler: optional callable that resolves a
-                declarative ``state_schema`` into a dynamic ``GraphState``
-                subclass, built from a ``ComponentRegistry`` via
-                ``modex_agent.plugins.assembly.graph_schema``. Threaded into
-                the internal ``GraphSpecCompiler`` so plugin-registered
-                data-namespace types resolve at compile time. ``None``
-                (default) keeps the plain two-arg self-build — backwards
-                compatible with callers that do not inject.
-        """
-        self._node_registry = node_registry
-        self._state_classes = state_classes
         self._spec_store = spec_store
         self._instance_store = instance_store
         self._coordinator_factory = coordinator_factory
@@ -199,39 +115,15 @@ class GraphOrchestrator:
         self._io_store = io_store
         self._process_identity = process_identity
         self._compiler = GraphSpecCompiler(
-            node_registry, state_classes, state_schema_compiler=state_schema_compiler
+            node_registry,
+            state_classes,
+            state_schema_compiler=state_schema_compiler,
         )
         self._runtime = GraphRuntime()
         self._active_instances: dict[int, GraphInstance] = {}
-        self._active_contexts: dict[int, GraphContext[Any]] = {}
-        # Live GraphContext instances, keyed by graph_instance_id. Populated in
-        # run_instance before engine execution; popped in finally after
-        # _finalize_instance. The turn-runner resolver reads this via
-        # get_graph_context(gid) to fetch the active context (carrying
-        # per-node artifacts in ctx.user_data["node_artifacts"]) for
-        # graph-scope turn configuration.
-        self._run_tasks: set[asyncio.Task[None]] = set()
-        self._running_gids: set[int] = set()
-
-        # Wire recovery + control (rule 15: single control + recovery path).
-        # GraphRecoveryService calls _run_existing_instance directly — no
-        # adapter indirection. The same coordinator factory is shared by
-        # both create_instance and recovery so that store-assembly strategy
-        # stays consistent across both paths.
-        self._recovery_service = GraphRecoveryService(
-            instance_store,
-            self,
-            coordinator_factory=coordinator_factory,
-        )
-        # GraphControlService._deliver converges on
-        # coordinator.route_deliver via the registry lookup — no shared
-        # deliver_store.
-        self._control_service = GraphControlService(
-            instance_store,
-            self._recovery_service,
-            coordinator_lookup=self._lookup_coordinator,
-            finalize_instance=self._finalize_instance,
-        )
+        self._executions: dict[int, _Execution] = {}
+        self._recovery_service = GraphRecoveryService(instance_store, self)
+        self._control_service = GraphControlService(instance_store, self)
 
     async def create_instance(
         self,
@@ -240,46 +132,96 @@ class GraphOrchestrator:
         parent_instance_id: int | None = None,
         user_input: GraphPayload | None = None,
     ) -> int:
-        """Load spec → compile → create ``GraphInstance`` (PENDING) → register.
-
-        Returns the ``graph_instance_id`` immediately without executing.
-        The caller runs the graph separately via ``run_instance``.
-
-        Status is set to ``PENDING``. The ``compiled`` graph and
-        ``user_input`` are stored on the ``GraphInstance`` so they survive
-        the create→run gap. The ``node_id_map`` is populated from
-        ``compiled.nodes`` and persisted in ``GraphMetadata`` (F7).
-
-        Raises:
-            ValueError: if the spec is not found in ``spec_store``.
-            TopologyError: if the spec's topology is invalid.
-            KeyError: if a ``NodeSpec.node_type`` is not registered.
-        """
-        spec = self._load_spec(spec_id)
-        compiled = self._compiler.compile(spec)
-        graph_instance_id = default_id_generator().generate()
-        node_id_map = {name: node.node_id for name, node in compiled.nodes.items()}
+        """Compile and persist a PENDING instance without executing it."""
+        compiled = self._compiler.compile(self._load_spec(spec_id))
+        gid = default_id_generator().generate()
         metadata = GraphMetadata(
-            graph_instance_id=graph_instance_id,
+            graph_instance_id=gid,
             spec_id=spec_id,
             parent_instance_id=parent_instance_id,
             parent_node=None,
             status=GraphInstanceStatus.PENDING,
-            node_id_map=node_id_map,
+            node_id_map={name: node.node_id for name, node in compiled.nodes.items()},
         )
         self._instance_store.save(metadata)
-        coordinator = self._coordinator_factory.create(graph_instance_id, self._instance_store)
+        coordinator = self._coordinator_factory.create(gid, self._instance_store)
         self._attach_output_adapter(coordinator)
-        for node in compiled.nodes.values():
-            coordinator.register_node(node.node_id)
-        instance = GraphInstance(
+        for node_id in metadata.node_id_map.values():
+            coordinator.register_node(node_id)
+        self._active_instances[gid] = GraphInstance(
             metadata,
             coordinator,
             compiled=compiled,
             user_input=user_input,
         )
-        self._active_instances[graph_instance_id] = instance
-        return graph_instance_id
+        return gid
+
+    def _metadata(self, gid: int) -> GraphMetadata:
+        latest = self._instance_store.load(gid)
+        if latest is None:
+            instance = self._active_instances.get(gid)
+            if instance is not None:
+                latest = instance.metadata
+        if latest is None:
+            raise ValueError(f"Graph instance {gid} not found in store.")
+        return latest
+
+    def _require_idle(self, gid: int) -> None:
+        if gid in self._executions:
+            raise ValueError(f"Graph instance {gid} is already running or draining.")
+
+    def _start_execution(
+        self,
+        gid: int,
+        *,
+        user_input: GraphPayload | None,
+        mode: BootstrapMode,
+    ) -> asyncio.Task[None]:
+        self._require_idle(gid)
+        metadata = self._metadata(gid)
+        allowed = (
+            {GraphInstanceStatus.PAUSED, GraphInstanceStatus.CRASHED}
+            if mode is BootstrapMode.RECOVERY
+            else {
+                GraphInstanceStatus.PENDING,
+                GraphInstanceStatus.COMPLETED,
+                GraphInstanceStatus.FAILED,
+                GraphInstanceStatus.CRASHED,
+            }
+        )
+        if metadata.status not in allowed:
+            raise ValueError(f"Cannot run instance {gid}: status is {metadata.status.value}.")
+        if (
+            mode is BootstrapMode.FRESH
+            and metadata.status is GraphInstanceStatus.PENDING
+            and user_input is None
+        ):
+            existing = self._active_instances.get(gid)
+            if existing is not None:
+                user_input = existing.user_input
+        # No await between admission and reservation, including the create_task gap.
+        invocation = self._instance_store.begin_invocation(gid)
+        execution = _Execution(GraphRunControl())
+        self._executions[gid] = execution
+        # Enter try/finally before exposing the task to immediate cancellation.
+        # The first suspension precedes engine execution and waits for RUNNING.
+        task = asyncio.Task(
+            self._execute(gid, invocation, user_input=user_input, mode=mode),
+            loop=asyncio.get_running_loop(),
+            eager_start=True,
+        )
+        execution.task = task
+        task.add_done_callback(lambda finished: self._release_execution(gid, finished))
+        return task
+
+    def _release_execution(self, gid: int, task: asyncio.Task[None]) -> None:
+        execution = self._executions.get(gid)
+        if execution is not None and execution.task is task:
+            self._executions.pop(gid)
+        # Background REST callers need not await the task. Retrieving its exception
+        # prevents unobserved-task warnings; awaiting the returned task still raises.
+        if not task.cancelled():
+            task.exception()
 
     async def run_instance(
         self,
@@ -288,150 +230,185 @@ class GraphOrchestrator:
         user_input: GraphPayload | None = None,
         mode: BootstrapMode,
     ) -> None:
-        """Execute a graph instance with version-chain lifecycle.
+        """Admit through the same guard as background starts, then wait for the run."""
+        await self._start_execution(graph_instance_id, user_input=user_input, mode=mode)
 
-        Loads latest metadata from store, begins a new invocation version,
-        rebuilds coordinator + compiled graph, runs the engine,
-        and finalizes via invocation methods (complete/suspend/crash).
-
-        Raises:
-            ValueError: if the instance is not in the store or is already running.
-            GraphInterrupt: if a node suspends (HITL).
-            Exception: any engine exception.
-        """
-        gid = graph_instance_id
-        latest = self._instance_store.load(gid)
-        if latest is None:
-            existing_inst = self._active_instances.get(gid)
-            if existing_inst is not None:
-                latest = existing_inst.metadata
-        if latest is None:
-            raise ValueError(f"Graph instance {gid} not found in store.")
-        if latest.status == GraphInstanceStatus.RUNNING and gid in self._running_gids:
-            raise ValueError(f"Graph instance {gid} is already running.")
-
-        existing = self._active_instances.get(gid)
-        initial_state = existing.initial_state if existing is not None else None
-        if user_input is None and existing is not None:
-            user_input = existing.user_input
-
-        invocation = self._instance_store.begin_invocation(gid)
-        if self._process_identity is not None:
-            self._instance_store.update_attrs(
-                gid, {EXECUTOR_PROCESS_ID_KEY: self._process_identity.process_id}
+    async def _execute(
+        self,
+        gid: int,
+        invocation: GraphInvocationContext,
+        *,
+        user_input: GraphPayload | None,
+        mode: BootstrapMode,
+    ) -> None:
+        execution = self._executions[gid]
+        status = GraphInstanceStatus.CRASHED
+        output: GraphOutput | None = None
+        try:
+            latest = self._metadata(gid)
+            existing = self._active_instances.get(gid)
+            record_id = default_id_generator().generate()
+            run_version = (
+                invocation.version if mode is BootstrapMode.FRESH else graph_run_version(latest)
             )
-        self._io_store.save(
-            GraphIORecord(
-                record_id=default_id_generator().generate(),
+            attrs: dict[str, int | str | None] = {}
+            if mode is BootstrapMode.FRESH:
+                attrs[GRAPH_RUN_VERSION_KEY] = run_version
+            if self._process_identity is not None:
+                attrs[EXECUTOR_PROCESS_ID_KEY] = self._process_identity.process_id
+            if attrs:
+                self._instance_store.update_attrs(gid, attrs)
+                latest = latest.model_copy(update={"attrs": {**latest.attrs, **attrs}})
+            prior_io = (
+                self._io_store.get_latest_by_instance(gid)
+                if mode is BootstrapMode.RECOVERY
+                else None
+            )
+            if prior_io is not None and prior_io.graph_run_version != run_version:
+                prior_io = None
+            if user_input is None and mode is BootstrapMode.RECOVERY:
+                if prior_io is not None:
+                    user_input = prior_io.user_input
+                elif existing is not None and graph_run_version(existing.metadata) == run_version:
+                    user_input = existing.user_input
+            if existing is not None:
+                existing.metadata = latest
+                existing.user_input = user_input
+            io_record = GraphIORecord(
+                record_id=record_id,
                 graph_instance_id=gid,
                 spec_id=latest.spec_id,
                 version=invocation.version,
+                graph_run_version=run_version,
                 user_input=user_input,
-                output=None,
+                output=prior_io.output if prior_io is not None else None,
                 created_at=now_ms(),
             )
-        )
-
-        if gid in self._active_instances:
-            self.unregister_instance(gid)
-        self._running_gids.add(gid)
-        output: GraphOutput | None = None
-        status = GraphInstanceStatus.RUNNING
-        ctx: GraphContext[Any] | None = None
-        try:
-            coordinator = self._coordinator_factory.create(gid, self._instance_store)
+            self._io_store.save(io_record)
+            # Fresh identity and scoped IO are durable before fallible assembly
+            # or suspension. Recovery placeholders carry the same run's result.
+            running_output = self._set_status(gid, GraphInstanceStatus.RUNNING)
             spec = self._load_spec(latest.spec_id)
             compiled = self._compiler.compile(spec)
+            coordinator = (
+                existing.coordinator
+                if existing is not None
+                else self._coordinator_factory.create(gid, self._instance_store)
+            )
             self._attach_output_adapter(coordinator)
             for node in compiled.nodes.values():
                 node.node_id = latest.node_id_map[node.name]
-            for node in compiled.nodes.values():
-                coordinator.register_node(node.node_id)
-
-            state = initial_state if initial_state is not None else self._create_state(spec)
-
-            instance = GraphInstance(
-                latest.model_copy(
-                    update={"version": invocation.version, "status": GraphInstanceStatus.RUNNING}
-                ),
-                coordinator,
-                compiled=compiled,
-                user_input=user_input,
+                if coordinator.get_deliver_store(node.node_id) is None:
+                    coordinator.register_node(node.node_id)
+            state = (
+                existing.initial_state
+                if existing is not None and existing.initial_state is not None
+                else self._create_state(spec)
             )
+            instance = existing if existing is not None else GraphInstance(latest, coordinator)
+            instance.metadata = self._metadata(gid)
+            instance.compiled = compiled
+            instance.user_input = user_input
+            instance.initial_state = None
             self._active_instances[gid] = instance
-
             ctx = GraphContext(
                 state=state,
                 runtime=self._runtime,
                 coordinator=coordinator,
                 user_input=user_input,
                 graph_instance_id=gid,
+                control=execution.control,
+                graph_run_version=run_version,
             )
-            self._active_contexts[gid] = ctx
-            controller = LiveGraphEngineController(gid, ctx.control)
-            self._control_service.register_engine(controller)
-
-            final_state = await GraphEngine(compiled).run_async(ctx, mode=mode)
-            status = (
-                GraphInstanceStatus.COMPLETED
-                if ctx.reached_end
-                else GraphInstanceStatus.FAILED
-            )
-            self._instance_store.complete_invocation(invocation)
-            if status == GraphInstanceStatus.FAILED:
-                self._instance_store.update_status(gid, GraphInstanceStatus.FAILED)
-            result = dict(final_state).get("result")
-            io_record = self._io_store.get_latest_by_instance(gid)
-            if io_record is not None:
-                self._io_store.update_output(
-                    io_record.record_id, result if isinstance(result, list) else None,
+            execution.context = ctx
+            end_before = coordinator.node_state_store.load_latest(latest.node_id_map[GraphNode.END])
+            await asyncio.shield(running_output)
+            final_state: GraphState | None = None
+            try:
+                final_state = await GraphEngine(compiled).run_async(ctx, mode=mode)
+            except GraphDrained:
+                status = GraphInstanceStatus.PAUSED
+            else:
+                status = (
+                    GraphInstanceStatus.COMPLETED if ctx.reached_end else GraphInstanceStatus.FAILED
                 )
-            output = GraphOutput(
-                kind=(
-                    GraphOutputKind.COMPLETED
-                    if status == GraphInstanceStatus.COMPLETED
-                    else GraphOutputKind.FAILED
-                ),
-                graph_instance_id=gid,
-                result=result,
-                timestamp=time.time_ns() // 1_000_000,
-            )
+            finally:
+                result = dict(final_state if final_state is not None else ctx.state).get("result")
+                end_after = coordinator.node_state_store.load_latest(
+                    latest.node_id_map[GraphNode.END]
+                )
+                if (
+                    mode is BootstrapMode.RECOVERY
+                    and ctx.reached_end
+                    and end_before is not None
+                    and end_before.graph_run_version == run_version
+                    and end_before.status is InvocationStatus.COMPLETED
+                    and end_before == end_after
+                    and prior_io is not None
+                ):
+                    # END is already durable; never replay it just to rebuild output.
+                    result = prior_io.output
+                if status in {GraphInstanceStatus.COMPLETED, GraphInstanceStatus.FAILED} or (
+                    end_after is not None
+                    and end_after.graph_run_version == run_version
+                    and end_after.status is InvocationStatus.COMPLETED
+                    and end_after != end_before
+                ):
+                    # Preserve newly completed END even if pause/cancel won the
+                    # scheduler wakeup before normal graph completion was observed.
+                    self._io_store.update_output(
+                        io_record.record_id,
+                        result if isinstance(result, list) else None,
+                    )
+            if status is not GraphInstanceStatus.PAUSED:
+                output = GraphOutput(
+                    kind=GraphOutputKind.COMPLETED if ctx.reached_end else GraphOutputKind.FAILED,
+                    graph_instance_id=gid,
+                    result=result,
+                    timestamp=now_ms(),
+                )
         except GraphInterrupt:
             status = GraphInstanceStatus.PAUSED
-            self._instance_store.suspend_invocation(invocation)
             raise
-        except GraphDrained:
-            if ctx is not None and ctx.control.stop_requested:
-                status = GraphInstanceStatus.STOPPED
-                self._instance_store.update_status(gid, GraphInstanceStatus.STOPPED)
-            else:
-                status = GraphInstanceStatus.PAUSED
-                self._instance_store.suspend_invocation(invocation)
+        except asyncio.CancelledError:
+            status = GraphInstanceStatus.CRASHED
+            output = GraphOutput(
+                kind=GraphOutputKind.CRASHED,
+                graph_instance_id=gid,
+                error="Graph execution cancelled",
+                timestamp=now_ms(),
+            )
+            raise
         except Exception as exc:
             status = GraphInstanceStatus.CRASHED
-            self._instance_store.crash_invocation(invocation)
             output = GraphOutput(
                 kind=GraphOutputKind.CRASHED,
                 graph_instance_id=gid,
                 error=str(exc),
-                timestamp=time.time_ns() // 1_000_000,
+                timestamp=now_ms(),
             )
             raise
         finally:
-            self._instance_store.finalize_invocation(invocation)
-            await self._finalize_instance(gid, status, output=output)
-            self._active_contexts.pop(gid, None)
-            self._running_gids.discard(gid)
+            execution.outcome = status
+            try:
+                await execution.control.wait_for_settlement(
+                    asyncio.create_task(
+                        self._finalize_instance(gid, status, output=output, invocation=invocation),
+                    )
+                )
+            finally:
+                execution.context = None
 
-    def get_graph_context(self, graph_instance_id: int) -> GraphContext[Any] | None:
-        """Get the live context for a running graph instance, or None.
-
-        The turn-runner's ``graph_context_resolver`` closure calls this to
-        fetch the active ``GraphContext`` during turn configuration. The
-        context's ``user_data["node_artifacts"]`` dict carries per-node
-        ``GraphTurnArtifacts`` stored by ``BotAgentNode.execute``.
-        """
-        return self._active_contexts.get(graph_instance_id)
+    def start_run(
+        self,
+        graph_instance_id: int,
+        *,
+        user_input: GraphPayload | None = None,
+    ) -> asyncio.Task[None]:
+        """Synchronously admit a fresh execution and return its retained task."""
+        return self._start_execution(
+            graph_instance_id, user_input=user_input, mode=BootstrapMode.FRESH
+        )
 
     def start_invoke(
         self,
@@ -439,40 +416,35 @@ class GraphOrchestrator:
         *,
         user_input: GraphPayload | None = None,
     ) -> asyncio.Task[None]:
-        """Launch re-invocation of an existing instance as a background task.
-
-        Validates that the instance is in a re-invokable terminal state
-        (completed/failed/crashed), then delegates to ``run_instance``
-        which calls ``begin_invocation`` (version+1, sets status RUNNING)
-        and executes fresh.
-
-        Per ADR-0040: ``bootstrap`` returns ``[entry_node]`` for the
-        re-invocation path because empty seeds (no CRASHED/RUNNING nodes)
-        combined with RUNNING instance status triggers the re-invocation
-        branch. The node's existing version chain handles per-node
-        re-execution — no node-level changes are needed.
-
-        Returns the task so callers can await it if needed.
-        """
-        latest = self._instance_store.load(graph_instance_id)
-        if latest is None:
-            raise ValueError(f"Graph instance {graph_instance_id} not found.")
-        if latest.status not in (
+        """Start a fresh version of a completed/failed/crashed instance."""
+        latest = self._metadata(graph_instance_id)
+        if latest.status not in {
             GraphInstanceStatus.COMPLETED,
             GraphInstanceStatus.FAILED,
             GraphInstanceStatus.CRASHED,
-        ):
+        }:
             raise ValueError(
-                f"Graph instance {graph_instance_id} status is "
-                f"{latest.status.value!r}; only completed/failed/crashed "
-                f"can be re-invoked."
+                f"Graph instance {graph_instance_id}: only completed/failed/crashed can be re-invoked."
             )
-        task = asyncio.create_task(
-            self.run_instance(graph_instance_id, user_input=user_input, mode=BootstrapMode.FRESH)
+        return self.start_run(graph_instance_id, user_input=user_input)
+
+    def start_resume(self, graph_instance_id: int) -> asyncio.Task[None]:
+        """Validate PAUSED and reserve recovery synchronously, before returning a task."""
+        self._require_idle(graph_instance_id)
+        metadata = self._metadata(graph_instance_id)
+        if metadata.status is GraphInstanceStatus.STOPPED:
+            raise ValueError("STOPPED is a terminal status; only PAUSED instances can be resumed.")
+        if metadata.status is not GraphInstanceStatus.PAUSED:
+            raise ValueError(
+                f"Cannot resume instance {graph_instance_id}: only PAUSED instances can be resumed."
+            )
+        return self._start_execution(
+            graph_instance_id, user_input=None, mode=BootstrapMode.RECOVERY
         )
-        self._run_tasks.add(task)
-        task.add_done_callback(self._run_tasks.discard)
-        return task
+
+    async def resume(self, graph_instance_id: int) -> None:
+        """Resume the same instance and wait for graph completion (or propagate failure)."""
+        await self.start_resume(graph_instance_id)
 
     async def create_and_run(
         self,
@@ -482,193 +454,115 @@ class GraphOrchestrator:
         parent_instance_id: int | None = None,
         user_input: GraphPayload | None = None,
     ) -> int:
-        """Convenience: ``create_instance`` + ``run_instance`` (for tests).
-
-        Returns the ``graph_instance_id`` (for external control via
-        ``pause`` / ``stop`` / ``resume`` / ``deliver_to_node``).
-        """
+        """Create an instance and wait for its admitted execution."""
         gid = await self.create_instance(
             spec_id,
             parent_instance_id=parent_instance_id,
             user_input=user_input,
         )
-        if initial_state is not None:
-            self._active_instances[gid].initial_state = initial_state
-        task = self.start_run(gid, user_input=user_input)
-        await task  # sync wait for tests; task is tracked in _run_tasks
+        self._active_instances[gid].initial_state = initial_state
+        await self.start_run(gid, user_input=user_input)
         return gid
 
-    def start_run(
-        self, graph_instance_id: int, *, user_input: GraphPayload | None = None
-    ) -> asyncio.Task[None]:
-        """Launch ``run_instance`` as a tracked background task (non-blocking).
-
-        The task is stored in ``_run_tasks`` so ``cleanup`` can cancel and
-        await it before closing connections. Used by REST handlers (run,
-        resume) so the HTTP request returns immediately while the graph
-        executes in the background — same path as normal scheduling.
-
-        Returns the created task so callers (e.g. ``create_and_run``) can
-        await it for synchronous completion while still tracking it in
-        ``_run_tasks``.
-        """
-        task = asyncio.create_task(
-            self.run_instance(graph_instance_id, user_input=user_input, mode=BootstrapMode.FRESH)
-        )
-        self._run_tasks.add(task)
-        task.add_done_callback(self._run_tasks.discard)
-        return task
-
-    def start_resume(self, graph_instance_id: int) -> asyncio.Task[None]:
-        """Launch ``resume`` as a tracked background task (non-blocking).
-
-        Delegates to ``resume`` which routes through the recovery path
-        (``GraphControlService`` → ``GraphRecoveryService`` →
-        ``_run_existing_instance`` → ``run_instance`` → ``bootstrap``),
-        rebuilding the instance if it was evicted from
-        ``_active_instances`` (e.g. after a bot restart). Used by REST
-        handlers so the HTTP request returns immediately while the graph
-        resumes in the background — same task-tracking path as
-        ``start_run``.
-
-        Returns the created task so callers can await it for synchronous
-        completion while still tracking it in ``_run_tasks``.
-        """
-        task = asyncio.create_task(self.resume(graph_instance_id))
-        self._run_tasks.add(task)
-        task.add_done_callback(self._run_tasks.discard)
-        return task
+    def get_graph_context(self, graph_instance_id: int) -> GraphContext[Any] | None:
+        """Return the live context, including node artifacts, until finalization exits."""
+        execution = self._executions.get(graph_instance_id)
+        return execution.context if execution is not None else None
 
     def get_state(self, graph_instance_id: int) -> GraphStateSnapshot:
-        """Collect graph metadata + per-node version histories.
-
-        Delegates to ``coordinator.get_graph_state`` for active instances.
-        For inactive (evicted) instances, loads metadata from
-        ``instance_store`` and queries via a temporary coordinator
-        constructed from ``coordinator_factory`` + ``node_id_map``.
-        """
+        """Read authoritative persisted metadata and node histories."""
         instance = self._active_instances.get(graph_instance_id)
         if instance is not None:
             return instance.get_state()
-        metadata = self._instance_store.load(graph_instance_id)
-        if metadata is None:
-            raise ValueError(f"Graph instance {graph_instance_id} not found in instance_store.")
+        metadata = self._metadata(graph_instance_id)
         coordinator = self._coordinator_factory.create(graph_instance_id, self._instance_store)
-        for node_id in metadata.node_id_map.values():
-            coordinator.register_node(node_id)
-        return coordinator.get_graph_state()
+        try:
+            for node_id in metadata.node_id_map.values():
+                coordinator.register_node(node_id)
+            return coordinator.get_graph_state()
+        finally:
+            coordinator.close()
 
     async def pause(self, graph_instance_id: int) -> None:
-        """Pause the graph instance (delegates to ``GraphControlService``)."""
-        await self._control_service.handle(
-            self._make_command(ControlCommandType.PAUSE_GRAPH, graph_instance_id)
-        )
+        """Request immediate pause and wait, shielded, for the owner's full drain."""
+        await self._drain(graph_instance_id, stop=False)
 
     async def stop(self, graph_instance_id: int) -> None:
-        """Stop the graph instance (delegates to ``GraphControlService``)."""
-        await self._control_service.handle(
-            self._make_command(ControlCommandType.STOP_GRAPH, graph_instance_id)
-        )
+        """Request terminal stop, upgrading any in-progress pause, and await drain."""
+        await self._drain(graph_instance_id, stop=True)
 
-    async def resume(self, graph_instance_id: int) -> None:
-        """Resume a paused graph instance.
+    async def _drain(self, gid: int, *, stop: bool) -> None:
+        metadata = self._metadata(gid)
+        execution = self._executions.get(gid)
+        if execution is not None and execution.task.done():
+            execution = None
+        if execution is None:
+            if not stop and metadata.status is GraphInstanceStatus.PAUSED:
+                return
+            if stop and metadata.status is GraphInstanceStatus.STOPPED:
+                return
+            if stop and metadata.status is GraphInstanceStatus.PAUSED:
+                control = GraphRunControl()
+                control.request_stop("external stop")
+                task = asyncio.create_task(
+                    self._finalize_instance(gid, GraphInstanceStatus.STOPPED)
+                )
+                execution = _Execution(control)
+                execution.task = task
+                self._executions[gid] = execution
+                task.add_done_callback(lambda finished: self._release_execution(gid, finished))
+                self._set_status(gid, GraphInstanceStatus.STOPPING)
+            else:
+                raise ValueError(
+                    f"Cannot {'stop' if stop else 'pause'} instance {gid}: "
+                    "no local execution owner; must be RUNNING or PAUSED."
+                )
+        elif execution.outcome not in _TERMINAL:
+            if stop and not execution.control.stop_requested:
+                self._set_status(gid, GraphInstanceStatus.STOPPING)
+                execution.control.request_stop("external stop")
+            elif (
+                not stop
+                and execution.outcome is None
+                and not (execution.control.pause_requested or execution.control.stop_requested)
+            ):
+                self._set_status(gid, GraphInstanceStatus.PAUSING)
+                execution.control.request_pause("external pause")
+        # Cancelling an HTTP waiter must not issue a second cancellation into
+        # node/session cleanup, or cancel the no-engine finalization task.
+        await asyncio.shield(execution.task)
 
-        Delegates to ``GraphControlService`` → ``GraphRecoveryService.resume``.
-        The recovery service validates the status (PAUSED only — STOPPED
-        is terminal and cannot be resumed), sets it to RUNNING, and calls
-        ``_run_existing_instance`` to re-run the graph (state is restored
-        via ``bootstrap`` inside ``run_async``).
-        """
-        await self._control_service.handle(
-            self._make_command(ControlCommandType.RESUME_GRAPH, graph_instance_id)
-        )
-
-    async def deliver_to_node(
-        self,
-        graph_instance_id: int,
-        node_name: str,
-        content: Any,
-    ) -> None:
-        """Deliver content to a node in the graph instance.
-
-        Delegates to ``GraphControlService`` which persists the deliver in
-        ``DeliverStore`` and notifies the engine controller. The node picks
-        up the deliver on its next ``_collect_delivers`` call.
-        """
-        await self._control_service.handle(
-            self._make_command(
-                ControlCommandType.DELIVER_TO_NODE,
-                graph_instance_id,
-                payload={"node_name": node_name, "content": content},
-            )
-        )
-
-    async def recover_crashed(self) -> list[int]:
-        """Fault recovery: auto-recover all CRASHED instances.
-
-        Delegates to ``GraphRecoveryService.recover_crashed``. Called on
-        startup (or on-demand by an operator) to auto-recover instances
-        that crashed mid-execution.
-
-        Returns:
-            The list of recovered ``graph_instance_id``s.
-        """
-        return await self._recovery_service.recover_crashed()
-
-    async def pause_all_active(self) -> None:
-        """Pause every active graph whose persisted status is RUNNING."""
-        for graph_instance_id, _instance in tuple(self._active_instances.items()):
-            metadata = self._instance_store.load(graph_instance_id)
-            if metadata is not None and metadata.status is GraphInstanceStatus.RUNNING:
-                await self.pause(graph_instance_id)
-
-    async def cleanup(self) -> None:
-        """Cancel tracked run tasks, then close coordinators and clear registries."""
-        for task in list(self._run_tasks):
-            task.cancel()
-        if self._run_tasks:
-            await asyncio.gather(*self._run_tasks, return_exceptions=True)
-        self._run_tasks.clear()
-        for instance in self._active_instances.values():
-            instance.coordinator.close()
-        self._active_instances.clear()
-
-    def unregister_instance(self, graph_instance_id: int) -> None:
-        """Evict a GraphInstance from the registry.
-
-        Calls ``coordinator.close()`` (a no-op — the coordinator owns no
-        connections; the caller manages the ``sqlite3.Connection`` lifetime)
-        and removes the instance from ``_active_instances``. Safe to call
-        on an unregistered ID (no-op).
-
-        Triggered by:
-        - Crash recovery: old instance evicted before registering the new
-          one (``_run_existing_instance``).
-        - Explicit application cleanup (e.g. shutdown hooks).
-        """
-        instance = self._active_instances.pop(graph_instance_id, None)
+    def _set_status(self, gid: int, status: GraphInstanceStatus) -> asyncio.Task[None]:
+        self._instance_store.update_status(gid, status)
+        instance = self._active_instances.get(gid)
         if instance is not None:
-            instance.coordinator.close()
+            instance.metadata = instance.metadata.model_copy(update={"status": status})
+        execution = self._executions[gid]
+        previous = execution.status_output
 
-    def _evict_if_terminal(
-        self,
-        graph_instance_id: int,
-        status: GraphInstanceStatus,
-    ) -> None:
-        """Remove terminal instances from ``_active_instances``.
+        async def emit_status() -> None:
+            if previous is not None:
+                await previous
+            await self._emit(
+                GraphOutput(
+                    kind=GraphOutputKind.STATUS_CHANGED,
+                    graph_instance_id=gid,
+                    status=status,
+                    timestamp=now_ms(),
+                )
+            )
 
-        After ``run_instance`` completes (or crashes), if the run outcome is
-        COMPLETED, CRASHED, or STOPPED, the instance is evicted
-        (coordinator closed + removed from registry). PAUSED instances are
-        retained for resume.
-        """
-        if status in {
-            GraphInstanceStatus.COMPLETED,
-            GraphInstanceStatus.CRASHED,
-            GraphInstanceStatus.STOPPED,
-            GraphInstanceStatus.FAILED,
-        }:
-            self.unregister_instance(graph_instance_id)
+        execution.status_output = asyncio.create_task(emit_status())
+        return execution.status_output
+
+    async def _emit(self, output: GraphOutput) -> None:
+        if self._output_adapter is not None:
+            try:
+                await self._output_adapter.emit(output)
+            except Exception:
+                logger.warning(
+                    "Output emit failed for instance %s", output.graph_instance_id, exc_info=True
+                )
 
     async def _finalize_instance(
         self,
@@ -676,141 +570,109 @@ class GraphOrchestrator:
         status: GraphInstanceStatus,
         *,
         output: GraphOutput | None = None,
+        invocation: GraphInvocationContext | None = None,
     ) -> None:
-        """Unified finalization for all terminal and non-terminal transitions.
+        gid = graph_instance_id
+        execution = self._executions[gid]
+        instance = self._active_instances.get(gid)
+        if instance is not None:
+            await instance.coordinator.drain_output_events()
+        if execution.status_output is not None:
+            await execution.status_output
+        if status is GraphInstanceStatus.PAUSED and execution.control.stop_requested:
+            status = GraphInstanceStatus.STOPPED
+        execution.outcome = status
+        if status in {GraphInstanceStatus.PAUSED, GraphInstanceStatus.STOPPED}:
+            self._set_status(gid, status)
+        else:
+            self._instance_store.update_status(gid, status)
+        if invocation is not None:
+            self._instance_store.finalize_invocation(invocation)
+        if execution.status_output is not None:
+            await execution.status_output
+        # Stop can arrive while PAUSED emission is still draining. The owner
+        # remains reserved, so it must settle the upgrade before releasing it.
+        if status is GraphInstanceStatus.PAUSED and execution.control.stop_requested:
+            status = GraphInstanceStatus.STOPPED
+            execution.outcome = status
+            await self._set_status(gid, status)
+        if output is not None:
+            await self._emit(output)
+        if status in _TERMINAL:
+            self._evict_instance(gid)
 
-        Called from ``run_instance`` finally (engine path) and
-        ``GraphControlService._stop`` (no-engine path for paused→stop).
-        Converges unregister_engine + emit + evict into one method so
-        every status transition goes through the same cleanup.
+    async def deliver_to_node(self, graph_instance_id: int, node_name: str, content: Any) -> None:
+        """Persist external delivery via the unchanged coordinator routing contract."""
+        await self._control_service.handle(
+            ControlCommand(
+                command_id=f"orchestrator-{graph_instance_id}-deliver",
+                type=ControlCommandType.DELIVER_TO_NODE,
+                scope=ControlScope(session_id="_orchestrator", graph_instance_id=graph_instance_id),
+                payload={"node_name": node_name, "content": content},
+            )
+        )
 
-        emit failures are isolated (logged, not re-raised) so they
-        never prevent eviction.
-        """
-        self._control_service.unregister_engine(graph_instance_id)
-        if output is not None and self._output_adapter is not None:
-            instance = self._active_instances.get(graph_instance_id)
-            if instance is not None:
-                # Flush pending fire-and-forget node-level events so the
-                # terminal event is emitted last (causal ordering).
-                await instance.coordinator.drain_output_events()
-            try:
-                await self._output_adapter.emit(output)
-            except Exception:
-                logger.warning(
-                    "output adapter emit failed for instance %s",
-                    graph_instance_id,
-                    exc_info=True,
-                )
-        self._evict_if_terminal(graph_instance_id, status)
+    def _notify_deliver(self, gid: int, node_name: str) -> None:
+        execution = self._executions.get(gid)
+        if execution is not None:
+            execution.control.notify_deliver(node_name)
 
-    # ── Internal: recovery path (called by GraphRecoveryService) ──────
+    async def recover_crashed(self) -> list[int]:
+        """Recover explicit CRASHED instances only; never infer remote process death."""
+        return await self._recovery_service.recover_crashed()
 
-    async def _run_existing_instance(self, instance: GraphInstance) -> None:
-        """Recovery path: load spec, compile, node_id recovery, run.
+    async def _run_existing_instance(self, graph_instance_id: int) -> None:
+        """Recovery entry delegates to normal admission and assembly, without eviction."""
+        await self.run_instance(graph_instance_id, mode=BootstrapMode.RECOVERY)
 
-        Called by ``GraphRecoveryService._recover_instances`` when
-        recovering a crashed/paused/stopped instance. The recovery service
-        creates the ``GraphInstance`` with a fresh coordinator (via
-        ``coordinator_factory.create``); this method handles:
+    async def pause_all_active(self) -> None:
+        """Drain every locally owned execution, including admitted and transitioning runs."""
+        await asyncio.gather(*(self.pause(gid) for gid in tuple(self._executions)))
 
-        - If an old ``GraphInstance`` with the same gid is still in the
-          registry, ``unregister_instance`` it (closes the old coordinator)
-          before registering the new one.
-        - After compiling the spec, restore ``node_id`` for each
-          ``compiled.nodes`` entry from ``metadata.node_id_map`` so persisted
-          node_states/deliver_states match after recovery.
-        - Register nodes on ``instance.coordinator`` by restored node_id.
-        - Store ``compiled`` on the instance for ``run_instance``.
-        - Register in ``_active_instances`` and delegate to ``run_instance``.
-
-        The scheduler restores state via ``bootstrap(ctx, graph)``
-        inside ``run_async``.
-        """
-        gid = instance.graph_instance_id
-        if gid in self._active_instances:
+    async def cleanup(self) -> None:
+        """Drain owners before releasing their coordinators; never cancel cleanup twice."""
+        await self.pause_all_active()
+        for gid in tuple(self._active_instances):
             self.unregister_instance(gid)
-        spec = self._load_spec(instance.spec_id)
-        compiled = self._compiler.compile(spec)
-        self._attach_output_adapter(instance.coordinator)
-        for node in compiled.nodes.values():
-            node.node_id = instance.metadata.node_id_map[node.name]
-        for node in compiled.nodes.values():
-            instance.coordinator.register_node(node.node_id)
-        instance.compiled = compiled
-        self._active_instances[gid] = instance
-        await self.run_instance(gid, mode=BootstrapMode.RECOVERY)
 
-    # ── Internal: coordinator lookup ────────────────────────────
+    def unregister_instance(self, graph_instance_id: int) -> None:
+        """Release idle runtime resources. An admitted/draining owner cannot be evicted."""
+        self._require_idle(graph_instance_id)
+        self._evict_instance(graph_instance_id)
+
+    def _evict_instance(self, gid: int) -> None:
+        instance = self._active_instances.pop(gid, None)
+        if instance is not None:
+            instance.coordinator.close()
 
     def _attach_output_adapter(self, coordinator: GraphPersistenceCoordinator) -> None:
-        """Wire this orchestrator's output adapter into a coordinator.
-
-        Single post-assembly wiring point for node-level ``GraphOutput``
-        events — called by both ``create_instance`` and the recovery path
-        (``_run_existing_instance``) so every runnable instance emits
-        through the same seam (rule 15).
-        """
         coordinator.set_output_adapter(self._output_adapter)
 
     def _lookup_coordinator(self, graph_instance_id: int) -> GraphPersistenceCoordinator | None:
-        """Look up the coordinator for an active graph instance.
-
-        Used by ``GraphControlService._deliver`` to route external delivers
-        through ``coordinator.route_deliver`` (no shared deliver_store).
-        Returns ``None`` if the instance is not in the registry.
-        """
         instance = self._active_instances.get(graph_instance_id)
-        return instance.coordinator if instance is not None else None
-
-    # ── Internal: spec + state helpers ─────────────────────────────────
+        if instance is None:
+            metadata = self._instance_store.load(graph_instance_id)
+            if metadata is None or metadata.status not in {
+                GraphInstanceStatus.PENDING,
+                GraphInstanceStatus.PAUSED,
+            }:
+                return None
+            coordinator = self._coordinator_factory.create(graph_instance_id, self._instance_store)
+            self._attach_output_adapter(coordinator)
+            for node_id in metadata.node_id_map.values():
+                coordinator.register_node(node_id)
+            instance = GraphInstance(metadata, coordinator)
+            self._active_instances[graph_instance_id] = instance
+        return instance.coordinator
 
     def _load_spec(self, spec_id: int) -> GraphSpec:
-        """Load a ``GraphSpec`` by ID, raising if not found."""
         spec = self._spec_store.load_by_id(spec_id)
         if spec is None:
-            raise ValueError(
-                f"GraphSpec {spec_id} not found in spec_store. "
-                f"Cannot create or recover graph instance."
-            )
+            raise ValueError(f"GraphSpec {spec_id} not found in spec_store.")
         return spec
 
     def _create_state(self, spec: GraphSpec) -> GraphState:
-        """Create fresh state via the compiler's state resolution.
-
-        Covers both declared paths (SPEC §8.2): ``state_class`` resolves
-        through the injected state-class mapping; ``state_schema`` resolves
-        through the injected ``state_schema_compiler``. Previously only
-        ``state_class`` was handled — a ``state_schema`` spec crashed with
-        ``KeyError: None`` after the run already returned HTTP 200.
-        """
         return self._compiler.resolve_state(spec)()
-
-    # ── Internal: control command construction ─────────────────────────
-
-    def _make_command(
-        self,
-        cmd_type: ControlCommandType,
-        graph_instance_id: int,
-        *,
-        payload: dict[str, object] | None = None,
-    ) -> ControlCommand:
-        """Build a ``ControlCommand`` for the given graph instance.
-
-        All orchestrator-issued control commands converge on the same
-        ``GraphControlService.handle`` path (rule 15). The ``session_id``
-        placeholder satisfies the ``ControlScope`` dataclass requirement;
-        the graph control path uses only ``graph_instance_id``.
-        """
-        return ControlCommand(
-            command_id=f"orchestrator-{graph_instance_id}-{cmd_type.value}",
-            type=cmd_type,
-            scope=ControlScope(
-                session_id=_ORCHESTRATOR_SESSION_ID,
-                graph_instance_id=graph_instance_id,
-            ),
-            payload=payload if payload is not None else {},
-        )
 
 
 __all__ = ["GraphOrchestrator"]

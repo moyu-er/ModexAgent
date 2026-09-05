@@ -84,6 +84,7 @@ async def test_empty_graph_emits_user_input_as_completed_result() -> None:
 
     kinds = [o.kind for o in output_adapter.outputs]
     assert kinds == [
+        GraphOutputKind.STATUS_CHANGED,
         GraphOutputKind.NODE_STARTED,
         GraphOutputKind.DELIVER_DISPATCHED,
         GraphOutputKind.NODE_COMPLETED,
@@ -153,6 +154,7 @@ async def test_completed_output_uses_state_returned_by_scheduler(
     ) -> DefaultGraphState:
         final_state = DefaultGraphState(result=recovered_result)
         ctx.state = final_state
+        ctx.reached_end = True
         return final_state
 
     monkeypatch.setattr(LinearScheduler, "run_async", run_with_recovered_state)
@@ -174,7 +176,7 @@ async def test_completed_output_uses_state_returned_by_scheduler(
 
     await orchestrator.create_and_run(spec_id)
 
-    assert output_adapter.outputs[0].result == recovered_result
+    assert output_adapter.outputs[-1].result == recovered_result
 
 
 async def test_completed_instance_is_evicted_with_null_instance_store() -> None:

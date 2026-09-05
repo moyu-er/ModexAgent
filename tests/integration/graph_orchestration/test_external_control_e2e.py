@@ -337,7 +337,8 @@ async def test_pause_cancel_resume_parallel_sqlite(tmp_path: Path) -> None:
     for branch in ("branch_a", "branch_b"):
         latest = coordinator.node_state_store.load_latest(node_ids[branch])
         assert latest is not None
-        assert latest.status == InvocationStatus.CRASHED
+        # Pause drains cooperative cancellation, not an unhandled node fault.
+        assert latest.status == InvocationStatus.CANCELED
     assert coordinator.node_state_store.load_latest(node_ids["queued"]) is None
     queued_store = coordinator.get_deliver_store(node_ids["queued"])
     assert queued_store is None
@@ -363,7 +364,7 @@ async def test_pause_cancel_resume_parallel_sqlite(tmp_path: Path) -> None:
         assert [
             record.status
             for record in recovered.node_state_store.query_versions(node_ids[branch])
-        ] == [InvocationStatus.COMPLETED, InvocationStatus.CRASHED]
+        ] == [InvocationStatus.COMPLETED, InvocationStatus.CANCELED]
     connection.close()
 
 
@@ -440,6 +441,7 @@ async def test_process_crash_recovers_without_replaying_completed_prefix(
     execution = asyncio.create_task(first_orchestrator.create_and_run(spec_id))
     await asyncio.wait_for(work_started.wait(), timeout=_TIMEOUT)
     graph_instance_id = _single_instance_id(first_instance_store, GraphInstanceStatus.RUNNING)
+    # Task cancellation models a crashed run, but lets node cleanup record CANCELED.
     execution.cancel()
     with pytest.raises(asyncio.CancelledError):
         await execution
@@ -472,7 +474,7 @@ async def test_process_crash_recovers_without_replaying_completed_prefix(
     assert [
         record.status
         for record in coordinator.node_state_store.query_versions(metadata.node_id_map["work"])
-    ] == [InvocationStatus.COMPLETED, InvocationStatus.CRASHED]
+    ] == [InvocationStatus.COMPLETED, InvocationStatus.CANCELED]
     recovered_connection.close()
 
 
@@ -569,6 +571,7 @@ async def test_ring_recovery_uses_latest_version_chain_head(tmp_path: Path) -> N
     execution = asyncio.create_task(first_orchestrator.create_and_run(spec_id))
     await asyncio.wait_for(crash_started.wait(), timeout=_TIMEOUT)
     graph_instance_id = _single_instance_id(first_instance_store, GraphInstanceStatus.RUNNING)
+    # Unlike process termination, this cooperative cancellation runs node cleanup.
     execution.cancel()
     with pytest.raises(asyncio.CancelledError):
         await execution
@@ -601,7 +604,7 @@ async def test_ring_recovery_uses_latest_version_chain_head(tmp_path: Path) -> N
         InvocationStatus.COMPLETED,
         InvocationStatus.COMPLETED,
         InvocationStatus.COMPLETED,
-        InvocationStatus.CRASHED,
+        InvocationStatus.CANCELED,
         InvocationStatus.COMPLETED,
     ]
     assert [record.version for record in b_versions] == [4, 3, 2, 1, 0]

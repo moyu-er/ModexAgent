@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .constants import GraphInstanceStatus
+
 
 class GraphOutputKind(StrEnum):
     """Graph execution event kinds — terminal outcomes + node-level events."""
@@ -15,6 +17,7 @@ class GraphOutputKind(StrEnum):
     COMPLETED = "graph_completed"
     CRASHED = "graph_crashed"
     FAILED = "graph_failed"
+    STATUS_CHANGED = "graph_status_changed"
     NODE_STARTED = "node_started"
     NODE_COMPLETED = "node_completed"
     NODE_CRASHED = "node_crashed"
@@ -28,6 +31,7 @@ class GraphOutput(BaseModel):
     / ``error``. Node-level events (``node_started`` / ``node_completed`` /
     ``node_crashed``) carry ``node_id`` / ``node_name`` / ``invocation_id``.
     ``deliver_dispatched`` carries ``node_id`` (source) + ``target_node_id``.
+    ``graph_status_changed`` carries the persisted lifecycle ``status``.
     All events carry ``timestamp`` (epoch ms).
     """
 
@@ -37,6 +41,9 @@ class GraphOutput(BaseModel):
     graph_instance_id: int
     result: Any = None
     error: str | None = None
+    status: GraphInstanceStatus | None = Field(
+        default=None, description="graph_status_changed: the persisted graph lifecycle status.",
+    )
     node_id: str | None = Field(
         default=None,
         description="Node-level events: the node. deliver_dispatched: the source node.",

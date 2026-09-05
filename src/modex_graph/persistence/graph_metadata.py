@@ -51,6 +51,7 @@ class InvocationContext(BaseModel):
     node_id: str
     version: int
     parent_version: int | None
+    graph_run_version: int | None = None
 
 
 class NodeInvocationRecord(BaseModel):
@@ -60,6 +61,8 @@ class NodeInvocationRecord(BaseModel):
     ``node_states`` table. The record tracks the invocation lifecycle:
     ``status`` transitions from ``RUNNING`` (initial) to a terminal state
     (``COMPLETED`` / ``CANCELED`` / ``CRASHED``).
+    ``graph_run_version`` is separate from this node's ``version``: it is the
+    original graph version at fresh admission, unchanged across recovery.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -72,6 +75,8 @@ class NodeInvocationRecord(BaseModel):
     status: InvocationStatus
     created_at: int
     updated_at: int
+    # Original graph version at fresh admission; None for legacy/unscoped runs.
+    graph_run_version: int | None = None
 
 
 class GraphStateSnapshot(BaseModel):

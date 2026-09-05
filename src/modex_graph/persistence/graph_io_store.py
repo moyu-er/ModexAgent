@@ -39,13 +39,14 @@ _COL_RECORD_ID = "record_id"
 _COL_GRAPH_INSTANCE_ID = "graph_instance_id"
 _COL_SPEC_ID = "spec_id"
 _COL_VERSION = "version"
+_COL_GRAPH_RUN_VERSION = "graph_run_version"
 _COL_USER_INPUT_JSON = "user_input_json"
 _COL_OUTPUT_JSON = "output_json"
 _COL_CREATED_AT = "created_at"
 
 _SELECT_COLS = (
     f"{_COL_RECORD_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
-    f"{_COL_VERSION}, {_COL_USER_INPUT_JSON}, {_COL_OUTPUT_JSON}, {_COL_CREATED_AT}"
+    f"{_COL_VERSION}, {_COL_USER_INPUT_JSON}, {_COL_OUTPUT_JSON}, {_COL_CREATED_AT}, {_COL_GRAPH_RUN_VERSION}"
 )
 
 # TypeAdapters for JSON serialization of nullable payload fields (same
@@ -67,6 +68,9 @@ class GraphIORecord(BaseModel):
     - ``spec_id: int`` -- FK -> ``graph_specs``.
     - ``version: int`` -- the graph instance version (invocation number)
       this record belongs to. Aligned with ``GraphMetadata.version``.
+    - ``graph_run_version: int | None`` -- original graph version at fresh
+      admission; equality identifies the same logical run across recovery.
+      None retains the membership of legacy/unscoped records.
     - ``user_input: GraphPayload | None`` -- the user input payload
       (None if the graph had no explicit input).
     - ``output: list[GraphPayload] | None`` -- the output payloads
@@ -86,6 +90,8 @@ class GraphIORecord(BaseModel):
     user_input: GraphPayload | None = None
     output: list[GraphPayload] | None = None
     created_at: int
+    # Original graph version at fresh admission; None for persisted legacy rows.
+    graph_run_version: int | None = None
 
 
 class GraphIORecordStore(ABC):
@@ -270,8 +276,8 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
     """SQLite-backed `GraphIORecordStore` using stdlib `sqlite3`.
 
     Schema is created on construction via `CREATE TABLE IF NOT EXISTS`
-    (lightweight migration). The DDL is idempotent -- if the table
-    already exists, this is a no-op.
+    (lightweight migration). Missing nullable membership columns are added
+    without rewriting existing records; repeated initialization is a no-op.
 
     Table and column names are module-level constants; all data values go
     through `?` parameter placeholders (no string interpolation, no SQL
@@ -309,11 +315,15 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
             f"REFERENCES graph_instances(graph_instance_id), "
             f"{_COL_SPEC_ID} INTEGER NOT NULL, "
             f"{_COL_VERSION} INTEGER NOT NULL DEFAULT 0, "
+            f"{_COL_GRAPH_RUN_VERSION} INTEGER, "
             f"{_COL_USER_INPUT_JSON} TEXT, "
             f"{_COL_OUTPUT_JSON} TEXT, "
             f"{_COL_CREATED_AT} INTEGER NOT NULL"
             f")"
         )
+        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({_IO_TABLE})")}
+        if _COL_GRAPH_RUN_VERSION not in columns:
+            conn.execute(f"ALTER TABLE {_IO_TABLE} ADD COLUMN {_COL_GRAPH_RUN_VERSION} INTEGER")
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_IO_TABLE}_instance "
             f"ON {_IO_TABLE} ({_COL_GRAPH_INSTANCE_ID}, {_COL_VERSION} DESC)"
@@ -338,12 +348,13 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
         self._conn.execute(
             f"INSERT INTO {_IO_TABLE} "
             f"({_COL_RECORD_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
-            f"{_COL_VERSION}, {_COL_USER_INPUT_JSON}, {_COL_OUTPUT_JSON}, {_COL_CREATED_AT}) "
-            f"VALUES (?, ?, ?, ?, ?, ?, ?) "
+            f"{_COL_VERSION}, {_COL_USER_INPUT_JSON}, {_COL_OUTPUT_JSON}, {_COL_CREATED_AT}, {_COL_GRAPH_RUN_VERSION}) "
+            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             f"ON CONFLICT({_COL_RECORD_ID}) DO UPDATE SET "
             f"{_COL_GRAPH_INSTANCE_ID} = excluded.{_COL_GRAPH_INSTANCE_ID}, "
             f"{_COL_SPEC_ID} = excluded.{_COL_SPEC_ID}, "
             f"{_COL_VERSION} = excluded.{_COL_VERSION}, "
+            f"{_COL_GRAPH_RUN_VERSION} = excluded.{_COL_GRAPH_RUN_VERSION}, "
             f"{_COL_USER_INPUT_JSON} = excluded.{_COL_USER_INPUT_JSON}, "
             f"{_COL_OUTPUT_JSON} = excluded.{_COL_OUTPUT_JSON}, "
             f"{_COL_CREATED_AT} = excluded.{_COL_CREATED_AT}",
@@ -355,6 +366,7 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
                 user_input_json,
                 output_json,
                 record.created_at,
+                record.graph_run_version,
             ),
         )
         self._conn.commit()
@@ -431,6 +443,7 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
             user_input_json,
             output_json,
             created_at,
+            graph_run_version,
         ) = row
         return GraphIORecord(
             record_id=record_id,
@@ -448,6 +461,7 @@ class SqliteGraphIORecordStore(GraphIORecordStore):
                 else None
             ),
             created_at=created_at,
+            graph_run_version=graph_run_version,
         )
 
 

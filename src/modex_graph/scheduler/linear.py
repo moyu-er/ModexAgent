@@ -12,6 +12,7 @@ and swallows them (D7).
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from ..constants import GraphNode, SchedulerKind
@@ -61,10 +62,8 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
 
         ``bootstrap`` derives seed node names from persisted invocation
         status and PENDING delivers (BFS-ordered). The scheduler takes
-        ``seeds[0]`` as the start, falling back to ``entry_node`` when no
-        seeds are produced. HITL resume routing remains driven by
-        `state.resume_target` (set by
-        `ctx.interrupt(value, resume_to=...)`).
+        ``seeds[0]`` as the start, returning without replay when no seeds
+        remain. Canceled invocations re-execute with consumable input.
 
         Routing is deliver-only: nodes MUST call
         ``deliver()`` during ``execute()``. After node completion,
@@ -81,7 +80,9 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
         self._ctx = ctx
 
         seeds = bootstrap(ctx, self.graph, mode=mode)
-        current = seeds[0] if seeds else self.graph.entry_node
+        if not seeds:
+            return ctx.state
+        current = seeds[0]
         iteration = 0
 
         while True:
@@ -100,17 +101,14 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
             # Reset per-node dispatch records before executing.
             self._dispatches = {}
 
-            node = self.graph.nodes[current]
-
-            node_exec = NodeExecution(instance_id=current)
-            exec_token = set_execution(node_exec)
-
+            task = asyncio.create_task(self._execute_node(ctx, current))
             try:
-                await ctx.runtime.before_node(ctx, current)
-                await node.run(ctx, graph=self.graph)
-                await ctx.runtime.after_node(ctx, current)
+                while not task.done():
+                    await ctx.control.wait_for_tasks({task})
+                task.result()
+                ctx.control.check()
             finally:
-                reset_execution(exec_token)
+                await ctx.control.cancel_and_drain({task})
 
             if current == GraphNode.END:
                 break
@@ -127,6 +125,17 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
             iteration += 1
 
         return ctx.state
+
+    async def _execute_node(self, ctx: GraphContext[S], current: str) -> None:
+        ctx.control.check()
+        exec_token = set_execution(NodeExecution(instance_id=current))
+        try:
+            await ctx.runtime.before_node(ctx, current)
+            ctx.control.check()
+            await self.graph.nodes[current].run(ctx, graph=self.graph)
+            await ctx.runtime.after_node(ctx, current)
+        finally:
+            reset_execution(exec_token)
 
     def _handle_linear_dispatch(
         self,

@@ -106,6 +106,7 @@ class GraphContext[S: "GraphState"]:
         scheduler_kind: SchedulerKind = SchedulerKind.LINEAR,
         dispatch_handler: DispatchHandler | None = None,
         graph_instance_id: int | None = None,
+        graph_run_version: int | None = None,
         control: GraphRunControl | None = None,
         reached_end: bool = False,
     ) -> None:
@@ -119,6 +120,8 @@ class GraphContext[S: "GraphState"]:
             dispatch_handler if dispatch_handler is not None else _noop_dispatch_handler
         )
         self.graph_instance_id: int | None = graph_instance_id
+        # Original graph version at fresh admission, retained through recovery.
+        self.graph_run_version: int | None = graph_run_version
         self.control: GraphRunControl = control if control is not None else GraphRunControl()
         # Run-level flag: set True when a dispatch targets GraphNode.END.
         # The orchestrator reads this after run_async returns to decide

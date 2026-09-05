@@ -114,8 +114,8 @@ class GraphInstanceStatus(StrEnum):
 
     Transitions:
 
-    - `running → paused` — manual pause.
-    - `running → stopped` — manual stop (terminal).
+    - `running → pausing → paused` — pause, then active-node cleanup completes.
+    - `running → stopping → stopped` — stop, then active-node cleanup completes.
     - `running → crashed` — unhandled exception / process kill.
     - `running → completed` — normal termination (terminal).
     - `running → failed` — error termination (terminal).
@@ -134,7 +134,9 @@ class GraphInstanceStatus(StrEnum):
 
     PENDING = "pending"
     RUNNING = "running"
+    PAUSING = "pausing"
     PAUSED = "paused"
+    STOPPING = "stopping"
     STOPPED = "stopped"
     CRASHED = "crashed"
     COMPLETED = "completed"

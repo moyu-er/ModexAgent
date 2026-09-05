@@ -33,7 +33,6 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from modex_agent.control.graph_control import LiveGraphEngineController
 from modex_agent.orchestration import GraphOrchestrator
 from modex_agent.runtime.constants import EXECUTOR_PROCESS_ID_KEY
 from modex_agent.runtime.process_identity import ProcessIdentity
@@ -44,7 +43,6 @@ from modex_graph import (
     FieldSpec,
     FunctionNodeFactory,
     GraphContext,
-    GraphInstance,
     GraphInstanceStatus,
     GraphInstanceStore,
     GraphIORecordStore,
@@ -71,7 +69,6 @@ from modex_graph import (
     RoutingError,
     SchedulerKind,
     SqliteGraphInstanceStore,
-    create_null_coordinator,
 )
 from modex_graph.scheduler.bootstrap import BootstrapMode
 
@@ -496,6 +493,32 @@ class TestE2ELifecycle:
 
 
 class TestControlDelegation:
+    async def test_start_keeps_delivers_admitted_before_execution(self) -> None:
+        entered, release = asyncio.Event(), asyncio.Event()
+        registry = _function_registry()
+        registry.register("blocking", _BlockingFactory(entered, release))
+        orch, specs, _ = _make_orchestrator(node_registry=registry)
+        spec = GraphSpec(
+            name="pending_delivery", state_class="counter",
+            nodes=[NodeSpec(name="entry", node_type="blocking"),
+                   NodeSpec(name="tail", node_type="function", config={"function": "increment"})],
+            edges=[EdgeSpec(source=GraphNode.START, target="entry"),
+                   EdgeSpec(source="entry", target="tail"),
+                   EdgeSpec(source="tail", target=GraphNode.END)],
+        )
+        gid = await orch.create_instance(specs.save(spec))
+        await orch.deliver_to_node(gid, "tail", "pending content")
+        task = orch.start_run(gid)
+        await asyncio.wait_for(entered.wait(), 2)
+        try:
+            coordinator = _get_coordinator(orch, gid)
+            tail_id = orch.get_state(gid).metadata.node_id_map["tail"]
+            pending = coordinator.collect_consumable_delivers(tail_id, 0)
+            assert [record.content for record in pending] == ["pending content"]
+        finally:
+            release.set()
+            await task
+
     async def test_pause_drains_running_graph_without_overwriting_status(self) -> None:
         entered = asyncio.Event()
         release = asyncio.Event()
@@ -504,15 +527,14 @@ class TestControlDelegation:
         orch, spec_store, instance_store = _make_orchestrator(node_registry=registry)
         gid, run_task = await _start_blocked_graph(orch, spec_store, instance_store, entered)
 
-        controller = orch._control_service._engines.get(gid)
-        assert type(controller) is LiveGraphEngineController
+        assert orch.get_graph_context(gid) is not None
         await orch.pause(gid)
         release.set()
         returned_gid = await run_task
 
         assert returned_gid == gid
         assert _load_status(instance_store, gid) == GraphInstanceStatus.PAUSED.value
-        assert gid not in orch._control_service._engines
+        assert orch.get_graph_context(gid) is None
 
     async def test_stop_drains_running_graph_without_overwriting_status(self) -> None:
         entered = asyncio.Event()
@@ -522,35 +544,34 @@ class TestControlDelegation:
         orch, spec_store, instance_store = _make_orchestrator(node_registry=registry)
         gid, run_task = await _start_blocked_graph(orch, spec_store, instance_store, entered)
 
-        controller = orch._control_service._engines.get(gid)
-        assert type(controller) is LiveGraphEngineController
+        assert orch.get_graph_context(gid) is not None
         await orch.stop(gid)
         release.set()
         returned_gid = await run_task
 
         assert returned_gid == gid
         assert _load_status(instance_store, gid) == GraphInstanceStatus.STOPPED.value
-        assert gid not in orch._control_service._engines
+        assert orch.get_graph_context(gid) is None
 
-    async def test_pause_sets_status_to_paused(self) -> None:
+    async def test_pause_does_not_claim_remote_running_instance(self) -> None:
         orch, spec_store, instance_store = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
         gid = await orch.create_instance(spec_id)
         instance_store.update_status(gid, GraphInstanceStatus.RUNNING)
 
-        await orch.pause(gid)
+        with pytest.raises(ValueError, match="no local execution owner"):
+            await orch.pause(gid)
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.RUNNING.value
 
-        assert _load_status(instance_store, gid) == GraphInstanceStatus.PAUSED.value
-
-    async def test_stop_sets_status_to_stopped(self) -> None:
+    async def test_stop_does_not_claim_remote_running_instance(self) -> None:
         orch, spec_store, instance_store = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
         gid = await orch.create_instance(spec_id)
         instance_store.update_status(gid, GraphInstanceStatus.RUNNING)
 
-        await orch.stop(gid)
-
-        assert _load_status(instance_store, gid) == GraphInstanceStatus.STOPPED.value
+        with pytest.raises(ValueError, match="no local execution owner"):
+            await orch.stop(gid)
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.RUNNING.value
 
     async def test_resume_sets_status_to_completed(self) -> None:
         orch, spec_store, instance_store = _make_orchestrator()
@@ -686,7 +707,7 @@ class TestErrorHandling:
         instances = instance_store.load_by_status(GraphInstanceStatus.CRASHED)
         assert len(instances) == 1
         assert instances[0].spec_id == spec_id
-        assert instances[0].graph_instance_id not in orch._control_service._engines
+        assert orch.get_graph_context(instances[0].graph_instance_id) is None
 
     async def test_graph_interrupt_sets_status_to_paused(self) -> None:
         node_registry = NodeRegistry()
@@ -712,14 +733,14 @@ class TestErrorHandling:
         instances = instance_store.load_by_status(GraphInstanceStatus.PAUSED)
         assert len(instances) == 1
         assert instances[0].spec_id == spec_id
-        assert instances[0].graph_instance_id not in orch._control_service._engines
+        assert orch.get_graph_context(instances[0].graph_instance_id) is None
 
     async def test_engine_controller_unregistered_after_completion(self) -> None:
         orch, spec_store, _ = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
         gid = await orch.create_and_run(spec_id)
 
-        assert gid not in orch._control_service._engines
+        assert orch.get_graph_context(gid) is None
 
     async def test_interrupted_instance_stays_in_registry(self) -> None:
         """GraphInterrupt keeps the instance in the registry (coordinator alive)."""
@@ -930,46 +951,52 @@ class TestRunExistingInstance:
 
         orch.unregister_instance(gid)
         instance_store.update_status(gid, GraphInstanceStatus.CRASHED)
-        instance = GraphInstance(metadata, create_null_coordinator(gid))
-        await orch._run_existing_instance(instance)
+        await orch._run_existing_instance(gid)
 
         assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
         # M1: terminal instance evicted after run_instance completes
         assert gid not in orch._active_instances
 
     async def test_run_existing_instance_registers_nodes_on_coordinator(self) -> None:
-        """_run_existing_instance registers nodes on the coordinator."""
-        orch, spec_store, instance_store = _make_orchestrator()
-        spec_id = _save_spec(spec_store, _simple_spec())
-
-        gid = await orch.create_and_run(spec_id)
+        """Recovery reconstructs usable node stores via normal run assembly."""
+        entered, release = asyncio.Event(), asyncio.Event()
+        registry = NodeRegistry()
+        registry.register("blocking", _BlockingFactory(entered, release))
+        orch, spec_store, instance_store = _make_orchestrator(node_registry=registry)
+        spec = GraphSpec(
+            name="recovery_registration", state_class="counter",
+            nodes=[NodeSpec(name="entry", node_type="blocking")],
+            edges=[EdgeSpec(source=GraphNode.START, target="entry"),
+                   EdgeSpec(source="entry", target=GraphNode.END)],
+        )
+        gid = await orch.create_instance(_save_spec(spec_store, spec))
         metadata = instance_store.load(gid)
         assert metadata is not None
         orch.unregister_instance(gid)
 
-        instance = GraphInstance(metadata, create_null_coordinator(gid))
+        instance_store.update_status(gid, GraphInstanceStatus.CRASHED)
         entry_node_id = metadata.node_id_map["entry"]
-        assert instance.coordinator.get_deliver_store(entry_node_id) is None
-
-        await orch._run_existing_instance(instance)
-
-        assert instance.coordinator.get_deliver_store(entry_node_id) is not None
+        task = asyncio.create_task(orch._run_existing_instance(gid))
+        await asyncio.wait_for(entered.wait(), 2)
+        try:
+            ctx = orch.get_graph_context(gid)
+            assert ctx is not None
+            assert ctx.coordinator.get_deliver_store(entry_node_id) is not None
+        finally:
+            release.set()
+            await task
 
     async def test_run_existing_instance_unknown_spec_raises(self) -> None:
-        orch, _, _ = _make_orchestrator()
-
-        instance = GraphInstance(
-            GraphMetadata(
+        orch, _, store = _make_orchestrator()
+        store.save(GraphMetadata(
                 graph_instance_id=1,
                 spec_id=999999,
                 parent_instance_id=None,
                 parent_node=None,
-                status=GraphInstanceStatus.RUNNING,
-            ),
-            create_null_coordinator(1),
-        )
+                status=GraphInstanceStatus.CRASHED,
+            ))
         with pytest.raises(ValueError, match="not found"):
-            await orch._run_existing_instance(instance)
+            await orch._run_existing_instance(1)
 
 
 # -- Multi-node graph (integration confidence) ---------------------------
@@ -1033,7 +1060,7 @@ class TestCoordinatorFactoryInjection:
 
         gid = await orch.create_and_run(spec_id)
 
-        assert len(factory.calls) == 2
+        assert len(factory.calls) == 1
         called_gid, called_store = factory.calls[-1]
         assert called_gid == gid
         assert called_store is instance_store
@@ -1059,7 +1086,7 @@ class TestCoordinatorFactoryInjection:
 
         await orch.recover_crashed()
 
-        assert len(factory.calls) == 4
+        assert len(factory.calls) == 2
         assert factory.calls[-1][0] == gid
         assert factory.calls[-1][1] is instance_store
 
@@ -1090,7 +1117,7 @@ class TestCreateInstance:
         # Status remains PENDING — no engine was started
         assert _load_status(instance_store, gid) == GraphInstanceStatus.PENDING.value
         # No engine controller registered
-        assert gid not in orch._control_service._engines
+        assert orch.get_graph_context(gid) is None
 
     async def test_stores_compiled_and_user_input_on_instance(self) -> None:
         """M8: compiled + user_input survive the create→run gap."""
@@ -1285,13 +1312,10 @@ class TestNodeIdRecovery:
 
         metadata = instance_store.load(gid)
         assert metadata is not None
-        instance = GraphInstance(metadata, create_null_coordinator(gid))
-        await orch._run_existing_instance(instance)
-
-        # M4: compiled nodes have restored node_ids
-        assert instance.compiled is not None
-        restored_node_id = instance.compiled.nodes["entry"].node_id
-        assert restored_node_id == original_node_id
+        await orch._run_existing_instance(gid)
+        restored = instance_store.load(gid)
+        assert restored is not None
+        assert restored.node_id_map["entry"] == original_node_id
 
 
 # -- P0: Lifecycle hardening (TDD) ---------------------------------------
@@ -1446,18 +1470,8 @@ class TestP0LifecycleHardening:
 class TestP1LifecycleHardening:
     """P1-2/P1-4/P1-5: turn lifecycle convergence, cancellation, session cleanup."""
 
-    async def test_p1_4_cancellederror_leaves_running_for_recovery(self) -> None:
-        """P1-4: when run_instance is cancelled (workspace eviction),
-        status must be left as RUNNING so that recover_crashed can pick
-        it up as an orphan on the next startup.
-
-        CancelledError inherits BaseException (Python 3.9+), so it
-        bypasses ``except Exception`` and reaches ``finally`` with
-        status still RUNNING (set before the try block). RUNNING is
-        non-terminal, so _finalize_instance does not evict — the
-        instance stays in _active_instances and the store as an orphan
-        RUNNING, exactly the state recover_crashed scans for.
-        """
+    async def test_p1_4_cancelled_owner_finalizes_crashed_for_recovery(self) -> None:
+        """Explicit task cancellation drains and classifies CRASHED, not remote RUNNING."""
         node_registry = NodeRegistry()
         node_registry.register("slow", _SlowFactory())
         orch, spec_store, instance_store = _make_orchestrator(node_registry=node_registry)
@@ -1472,11 +1486,10 @@ class TestP1LifecycleHardening:
         )
         spec_id = _save_spec(spec_store, spec)
         gid = await orch.create_instance(spec_id)
-        orch.start_run(gid)
+        task = orch.start_run(gid)
         await asyncio.sleep(0.2)
 
         # Cancel the running task (simulates workspace eviction)
-        task = next(t for t in orch._run_tasks if not t.done())
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
