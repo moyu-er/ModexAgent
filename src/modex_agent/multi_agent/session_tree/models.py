@@ -35,6 +35,13 @@ class NodeVersionStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class SessionTreeMetadata(StrEnum):
+    """SessionRegistry metadata owned by the session-tree lifecycle."""
+
+    BINDING = "session_tree_binding"
+    PAUSED = "session_tree_paused"
+
+
 class MessageTrackStatus(StrEnum):
     """Delivery state of a tracked message between tree nodes."""
 

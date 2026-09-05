@@ -186,6 +186,45 @@ enter native materialization.
 The old `send_message`, `send_message_async`, and `dispatch_task` tools are
 removed. Do not add compatibility wrappers.
 
+## Pause And Reentry
+
+`SessionTreeManager.pause_session(session_id)` pauses the entire owning tree:
+admission closes before cancelling the poller's real tasks, and the call drains
+their cleanup through the dispatch lifecycle and `wait_quiesce`. Paused admission
+is persisted in the root SessionRegistry metadata; the unfinished tree remains
+`ACTIVE`. Pending work is nonrunnable but does not prevent drain quiescence;
+interrupted node versions are `CANCELLED`, not `COMPLETED`. Retention preserves
+paused sessions.
+
+`bind_session(session_id, SessionBinding)` persists ownership in the existing
+SessionRegistry metadata before installing live artifacts. `SessionTreeMetadata`
+names the ownership/admission keys. `SessionWork` (in `inbox/types.py`) holds
+reserved `InboxMessage` receipts under `SESSION_WORK_METADATA_KEY` in that same
+registry. `InboxConsumer.consume` reserves before destructive MQ consumption;
+both Poller and InboxFlushHook acknowledge each receipt after its receiver turn
+or history append succeeds, and release claims in `finally`. Unacknowledged
+receipts survive cancellation; claims keep nested fold-in from taking the
+Poller's held batch. Reentry is at-least-once; acknowledged receipts do not replay.
+`peek` includes saved-only receipts, including their authoritative parent link.
+
+Startup must load the SessionRegistry before starting pollers. A persisted graph
+owner without its live root binding remains gated even when tree status is ACTIVE.
+Only the real node entry restores artifacts with `bind_session`, then calls
+`resume_session(session_id)`. Resume rejects an undrained tree or missing live
+binding, rebuilds pending work, and returns whether existing work replaces a new
+input envelope. `find_paused_session(task_id, graph_node_name)` reattaches both
+cached and per-invocation nodes using those same persisted bindings and tree stores.
+Discovery uses the dispatch admission predicate, including crash-owned sessions
+whose persisted pause flag is false but live root binding is absent. Binding
+restoration keeps admission closed until `resume_session` finishes.
+`unbind_session_tree` releases runtime bindings after drain while
+retaining ownership for startup gating. Graph engine/orchestrator lifecycle stays
+outside this module; it cancels and awaits the outer node execution.
+
+Dispatch finalization runs once in a shielded, dispatch-owned task. The Poller's
+inflight entry and the tree's running membership remain until lifecycle writes
+finish; cancelling during those writes neither restarts nor abandons cleanup.
+
 ## Per-pool isolation
 
 Each pool owns its own `InboxMQ` (own storage dir

@@ -6,11 +6,14 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.multi_agent.inbox.types import SessionWork
 from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.session_tree.models import (
     MessageTrack,
     MessageTrackStatus,
     NodeVersionStatus,
+    SessionTreeMetadata,
     SessionTreeRecord,
     SessionTreeStatus,
     TreeNodeRecord,
@@ -59,10 +62,12 @@ class SessionTreeManager:
         self._pool_name = pool_name
         self._workspace_root = workspace_root
         self._session_registry = session_registry
+        self._bus.set_session_registry(session_registry)
         self._binding_store = binding_store
         self._running: set[str] = set()
         self._pending_input: set[str] = set()
         self._quiesce_events: dict[str, asyncio.Event] = {}
+        self._paused_trees: set[str] = set()
 
     def _quiesce_event(self, tree_id: str) -> asyncio.Event:
         return self._quiesce_events.setdefault(tree_id, asyncio.Event())
@@ -74,7 +79,7 @@ class SessionTreeManager:
     def _signal(self, tree_id: str) -> None:
         self._quiesce_event(tree_id).set()
 
-    def _maybe_bind_session(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
+    async def _maybe_bind_session(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
         """Auto-create a SessionBinding from envelope metadata if not already bound.
 
         Called on every ``deliver``. Reads ``graph_instance_id`` from
@@ -91,7 +96,7 @@ class SessionTreeManager:
         """
         if self._binding_store is None:
             return
-        existing = self._binding_store.get(session_id)
+        existing = self._binding_store.get(session_id) or await self._persisted_binding(session_id)
         if existing is not None:
             incoming_gid = envelope.metadata.get("graph_instance_id")
             if incoming_gid is not None and existing.task_id is not None and incoming_gid != existing.task_id:
@@ -103,10 +108,133 @@ class SessionTreeManager:
             return
         task_id = envelope.metadata.get("graph_instance_id")
         if task_id is not None:
-            self._binding_store.bind(
+            await self.bind_session(
                 session_id,
                 SessionBinding(task_id=task_id),
             )
+
+    async def bind_session(self, session_id: str, binding: SessionBinding) -> None:
+        """Persist ownership before installing live, nonserializable artifacts.
+
+        A persisted graph binding without its live root binding is nonrunnable,
+        even if the process crashed before it could persist paused admission.
+        """
+        node = await self._ensure_node(session_id)
+        existing = await self._persisted_binding(session_id)
+        if existing is not None and existing.task_id != binding.task_id:
+            record = await self._tree_store.get(node.tree_id)
+            if record is not None and record.status != SessionTreeStatus.COMPLETED:
+                raise ValueError(f"Session {session_id!r} still belongs to task {existing.task_id}")
+        if binding.is_node_execution:
+            # Binding restoration is part of entry, not permission to dispatch.
+            self._paused_trees.add(node.tree_id)
+        await self._session_registry.register(SessionInfo.from_str(session_id).model_copy(update={
+            "metadata": {SessionTreeMetadata.BINDING: binding.model_dump(
+                mode="json", exclude={"graph_artifacts"},
+            )},
+        }))
+        if self._binding_store is not None:
+            self._binding_store.bind(session_id, binding)
+
+    async def _persisted_binding(self, session_id: str) -> SessionBinding | None:
+        info = await self._session_registry.get(session_id)
+        data = info.metadata.get(SessionTreeMetadata.BINDING) if info is not None else None
+        return SessionBinding.model_validate(data) if data is not None else None
+
+    async def find_paused_session(self, task_id: int, graph_node_name: str) -> SessionInfo | None:
+        """Find the unfinished session whose durable admission requires node reentry."""
+        for record in await self._tree_store.list_active():
+            if await self.can_dispatch(record.root_node_session_id):
+                continue
+            binding = await self._persisted_binding(record.root_node_session_id)
+            if binding is not None and (
+                binding.task_id == task_id and binding.graph_node_name == graph_node_name
+            ):
+                return await self._session_registry.get(record.root_node_session_id)
+        return None
+
+    async def pending_work(self, session_id: str) -> SessionWork:
+        return await self._bus.pending_work(session_id)
+
+    def pending_sessions(self) -> set[str]:
+        """Include reserved work no longer present in the MQ's pending index."""
+        return self._pending_input.copy()
+
+    async def can_dispatch(self, session_id: str) -> bool:
+        node = await self._node_store.get(session_id)
+        if node is None:
+            peeked = await self._bus.peek(session_id)
+            node = await self._ensure_node(session_id, peeked[0] if peeked else None)
+        record = await self._tree_store.get(node.tree_id)
+        if record is not None and record.status == SessionTreeStatus.CANCELLED:
+            return False
+        owner = await self._persisted_binding(node.tree_id)
+        if owner is not None and owner.task_id is not None:
+            live = self._binding_store.get(node.tree_id) if self._binding_store is not None else None
+            if live is None or live.task_id != owner.task_id:
+                return False
+            if owner.is_node_execution and live.graph_artifacts is None:
+                return False
+            if self._binding_store is not None and self._binding_store.get(session_id) is None:
+                self._binding_store.bind(session_id, SessionBinding(task_id=owner.task_id))
+        # Last check is synchronous with the poller's task admission. Pause
+        # closes this gate before its first persistence await.
+        return not await self._is_tree_paused(node.tree_id)
+
+    async def pause_session(self, session_id: str) -> None:
+        """Close the owning tree's admission, cancel its tasks, and drain cleanup."""
+        node = await self._ensure_node(session_id)
+        tree_id = node.tree_id
+        self._paused_trees.add(tree_id)
+        await self._session_registry.register(SessionInfo.from_str(tree_id).model_copy(update={
+            "metadata": {SessionTreeMetadata.PAUSED: True},
+        }))
+        await self._tree_store.update_status(tree_id, SessionTreeStatus.ACTIVE)
+        sessions = await self._node_store.get_tree_sessions(tree_id)
+        await self._poller.cancel_sessions(sessions)
+        self._signal(tree_id)
+        await self.wait_quiesce(tree_id)
+
+    async def is_session_paused(self, session_id: str) -> bool:
+        node = await self._node_store.get(session_id)
+        return node is not None and await self._is_tree_paused(node.tree_id)
+
+    async def _is_tree_paused(self, tree_id: str) -> bool:
+        info = await self._session_registry.get(tree_id)
+        return tree_id in self._paused_trees or (
+            info is not None and info.metadata.get(SessionTreeMetadata.PAUSED) is True
+        )
+
+    async def resume_session(self, session_id: str) -> bool:
+        """Reopen only after live root binding restoration; return whether work remains."""
+        node = await self._ensure_node(session_id)
+        tree_id = node.tree_id
+        sessions = await self._node_store.get_tree_sessions(tree_id)
+        if any(sid in self._running for sid in sessions):
+            raise RuntimeError("The owning tree must drain before resume")
+        owner = await self._persisted_binding(tree_id)
+        if owner is not None and owner.task_id is not None:
+            live = self._binding_store.get(tree_id) if self._binding_store is not None else None
+            if live is None or live.task_id != owner.task_id or (
+                owner.is_node_execution and live.graph_artifacts is None
+            ):
+                raise RuntimeError("Restore the owning node's live binding before resuming its tree")
+        await self.recover_tree(tree_id)
+        pending = await self._has_pending_work(tree_id, sessions)
+        await self._tree_store.update_status(tree_id, SessionTreeStatus.ACTIVE)
+        await self._session_registry.register(SessionInfo.from_str(tree_id).model_copy(update={
+            "metadata": {SessionTreeMetadata.PAUSED: False},
+        }))
+        self._paused_trees.discard(tree_id)
+        self._poller.signal_wakeup()
+        return pending
+
+    async def unbind_session_tree(self, session_id: str) -> None:
+        """Release runtime bindings after drain, retaining durable ownership."""
+        node = await self._node_store.get(session_id)
+        if node is not None and self._binding_store is not None:
+            for sid in await self._node_store.get_tree_sessions(node.tree_id):
+                self._binding_store.unbind(sid)
 
     async def _ensure_node(
         self, session_id: str, envelope: AgentMessageEnvelope | None = None
@@ -158,7 +286,7 @@ class SessionTreeManager:
         node = await self._ensure_node(target_session_id, envelope)
         tree_id = node.tree_id
 
-        self._maybe_bind_session(target_session_id, envelope)
+        await self._maybe_bind_session(target_session_id, envelope)
 
         if msg_type in _PENDING_TYPES:
             self._pending_input.add(target_session_id)
@@ -242,6 +370,7 @@ class SessionTreeManager:
             self._signal(tree_id)
 
     async def on_dispatch_start(self, session_id: str) -> None:
+        self._running.add(session_id)
         self._pending_input.discard(session_id)
         node = await self._ensure_node(session_id)
         await self._node_store.update_version(
@@ -250,40 +379,61 @@ class SessionTreeManager:
             node.version,
             NodeVersionStatus.RUNNING,
         )
-        self._running.add(session_id)
-        await self._tree_store.update_status(node.tree_id, SessionTreeStatus.ACTIVE)
+        if node.tree_id not in self._paused_trees:
+            await self._tree_store.update_status(node.tree_id, SessionTreeStatus.ACTIVE)
 
-    async def on_dispatch_end(self, session_id: str) -> None:
+    async def on_dispatch_end(self, session_id: str, *, cancelled: bool = False) -> None:
         await self._track_store.close_tracks_for_session(
-            session_id, MessageTrackStatus.CONSUMED
+            session_id, MessageTrackStatus.CANCELLED if cancelled else MessageTrackStatus.CONSUMED
         )
-        self._running.discard(session_id)
         node = await self._ensure_node(session_id)
         tree_id = node.tree_id
         await self._node_store.update_version(
             session_id,
             node.version,
             node.parent_version,
-            NodeVersionStatus.COMPLETED,
+            NodeVersionStatus.CANCELLED if cancelled else NodeVersionStatus.COMPLETED,
         )
-        if await self.is_quiesced(tree_id):
+        if (await self.pending_work(session_id)).pending or await self._bus.peek(session_id):
+            self._pending_input.add(session_id)
+        else:
+            self._pending_input.discard(session_id)
+        record = await self._tree_store.get(tree_id)
+        if (
+            tree_id not in self._paused_trees
+            and record is not None
+            and record.status == SessionTreeStatus.ACTIVE
+            and await self.is_quiesced(tree_id, finishing_session_id=session_id)
+        ):
             await self._tree_store.update_status(tree_id, SessionTreeStatus.COMPLETED)
+        self._running.discard(session_id)
         self._signal(tree_id)
 
-    async def is_quiesced(self, tree_id: str) -> bool:
-        if await self._track_store.has_dispatched(tree_id):
-            return False
+    async def is_quiesced(self, tree_id: str, *, finishing_session_id: str | None = None) -> bool:
         sessions = await self._node_store.get_tree_sessions(tree_id)
-        return not any(s in self._running for s in sessions) and not any(
+        if any(s in self._running and s != finishing_session_id for s in sessions):
+            return False
+        if await self._is_tree_paused(tree_id):
+            return True
+        return not await self._has_pending_work(tree_id, sessions)
+
+    async def _has_pending_work(self, tree_id: str, sessions: list[str]) -> bool:
+        """Pending work survives pause even when the tree is quiescent for drain."""
+        if await self._track_store.has_dispatched(tree_id):
+            return True
+        for sid in sessions:
+            if (await self.pending_work(sid)).pending:
+                return True
+        return any(
             s in self._pending_input for s in sessions
         )
 
     async def wait_quiesce(self, tree_id: str) -> None:
         while True:
-            if await self.is_quiesced(tree_id):
-                return
             event = self._quiesce_event(tree_id)
             event.clear()
+            if await self.is_quiesced(tree_id):
+                return
             self._poller.signal_wakeup()
             await event.wait()
 
@@ -347,15 +497,17 @@ class SessionTreeManager:
                 node = await self._node_store.get(track.target_session_id)
                 if node is not None and node.status == NodeVersionStatus.RUNNING:
                     await self._node_store.update_version(
-                        track.target_session_id, node.version, node.parent_version, NodeVersionStatus.COMPLETED)
+                        track.target_session_id, node.version, node.parent_version, NodeVersionStatus.CANCELLED)
                 await self._track_store.update_status(track.track_id, MessageTrackStatus.CONSUMED, now_ms())
         sessions = await self._node_store.get_tree_sessions(tree_id)
         for sid in sessions:
             node = await self._node_store.get(sid)
             if node is not None and node.status == NodeVersionStatus.RUNNING:
-                await self._node_store.update_version(sid, node.version, node.parent_version, NodeVersionStatus.COMPLETED)
+                await self._node_store.update_version(sid, node.version, node.parent_version, NodeVersionStatus.CANCELLED)
         self._pending_input -= set(sessions)
         for sid in sessions:
+            if (await self.pending_work(sid)).pending:
+                self._pending_input.add(sid)
             for env in await self._bus.peek(sid, limit=100):
                 if env.message_type in _PENDING_TYPES:
                     self._pending_input.add(sid)

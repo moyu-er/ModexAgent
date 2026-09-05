@@ -12,8 +12,9 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.envelope import AgentMessageEnvelope
     from modex_agent.multi_agent.inbox.consumer import InboxConsumer
     from modex_agent.multi_agent.inbox.producer import BaseInboxProducer
-    from modex_agent.multi_agent.inbox.types import InboxMessage
+    from modex_agent.multi_agent.inbox.types import InboxMessage, SessionWork
     from modex_agent.multi_agent.inbox_poller import InboxPoller
+    from modex_agent.persistence.session_registry import SessionRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,16 @@ class AgentMessageBus(ABC):
         """Gracefully shut down the bus."""
         ...
 
+    @abstractmethod
+    async def acknowledge(self, session_id: str, message_id: str) -> None:
+        """Retire a received message after processing succeeds."""
+        ...
+
+    @abstractmethod
+    def release(self, session_id: str, message_ids: list[str]) -> None:
+        """Release the receiver's claims without deleting unfinished work."""
+        ...
+
 
 class LocalAgentMessageBus(AgentMessageBus):
     """Local event-driven implementation of AgentMessageBus.
@@ -96,6 +107,18 @@ class LocalAgentMessageBus(AgentMessageBus):
         self._consumer = consumer
         self._closed = False
         self._poller: InboxPoller | None = None
+
+    def set_session_registry(self, registry: SessionRegistry) -> None:
+        self._consumer.set_session_registry(registry)
+
+    async def pending_work(self, session_id: str) -> SessionWork:
+        return await self._consumer.pending_work(session_id)
+
+    async def acknowledge(self, session_id: str, message_id: str) -> None:
+        await self._consumer.acknowledge(session_id, message_id)
+
+    def release(self, session_id: str, message_ids: list[str]) -> None:
+        self._consumer.release(session_id, message_ids)
 
     def set_poller(self, poller: InboxPoller) -> None:
         """Wire the pool's ``InboxPoller`` so ``send`` can wake it directly.

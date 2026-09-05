@@ -368,6 +368,8 @@ class TestDispatchLifecycle:
         env = _envelope(AgentMessageType.TASK_REQUEST, target_sid="inv.sub")
         await manager.deliver("inv.sub", env)
         await manager.on_dispatch_start("inv.sub")
+        for received in await manager._bus.consume("inv.sub"):
+            await manager._bus.acknowledge("inv.sub", received.message_id)
         await manager.on_dispatch_end("inv.sub")
         tree = await manager._tree_store.get("t1")
         assert tree is not None
@@ -536,7 +538,7 @@ class TestRecoverTree:
         assert track.status is MessageTrackStatus.CONSUMED
         node = await manager._node_store.get("inv.sub")
         assert node is not None
-        assert node.status is NodeVersionStatus.COMPLETED
+        assert node.status is NodeVersionStatus.CANCELLED
 
     async def test_stale_running_node_without_tracks(self) -> None:
         manager, _ = _make_manager()
@@ -545,7 +547,7 @@ class TestRecoverTree:
         await manager.recover_tree("t1")
         node = await manager._node_store.get("inv.sub")
         assert node is not None
-        assert node.status is NodeVersionStatus.COMPLETED
+        assert node.status is NodeVersionStatus.CANCELLED
 
     async def test_rebuilds_pending_input(self) -> None:
         manager, _ = _make_manager()
@@ -646,6 +648,8 @@ class TestEnsureNode:
         assert await manager.is_quiesced("conv1.main") is False
         await manager.on_dispatch_start("inv.sub")
         assert "inv.sub" in manager._running
+        for received in await manager._bus.consume("inv.sub"):
+            await manager._bus.acknowledge("inv.sub", received.message_id)
         await manager.on_dispatch_end("inv.sub")
         assert "inv.sub" not in manager._running
         result_env = _envelope(

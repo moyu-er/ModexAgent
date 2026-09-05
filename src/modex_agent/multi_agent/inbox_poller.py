@@ -108,6 +108,30 @@ class InboxPoller:
         await asyncio.gather(*self._inflight.values(), return_exceptions=True)
         self._inflight.clear()
 
+    async def cancel_sessions(self, session_ids: list[str]) -> None:
+        """Cancel and await real single-flight owners after tree admission closes."""
+        tasks = [self._inflight[sid] for sid in session_ids if sid in self._inflight]
+        for task in tasks:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        drain = asyncio.gather(*tasks, return_exceptions=True)
+        caller_cancelled = False
+        try:
+            results = await asyncio.shield(drain)
+        except asyncio.CancelledError:
+            # Cancellation of the caller must not inject another cancellation
+            # into providers already unwinding. Retain ownership until drained.
+            results = await drain
+            caller_cancelled = True
+        for result in results:
+            # asyncio.gather is the exception/value boundary. Cancellation is
+            # expected; a failed lifecycle write must fail pause, not hang it.
+            if result is not None and not isinstance(result, asyncio.CancelledError):
+                raise result
+        self._reconcile()
+        if caller_cancelled:
+            raise asyncio.CancelledError
+
     async def _loop(self) -> None:
         while True:
             # Clear BEFORE the tick: any wakeup set DURING this tick (e.g. a
@@ -131,7 +155,12 @@ class InboxPoller:
 
     async def _tick(self) -> None:
         self._reconcile()
-        for sid in await self._pool.sessions_with_pending():
+        sessions = set(await self._pool.sessions_with_pending())
+        if self._tree_manager is not None:
+            sessions.update(self._tree_manager.pending_sessions())
+        for sid in sessions:
+            if self._tree_manager is not None and not await self._tree_manager.can_dispatch(sid):
+                continue
             self._maybe_start(sid)
 
     def _reconcile(self) -> None:
@@ -194,27 +223,54 @@ class InboxPoller:
         once by exactly one of them.
         """
         if self._tree_manager is not None:
+            if not await self._tree_manager.can_dispatch(sid):
+                return
             await self._tree_manager.on_dispatch_start(sid)
         batch = await self._pool.consume_inbox(sid)
-        for envelope in batch:
-            await self._pool.dispatch_envelope(sid, instance, envelope)
+        task = asyncio.current_task()
+        try:
+            for envelope in batch:
+                if task is not None and task.cancelling():
+                    raise asyncio.CancelledError
+                await self._pool.dispatch_envelope(sid, instance, envelope)
+                if task is not None and task.cancelling():
+                    raise asyncio.CancelledError
+                await self._pool.acknowledge_inbox(sid, envelope.message_id)
+        finally:
+            self._pool.release_inbox(sid, [env.message_id for env in batch])
 
-    async def _end_dispatch(self, sid: str) -> None:
+    async def _end_dispatch(self, sid: str, *, cancelled: bool = False) -> None:
         try:
             if self._tree_manager is not None:
-                await self._tree_manager.on_dispatch_end(sid)
+                cleanup = asyncio.create_task(self._tree_manager.on_dispatch_end(sid, cancelled=cancelled))
+                interrupted = False
+                # Await the same finalizer under repeated cancellation. It is
+                # never restarted and remains owned by this inflight dispatch.
+                while not cleanup.done():
+                    try:
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        interrupted = True
+                cleanup.result()
+                if interrupted:
+                    raise asyncio.CancelledError
         except Exception:
             logger.exception("on_dispatch_end failed for %s", sid)
+            raise
         finally:
             self._inflight.pop(sid, None)
             self.signal_wakeup()
 
     async def _run_turn(self, sid: str, instance: AgentInstance) -> None:
+        cancelled = False
         try:
             await self._ensure_session_registered(sid)
             await self._dispatch_batch(sid, instance)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         finally:
-            await self._end_dispatch(sid)
+            await self._end_dispatch(sid, cancelled=cancelled)
 
     async def _ensure_session_registered(
         self, sid: str, *, parent_session_id: str | None = None
@@ -240,6 +296,7 @@ class InboxPoller:
             await self._session_registry.register(info)
 
     async def _materialize_then_turn(self, sid: str, template: AgentTemplate) -> None:
+        cancelled = False
         try:
             # Peek (non-destructive) the first pending envelope to read the
             # authoritative parent link BEFORE registering — every envelope in a
@@ -259,7 +316,10 @@ class InboxPoller:
                 sid, template, parent_session_id=parent_sid
             )
             await self._dispatch_batch(sid, instance)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         except Exception:
             logger.exception("Materialize/turn failed for %s; message stays in inbox", sid)
         finally:
-            await self._end_dispatch(sid)
+            await self._end_dispatch(sid, cancelled=cancelled)

@@ -12,11 +12,13 @@ Public API:
 
 from __future__ import annotations
 
+from modex_agent.multi_agent.inbox.types import SessionWork
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.session_tree.models import (
     MessageTrack,
     MessageTrackStatus,
     NodeVersionStatus,
+    SessionTreeMetadata,
     SessionTreeRecord,
     SessionTreeStatus,
     TreeNodeRecord,
@@ -60,9 +62,11 @@ __all__ = [
     "SessionBinding",
     "SessionBindingStore",
     "SessionTreeManager",
+    "SessionTreeMetadata",
     "SessionTreeRecord",
     "SessionTreeStatus",
     "SessionTreeStore",
+    "SessionWork",
     "SqliteMessageTrackStore",
     "SqliteSessionTreeStore",
     "SqliteTreeNodeStore",

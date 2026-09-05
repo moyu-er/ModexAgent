@@ -26,6 +26,20 @@ class NestedTransactionError(RuntimeError):
     """Raised when one task attempts to nest manager transactions."""
 
 
+@asynccontextmanager
+async def _query_cursor(
+    connection: aiosqlite.Connection, sql: str, parameters: SqlParameters
+) -> AsyncIterator[aiosqlite.Cursor]:
+    # Own the cursor before SQL starts: cancelling aiosqlite does not stop its worker.
+    cursor = await connection.cursor()
+    try:
+        await cursor.execute(sql, parameters)
+        yield cursor
+    finally:
+        with anyio.CancelScope(shield=True):
+            await cursor.close()
+
+
 class Transaction:
     """Restricted SQL operations available while the manager lock is held."""
 
@@ -39,12 +53,12 @@ class Transaction:
         await self._connection.executemany(sql, parameters)
 
     async def query_all(self, sql: str, parameters: SqlParameters = ()) -> list[Row]:
-        cursor = await self._connection.execute(sql, parameters)
-        return list(await cursor.fetchall())
+        async with _query_cursor(self._connection, sql, parameters) as cursor:
+            return list(await cursor.fetchall())
 
     async def query_one(self, sql: str, parameters: SqlParameters = ()) -> Row | None:
-        cursor = await self._connection.execute(sql, parameters)
-        return await cursor.fetchone()
+        async with _query_cursor(self._connection, sql, parameters) as cursor:
+            return await cursor.fetchone()
 
     async def query_value(
         self,
@@ -109,14 +123,18 @@ class ConnectionManager:
 
     async def query_all(self, sql: str, parameters: SqlParameters = ()) -> list[Row]:
         self._reject_transaction_owner()
-        async with self._operation_lock:
-            cursor = await self._require_connection().execute(sql, parameters)
+        async with (
+            self._operation_lock,
+            _query_cursor(self._require_connection(), sql, parameters) as cursor,
+        ):
             return list(await cursor.fetchall())
 
     async def query_one(self, sql: str, parameters: SqlParameters = ()) -> Row | None:
         self._reject_transaction_owner()
-        async with self._operation_lock:
-            cursor = await self._require_connection().execute(sql, parameters)
+        async with (
+            self._operation_lock,
+            _query_cursor(self._require_connection(), sql, parameters) as cursor,
+        ):
             return await cursor.fetchone()
 
     async def query_value(

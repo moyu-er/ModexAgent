@@ -121,6 +121,12 @@ class _FakePool:
     async def peek_inbox(self, sid: str, limit: int = 1) -> list[AgentMessageEnvelope]:
         return await self._bus.peek(sid, limit=limit)
 
+    async def acknowledge_inbox(self, sid: str, message_id: str) -> None:
+        await self._bus.acknowledge(sid, message_id)
+
+    def release_inbox(self, sid: str, message_ids: list[str]) -> None:
+        self._bus.release(sid, message_ids)
+
     async def dispatch_envelope(
         self, sid: str, instance: object, envelope: AgentMessageEnvelope
     ) -> None:
@@ -325,6 +331,7 @@ class TestInboxConsumerConsumeDedup:
             metadata={},
         )
         mock_server = MagicMock()
+        mock_server.peek = AsyncMock(return_value=[msg])
         mock_server.consume = AsyncMock(side_effect=[[msg], [msg]])
         consumer = InboxConsumer(server=mock_server)
 

@@ -222,6 +222,8 @@ async def _run_verification(tmp_path: Path) -> None:
         # Necessary so on_dispatch_end(sub_sid) sees is_quiesced=True -> tree COMPLETED.
         # In production the poller starts a root turn that consumes the inbox.
         batch = await manager._bus.consume(root_sid, limit=10)
+        for received in batch:
+            await manager._bus.acknowledge(root_sid, received.message_id)
         assert len(batch) == 1, f"Expected 1 consumed envelope, got {len(batch)}"
         assert root_sid not in manager._pending_input
         print("\nSTEP 4a.1: consume EXTERNAL_INPUT (clears pending_input)")
@@ -266,6 +268,8 @@ async def _run_verification(tmp_path: Path) -> None:
         assert sub_node_running.version == version_before + 1
         assert sub_sid in manager._running
 
+        for received in await manager._bus.consume(sub_sid):
+            await manager._bus.acknowledge(sub_sid, received.message_id)
         await manager.on_dispatch_end(sub_sid)
         sub_node_done = await manager._node_store.get(sub_sid)
         assert sub_node_done is not None
@@ -329,6 +333,8 @@ async def _run_verification(tmp_path: Path) -> None:
 
         # --- Step 4e: consume via bus (fires on_consumed) ---
         batch = await manager._bus.consume(root_sid, limit=10)
+        for received in batch:
+            await manager._bus.acknowledge(root_sid, received.message_id)
         assert len(batch) == 1, f"Expected 1 consumed AGENT_RESULT, got {len(batch)}"
 
         result_track = await manager._track_store.get("m_result")
@@ -425,8 +431,8 @@ async def _run_verification(tmp_path: Path) -> None:
 
             fixed_node = await manager2._node_store.get(crash_sid)
             assert fixed_node is not None
-            assert fixed_node.status == NodeVersionStatus.COMPLETED, (
-                f"Expected COMPLETED, got {fixed_node.status}"
+            assert fixed_node.status == NodeVersionStatus.CANCELLED, (
+                f"Expected CANCELLED, got {fixed_node.status}"
             )
 
             fixed_track = await manager2._track_store.get("crash_track")

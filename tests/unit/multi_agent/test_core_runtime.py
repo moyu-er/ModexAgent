@@ -115,6 +115,7 @@ async def test_agent_pool_session_cap_evicts_lru_after_touching_oldest(any_broke
     )
     mock_tree = MagicMock()
     mock_tree.on_session_evicted = AsyncMock()
+    mock_tree.is_session_paused = AsyncMock(return_value=False)
     pool._tree = mock_tree
     pool._agents["worker"] = fake_instance
     try:

@@ -181,7 +181,8 @@ async def test_quiesce_after_subagent_completes() -> None:
     await manager.deliver("root.main", result_env)
     assert not await manager.is_quiesced("t1")
 
-    await manager._bus.consume("root.main", limit=10)
+    for received in await manager._bus.consume("root.main", limit=10):
+        await manager._bus.acknowledge("root.main", received.message_id)
     assert await manager.is_quiesced("t1")
 
 
@@ -225,7 +226,8 @@ async def test_fold_in_no_new_version() -> None:
     await manager.deliver("root.main", env)
     assert "root.main" in manager._pending_input
 
-    await manager._bus.consume("root.main", limit=10)
+    for received in await manager._bus.consume("root.main", limit=10):
+        await manager._bus.acknowledge("root.main", received.message_id)
     assert "root.main" not in manager._pending_input
 
     node_after = await manager._node_store.get("root.main")
@@ -309,7 +311,8 @@ async def test_wait_quiesce_blocks_then_returns() -> None:
         parent_sid="inv.sub",
     )
     await manager.deliver("root.main", result_env)
-    await manager._bus.consume("root.main", limit=10)
+    for received in await manager._bus.consume("root.main", limit=10):
+        await manager._bus.acknowledge("root.main", received.message_id)
 
     result = await asyncio.wait_for(wait_task, timeout=5.0)
     assert result is None
@@ -338,6 +341,8 @@ async def test_pending_input_blocks_quiesce_external() -> None:
     await manager.on_dispatch_start("root.main")
     assert "root.main" not in manager._pending_input
 
+    for received in await manager._bus.consume("root.main"):
+        await manager._bus.acknowledge("root.main", received.message_id)
     await manager.on_dispatch_end("root.main")
     assert await manager.is_quiesced("t1")
 
@@ -362,7 +367,8 @@ async def test_pending_input_blocks_quiesce_agent_message() -> None:
     assert "root.main" in manager._pending_input
     assert not await manager.is_quiesced("t1")
 
-    await manager._bus.consume("root.main", limit=10)
+    for received in await manager._bus.consume("root.main", limit=10):
+        await manager._bus.acknowledge("root.main", received.message_id)
     assert "root.main" not in manager._pending_input
     assert await manager.is_quiesced("t1")
 
@@ -472,7 +478,7 @@ async def test_recover_tree_marks_stale_terminal() -> None:
 
     sub_node = await manager._node_store.get(sub_sid)
     assert sub_node is not None
-    assert sub_node.status == NodeVersionStatus.COMPLETED
+    assert sub_node.status == NodeVersionStatus.CANCELLED
 
     task_track = await manager._track_store.get("m1")
     assert task_track is not None
@@ -597,6 +603,8 @@ async def test_empty_stores_full_lifecycle() -> None:
     # Dispatch lifecycle
     await manager.on_dispatch_start("inv.sub")
     assert "inv.sub" in manager._running
+    for received in await manager._bus.consume("inv.sub"):
+        await manager._bus.acknowledge("inv.sub", received.message_id)
     await manager.on_dispatch_end("inv.sub")
     assert "inv.sub" not in manager._running
 
@@ -612,6 +620,8 @@ async def test_empty_stores_full_lifecycle() -> None:
 
     # Consume the result via the real bus → triggers on_consumed callback
     batch = await manager._bus.consume("conv1.main", limit=10)
+    for received in batch:
+        await manager._bus.acknowledge("conv1.main", received.message_id)
     assert len(batch) > 0, "result envelope must be consumable from the inbox"
 
     assert await manager.is_quiesced("conv1.main") is True, "tree must be quiesced after result consumed"

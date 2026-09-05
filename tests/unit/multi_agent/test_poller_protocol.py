@@ -219,11 +219,12 @@ async def test_dispatch_lifecycle_fires_start_and_end() -> None:
     async def on_dispatch_start(_sid: str) -> None:
         lifecycle.append("start")
 
-    async def on_dispatch_end(sid: str) -> None:
+    async def on_dispatch_end(sid: str, *, cancelled: bool) -> None:
         assert sid in poller._inflight
         lifecycle.append("end")
 
-    tree_manager = MagicMock()
+    tree_manager = MagicMock(spec=SessionTreeManager)
+    tree_manager.can_dispatch = AsyncMock(return_value=True)
     tree_manager.on_dispatch_start = AsyncMock(side_effect=on_dispatch_start)
     tree_manager.on_dispatch_end = AsyncMock(side_effect=on_dispatch_end)
     poller.attach_tree_manager(tree_manager)
@@ -235,25 +236,27 @@ async def test_dispatch_lifecycle_fires_start_and_end() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dispatch_end_exception_doesnt_crash_poller() -> None:
+async def test_dispatch_end_failure_releases_inflight_and_propagates() -> None:
     pool, _bus, poller = await _make_poller_pool()
     await poller.stop()
 
-    async def fail_dispatch_end(sid: str) -> None:
+    async def fail_dispatch_end(sid: str, *, cancelled: bool) -> None:
         assert sid in poller._inflight
         raise RuntimeError("tree store unavailable")
 
-    tree_manager = MagicMock()
+    tree_manager = MagicMock(spec=SessionTreeManager)
+    tree_manager.can_dispatch = AsyncMock(return_value=True)
     tree_manager.on_dispatch_start = AsyncMock()
     tree_manager.on_dispatch_end = AsyncMock(side_effect=fail_dispatch_end)
     poller.attach_tree_manager(tree_manager)
     poller._inflight["pfx.main"] = MagicMock(done=lambda: False)
     poller.signal_wakeup = MagicMock()
 
-    await poller._run_turn("pfx.main", pool._agents["main"])
+    with pytest.raises(RuntimeError, match="tree store unavailable"):
+        await poller._run_turn("pfx.main", pool._agents["main"])
 
     assert "pfx.main" not in poller._inflight
-    tree_manager.on_dispatch_end.assert_awaited_once_with("pfx.main")
+    tree_manager.on_dispatch_end.assert_awaited_once_with("pfx.main", cancelled=False)
     poller.signal_wakeup.assert_called_once_with()
 
 

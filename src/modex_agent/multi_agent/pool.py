@@ -324,14 +324,15 @@ class AgentPool(AgentRegistry):
         return await self._agent_bus.sessions_with_pending()
 
     async def consume_inbox(
-        self, session_id: str, *, only_types: set[str] | None = None
+        self, session_id: str, *, only_types: set[str] | None = None,
+        limit: int = _DRAIN_BATCH_LIMIT,
     ) -> list[AgentMessageEnvelope]:
         """Non-blocking consume of a batch of inbox envelopes for a session."""
         if self._agent_bus is None:
             raise RuntimeError("AgentPool.agent_bus not wired")
         return await self._agent_bus.consume(
             session_id,
-            limit=self._DRAIN_BATCH_LIMIT,
+            limit=limit,
             only_types=only_types,
         )
 
@@ -345,6 +346,16 @@ class AgentPool(AgentRegistry):
         if self._agent_bus is None:
             raise RuntimeError("AgentPool.agent_bus not wired")
         return await self._agent_bus.peek(session_id, limit=limit)
+
+    async def acknowledge_inbox(self, session_id: str, message_id: str) -> None:
+        if self._agent_bus is None:
+            raise RuntimeError("AgentPool.agent_bus not wired")
+        await self._agent_bus.acknowledge(session_id, message_id)
+
+    def release_inbox(self, session_id: str, message_ids: list[str]) -> None:
+        if self._agent_bus is None:
+            raise RuntimeError("AgentPool.agent_bus not wired")
+        self._agent_bus.release(session_id, message_ids)
 
     async def materialize_agent(
         self,
@@ -667,6 +678,8 @@ class AgentPool(AgentRegistry):
         """
         if self._tree is None:
             raise RuntimeError("AgentPool.tree not wired before session eviction")
+        if await self._tree.is_session_paused(session_id):
+            return
         with contextlib.suppress(Exception):
             await self._tree.on_session_evicted(session_id)
         agent_name = self._session_agents.get(session_id)

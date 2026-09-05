@@ -46,6 +46,12 @@ class _FakePool:
             return [MagicMock(parent_session_id=None)]
         return []
 
+    async def acknowledge_inbox(self, sid, message_id):
+        pass
+
+    def release_inbox(self, sid, message_ids):
+        pass
+
     async def materialize_agent(self, sid, template, *, parent_session_id=None):
         inv = sid.split(".")[0]
         return await template.materialize(None, inv, self._materialize_deps)

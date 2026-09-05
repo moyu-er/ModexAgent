@@ -13,6 +13,7 @@ TurnContextConfigPipeline configurators, not inline mutation.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, assert_never
 
@@ -117,12 +118,19 @@ class BotAgentNode(AgentNode):
         ctx: GraphContext[Any],
         integrated_input: IntegratedInput,
     ) -> None:
-        # 1. Ensure session.
-        session = await self._ensure_session(ctx)
-
         binding_store = self._resolve_pool().session_binding_store
         tree = self._resolve_pool().tree_manager
+        # A paused invocation retains its session under either allocation policy.
+        session = (
+            await tree.find_paused_session(ctx.graph_instance_id, self.name)
+            if ctx.graph_instance_id is not None else None
+        )
+        if session is None:
+            session = await self._ensure_session(ctx)
+        else:
+            self._session = session
         bound_here = False
+        paused = False
 
         try:
             # 2. Build artifacts and store on graph context for the configurator pipeline.
@@ -134,7 +142,7 @@ class BotAgentNode(AgentNode):
             # 2b. Bind session — binding store replaces envelope transport
             # for graph_node_name / is_node_execution / graph_artifacts.
             if binding_store is not None and ctx.graph_instance_id is not None:
-                binding_store.bind(
+                await tree.bind_session(
                     session.session_id,
                     SessionBinding(
                         task_id=ctx.graph_instance_id,
@@ -145,6 +153,8 @@ class BotAgentNode(AgentNode):
                 )
                 bound_here = True
 
+            pending_work = await tree.resume_session(session.session_id)
+
             # 3. Build input envelope (formats Origin Request + upstream input).
             envelope = await self._build_graph_input_envelope(
                 ctx, integrated_input, session
@@ -154,18 +164,25 @@ class BotAgentNode(AgentNode):
             # turn, cold-starting the agent from its template when no live
             # instance exists yet (SPEC §4 axis 3: same materialization
             # semantics as session mode).
-            await tree.deliver(session.session_id, envelope, track_consume=True)
+            if not pending_work:
+                await tree.deliver(session.session_id, envelope, track_consume=True)
 
             # 5. Wait for the tree to quiesce (turn + any subagents complete).
             tree_id = await tree.tree_id_for_session(session.session_id)
             if tree_id is not None:
                 await tree.wait_quiesce(tree_id)
+            if await tree.is_session_paused(session.session_id):
+                raise asyncio.CancelledError
             # return — no deliver check, no auto-deliver.
             # graph COMPLETED/FAILED is judged by ctx.reached_end (graph engine).
+        except asyncio.CancelledError:
+            paused = True
+            await tree.pause_session(session.session_id)
+            raise
         finally:
             if bound_here and binding_store is not None:
-                binding_store.unbind(session.session_id)
-            if self._session_strategy is SessionStrategy.PER_INVOCATION:
+                await tree.unbind_session_tree(session.session_id)
+            if self._session_strategy is SessionStrategy.PER_INVOCATION and not paused:
                 registry = await self._resolve_session_registry()
                 await registry.cleanup(session.session_id)
 

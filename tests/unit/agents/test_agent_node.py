@@ -21,6 +21,11 @@ from modex_agent.core.tool_manager import Tool
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.message_type import AgentMessageType
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+from modex_agent.multi_agent.session_tree.session_binding import (
+    InMemorySessionBindingStore,
+    SessionBinding,
+)
 from modex_agent.persistence.session_registry import (
     InMemorySessionRegistry,
     SessionRegistry,
@@ -209,16 +214,28 @@ def _build_mock_workspace_resolver(
     pool_name: str,
     agent_instance: MagicMock,
     session_registry: SessionRegistry | None = None,
-    tree_manager: MagicMock | None = None,
 ) -> MagicMock:
     """Build a mock WorkspaceResolverCell chain returning the given agent instance."""
     mock_agent_pool = MagicMock()
     mock_agent_pool.get.return_value = agent_instance
     mock_agent_pool.session_registry = session_registry or InMemorySessionRegistry()
 
+    bindings = InMemorySessionBindingStore()
+    tree = MagicMock(spec=SessionTreeManager)
+    tree.find_paused_session = AsyncMock(return_value=None)
+    tree.bind_session = AsyncMock(side_effect=bindings.bind, return_value=None)
+    tree.resume_session = AsyncMock(return_value=False)
+    tree.deliver = AsyncMock(return_value=None)
+    tree.wait_quiesce = AsyncMock(return_value=None)
+    tree.tree_id_for_session = AsyncMock(return_value="tree-1")
+    tree.is_session_paused = AsyncMock(return_value=False)
+    tree.pause_session = AsyncMock(return_value=None)
+    tree.unbind_session_tree = AsyncMock(side_effect=bindings.unbind, return_value=None)
+
     mock_pool_instance = MagicMock()
     mock_pool_instance.pool = mock_agent_pool
-    mock_pool_instance.tree_manager = tree_manager or MagicMock()
+    mock_pool_instance.tree_manager = tree
+    mock_pool_instance.session_binding_store = bindings
 
     mock_workspace = MagicMock()
     mock_workspace.pools = {pool_name: mock_pool_instance}
@@ -931,13 +948,8 @@ class TestBotAgentNodeExecute:
         instance = _build_mock_agent_instance(
             MagicMock(), MagicMock(), existing_messages=existing_messages
         )
-        mock_tree = MagicMock()
-        mock_tree.deliver = AsyncMock()
-        mock_tree.wait_quiesce = AsyncMock()
-        mock_tree.tree_id_for_session = AsyncMock(return_value="tree-1")
-        resolver = _build_mock_workspace_resolver(
-            "default", instance, tree_manager=mock_tree
-        )
+        resolver = _build_mock_workspace_resolver("default", instance)
+        mock_tree = resolver.resolve_workspace.return_value.pools["default"].tree_manager
 
         node = BotAgentNode(
             "planner",
@@ -977,9 +989,30 @@ class TestBotAgentNodeExecute:
         ctx.graph_instance_id = 42
         ctx.user_data = {}
 
+        bindings = node._resolve_pool().session_binding_store
+        assert bindings is not None
+
+        async def assert_bound_during_wait(tree_id: str) -> None:
+            assert tree_id == "tree-1"
+            assert node._session is not None
+            assert bindings.get(node._session.session_id) == SessionBinding(
+                task_id=42,
+                graph_node_name="planner_node",
+                is_node_execution=True,
+                graph_artifacts=ctx.user_data["node_artifacts"]["planner_node"],
+            )
+
+        mock_tree.wait_quiesce.side_effect = assert_bound_during_wait
+
         await node.execute(ctx, IntegratedInput(payloads=[]))
 
         mock_tree.wait_quiesce.assert_awaited_once_with("tree-1")
+        assert node._session is not None
+        sid = node._session.session_id
+        mock_tree.find_paused_session.assert_awaited_once_with(42, "planner_node")
+        mock_tree.resume_session.assert_awaited_once_with(sid)
+        mock_tree.unbind_session_tree.assert_awaited_once_with(sid)
+        assert bindings.get(sid) is None
 
     async def test_execute_does_not_call_runner_execute_turn(self) -> None:
         node, mock_tree, instance = self._build_execute_setup()
@@ -1130,14 +1163,9 @@ class TestBotAgentNodeSessionCleanup:
         registry: SessionRegistry,
         strategy: SessionStrategy,
     ) -> BotAgentNode:
-        mock_tree = MagicMock()
-        mock_tree.deliver = AsyncMock()
-        mock_tree.wait_quiesce = AsyncMock()
-        mock_tree.tree_id_for_session = AsyncMock(return_value="tree-1")
-
         instance = _build_mock_agent_instance(MagicMock(), MagicMock())
         resolver = _build_mock_workspace_resolver(
-            "default", instance, session_registry=registry, tree_manager=mock_tree
+            "default", instance, session_registry=registry
         )
 
         node = BotAgentNode(
@@ -1162,9 +1190,11 @@ class TestBotAgentNodeSessionCleanup:
         mock_ctx.user_data = {}
         await node.execute(mock_ctx, IntegratedInput(payloads=[]))
 
-        assert len(registry.registered) == 1
+        assert len({session.session_id for session in registry.registered}) == 1
         session_id = registry.registered[0].session_id
         assert await registry.get(session_id) is None
+        bindings = node._resolve_pool().session_binding_store
+        assert bindings is not None and bindings.get(session_id) is None
 
     async def test_cached_session_not_cleaned_up_after_execute(self) -> None:
         registry = _RecordingSessionRegistry()
@@ -1176,6 +1206,8 @@ class TestBotAgentNodeSessionCleanup:
         mock_ctx.user_data = {}
         await node.execute(mock_ctx, IntegratedInput(payloads=[]))
 
-        assert len(registry.registered) == 1
+        assert len({session.session_id for session in registry.registered}) == 1
         session_id = registry.registered[0].session_id
         assert await registry.get(session_id) is not None
+        bindings = node._resolve_pool().session_binding_store
+        assert bindings is not None and bindings.get(session_id) is None

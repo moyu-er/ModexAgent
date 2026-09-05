@@ -71,6 +71,12 @@ class _FakeBus(AgentMessageBus):
     async def close(self) -> None:
         pass
 
+    async def acknowledge(self, session_id: str, message_id: str) -> None:
+        pass
+
+    def release(self, session_id: str, message_ids: list[str]) -> None:
+        pass
+
 
 class _FakeBroker(MessageBroker):
     def __init__(self) -> None:

@@ -67,6 +67,9 @@ class TestInboxConsumer:
         messages = await consumer.consume("s1")
 
         assert len(messages) == 3
+        assert callback.await_count == 0
+        for message in messages:
+            await consumer.acknowledge("s1", message.message_id)
         assert callback.await_count == 3
 
     async def test_set_on_consumed_none_no_crash(self) -> None:
