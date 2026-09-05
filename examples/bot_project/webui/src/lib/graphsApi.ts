@@ -62,7 +62,7 @@ export interface GraphPayload {
 export interface GraphInstance {
   spec_id: string;
   graph_instance_id: string;
-  status: string;
+  status: GraphInstanceStatus;
   nodes: GraphNodeStatus[];
   result: GraphPayload[] | null;
   created_at?: number;
@@ -94,6 +94,7 @@ export interface GraphInvocationRecord {
 
 export interface GraphEvent {
   kind: string;
+  status?: GraphInstanceStatus | null;
   graph_instance_id?: string;
   result?: unknown;
   error?: string | null;
@@ -101,19 +102,23 @@ export interface GraphEvent {
 
 export interface GraphControlResponse {
   graph_instance_id: string;
-  status: string;
+  status: GraphInstanceStatus;
 }
 
 /** Instance lifecycle values accepted by the `?status=` filter. */
 export const GRAPH_INSTANCE_STATUSES = [
   "pending",
   "running",
+  "pausing",
   "paused",
+  "stopping",
   "stopped",
   "crashed",
   "completed",
   "failed",
 ] as const;
+
+export type GraphInstanceStatus = (typeof GRAPH_INSTANCE_STATUSES)[number];
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 

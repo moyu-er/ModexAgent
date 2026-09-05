@@ -1,5 +1,6 @@
 import type { DeltaEnvelope, ServerEventUnion } from "../types/events";
 import type { OutgoingAttachmentRef } from "../types/attachments";
+import type { GraphInstanceStatus } from "./graphsApi";
 import { unwrapEnvelope } from "../types/events";
 
 type EventHandler = (event: ServerEventUnion) => void;
@@ -12,6 +13,7 @@ type ConnectionListener = (connected: boolean) => void;
 /** One node-level event payload inside a `graph_event` WS message (G09). */
 export interface GraphOutputEvent {
   kind: string;
+  status?: GraphInstanceStatus | null;
   node_id?: string;
   node_name?: string;
   invocation_id?: number;

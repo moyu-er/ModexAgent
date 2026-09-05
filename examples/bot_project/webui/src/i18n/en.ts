@@ -617,6 +617,8 @@ export const en = {
     statusPending: "pending",
     statusRunning: "running",
     statusPaused: "paused",
+    statusPausing: "pausing",
+    statusStopping: "stopping",
     statusStopped: "stopped",
     statusCrashed: "crashed",
     statusCompleted: "completed",

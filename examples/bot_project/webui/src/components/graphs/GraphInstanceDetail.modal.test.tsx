@@ -398,7 +398,7 @@ describe("Run graph modal — inline deliver panel", () => {
     });
   });
 
-  it.each(["completed", "crashed", "stopped"])(
+  it.each(["completed", "crashed", "stopped"] as const)(
     "hides inline deliver panel when terminal (%s)",
     async (status) => {
       mockHook({

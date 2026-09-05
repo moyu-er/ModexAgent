@@ -40,7 +40,7 @@ import {
 } from "./useGraphExecution.diff";
 
 // crashed stays polled — fault recovery may auto-resume it to running.
-const ACTIVE_STATUSES = new Set(["pending", "running", "paused", "crashed"]);
+const ACTIVE_STATUSES = new Set(["pending", "running", "pausing", "paused", "stopping", "crashed"]);
 const POLL_MS = 2000;
 /** Pulse dedup window: if the same edge was pulsed within this window
  * (by either node_completed or deliver_dispatched), skip the duplicate.
@@ -74,7 +74,7 @@ export interface UseGraphExecutionResult {
   crashFlashes: CrashSignal[];
   error: string | null;
   /** Re-fetch immediately (e.g. after a pause/resume/stop control). */
-  refresh: () => void;
+  refresh: () => Promise<void>;
   dismissPulse: (id: number) => void;
   dismissCrashFlash: (id: number) => void;
 }
@@ -115,6 +115,10 @@ export function useGraphExecution(
   // Bumped per effect run so a stale in-flight poll from a previous
   // instance/workspace can no longer write state.
   const generation = useRef(0);
+  const snapshotRequest = useRef(0);
+  const appliedSnapshot = useRef(0);
+  // Only events received after a snapshot request began override that response.
+  const liveStatus = useRef<Partial<Pick<GraphInstance, "status" | "result">> | null>(null);
   const edgesRef = useRef(edges);
   useEffect(() => {
     edgesRef.current = edges;
@@ -141,13 +145,17 @@ export function useGraphExecution(
 
   // ── Polling (PRD §6.1 Phase 1) ────────────────────────────────────────────
 
-  // Returns true when the instance reached a terminal status.
-  const pollOnce = useCallback(async (): Promise<boolean> => {
+  const pollOnce = useCallback(async (): Promise<void> => {
     const gen = generation.current;
-    let terminal = false;
+    const request = ++snapshotRequest.current;
+    const statusAtRequest = liveStatus.current;
     try {
-      const loaded = await getInstance(workspaceId, instanceId);
-      if (gen !== generation.current) return true;
+      const snapshot = await getInstance(workspaceId, instanceId);
+      if (gen !== generation.current || request < appliedSnapshot.current) return;
+      appliedSnapshot.current = request;
+      const loaded = liveStatus.current !== statusAtRequest
+        ? { ...snapshot, ...liveStatus.current }
+        : snapshot;
       const now = Date.now();
       const transitions = diffNodeStatuses(prevNodes.current, loaded.nodes, now);
       prevNodes.current = loaded.nodes;
@@ -177,9 +185,8 @@ export function useGraphExecution(
       }
       setInstance(loaded);
       setError(null);
-      terminal = !ACTIVE_STATUSES.has(loaded.status);
     } catch (err) {
-      if (gen !== generation.current) return true;
+      if (gen !== generation.current || request < appliedSnapshot.current) return;
       setError(err instanceof Error ? err.message : String(err));
     }
     getEvents(workspaceId, instanceId)
@@ -192,13 +199,13 @@ export function useGraphExecution(
       .catch(() => {
         // Event polling is best-effort; the instance payload carries status.
       });
-    return terminal;
   }, [workspaceId, instanceId]);
 
   // ── Reset on instance/workspace switch ───────────────────────────────────
 
   useEffect(() => {
     generation.current += 1;
+    liveStatus.current = null;
     prevNodes.current = [];
     recentPulseEdges.current.clear();
     setInstance(null);
@@ -207,27 +214,21 @@ export function useGraphExecution(
     setCrashFlashes([]);
     setError(null);
     setWsConnected(false);
+    return () => { generation.current += 1; };
   }, [instanceId, workspaceId]);
 
   // ── Polling effect (polling mode + WS-disconnect fallback) ───────────────
 
   useEffect(() => {
-    if (!shouldPoll) return; // WS mode active — no polling
-    let stopped = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
-    void pollOnce().then((terminal) => {
-      if (stopped || terminal) return;
-      timer = setInterval(() => {
-        void pollOnce().then((done) => {
-          if (done && timer) clearInterval(timer);
-        });
-      }, POLL_MS);
-    });
-    return (): void => {
-      stopped = true;
-      if (timer) clearInterval(timer);
-    };
+    if (shouldPoll) void pollOnce();
   }, [pollOnce, shouldPoll]);
+
+  const active = instance === null || ACTIVE_STATUSES.has(instance.status);
+  useEffect(() => {
+    if (!shouldPoll || !active) return;
+    const timer = setInterval(() => { void pollOnce(); }, POLL_MS);
+    return () => clearInterval(timer);
+  }, [pollOnce, shouldPoll, active]);
 
   // ── WS mode (G11, PRD §11.2 Phase 2) ─────────────────────────────────────
 
@@ -254,7 +255,11 @@ export function useGraphExecution(
         setError(msg.message);
         return;
       }
-      if (msg.type !== "graph_event") return; // acks: no action
+      if (msg.type === "graph_subscribed" && msg.graph_instance_id === instanceId) {
+        // Subscribe first, then reconcile anything missed before the ack.
+        void pollOnce();
+      }
+      if (msg.type !== "graph_event") return;
       if (msg.graph_instance_id !== instanceId) return;
 
       const event: GraphOutputEvent = msg.event;
@@ -359,33 +364,33 @@ export function useGraphExecution(
           );
           break;
         }
-        case "graph_completed": {
-          setInstance((prev) =>
-            prev
-              ? { ...prev, status: "completed", result: (event.result as GraphPayload[] | null) ?? null }
-              : prev,
-          );
-          setTimeline((current) =>
-            mergeTimelineEvents(current, [
-              wsTimelineEvent("graph_completed", undefined, undefined, ts, event),
-            ]),
-          );
-          break;
-        }
+        case "graph_status_changed":
+        case "graph_completed":
+        case "graph_failed":
         case "graph_crashed": {
-          setInstance((prev) =>
-            prev ? { ...prev, status: "crashed" } : prev,
-          );
+          const status = event.kind === "graph_status_changed" ? event.status
+            : event.kind === "graph_completed" ? "completed"
+            : event.kind === "graph_failed" ? "failed" : "crashed";
+          if (status) {
+            const patch = {
+              status,
+              ...(event.kind === "graph_completed"
+                ? { result: (event.result as GraphPayload[] | null) ?? null }
+                : {}),
+            };
+            liveStatus.current = patch;
+            setInstance((prev) => prev ? { ...prev, ...patch } : prev);
+          }
           setTimeline((current) =>
             mergeTimelineEvents(current, [
-              wsTimelineEvent("graph_crashed", undefined, undefined, ts, event),
+              wsTimelineEvent(event.kind, undefined, undefined, ts, event),
             ]),
           );
           break;
         }
       }
     },
-    [instanceId, shouldFirePulse],
+    [instanceId, shouldFirePulse, pollOnce],
   );
 
   // ── WS subscription lifecycle ────────────────────────────────────────────
@@ -430,8 +435,8 @@ export function useGraphExecution(
     };
   }, [wsClient, instanceId, workspaceId, handleGraphMessage]);
 
-  const refresh = useCallback((): void => {
-    void pollOnce();
+  const refresh = useCallback(async (): Promise<void> => {
+    await pollOnce();
   }, [pollOnce]);
 
   const dismissPulse = useCallback((id: number): void => {

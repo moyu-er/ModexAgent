@@ -14,7 +14,9 @@ import type { GraphNodeVisualStatus } from "./topology/GraphNode";
 const STATUS_CLS: Record<string, string> = {
   pending: "graph-badge-pending",
   running: "graph-badge-running",
+  pausing: "graph-badge-suspended",
   paused: "graph-badge-suspended",
+  stopping: "graph-badge-suspended",
   stopped: "graph-badge-canceled",
   crashed: "graph-badge-crashed",
   completed: "graph-badge-completed",
@@ -24,7 +26,9 @@ const STATUS_CLS: Record<string, string> = {
 const STATUS_LABEL_KEYS: Record<string, MessageKey> = {
   pending: "graphs.statusPending",
   running: "graphs.statusRunning",
+  pausing: "graphs.statusPausing",
   paused: "graphs.statusPaused",
+  stopping: "graphs.statusStopping",
   stopped: "graphs.statusStopped",
   crashed: "graphs.statusCrashed",
   completed: "graphs.statusCompleted",

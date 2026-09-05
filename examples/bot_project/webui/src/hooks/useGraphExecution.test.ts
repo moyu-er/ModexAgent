@@ -16,7 +16,7 @@ function node(name: string, status: string, id = `${name}-id`): GraphNodeStatus 
   return { node_name: name, node_id: id, status };
 }
 
-function instance(status: string, nodes: GraphNodeStatus[]): GraphInstance {
+function instance(status: GraphInstance["status"], nodes: GraphNodeStatus[]): GraphInstance {
   return {
     spec_id: "spec-1",
     graph_instance_id: "inst-1",
@@ -230,9 +230,54 @@ describe("useGraphExecution", () => {
     await tick(1);
     expect(mockGetInstance).toHaveBeenCalledTimes(1);
 
-    act(() => result.current.refresh());
+    act(() => { void result.current.refresh(); });
     await tick(0);
     expect(mockGetInstance).toHaveBeenCalledTimes(2);
     expect(result.current.instance?.status).toBe("running");
+  });
+
+  it.each(["pausing", "stopping"] as const)("keeps polling through %s until drain finishes", async (status) => {
+    mockGetInstance.mockResolvedValue(instance(status, []));
+    const { result } = renderHook(() => useGraphExecution("ws1", "inst-1", EDGES));
+    await tick(1);
+    const drained = status === "pausing" ? "paused" : "stopped";
+    mockGetInstance.mockResolvedValue(instance(drained, []));
+    await tick(2000);
+    expect(result.current.instance?.status).toBe(drained);
+  });
+
+  it("restarts fallback polling after a same-id re-invoke refresh", async () => {
+    mockGetInstance.mockResolvedValue(instance("completed", []));
+    const { result } = renderHook(() => useGraphExecution("ws1", "inst-1", EDGES));
+    await tick(1);
+    mockGetInstance.mockResolvedValue(instance("running", []));
+    act(() => { void result.current.refresh(); });
+    await tick(1);
+    mockGetInstance.mockResolvedValue(instance("failed", []));
+    await tick(2000);
+    expect(result.current.instance?.status).toBe("failed");
+  });
+
+  it("does not let an older refresh overwrite a newer snapshot", async () => {
+    mockGetInstance.mockResolvedValue(instance("running", []));
+    const { result } = renderHook(() => useGraphExecution("ws1", "inst-1", EDGES));
+    await tick(1);
+    let resolveOld!: (value: GraphInstance) => void;
+    mockGetInstance.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+    act(() => { void result.current.refresh(); });
+    mockGetInstance.mockResolvedValue(instance("paused", []));
+    act(() => { void result.current.refresh(); });
+    await tick(1);
+    await act(async () => resolveOld(instance("running", [])));
+    expect(result.current.instance?.status).toBe("paused");
+  });
+
+  it("still presents snapshots when request latency exceeds the polling interval", async () => {
+    mockGetInstance.mockImplementation(() => new Promise((resolve) => {
+      setTimeout(() => resolve(instance("pausing", [])), 3000);
+    }));
+    const { result } = renderHook(() => useGraphExecution("ws1", "inst-1", EDGES));
+    await tick(3500);
+    expect(result.current.instance?.status).toBe("pausing");
   });
 });

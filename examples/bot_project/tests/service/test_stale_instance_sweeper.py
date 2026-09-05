@@ -262,6 +262,18 @@ class TestSweepEmpty:
         assert swept == []
 
 
+@pytest.mark.parametrize("status", [GraphInstanceStatus.PAUSING, GraphInstanceStatus.STOPPING])
+@pytest.mark.parametrize("alive", [False, True])
+async def test_transitional_instances_use_the_same_executor_classifier(
+    status: GraphInstanceStatus, alive: bool,
+) -> None:
+    store = InMemoryGraphInstanceStore()
+    store.save(_make_metadata(40, status=status, attrs={EXECUTOR_PROCESS_ID_KEY: 100}))
+    sweeper = StaleInstanceSweeper(store, _FakeRegistry({100} if alive else set()))
+    assert await sweeper.sweep() == ([] if alive else [40])
+    assert _status(store, 40) is (status if alive else GraphInstanceStatus.CRASHED)
+
+
 # -- start_sweeper_loop ------------------------------------------------------
 
 

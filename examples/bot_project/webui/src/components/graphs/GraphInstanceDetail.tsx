@@ -77,7 +77,7 @@ const MAX_INPUT_HEIGHT = 320;
 const MIN_INPUT_HEIGHT = 56;
 
 const TERMINAL_STATUSES = new Set(["completed", "crashed", "stopped", "failed"]);
-const ACTIVE_STATUSES = new Set(["pending", "running", "paused"]);
+const ACTIVE_STATUSES = new Set(["pending", "running", "pausing", "paused", "stopping"]);
 // Stoppable statuses mirror the hook's ACTIVE_STATUSES: crashed stays
 // stoppable because fault recovery may auto-resume it to running.
 const STOPPABLE_STATUSES = new Set(["pending", "running", "paused", "crashed"]);
@@ -116,6 +116,9 @@ export const GraphInstanceDetail: FC<GraphInstanceDetailProps> = ({
   const [invocations, setInvocations] = useState<GraphInvocationRecord[]>([]);
   const [input, setInput] = useState("");
   const [isInvoking, setIsInvoking] = useState(false);
+  const [controlBusy, setControlBusy] = useState(false);
+  const [controlError, setControlError] = useState<string | null>(null);
+  const controlPending = useRef(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [invocationsLoading, setInvocationsLoading] = useState(true);
@@ -139,6 +142,20 @@ export const GraphInstanceDetail: FC<GraphInstanceDetailProps> = ({
     dismissPulse,
     dismissCrashFlash,
   } = useGraphExecution(workspaceId, instanceId, edges, wsClient);
+
+  const handleControl = useCallback((fn: typeof pauseGraph): void => {
+    if (controlPending.current) return;
+    controlPending.current = true;
+    setControlBusy(true);
+    setControlError(null);
+    fn(workspaceId, instanceId)
+      .then(() => refresh())
+      .catch((err) => setControlError(formatGraphApiError(err)))
+      .finally(() => {
+        controlPending.current = false;
+        setControlBusy(false);
+      });
+  }, [workspaceId, instanceId, refresh]);
 
   const nodeStatuses = useMemo<Record<string, GraphNodeVisualStatus>>(() => {
     return buildNodeStatusMap(instance?.nodes ?? []);
@@ -300,7 +317,7 @@ export const GraphInstanceDetail: FC<GraphInstanceDetailProps> = ({
 
   const status = instance?.status ?? "";
   const isRunning = ACTIVE_STATUSES.has(status);
-  const error = loadError ?? pollError;
+  const error = controlError ?? loadError ?? pollError;
 
   const handleInvoke = useCallback((): void => {
     if (isInvoking || isRunning || !input.trim()) return;
@@ -319,9 +336,9 @@ export const GraphInstanceDetail: FC<GraphInstanceDetailProps> = ({
       },
     ]);
     invokeInstance(workspaceId, instanceId, content)
-      .then(() => {
+      .then(async () => {
         refreshInvocations();
-        refresh();
+        await refresh();
       })
       .catch((err) => {
         setInvocations((prev) =>
@@ -493,6 +510,9 @@ export const GraphInstanceDetail: FC<GraphInstanceDetailProps> = ({
           completedCount={completedCount}
           totalNodes={totalNodes}
           refresh={refresh}
+          controlBusy={controlBusy}
+          controlError={controlError ?? pollError}
+          onControl={handleControl}
           onPulseComplete={dismissPulse}
           onOpenSession={handleOpenSession}
           onClose={closeModal}
@@ -621,6 +641,9 @@ interface RunGraphModalProps {
   completedCount: number;
   totalNodes: number;
   refresh: () => void;
+  controlBusy: boolean;
+  controlError: string | null;
+  onControl: (fn: typeof pauseGraph) => void;
   onPulseComplete: (id: number) => void;
   onOpenSession: (nodeName: string) => void;
   onClose: () => void;
@@ -640,6 +663,9 @@ const RunGraphModal: FC<RunGraphModalProps> = ({
   completedCount,
   totalNodes,
   refresh,
+  controlBusy: lifecycleBusy,
+  controlError,
+  onControl,
   onPulseComplete,
   onOpenSession,
   onClose,
@@ -649,7 +675,8 @@ const RunGraphModal: FC<RunGraphModalProps> = ({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [deliverNodeName, setDeliverNodeName] = useState("");
   const [deliverContent, setDeliverContent] = useState("");
-  const [controlBusy, setControlBusy] = useState(false);
+  const [deliverBusy, setDeliverBusy] = useState(false);
+  const controlBusy = lifecycleBusy || deliverBusy;
   const [actionError, setActionError] = useState<string | null>(null);
   const [runStartTime, setRunStartTime] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -678,21 +705,9 @@ const RunGraphModal: FC<RunGraphModalProps> = ({
     return () => clearInterval(timer);
   }, [runStartTime]);
 
-  const handleControl = useCallback(
-    (fn: typeof pauseGraph): void => {
-      setControlBusy(true);
-      setActionError(null);
-      fn(workspaceId, instanceId)
-        .then(() => refresh())
-        .catch((err) => setActionError(formatGraphApiError(err)))
-        .finally(() => setControlBusy(false));
-    },
-    [workspaceId, instanceId, refresh],
-  );
-
   const handleDeliverInline = useCallback((): void => {
     if (!deliverNodeName || !deliverContent.trim() || controlBusy) return;
-    setControlBusy(true);
+    setDeliverBusy(true);
     setActionError(null);
     deliverToNode(workspaceId, instanceId, deliverNodeName, deliverContent)
       .then(() => {
@@ -703,7 +718,7 @@ const RunGraphModal: FC<RunGraphModalProps> = ({
         setDeliverContent("");
       })
       .catch((err) => setActionError(formatGraphApiError(err)))
-      .finally(() => setControlBusy(false));
+      .finally(() => setDeliverBusy(false));
   }, [workspaceId, instanceId, deliverNodeName, deliverContent, controlBusy, refresh, toast, t]);
 
   const autosizeDeliver = useCallback((): void => {
@@ -802,7 +817,7 @@ const RunGraphModal: FC<RunGraphModalProps> = ({
                 variant="secondary"
                 size="sm"
                 disabled={controlBusy}
-                onClick={(): void => handleControl(pauseGraph)}
+                onClick={(): void => onControl(pauseGraph)}
               >
                 <Pause size={14} />
                 {t("graphs.pause")}
@@ -813,7 +828,7 @@ const RunGraphModal: FC<RunGraphModalProps> = ({
                 variant="secondary"
                 size="sm"
                 disabled={controlBusy}
-                onClick={(): void => handleControl(resumeGraph)}
+                onClick={(): void => onControl(resumeGraph)}
               >
                 <Play size={14} />
                 {t("graphs.resume")}
@@ -824,7 +839,7 @@ const RunGraphModal: FC<RunGraphModalProps> = ({
                 variant="danger"
                 size="sm"
                 disabled={controlBusy}
-                onClick={(): void => handleControl(stopGraph)}
+                onClick={(): void => onControl(stopGraph)}
               >
                 <Square size={14} />
                 {t("graphs.stop")}
@@ -841,9 +856,9 @@ const RunGraphModal: FC<RunGraphModalProps> = ({
           </div>
         </div>
 
-        {actionError ? (
+        {controlError || actionError ? (
           <pre className="mx-4 mt-3 whitespace-pre-wrap rounded-sm border border-danger bg-canvas-elevated px-3 py-2 font-mono text-xs text-danger">
-            {actionError}
+            {controlError ?? actionError}
           </pre>
         ) : null}
 
