@@ -263,14 +263,17 @@ async def test_real_pool_drives_direct_answer_to_emitter_completion(tmp_path: Pa
     assert result.content == "direct pool answer"
     assert poller_task.done()
     assert poller._inflight == {}
+    # The tracing capability (FILE backend — the boot fallback's default)
+    # persists the turn's spans even under a custom emitter factory: the
+    # retired trace gap (emitter-carried pools lost every span) is closed.
     spans = await JsonlSpanQuery(tmp_path / "runtime_state" / "coder" / "trace").list_by_session(
         _ROOT_SESSION.session_id
     )
-    assert spans == []
+    assert {span.name for span in spans} == {"chat", "invoke_agent"}
 
 
 @pytest.mark.asyncio
-async def test_real_pool_drives_delegated_subagent_and_exposes_trace_gap(
+async def test_real_pool_drives_delegated_subagent_and_persists_trace(
     tmp_path: Path,
 ) -> None:
     completion: asyncio.Future[AgentResult] = asyncio.get_running_loop().create_future()
@@ -306,8 +309,17 @@ async def test_real_pool_drives_delegated_subagent_and_exposes_trace_gap(
     assert parent_id == _ROOT_SESSION.session_id
     assert child_result.content == "child pool answer"
     assert parent_result.content == "delegated pool answer"
+    # Trace persistence covers the delegation too: the orchestrator's
+    # handoff chain and the subagent's own turn both reach the pool's
+    # span store under their session ids.
     query = JsonlSpanQuery(tmp_path / "runtime_state" / "coder" / "trace")
     root_spans = await query.list_by_session(_ROOT_SESSION.session_id)
     child_spans = await query.list_by_session(child_id)
-    assert root_spans == []
-    assert child_spans == []
+    assert {span.name for span in root_spans} == {
+        "chat",
+        "execute_tool_batch",
+        "execute_tool",
+        "agent.handoff",
+        "invoke_agent",
+    }
+    assert {span.name for span in child_spans} == {"chat", "invoke_agent"}

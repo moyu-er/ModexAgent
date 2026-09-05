@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -322,7 +323,14 @@ async def test_runtime_compiles_canonical_relative_roots(
         await runtime.close()
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="requires real Linux bwrap")
+# Real-bwrap enforcement: skip wherever the binary is absent (CI runners,
+# Windows, macOS) — the same availability contract test_bwrap_integration
+# skips under; the parameter-compilation contracts are covered engine-free
+# above.
+_HAS_REAL_BWRAP = sys.platform.startswith("linux") and shutil.which("bwrap") is not None
+
+
+@pytest.mark.skipif(not _HAS_REAL_BWRAP, reason="requires real Linux bwrap")
 async def test_real_bwrap_writes_permitted_relative_extra_root(tmp_path: Path) -> None:
     from modex_agent.sandbox.bwrap_runtime import BwrapRuntime
     from modex_agent.sandbox.container_executor import ContainerShellExecutor

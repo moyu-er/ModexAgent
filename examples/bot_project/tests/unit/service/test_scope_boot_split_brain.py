@@ -54,6 +54,7 @@ from modex_agent.plugins.loader import (
 )
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.tools.terminal.persistent_bash import persistent_bash_supported
+from modex_agent.tools.workspace_scoped import WorkspaceScopedTool
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -323,7 +324,13 @@ async def test_lazy_materialization_from_compiled_spec(tmp_path: Path) -> None:
             + (["bash_input"] if persistent_bash_supported() else [])
         )
         assert isinstance(tool_manager.get_tool("send_to_agent"), SendToAgentTool)
-        assert type(tool_manager.get_tool("edit")).__name__ == "AciEditTool"
+        # Assembly wraps path-resolving tools in the workspace-scoped
+        # wrapper (native_core's wrap_standard_tools) — the ACI edit is
+        # the inner tool.
+        edit = tool_manager.get_tool("edit")
+        if isinstance(edit, WorkspaceScopedTool):
+            edit = edit.inner
+        assert type(edit).__name__ == "AciEditTool"
         # Session-only subagent memory (the compiled spec's memory face).
         assert materialized.descriptor.memory_config.archive is None
         assert materialized.descriptor.memory_config.core is None
