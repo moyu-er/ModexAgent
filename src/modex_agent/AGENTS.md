@@ -29,7 +29,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `persistence/` | `adapters/`, `managers/`, `migrations/`, `session_artifacts/` | Hybrid persistence layer (ADR-0023, ADR-0028~0031). Owns `SessionStore`, `SessionRegistry`, file/SQLite adapters, migrations, and session artifact cleanup. |
 | `multi_agent/` | `communication/`, `inbox/`, `session_tree/` | Star-topology orchestration — `AgentPool`, `AgentTemplate`, `PoolInstance`, inbox, and `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
 | `tools/` | `ast/`, `lsp/`, `mcp/`, `overflow/`, `standard/`, `terminal/`, `web/` | Tool subsystem — concrete `InMemoryToolManager`, filtering, MCP, terminal, overflow, and standard tools (see `tools/AGENTS.md`) |
-| `sandbox/` | `adapters/` | Sandboxed execution — Subprocess, Docker, E2B, Landlock, guards, environment builder (see `sandbox/AGENTS.md`) |
+| `sandbox/` | `adapters/` | Opt-in execution substrate and shared permission judgments (ADR-0007): LOCAL/OCI selection, per-session native main/subagent HOST fallback, canonical targets and independent human approval. DEFAULT is dormant; HOST/external coverage and validation limits: see `sandbox/AGENTS.md`. |
 | `pipeline/` | — | `AgentPipeline` orchestration, `InputAdapter` ABC, approval renderer, snapshot handling (see `pipeline/AGENTS.md`) |
 | `runtime/` | — | `AgentRuntime`, runtime state/codecs, `TurnStateStore`, and per-session Todo models/store contracts in `todo.py` (see `runtime/AGENTS.md`). |
 | `commands/` | — | Slash command parsing and dispatch, including the consumer-owned `SkillResolver` command seam (see `commands/AGENTS.md`) |
@@ -37,7 +37,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `hook/` | `builtin/` | Lifecycle hooks — `HookRunner`, `HookPoint`, builtin hooks (see `hook/AGENTS.md`) |
 | `interceptor/` | `builtin/` | AOP interceptor chain — `InterceptorChain` and builtin interceptors (see `interceptor/AGENTS.md`) |
 | `ioc/` | `configs/`, `factories/` | `AppConfig` and typed construction helpers (see `ioc/AGENTS.md`) |
-| `approval/` | — | Tiered tool approval — tiers, decisions, response parsing (see `approval/AGENTS.md`) |
+| `approval/` | — | Tiered tool approval, typed classification facts, per-tool path/command rules and response parsing; guard verdicts reuse the existing transaction/GraphInterrupt channel (see `approval/AGENTS.md`) |
 | `messaging/` | — | `MessageBroker`, `BrokerBridgeService` (see `messaging/AGENTS.md`) |
 | `plugins/` | `assembly/`, `defaults/capabilities/` | Plugin-unified agent assembly; the `CAPABILITY` slot hosts bundled capabilities, including the complete Experience and Skills vertical slices (see `plugins/AGENTS.md` and `docs/design/capability-bundles/AUTHOR-GUIDE.md`) |
 | `scope/` | — | Scope declarations, validation, compilation, effective toolsets, provenance, and the capability compile protocol (see `scope/AGENTS.md`) |
@@ -116,7 +116,7 @@ From `modex_agent`'s perspective:
 - `multi_agent/` depends on `core/` (agent ABC), `memory/` (isolated memory), `messaging/` (bus), `persistence/` (InboxMQ, routing stores).
 - `pipeline/` depends on `core/`, `agents/`, `runtime/`, `commands/`.
 - `tools/` depends on `core/` (Tool ABC, ToolManager ABC); owns the concrete InMemoryToolManager (C2).
-- `sandbox/` depends on `core/` (types) only; NOT wired into `tools/` — opt-in capability per ADR-0007.
+- `sandbox/` integrates with tools/workspace, approval/core/interceptor and runtime contracts. Substrate opt-in uses agent `interceptors` plus `interceptor_configs.sandbox_guard.sandbox`, not a scope-root sandbox field. DEFAULT creates no sandbox interceptor or probe; independent approval, WebReader safety and native delegation checks remain separate.
 
 ### External
 - `httpx` — direct-HTTP LLM provider transport (ADR-0046)
@@ -128,7 +128,7 @@ From `modex_agent`'s perspective:
 
 ## Approval & Security Architecture
 
-See root `AGENTS.md` for a detailed breakdown of the approval architecture, coverage gaps (command content, subagents, pool mode, SSRF, workspace boundary, environment isolation), and what NOT to do.
+See [sandbox guidance](sandbox/AGENTS.md) and the [permission contract](../../docs/design/unified-security/PRD.md) for native-main switch combinations, fixed native delegation and external limits. Sandbox and human approval are independently switchable; guard-only checks still reuse `ApprovalRuntime`. Enabled main approval escalates BOUNDARY even with an empty tools map; native subagents return direct errors without human escalation. HOST command guards are best-effort, external provider tools bypass framework ToolNode, and fallback never grants permission or replays a possibly-submitted command. [Ticket evidence](../../docs/design/sandbox-integration/tickets.md#validation-evidence) records Windows/WSL validation and live-platform gaps.
 
 <!-- MANUAL -->
 <!-- Additional manual entries can be added below this line. -->

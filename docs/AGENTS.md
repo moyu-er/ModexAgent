@@ -16,6 +16,8 @@ docs/
 ├── design/                ← Feature design docs (PRD per feature; completed tickets in _archive/)
 │   ├── _archive/                      ← Superseded PRDs + completed tickets
 │   ├── capability-bundles/            (ADR-0047, implemented 2026-08-28) capability bundles — SPEC, author guide
+│   ├── sandbox-integration/           (ADR-0007) execution substrate, per-session HOST fallback and validation evidence - PRD, tickets
+│   ├── unified-security/              shared verdicts, independent human approval and delegation limits - PRD, tickets
 │   ├── llm-provider/                  (ADR-0046) LLM provider protocol engines — PRD
 │   ├── scope-converge/                (ADR-0041) plugin/assembly SPEC, errata, handoff
 │   ├── scope-assembly/                (ADR-0042/0043, implemented 2026-08-22) scope declaration tree + unified assembly SPEC, issues, closure matrix
@@ -60,6 +62,8 @@ Each feature has a directory under `design/<feature-slug>/` containing:
 | Feature | ADR | Key files |
 |---------|-----|-----------|
 | Capability bundles (11th slot, five-phase protocol, five bundled packages migrated split-brain; implemented 2026-08-28) | ADR-0047 | SPEC.md, AUTHOR-GUIDE.md |
+| Sandbox integration (DEFAULT dormant; selected engine/per-session HOST fallback; no replay) | ADR-0007 | [PRD](design/sandbox-integration/PRD.md), [tickets and validation evidence](design/sandbox-integration/tickets.md#validation-evidence) |
+| Unified security (canonical targets, independent human approval, native delegation/audit; HOST/external limits) | sandbox-integration | [PRD](design/unified-security/PRD.md), [tickets and security coverage](design/unified-security/tickets.md#validation-scope) |
 | LLM provider protocol engines (ADR-0046) | 0046 | PRD.md |
 | Scope unified assembly (declaration tree, context chain, convergence waves; implemented 2026-08-22, tickets 01-19 closed) | ADR-0042/0043 | SPEC.md (§13 errata + ADR anchor audit), issues/01-19, closure-matrix.md |
 | Graph orchestration (persistence, external control) | ADR-0033/0034 | distributed-persistence.md, external-control.md, backlog.md, future-capabilities.md, state-consistency.md |
