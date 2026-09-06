@@ -28,6 +28,7 @@ from bot.service.pool.declaration import (
     declared_pool_build,
 )
 from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
+from bot.workspace.handle import WorkspaceHandle
 from bot.workspace.pool_data import build_pool_data
 from bot.workspace.wiring.stack import declared_assembly_deps
 
@@ -207,6 +208,9 @@ async def _create_declared_pool(
                 declared=declared,
                 assembly_deps=deps,
                 project_dir=BOT_BASE,
+                workspace_handle=WorkspaceHandle(
+                    target=tmp_path, data_root=tmp_path / '.modex',
+                ),
                 workspace_registry=object(),
                 workspace_resources=object(),
                 data_dir=tmp_path / ".modex",

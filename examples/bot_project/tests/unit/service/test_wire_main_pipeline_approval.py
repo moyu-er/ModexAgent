@@ -56,7 +56,12 @@ from modex_agent.pipeline.turn_context_config import (
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.services import AgentRuntimeServices
-from modex_agent.sandbox.settings import SandboxBackend, SandboxPolicy, SandboxSettings
+from modex_agent.sandbox.settings import (
+    ExclusiveConfig,
+    SandboxBackend,
+    SandboxSettings,
+    WriteSurface,
+)
 from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
@@ -395,7 +400,10 @@ def test_main_and_graph_approval_wiring_matrix(
 
     pipeline = _wire(
         approval=approval,
-        sandbox=SandboxSettings(backend=backend, policy=SandboxPolicy.WORKSPACE_WRITE)
+        sandbox=SandboxSettings(
+            backend=backend,
+            exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE),
+        )
         if backend is not None else None,
         root_provider=Root(),
     )

@@ -50,6 +50,22 @@ class WorkspaceHandleRootProvider(WorkspaceRootProvider):
         return self._handle.current
 
 
+class StaticRootProvider(WorkspaceRootProvider):
+    """WorkspaceRootProvider anchored to one fixed path — the workspace-less
+    pool fallback.
+
+    ``create_pool`` is callable without a workspace (hermetic harnesses,
+    non-workspace wiring); the sandbox guard factory requires a root on
+    every pool boot, so workspace-less pools anchor to the project dir.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self._root: Path = Path(root).resolve()
+
+    def current(self) -> Path:
+        return self._root
+
+
 class WorkspaceResolverCell(WorkspaceManager):
     """Late-binding holder for the per-workspace resource bundle (``R``).
 

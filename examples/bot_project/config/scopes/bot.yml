@@ -60,15 +60,18 @@ workspace:
           hook_configs:
             reference_collector:
               max_sources: 20
+          # The bot's basic permission logic: default write surface is the
+          # workspace (reads unrestricted); extra paths are declarable per
+          # pool. Subagents inherit this face via resolve_agent_sandbox.
+          interceptors: [+sandbox_guard]
+          interceptor_configs:
+            sandbox_guard:
+              sandbox:
+                backend: host
+                exclusive:
+                  write_surface: workspace
           approval:
             enabled: true
-            tools:
-              write:
-                allowed_paths:
-                - ./*
-              edit:
-                allowed_paths:
-                - ./*
           mcp:
           - playwright
           agents:
@@ -108,15 +111,18 @@ workspace:
           # Per-turn model binding — declared roster entry since the W6
           # glue eradication retired the unconditional create_pool injection.
           - +model_choice_bind
+          # The bot's basic permission logic: default write surface is the
+          # workspace (reads unrestricted); extra paths are declarable per
+          # pool. Subagents inherit this face via resolve_agent_sandbox.
+          interceptors: [+sandbox_guard]
+          interceptor_configs:
+            sandbox_guard:
+              sandbox:
+                backend: host
+                exclusive:
+                  write_surface: workspace
           approval:
             enabled: true
-            tools:
-              write:
-                allowed_paths:
-                - ./*
-              edit:
-                allowed_paths:
-                - ./*
           agents:
             explore:
               description: >-
@@ -161,6 +167,16 @@ workspace:
             ast_grep: {}
             experience: {}
             todo: {}
+          # The bot's basic permission logic: default write surface is the
+          # workspace (reads unrestricted); extra paths are declarable per
+          # pool. Subagents inherit this face via resolve_agent_sandbox.
+          interceptors: [+sandbox_guard]
+          interceptor_configs:
+            sandbox_guard:
+              sandbox:
+                backend: host
+                exclusive:
+                  write_surface: workspace
           tools:
           # Ticket 11: the notification hook is a HOOK-slot roster
           # reference (Stage 4 dispatch) — config evolution only

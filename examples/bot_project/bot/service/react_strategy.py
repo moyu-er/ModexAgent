@@ -105,11 +105,17 @@ class ReactExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategy):
         else:
             context_manager = self._fallback_context_manager(main_spec, system_prompt)
 
-        root_provider = None
-        if workspace_handle is not None:
-            from bot.workspace.handle import WorkspaceHandleRootProvider
+        # The sandbox guard factory requires a root on EVERY pool boot
+        # (fail-fast), so the provider is always produced: the live
+        # workspace root when a workspace exists, the project dir
+        # otherwise (workspace-less wiring).
+        from bot.workspace.handle import StaticRootProvider, WorkspaceHandleRootProvider
 
-            root_provider = WorkspaceHandleRootProvider(workspace_handle)
+        root_provider = (
+            WorkspaceHandleRootProvider(workspace_handle)
+            if workspace_handle is not None
+            else StaticRootProvider(ctx.project_dir)
+        )
 
         tool_manager: ToolManager = await self._build_tools(pool_name)
         # The bash slot is NOT built or registered here: the roster owns it.

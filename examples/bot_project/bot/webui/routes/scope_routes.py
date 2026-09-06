@@ -209,9 +209,14 @@ def _field_value(
             return compiled.spec.max_iterations
         case "memory":
             return compiled.spec.memory_overrides.model_dump(mode="json")
-        case "allowed_dirs":
-            # Declaration face (05a); runtime consumption lands in 05b.
-            return [str(d) for d in (agent_spec.allowed_dirs or [])]
+        case "sandbox":
+            # Declaration face — the two-class permission block (None =
+            # inherit the caller's settings wholesale).
+            return (
+                agent_spec.sandbox.model_dump(mode="json")
+                if agent_spec.sandbox is not None
+                else None
+            )
     raise KeyError(f"unknown provenance field {field!r}")
 
 

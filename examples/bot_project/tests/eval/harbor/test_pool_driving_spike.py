@@ -9,6 +9,7 @@ import pytest
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.pool import create_pool
 from bot.service.pool.declaration import boot_scope_declaration, declared_pool_build
+from bot.workspace.handle import WorkspaceHandle
 from bot.workspace.pool_data import PoolData, build_pool_data
 from plugins.bot_strategies import BotDefaultLLMConfig
 
@@ -215,6 +216,9 @@ async def _create_scripted_pool(
         on_subagent_created=on_subagent_created,
         bot_model_config=None,
         model_choice_registry=ModelChoiceRegistry(),
+        workspace_handle=WorkspaceHandle(
+            target=_BOT_PROJECT, data_root=data_dir,
+        ),
         workspace_registry=object(),
         workspace_resources=object(),
         component_registry=await _scripted_registry(provider),

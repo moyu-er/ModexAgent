@@ -19,7 +19,7 @@ Sandbox and human approval are independently switchable product features. This i
 
 Explicit HOST activates guards without kernel isolation. Available LOCAL/OCI keeps its selected engine even under `write_surface: full`. The exclusive (read-write) class defaults to `workspace` (workspace + `writable_roots` writable); `roots` confines writes to the declared roots; `none` refuses file writes; `full` declares no file boundary. The parallel (read-only) class is unrestricted by default. The [execution PRD](../sandbox-integration/PRD.md) defines backend selection and pre-command fallback.
 
-The bot currently has no sandbox opt-in. Its `default` and `coder` native roots enable approval with write/edit `allowed_paths: ["./*"]` only; the `review` root does not declare approval. This does not gate every command or read tool.
+Its `default` and `coder` native roots opt into the sandbox and enable approval (`enabled: true`, no per-tool entries — the guard layer arbitrates: in-envelope writes are CLEAN, boundary/SSRF findings card); the `review` root declares the sandbox without approval (guard findings deny directly). Per-tool approval overrides (`approval.tools`) remain a framework capability the bot does not expose. This does not gate every command or read tool.
 
 ## Verdict Order
 
