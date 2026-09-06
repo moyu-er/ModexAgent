@@ -20,8 +20,8 @@ from modex_agent.sandbox.decision import (
 )
 from modex_agent.sandbox.settings import (
     GuardSettings,
-    SandboxPolicy,
     SandboxSettings,
+    WriteSurface,
 )
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
@@ -39,10 +39,13 @@ class _FixedRoot(WorkspaceRootProvider):
 
 
 def _service(
-    policy: SandboxPolicy = SandboxPolicy.WORKSPACE_WRITE,
+    write_surface: WriteSurface = WriteSurface.WORKSPACE,
     guard: GuardSettings | None = None,
 ) -> SecurityDecisionService:
-    kwargs: dict[str, object] = {"backend": "host", "policy": policy}
+    kwargs: dict[str, object] = {
+        "backend": "host",
+        "exclusive": {"write_surface": write_surface.value},
+    }
     if guard is not None:
         kwargs["guard"] = guard
     settings = SandboxSettings.model_validate(kwargs)
@@ -54,24 +57,45 @@ def _service(
 
 class TestEvaluateCommand:
     def test_deny_rule_sample_maps_to_deny_rule(self) -> None:
-        verdict = _service().evaluate_command("rm -rf /")
+        # The deny rules are opt-in (deprecated usage); flipping the
+        # toggle restores the pattern rules verbatim.
+        verdict = _service(
+            guard=GuardSettings(deny_rules=True)
+        ).evaluate_command("rm -rf /")
         assert verdict.category is GuardCategory.DENY_RULE
         assert verdict.reason is not None
         assert "denied" in verdict.reason.lower()
 
     def test_fork_bomb_maps_to_deny_rule(self) -> None:
-        verdict = _service().evaluate_command(":(){ :|:& };:")
+        verdict = _service(
+            guard=GuardSettings(deny_rules=True)
+        ).evaluate_command(":(){ :|:& };:")
         assert verdict.category is GuardCategory.DENY_RULE
 
-    def test_traversal_maps_to_traversal(self) -> None:
-        verdict = _service().evaluate_command("cat ../../etc/passwd")
-        assert verdict.category is GuardCategory.TRAVERSAL
-        assert verdict.reason is not None
+    def test_deny_rules_default_off_in_workspace_is_clean(self) -> None:
+        # The core contract: a destructive command INSIDE the permitted
+        # workspace is allowed — permissions are the boundary, not
+        # command patterns.
+        verdict = _service().evaluate_command("rm -rf ./build")
+        assert verdict.category is GuardCategory.CLEAN
+
+    def test_deny_rules_default_off_still_bounds_escaped_paths(self) -> None:
+        # Outside-path destruction is still caught — by the path
+        # envelope, not by command patterns.
+        verdict = _service().evaluate_command("rm -rf ~")
+        assert verdict.category is GuardCategory.BOUNDARY
+
+    def test_relative_escape_read_is_clean(self) -> None:
+        # Relative paths are not a shape finding: parallel reads are
+        # unrestricted, relative writes are the kernel substrate's business.
+        assert _service().evaluate_command("cat ../../etc/passwd").is_clean
 
     def test_path_escape_maps_to_boundary(self) -> None:
         # /etc is outside the workspace under workspace-write — the
         # gray-zone category (DANGEROUS in the Ticket 02 tier table).
-        verdict = _service().evaluate_command("cat /etc/passwd")
+        # A write-capable command, not a provable read (the readonly
+        # fast path would waive a `cat`).
+        verdict = _service().evaluate_command("rm /etc/passwd")
         assert verdict.category is GuardCategory.BOUNDARY
         assert verdict.reason is not None
 
@@ -89,21 +113,24 @@ class TestEvaluateCommand:
     def test_empty_command_is_clean(self) -> None:
         assert _service().evaluate_command("").is_clean
 
-    def test_guard_disabled_dangerous_command_still_denied(self) -> None:
-        # Deterministic denials are structural: guard.enabled=False only
-        # disables the advisory layers — the built-in destructive/fork/
-        # system deny rules always run.
-        verdict = _service(guard=GuardSettings(enabled=False)).evaluate_command("rm -rf /")
+    def test_deny_rules_independent_of_advisory_toggle(self) -> None:
+        # deny_rules owns the pattern layer; guard.enabled only gates the
+        # advisory network layer.
+        verdict = _service(
+            guard=GuardSettings(enabled=False, deny_rules=True)
+        ).evaluate_command("rm -rf /")
         assert verdict.category is GuardCategory.DENY_RULE
         assert verdict.reason is not None
 
-    def test_all_toggles_off_hard_deny_remains(self) -> None:
-        guard = GuardSettings(enabled=False, path_traversal=False, network=False)
+    def test_all_toggles_off_command_is_clean(self) -> None:
+        guard = GuardSettings(enabled=False, deny_rules=False, network=False)
         service = _service(guard=guard)
-        assert service.evaluate_command("rm -rf /").category is GuardCategory.DENY_RULE
-        assert service.evaluate_command(":(){ :|:& };:").category is GuardCategory.DENY_RULE
-        # The advisory layers are genuinely off: traversal no longer denies.
-        assert service.evaluate_command("cat ../../etc/passwd").is_clean
+        # Every text layer is off: rm -rf is not pattern-denied; escapes
+        # with an extractable path (~/siblings) are still envelope-bounded.
+        assert service.evaluate_command("rm -rf ./build").is_clean
+        assert service.evaluate_command("rm -rf ~").category is GuardCategory.BOUNDARY
+        # The advisory network layer is genuinely off.
+        assert service.evaluate_command("curl http://127.0.0.1/x").is_clean
 
     def test_public_url_command_is_clean(self) -> None:
         verdict = _service().evaluate_command("curl https://example.com/doc")
@@ -114,34 +141,40 @@ class TestEvaluateFileTool:
     def test_read_only_write_tool_maps_to_deny_rule(self) -> None:
         # READ_ONLY 禁写 is a hard policy refuse — never approvable, so
         # DENY_RULE, not BOUNDARY (category rationale in decision.py).
-        verdict = _service(policy=SandboxPolicy.READ_ONLY).evaluate_file_tool("write", "src/new.py")
+        verdict = _service(write_surface=WriteSurface.NONE).evaluate_file_tool("write", "src/new.py")
         assert verdict.category is GuardCategory.DENY_RULE
         assert verdict.reason is not None
 
     def test_read_only_read_inside_workspace_is_clean(self) -> None:
-        verdict = _service(policy=SandboxPolicy.READ_ONLY).evaluate_file_tool("read", "src/main.py")
+        verdict = _service(write_surface=WriteSurface.NONE).evaluate_file_tool("read", "src/main.py")
         assert verdict.is_clean
 
-    def test_workspace_outside_path_maps_to_boundary(self) -> None:
+    def test_workspace_outside_read_maps_to_clean(self) -> None:
+        # Parallel reads are unrestricted by default (the two-class contract).
         verdict = _service().evaluate_file_tool("read", "/etc/passwd")
+        assert verdict.category is GuardCategory.CLEAN
+
+    def test_workspace_outside_write_maps_to_boundary(self) -> None:
+        verdict = _service().evaluate_file_tool("write", "/etc/passwd")
         assert verdict.category is GuardCategory.BOUNDARY
-        # reason is the WorkspaceBoundaryError text (the interceptor
-        # embeds it verbatim in the denial copy).
+        # reason names the resolved escape (the interceptor embeds it
+        # verbatim in the denial copy).
         assert verdict.reason is not None
         assert "/etc/passwd" in verdict.reason
+        assert verdict.allowed_roots
 
     def test_workspace_inside_path_is_clean(self) -> None:
         verdict = _service().evaluate_file_tool("write", "src/new.py")
         assert verdict.is_clean
 
-    def test_traversal_path_maps_to_boundary(self) -> None:
-        # require_within resolves ../../ against the root and escapes —
-        # a boundary finding for file tools.
-        verdict = _service().evaluate_file_tool("read", "../../etc/passwd")
+    def test_relative_escape_write_maps_to_boundary(self) -> None:
+        # A `../` path on an EXCLUSIVE tool resolves outside the write
+        # surface — path resolution, a boundary finding (no shape rule).
+        verdict = _service().evaluate_file_tool("write", "../../etc/passwd")
         assert verdict.category is GuardCategory.BOUNDARY
 
     def test_danger_full_access_has_no_file_boundary(self) -> None:
-        verdict = _service(policy=SandboxPolicy.DANGER_FULL_ACCESS).evaluate_file_tool(
+        verdict = _service(write_surface=WriteSurface.FULL).evaluate_file_tool(
             "write", "/etc/x"
         )
         assert verdict.is_clean

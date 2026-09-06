@@ -5,10 +5,11 @@ Coverage per unified-security Ticket 03 / PRD 验收标准 2:
 - WRITE: ``ApprovalResumer.apply_resume`` on an ALLOW decision records
   ``custom[TurnCustomKey.HUMAN_APPROVED_CALLS][tool_call_id] = anchor``
   into the snapshot payload (anchored against the live workspace root).
-- READ: ``SandboxGuardInterceptor`` waives a BOUNDARY denial iff the
-  call's marker anchor matches (same ``approval_anchor`` derivation,
-  same live root); mismatch (workspace switched while suspended) still
-  denies; HARDLINE categories never honor the marker.
+- READ: ``SandboxGuardInterceptor`` waives an approvable-category denial
+  (BOUNDARY / SSRF — ``APPROVABLE_CATEGORIES``) iff the call's marker
+  anchor matches (same ``approval_anchor`` derivation, same live root);
+  mismatch (workspace switched while suspended) still denies; categories
+  outside the approvable set (DENY_RULE) never honor the marker.
 - END-TO-END: classify (DANGEROUS card) → approve via the resumer →
   restore state → the interceptor that would have denied the exact
   boundary-outside call now executes it (white-approval closed loop).
@@ -54,8 +55,8 @@ from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
 from modex_agent.sandbox.runtime import ResolvedSandbox, SandboxRuntime
 from modex_agent.sandbox.settings import (
     SandboxBackend,
-    SandboxPolicy,
     SandboxSettings,
+    WriteSurface,
 )
 from modex_agent.sandbox.types import EnforcementLevel
 from modex_agent.tools.manager import InMemoryToolManager
@@ -101,26 +102,30 @@ class _FakeRuntime(SandboxRuntime):
         return self._resolved
 
 
-def _settings(policy: SandboxPolicy = SandboxPolicy.WORKSPACE_WRITE) -> SandboxSettings:
-    return SandboxSettings.model_validate({"backend": "host", "policy": policy})
+def _settings(write_surface: WriteSurface = WriteSurface.WORKSPACE) -> SandboxSettings:
+    return SandboxSettings.model_validate(
+        {"backend": "host", "exclusive": {"write_surface": write_surface.value}}
+    )
 
 
 def _service(
-    root: WorkspaceRootProvider, policy: SandboxPolicy = SandboxPolicy.WORKSPACE_WRITE
+    root: WorkspaceRootProvider,
+    write_surface: WriteSurface = WriteSurface.WORKSPACE,
 ) -> SecurityDecisionService:
     return SecurityDecisionService(
-        settings=_settings(policy), workspace_root_provider=root
+        settings=_settings(write_surface), workspace_root_provider=root
     )
 
 
 def _guard(
-    root: WorkspaceRootProvider, policy: SandboxPolicy = SandboxPolicy.WORKSPACE_WRITE
+    root: WorkspaceRootProvider,
+    write_surface: WriteSurface = WriteSurface.WORKSPACE,
 ) -> SandboxGuardInterceptor:
     return SandboxGuardInterceptor(
-        settings=_settings(policy),
+        settings=_settings(write_surface),
         runtime=_FakeRuntime(),
         workspace_root_provider=root,
-        decision=_service(root, policy),
+        decision=_service(root, write_surface),
     )
 
 
@@ -169,8 +174,9 @@ def _boundary_call(state: ReActTurnState, call_id: str = "c1") -> ToolCallContex
 
 
 def _hardline_call(state: ReActTurnState, call_id: str = "call-1") -> ToolCallContext:
-    # fork bomb → DENY_RULE (HARDLINE).
-    return _call("bash", {"command": ":(){ :|:& };:"}, call_id, state)
+    # Protected-subpath write → DENY_RULE (HARDLINE): a hard finding that
+    # fires by default (deny rules deprecated; protected paths are policy).
+    return _call("write", {"path": ".git/config", "content": "x"}, call_id, state)
 
 
 async def _pass(guard: SandboxGuardInterceptor, call: ToolCallContext) -> ToolResult:
@@ -374,18 +380,34 @@ class TestInterceptorBackstop:
     async def test_hardline_deny_rule_never_honors_marker(self) -> None:
         guard = _guard(_FixedRoot(WS))
         state = _turn_state()
-        _mark(state, "call-1", ":(){ :|:& };:")  # exact command approved
+        _mark(state, "call-1", ".git/config")  # exact target approved
         result = await _pass(guard, _hardline_call(state))
         assert result.error is not None
         assert "Sandbox policy denied" in result.error
 
-    async def test_hardline_ssrf_never_honors_marker(self) -> None:
+    async def test_approved_ssrf_call_is_waived(self) -> None:
+        # SSRF is in APPROVABLE_CATEGORIES: the card the user approved must
+        # execute. (Pre-fix behavior denied it at execution time — the
+        # approved-but-denied dead end.)
         guard = _guard(_FixedRoot(WS))
         state = _turn_state()
         _mark(state, "call-1", "http://169.254.169.254/")
         call = _call("web_reader", {"url": "http://169.254.169.254/"}, "call-1", state)
         result = await _pass(guard, call)
-        assert result.error is not None
+        assert result.error is None
+        assert result.message_content() == "executed"
+
+    async def test_approved_bash_ssrf_command_is_waived(self) -> None:
+        # The bot-shaped case: an approved bash curl executes instead of
+        # dying after approval. The command anchor is the raw command text.
+        guard = _guard(_FixedRoot(WS))
+        state = _turn_state()
+        command = "curl http://169.254.169.254/latest/meta-data"
+        _mark(state, "call-1", command)
+        call = _call("bash", {"command": command}, "call-1", state)
+        result = await _pass(guard, call)
+        assert result.error is None
+        assert result.message_content() == "executed"
 
     async def test_no_marker_keeps_pre_ticket_behavior(self) -> None:
         guard = _guard(_FixedRoot(WS))
@@ -509,16 +531,16 @@ class TestEndToEndWhiteApproval:
 
 class TestDelegationRegression:
     async def test_read_only_write_denial_copy(self) -> None:
-        guard = _guard(_FixedRoot(WS), policy=SandboxPolicy.READ_ONLY)
+        guard = _guard(_FixedRoot(WS), write_surface=WriteSurface.NONE)
         state = _turn_state()
         result = await _pass(
             guard, _call("write", {"path": "a.py", "content": "x"}, "c1", state)
         )
         assert result.error == (
-            "Sandbox policy denied: write tool 'write' refused — policy: read-only "
-            "(every path is read-only)\n\n"
+            "Sandbox policy denied: write tool 'write' refused — write surface: none "
+            "(file writes are disabled)\n\n"
             "  target: a.py\n\n"
-            "Request a sandbox policy change to enable writes."
+            "Request a write-surface change to enable writes."
         )
 
     async def test_file_boundary_denial_copy(self) -> None:
@@ -527,10 +549,12 @@ class TestDelegationRegression:
         result = await _pass(guard, _boundary_call(state))
         assert result.error is not None
         canonical_ws = str(canonicalize_path(WS))
+        resolved = str(canonicalize_path("/etc/hosts", base=WS))
         assert result.error == (
             "Sandbox policy denied: target outside the sandbox boundary "
-            "(policy: workspace-write)\n\n"
-            f"Path '/etc/hosts' is outside the allowed workspace '{canonical_ws}'\n\n"
+            "(write surface: workspace)\n\n"
+            f"Path '/etc/hosts' resolves to '{resolved}' which is outside "
+            "the allowed roots\n\n"
             f"Allowed roots:\n  - {canonical_ws}\n\n"
             "Use paths within the allowed roots, or adjust writable_roots."
         )

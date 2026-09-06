@@ -1,10 +1,10 @@
-"""Delegation-boundary envelope wiring — the POOL envelope, not workspace alone.
+"""Delegation-boundary envelope wiring — the CALLER envelope, not workspace alone.
 
-RED repro: ``_wire_delegation_boundary`` validates declared ``allowed_dirs``
-against the workspace root only, contradicting the pool's configured
-``writable_roots`` — a dir under a configured writable root (part of the
-pool envelope) must pass validation, and the materialization call must
-pass the actual pool envelope roots from the sandbox settings.
+A declared subagent ``sandbox`` block (the unified two-class shape) is
+validated against the caller's envelope — workspace plus the caller's
+``exclusive.writable_roots``. A declared root under a configured caller
+root must pass; a root under no envelope root fails fast (a delegation
+can only narrow, never amplify).
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.sandbox.settings import ExclusiveConfig, SandboxSettings
 from modex_agent.scope.compiler import compile_scope
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
@@ -142,8 +143,7 @@ async def test_allowed_dir_under_pool_writable_root_materializes(tmp_path: Path)
             "sandbox_guard": {
                 "sandbox": {
                     "backend": "host",
-                    "policy": "workspace-write",
-                    "writable_roots": [str(vendor)],
+                    "exclusive": {"writable_roots": [str(vendor)]},
                 }
             }
         },
@@ -151,7 +151,12 @@ async def test_allowed_dir_under_pool_writable_root_materializes(tmp_path: Path)
     pool_assembly = _pool_assembly(tmp_path, root_spec)
     deps = await _deps(tmp_path, pool_assembly, ws)
     deps.scope_path = ScopePath(workspace_root=ws, pool_name="main")
-    template = _compiled_template("scout", allowed_dirs=[vendor / "libs"])
+    template = _compiled_template(
+        "scout",
+        sandbox=SandboxSettings(
+            exclusive=ExclusiveConfig(writable_roots=[vendor / "libs"])
+        ),
+    )
 
     with patch(
         "modex_agent.plugins.defaults.hooks.resolve_modexctl_bin_dir",
@@ -179,8 +184,7 @@ async def test_allowed_dir_outside_all_pool_roots_still_fails(tmp_path: Path) ->
             "sandbox_guard": {
                 "sandbox": {
                     "backend": "host",
-                    "policy": "workspace-write",
-                    "writable_roots": [str(vendor)],
+                    "exclusive": {"writable_roots": [str(vendor)]},
                 }
             }
         },
@@ -188,14 +192,19 @@ async def test_allowed_dir_outside_all_pool_roots_still_fails(tmp_path: Path) ->
     pool_assembly = _pool_assembly(tmp_path, root_spec)
     deps = await _deps(tmp_path, pool_assembly, ws)
     deps.scope_path = ScopePath(workspace_root=ws, pool_name="main")
-    template = _compiled_template("scout", allowed_dirs=[elsewhere])
+    template = _compiled_template(
+        "scout",
+        sandbox=SandboxSettings(
+            exclusive=ExclusiveConfig(writable_roots=[elsewhere])
+        ),
+    )
 
     with (
         patch(
             "modex_agent.plugins.defaults.hooks.resolve_modexctl_bin_dir",
             return_value=Path("/fake/bin"),
         ),
-        pytest.raises(ValueError, match="allowed_dirs"),
+        pytest.raises(ValueError, match="can only narrow, never amplify"),
     ):
         await template.materialize(
             parent_session=MagicMock(), invocation_id="inv1", deps=deps

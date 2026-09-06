@@ -16,8 +16,9 @@ from modex_agent.sandbox.decision import (
     GuardCategory,
     GuardVerdict,
 )
-from modex_agent.sandbox.settings import SandboxPolicy
+from modex_agent.sandbox.settings import WriteSurface
 from modex_agent.sandbox.tool_matrix import (
+    PermissionClass,
     ToolEffect,
     approval_anchor,
     describe_tool_security,
@@ -42,7 +43,6 @@ CONTAINER_DEAD_MARKERS: tuple[str, ...] = (
 
 _HARD_LABEL: dict[GuardCategory, str] = {
     GuardCategory.DENY_RULE: "a hard policy rule hit",
-    GuardCategory.TRAVERSAL: "a path traversal finding",
     GuardCategory.SSRF: "a private/internal network target",
 }
 
@@ -52,8 +52,8 @@ def denied(reason: str) -> str:
     return f"{_DENIED_PREFIX}: {reason}"
 
 
-def _policy_clause(policy: SandboxPolicy) -> str:
-    return f"policy: {policy.value}"
+def _surface_clause(surface: WriteSurface) -> str:
+    return f"write surface: {surface.value}"
 
 
 def _is_write_tool(tool_name: str) -> bool:
@@ -90,7 +90,7 @@ def evaluate_call(decision: SecurityDecisionService, call: ToolCallContext) -> G
 
 def verdict_to_denial(
     verdict: GuardVerdict,
-    policy: SandboxPolicy,
+    write_surface: WriteSurface,
     workspace_root: str,
     tool_name: str,
     target: str | None,
@@ -98,46 +98,51 @@ def verdict_to_denial(
     """Map a non-clean verdict to the English denial copy (None when clean).
 
     Structured blocks separated by blank lines: the header (category +
-    policy), the attempted target (one line), the guard fact
-    (``verdict.reason`` verbatim), the allowed roots (one root per
-    line), and the actionable hint. The service carries the source fact;
-    this layer adds policy context and presentation.
+    write surface or tool boundary), the attempted target (one line),
+    the guard fact (``verdict.reason`` verbatim), the allowed roots
+    (one root per line), and the actionable hint. The service carries
+    the source fact; this layer adds policy context and presentation.
 
     For file-tool boundary findings the raw target line is omitted: the
     fact sentence already names the canonical resolved path, and the
     raw argument usually reads identically — repeating it would state
     the same path twice.
     """
+    descriptor = describe_tool_security(tool_name)
     match verdict.category:
         case GuardCategory.CLEAN:
             return None
         case GuardCategory.BOUNDARY:
-            effect = describe_tool_security(tool_name).effect
+            clause = (
+                _surface_clause(write_surface)
+                if descriptor.permission_class is PermissionClass.EXCLUSIVE
+                else "tool boundary"
+            )
             show_target = (
-                bool(target) and effect not in (ToolEffect.READ, ToolEffect.WRITE)
+                bool(target) and descriptor.effect not in (ToolEffect.READ, ToolEffect.WRITE)
             )
             return _join_sections(
-                denied(f"target outside the sandbox boundary ({_policy_clause(policy)})"),
+                denied(f"target outside the sandbox boundary ({clause})"),
                 _target_section(target if show_target else None),
                 verdict.reason or "",
                 _roots_section(verdict.allowed_roots or (Path(workspace_root),)),
                 "Use paths within the allowed roots, or adjust writable_roots.",
             )
         case GuardCategory.DENY_RULE if _is_write_tool(tool_name) and (
-            policy is SandboxPolicy.READ_ONLY
+            write_surface is WriteSurface.NONE
         ):
             return _join_sections(
                 denied(
-                    f"write tool '{tool_name}' refused — {_policy_clause(policy)} "
-                    "(every path is read-only)"
+                    f"write tool '{tool_name}' refused — {_surface_clause(write_surface)} "
+                    "(file writes are disabled)"
                 ),
                 _target_section(target),
-                "Request a sandbox policy change to enable writes.",
+                "Request a write-surface change to enable writes.",
             )
-        case GuardCategory.DENY_RULE | GuardCategory.TRAVERSAL | GuardCategory.SSRF:
+        case GuardCategory.DENY_RULE | GuardCategory.SSRF:
             return _join_sections(
                 denied(
-                    f"{_HARD_LABEL[verdict.category]} ({_policy_clause(policy)})"
+                    f"{_HARD_LABEL[verdict.category]} ({_surface_clause(write_surface)})"
                 ),
                 _target_section(target),
                 verdict.reason or "the call hit a deny rule",
@@ -185,14 +190,14 @@ def sandbox_restarted_error_text(original_error: str) -> str:
     )
 
 
-def translate_denial(stderr: str, policy: SandboxPolicy) -> str:
+def translate_denial(stderr: str, write_surface: WriteSurface) -> str:
     """Translate a container-emitted denial feature into actionable copy.
 
     Pure function for the tool layer: when executed commands fail with
     ``Read-only file system`` / ``Operation not permitted`` (EPERM), the
-    raw kernel wording says nothing about WHICH policy caused it. This
-    appends the sandbox-policy context and a rewrite direction. Clean
-    stderr passes through unchanged — translation is additive only.
+    raw kernel wording says nothing about WHICH surface caused it. This
+    appends the sandbox context and a rewrite direction. Clean stderr
+    passes through unchanged — translation is additive only.
     """
     lowered = stderr.lower()
     hit = "read-only file system" in lowered or "operation not permitted" in lowered
@@ -208,4 +213,4 @@ def translate_denial(stderr: str, policy: SandboxPolicy) -> str:
             "the operation was rejected by the sandbox boundary; run it within "
             "the allowed roots, or request a sandbox policy change"
         )
-    return f"{stderr}\n[modex sandbox] ({_policy_clause(policy)}) {action}."
+    return f"{stderr}\n[modex sandbox] ({_surface_clause(write_surface)}) {action}."

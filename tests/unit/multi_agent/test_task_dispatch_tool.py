@@ -376,8 +376,13 @@ def _runtime_with_delegation(depth: int) -> object:
     from modex_agent.runtime.models import TurnIdentity, TurnStateBase
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
     from modex_agent.sandbox.delegation import DelegationSnapshot
+    from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
 
-    snapshot = DelegationSnapshot(workspace_root=Path("/ws"), depth=depth)
+    snapshot = DelegationSnapshot(
+        workspace_root=Path("/ws"),
+        settings=SandboxSettings(backend=SandboxBackend.HOST),
+        depth=depth,
+    )
     state = TurnStateBase(
         identity=TurnIdentity(
             agent_id="agent",

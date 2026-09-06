@@ -1,10 +1,12 @@
-"""Delegation boundary — snapshot, denial copy, settings derivation (T05b).
+"""Delegation boundary — snapshot, denial copy, unified derivation (T05b).
 
 Covers the PRD §Subagent 专项 acceptance anchors:
 - 两段式文案 (禁令语句 + escalation 提示, 含 allowed 范围)
 - 快照 frozen (池配置后变不影响已 spawn subagent)
-- 边界推导: pool DEFAULT → 专用 HOST+WORKSPACE_WRITE; pool on → 收窄
-- envelope = workspace + allowed_dirs
+- 统一派生 ``resolve_agent_sandbox``: 未声明 → 继承调用方 (休眠调用方
+  归一化为 guard-only HOST); 声明块权限面 authoritative、substrate 继承;
+  ceiling 纪律 (只能收窄, 不能放大)
+- envelope = workspace(POWER 面) + declared roots
 """
 
 from __future__ import annotations
@@ -18,12 +20,13 @@ from modex_agent.sandbox.delegation import (
     MAX_DELEGATION_DEPTH,
     DelegationSnapshot,
     delegation_denial_message,
-    delegation_sandbox_settings,
+    resolve_agent_sandbox,
 )
 from modex_agent.sandbox.settings import (
+    ExclusiveConfig,
     SandboxBackend,
-    SandboxPolicy,
     SandboxSettings,
+    WriteSurface,
 )
 
 WS = Path("/ws/project").resolve()
@@ -32,7 +35,10 @@ WS = Path("/ws/project").resolve()
 def _snapshot(**overrides: object) -> DelegationSnapshot:
     kwargs: dict[str, object] = {
         "workspace_root": WS,
-        "allowed_dirs": (Path("/ws/shared"),),
+        "settings": SandboxSettings(
+            backend=SandboxBackend.HOST,
+            exclusive=ExclusiveConfig(writable_roots=[WS / "shared"]),
+        ),
         "enforcement": "none",
         "depth": 1,
     }
@@ -44,11 +50,14 @@ class TestSnapshot:
     def test_default_source_is_delegation(self) -> None:
         assert _snapshot().source == "delegation"
 
-    def test_envelope_is_workspace_plus_allowed_dirs(self) -> None:
-        assert _snapshot().envelope == (WS, Path("/ws/shared").resolve())
+    def test_envelope_is_workspace_plus_declared_roots(self) -> None:
+        assert _snapshot().envelope == (WS, (WS / "shared").resolve())
 
-    def test_envelope_workspace_only_when_no_allowed_dirs(self) -> None:
-        assert _snapshot(allowed_dirs=()).envelope == (WS,)
+    def test_envelope_workspace_only_when_no_roots(self) -> None:
+        snap = _snapshot(
+            settings=SandboxSettings(backend=SandboxBackend.HOST)
+        )
+        assert snap.envelope == (WS,)
 
     def test_frozen(self) -> None:
         snap = _snapshot()
@@ -87,45 +96,79 @@ class TestDenialMessage:
 
 
 class TestSettingsDerivation:
-    def test_pool_default_builds_dedicated_host_workspace_write(self) -> None:
-        settings = delegation_sandbox_settings((Path("/ws/shared"),), pool=None)
+    def test_no_caller_defaults_to_guard_only_host(self) -> None:
+        settings = resolve_agent_sandbox(None, None, WS)
         assert settings.backend is SandboxBackend.HOST
-        assert settings.policy is SandboxPolicy.WORKSPACE_WRITE
-        assert settings.writable_roots == [Path("/ws/shared")]
+        assert settings.exclusive.write_surface is WriteSurface.WORKSPACE
+        assert settings.exclusive.writable_roots == []
         assert settings.guard.enabled is True
 
-    def test_pool_default_tier_also_dedicated(self) -> None:
-        dormant = SandboxSettings()  # backend=DEFAULT
-        settings = delegation_sandbox_settings((), pool=dormant)
+    def test_dormant_caller_normalizes_to_guard_only_host(self) -> None:
+        # The pool's main agent is dormant (DEFAULT) — native delegation
+        # still installs its guard-only permission face on HOST.
+        settings = resolve_agent_sandbox(None, SandboxSettings(), WS)
         assert settings.backend is SandboxBackend.HOST
-        assert settings.policy is SandboxPolicy.WORKSPACE_WRITE
+        assert settings.exclusive.write_surface is WriteSurface.WORKSPACE
 
-    def test_pool_on_inherits_backend_tightens_policy_and_roots(self) -> None:
-        pool = SandboxSettings(
+    def test_declared_block_inherits_substrate_from_caller(self) -> None:
+        caller = SandboxSettings(
             backend=SandboxBackend.OCI,
-            policy=SandboxPolicy.DANGER_FULL_ACCESS,
-            writable_roots=[Path("/pool/extra")],
             network=True,
+            exclusive=ExclusiveConfig(
+                write_surface=WriteSurface.FULL, writable_roots=[Path("/ws/extra")]
+            ),
         )
-        settings = delegation_sandbox_settings((Path("/ws/shared"),), pool=pool)
-        assert settings.backend is SandboxBackend.OCI
-        assert settings.policy is SandboxPolicy.WORKSPACE_WRITE
-        assert settings.writable_roots == [Path("/ws/shared")]
+        declared = SandboxSettings(
+            exclusive=ExclusiveConfig(writable_roots=[WS / "shared"])
+        )
+        settings = resolve_agent_sandbox(declared, caller, WS)
+        assert settings.backend is SandboxBackend.OCI  # substrate inherits
         assert settings.network is True
+        # The permission face is the declared block's — the caller's full
+        # surface does not leak through an explicit declaration.
+        assert settings.exclusive.write_surface is WriteSurface.WORKSPACE
+        assert settings.exclusive.writable_roots == [WS / "shared"]
 
-    def test_pool_danger_full_access_is_narrowed_not_inherited(self) -> None:
-        pool = SandboxSettings(
-            backend=SandboxBackend.HOST,
-            policy=SandboxPolicy.DANGER_FULL_ACCESS,
+    def test_undeclared_block_inherits_caller_wholesale(self) -> None:
+        caller = SandboxSettings(
+            backend=SandboxBackend.LOCAL,
+            exclusive=ExclusiveConfig(
+                write_surface=WriteSurface.ROOTS, writable_roots=[Path("/ws/extra")]
+            ),
         )
-        settings = delegation_sandbox_settings((), pool=pool)
-        assert settings.policy is SandboxPolicy.WORKSPACE_WRITE
+        settings = resolve_agent_sandbox(None, caller, WS)
+        assert settings is caller
 
-    def test_original_pool_settings_untouched(self) -> None:
-        pool = SandboxSettings(
+    def test_declared_roots_inside_caller_ceiling_pass(self) -> None:
+        caller = SandboxSettings(
             backend=SandboxBackend.HOST,
-            policy=SandboxPolicy.WORKSPACE_WRITE,
-            writable_roots=[Path("/pool/extra")],
+            exclusive=ExclusiveConfig(writable_roots=[Path("/ws/extra")]),
         )
-        delegation_sandbox_settings((Path("/ws/shared"),), pool=pool)
-        assert pool.writable_roots == [Path("/pool/extra")]
+        declared = SandboxSettings(
+            exclusive=ExclusiveConfig(writable_roots=[Path("/ws/extra/sub")])
+        )
+        settings = resolve_agent_sandbox(declared, caller, WS)
+        assert settings.exclusive.writable_roots == [Path("/ws/extra/sub")]
+
+    def test_declared_roots_outside_caller_ceiling_fail(self) -> None:
+        caller = SandboxSettings(
+            backend=SandboxBackend.HOST,
+            exclusive=ExclusiveConfig(writable_roots=[Path("/ws/extra")]),
+        )
+        declared = SandboxSettings(
+            exclusive=ExclusiveConfig(writable_roots=[Path("/ws/other")])
+        )
+        with pytest.raises(ValueError, match="can only narrow, never amplify"):
+            resolve_agent_sandbox(declared, caller, WS)
+
+    def test_declared_boundary_outside_caller_ceiling_fails(self) -> None:
+        from modex_agent.sandbox.settings import ToolPaths
+
+        caller = SandboxSettings(backend=SandboxBackend.HOST)
+        declared = SandboxSettings(
+            exclusive=ExclusiveConfig(
+                boundaries={"write": ToolPaths(paths=(Path("/ws/other"),))}
+            )
+        )
+        with pytest.raises(ValueError, match="can only narrow, never amplify"):
+            resolve_agent_sandbox(declared, caller, WS)

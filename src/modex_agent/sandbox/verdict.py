@@ -13,8 +13,9 @@ Category semantics:
   a boundary-outside path: the deployment forbids file-tool writes, and no
   human approval rewrites that declaration mid-session. It therefore
   lands here, not in BOUNDARY.
-- ``TRAVERSAL`` — ``../`` sequences (injection shape, HARDLINE).
-- ``SSRF`` — private/internal URL target (HARDLINE).
+- ``SSRF`` — private/internal URL target. APPROVABLE gray zone: the
+  classifier escalates it like BOUNDARY (card on main agents, direct
+  denial on subagents) — network is not path-permission scope.
 - ``BOUNDARY`` — a path/command outside the declared sandbox envelope
   (workspace + writable_roots). The gray zone: human-arbitrable
   (DANGEROUS) for main agents with approval enabled; otherwise denied.
@@ -29,6 +30,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 __all__ = [
+    "APPROVABLE_CATEGORIES",
     "GuardCategory",
     "GuardVerdict",
 ]
@@ -38,10 +40,19 @@ class GuardCategory(StrEnum):
     """What kind of security finding a verdict reports."""
 
     DENY_RULE = "deny_rule"  # Deny rule or READ_ONLY write refusal; not approvable
-    TRAVERSAL = "traversal"  # Parent-directory traversal finding
     SSRF = "ssrf"  # Private/internal URL target
     BOUNDARY = "boundary"  # Outside allowed roots; human escalation when enabled
     CLEAN = "clean"  # No finding, not proof of containment
+
+
+# The categories a human approval channel arbitrates (card on main agents
+# with escalation). The ``SecurityClassifier`` escalation branches AND the
+# ``SandboxGuardInterceptor`` approval-marker waiver consume this one set —
+# a category listed here can be approved on a card, so its execution-time
+# denial must honor the approval marker; a category outside it can never.
+APPROVABLE_CATEGORIES: frozenset[GuardCategory] = frozenset(
+    {GuardCategory.BOUNDARY, GuardCategory.SSRF}
+)
 
 
 class GuardVerdict(BaseModel):

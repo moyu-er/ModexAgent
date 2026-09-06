@@ -29,9 +29,10 @@ import pytest
 
 from modex_agent.sandbox.runtime import ResolvedSandbox, SandboxRuntime
 from modex_agent.sandbox.settings import (
+    ExclusiveConfig,
     SandboxBackend,
-    SandboxPolicy,
     SandboxSettings,
+    WriteSurface,
 )
 from modex_agent.sandbox.types import EnforcementLevel
 from modex_agent.tools.terminal.command_tool import CommandTool
@@ -351,7 +352,7 @@ class TestOciEnginePrefix:
         from modex_agent.sandbox.oci_runtime import OciContainerRuntime
         from modex_agent.sandbox.selection import OciEngine
 
-        settings = SandboxSettings(backend=SandboxBackend.OCI, policy=SandboxPolicy.WORKSPACE_WRITE)
+        settings = SandboxSettings(backend=SandboxBackend.OCI, exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE))
         image = settings.image or "modex-sandbox:latest"
         # Hash computed with the product's own helpers so the inspect
         # payload matches and the reuse leg (not rebuild) runs.
@@ -406,7 +407,7 @@ def _guard(resolved: ResolvedSandbox) -> Any:
     from modex_agent.sandbox.decision import SecurityDecisionService
     from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
 
-    settings = SandboxSettings(backend=SandboxBackend.LOCAL, policy=SandboxPolicy.WORKSPACE_WRITE)
+    settings = SandboxSettings(backend=SandboxBackend.LOCAL, exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE))
     return SandboxGuardInterceptor(
         settings=settings,
         runtime=_FakeRuntime(resolved),

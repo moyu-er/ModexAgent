@@ -55,6 +55,7 @@ from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.sandbox.delegation import DelegationSnapshot
+from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_graph import (
@@ -137,7 +138,6 @@ def _guard_classifier(*, escalate: bool) -> ApprovalClassifier:
     from modex_agent.sandbox.settings import (
         GuardSettings,
         SandboxBackend,
-        SandboxPolicy,
         SandboxSettings,
     )
 
@@ -153,7 +153,7 @@ def _guard_classifier(*, escalate: bool) -> ApprovalClassifier:
             settings=SandboxSettings.model_validate(
                 {
                     "backend": SandboxBackend.HOST,
-                    "policy": SandboxPolicy.WORKSPACE_WRITE,
+                    "exclusive": {"write_surface": "workspace"},
                     "guard": GuardSettings(),
                 }
             ),
@@ -237,11 +237,11 @@ async def _run_tool_node(
 
 
 def _deny_rule_call() -> ToolCall:
-    return ToolCall(tool_name="bash", arguments={"command": "rm -rf /"}, call_id="c1")
+    return ToolCall(tool_name="write", arguments={"path": ".git/config", "content": "x"}, call_id="c1")
 
 
 def _boundary_call() -> ToolCall:
-    return ToolCall(tool_name="read", arguments={"path": "/etc/passwd"}, call_id="c1")
+    return ToolCall(tool_name="write", arguments={"path": "/etc/hosts"}, call_id="c1")
 
 
 def _clean_call() -> ToolCall:
@@ -307,7 +307,7 @@ class TestSingleClassification:
                 )
             )
             call = ToolCall(
-                tool_name="bash", arguments={"command": "cat /etc/passwd"}, call_id="c1"
+                tool_name="bash", arguments={"command": "touch /etc/passwd"}, call_id="c1"
             )
             await ctx.agent_ctx.history.append(
                 ChatMessage(role=MessageRole.ASSISTANT, content="", tool_calls=[call])
@@ -368,7 +368,7 @@ class TestSingleClassification:
         ctx = _make_graph_ctx(services)
         calls = [
             _deny_rule_call(),
-            ToolCall(tool_name="bash", arguments={"command": "cat /etc/passwd"}, call_id="c2"),
+            ToolCall(tool_name="bash", arguments={"command": "touch /etc/passwd"}, call_id="c2"),
             ToolCall(tool_name="bash", arguments={"command": "pwd"}, call_id="c3"),
         ]
         await ctx.agent_ctx.history.append(
@@ -419,8 +419,8 @@ class TestSingleClassification:
     async def test_guard_batch_one_classify_per_tool_no_bleed(self) -> None:
         counting = _CountingClassifier(_guard_classifier(escalate=True))
         calls = [
-            ToolCall(tool_name="read", arguments={"path": "/etc/passwd"}, call_id="c1"),
-            ToolCall(tool_name="bash", arguments={"command": "rm -rf /"}, call_id="c2"),
+            ToolCall(tool_name="write", arguments={"path": "/etc/hosts"}, call_id="c1"),
+            ToolCall(tool_name="write", arguments={"path": ".git/config", "content": "x"}, call_id="c2"),
             ToolCall(tool_name="bash", arguments={"command": f"ls {WS}"}, call_id="c3"),
         ]
         await _run_tool_node(counting, None, calls, expect_pending=True)
@@ -440,7 +440,14 @@ class TestGuardAuditFromClassification:
                 AgentRuntimeServices(
                     approval=ApprovalRuntime(_guard_classifier(escalate=False)),
                     approval_audit=audit,
-                    delegation=DelegationSnapshot(workspace_root=WS) if delegated else None,
+                    delegation=(
+                        DelegationSnapshot(
+                            workspace_root=WS,
+                            settings=SandboxSettings(backend=SandboxBackend.HOST),
+                        )
+                        if delegated
+                        else None
+                    ),
                 )
             )
             await ctx.agent_ctx.history.append(
@@ -515,5 +522,5 @@ class TestDenialCopyFromClassification:
         tool_msgs = [m for m in messages if m.role == MessageRole.TOOL]
         assert len(tool_msgs) == 1
         content = str(tool_msgs[0].content)
-        assert "/etc/passwd" in content
+        assert "/etc/hosts" in content
         assert "Denied by user" not in content

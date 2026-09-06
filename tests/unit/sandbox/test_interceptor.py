@@ -1,8 +1,8 @@
 """SandboxGuardInterceptor — the opt-in policy layer (Ticket 08).
 
 Coverage per ticket:
-- A-class execution tools (``bash``) → GuardPipeline (pattern/path/traversal
-  per GuardSettings toggles) → deny → ``ToolResult(error)`` actionable copy
+- A-class execution tools (``bash``) → GuardPipeline (pattern deny / path
+  boundary / SSRF) → deny → ``ToolResult(error)`` actionable copy
 - B-class file tools (read/write/edit/ls/glob/grep) → WorkspacePolicy
   boundary per policy roots; DANGER_FULL_ACCESS → no boundary check
 - C-class web tools (web_reader) → NetworkGuard SSRF static check
@@ -36,9 +36,11 @@ from modex_agent.sandbox.interceptor import (
 from modex_agent.sandbox.runtime import ResolvedSandbox, SandboxRuntime
 from modex_agent.sandbox.settings import (
     GuardSettings,
+    ParallelConfig,
     SandboxBackend,
-    SandboxPolicy,
     SandboxSettings,
+    ToolPaths,
+    WriteSurface,
 )
 from modex_agent.sandbox.types import EnforcementLevel
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
@@ -145,11 +147,14 @@ def _ok(tool_name: str = "bash") -> ToolResult:
 
 
 def _settings(
-    policy: SandboxPolicy = SandboxPolicy.WORKSPACE_WRITE,
+    write_surface: WriteSurface = WriteSurface.WORKSPACE,
     backend: SandboxBackend = SandboxBackend.LOCAL,
     guard: GuardSettings | None = None,
 ) -> SandboxSettings:
-    kwargs: dict[str, Any] = {"backend": backend, "policy": policy}
+    kwargs: dict[str, Any] = {
+        "backend": backend,
+        "exclusive": {"write_surface": write_surface.value},
+    }
     if guard is not None:
         kwargs["guard"] = guard
     return SandboxSettings.model_validate(kwargs)
@@ -201,7 +206,7 @@ class TestTranslateDenial:
     def test_read_only_file_system_gets_suggestion(self) -> None:
         out = translate_denial(
             "touch: cannot touch '/etc/hosts': Read-only file system",
-            SandboxPolicy.READ_ONLY,
+            WriteSurface.NONE,
         )
         assert "[modex sandbox]" in out
         assert "read-only" in out
@@ -209,18 +214,18 @@ class TestTranslateDenial:
     def test_operation_not_permitted_gets_suggestion(self) -> None:
         out = translate_denial(
             "mkdir: cannot create directory '/x': Operation not permitted",
-            SandboxPolicy.WORKSPACE_WRITE,
+            WriteSurface.WORKSPACE,
         )
         assert "[modex sandbox]" in out
         assert "sandbox boundary" in out
 
     def test_clean_stderr_passes_through_unchanged(self) -> None:
         text = "command not found: foo"
-        assert translate_denial(text, SandboxPolicy.WORKSPACE_WRITE) == text
+        assert translate_denial(text, WriteSurface.WORKSPACE) == text
 
     def test_original_text_preserved_in_output(self) -> None:
         text = "cp: cannot create '/etc/x': Read-only file system"
-        assert text in translate_denial(text, SandboxPolicy.READ_ONLY)
+        assert text in translate_denial(text, WriteSurface.NONE)
 
 
 # ---------------------------------------------------------------------------
@@ -230,35 +235,47 @@ class TestTranslateDenial:
 
 class TestBashGuardMatrix:
     async def test_dangerous_command_denied_with_actionable_copy(self) -> None:
-        guard = _guard(_settings())
-        result = await _run(guard, "bash", {"command": "rm -rf /"})
+        # Deny rules are opt-in (deprecated usage); the toggle restores
+        # the pattern rules verbatim.
+        guard = _guard(_settings(guard=GuardSettings(deny_rules=True)))
+        result = await _run(guard, "bash", {"command": "rm -rf /etc"})
         assert result.error is not None
         assert "Sandbox policy denied" in result.error
         assert "rm" in result.error or "destructive" in result.error
 
     async def test_fork_bomb_denied(self) -> None:
-        guard = _guard(_settings())
+        guard = _guard(_settings(guard=GuardSettings(deny_rules=True)))
         result = await _run(guard, "bash", {"command": ":(){ :|:& };:"})
         assert result.error is not None
         assert "Sandbox policy denied" in result.error
 
-    async def test_traversal_denied_when_enabled(self) -> None:
+    async def test_destructive_inside_workspace_is_allowed_by_default(self) -> None:
+        # Permissions are the boundary, not command patterns: rm -rf
+        # within the permitted workspace is not pattern-denied (the
+        # kernel substrate owns the blast radius when enabled).
         guard = _guard(_settings())
-        result = await _run(guard, "bash", {"command": "cat ../../etc/passwd"})
-        assert result.error is not None
+        result = await _run(guard, "bash", {"command": "rm -rf ./build"})
+        assert result.error is None
+
+    async def test_relative_escape_read_passes(self) -> None:
+        # Relative paths are not a shape finding: parallel reads are
+        # unrestricted, relative writes are the kernel substrate's business.
+        guard = _guard(_settings())
+        assert (await _run(guard, "bash", {"command": "cat ../../etc/passwd"})).error is None
 
     async def test_path_escape_denied_under_workspace_write(self) -> None:
         # Path outside workspace under workspace-write policy (Linux-shaped
-        # path so the extractor sees it).
+        # path so the extractor sees it); write-capable command, so the
+        # readonly fast path does not waive it.
         guard = _guard(_settings())
-        result = await _run(guard, "bash", {"command": "cat /etc/passwd"})
+        result = await _run(guard, "bash", {"command": "rm /etc/passwd"})
         assert result.error is not None
 
     async def test_path_outside_allowed_under_read_only(self) -> None:
         # READ_ONLY has no writable root — reading inside workspace is the
-        # boundary; /etc is outside.
-        guard = _guard(_settings(policy=SandboxPolicy.READ_ONLY))
-        result = await _run(guard, "bash", {"command": "cat /etc/passwd"})
+        # boundary; /etc is outside (write-capable command probe).
+        guard = _guard(_settings(write_surface=WriteSurface.NONE))
+        result = await _run(guard, "bash", {"command": "rm /etc/passwd"})
         assert result.error is not None
 
     async def test_benign_command_passes_through(self) -> None:
@@ -274,23 +291,26 @@ class TestBashGuardMatrix:
         )
         assert result.error is not None
 
-    async def test_guard_disabled_still_denies_builtin_rules(self) -> None:
-        # Deterministic denials are structural: even with every guard
-        # toggle off, the built-in deny rules still block rm -rf.
-        guard = _guard(_settings(guard=GuardSettings(enabled=False)))
-        result = await _run(guard, "bash", {"command": "rm -rf /"})
+    async def test_deny_rules_independent_of_advisory_toggle(self) -> None:
+        # deny_rules owns the pattern layer; guard.enabled only gates the
+        # advisory layers.
+        guard = _guard(
+            _settings(guard=GuardSettings(enabled=False, deny_rules=True))
+        )
+        result = await _run(guard, "bash", {"command": "rm -rf /etc"})
         assert result.error is not None
 
     async def test_all_toggles_off_advisory_layers_really_off(self) -> None:
-        # All toggles off: builtin deny still fires, but the advisory
-        # traversal layer no longer denies.
+        # All toggles off: no pattern deny, and the advisory network
+        # layer no longer denies either — escaped-path writes are still
+        # bounded by the write surface (exclusive class).
         guard = _guard(
             _settings(guard=GuardSettings(enabled=False, network=False))
         )
-        denied = await _run(guard, "bash", {"command": "rm -rf /"})
-        assert denied.error is not None
-        traversed = await _run(guard, "bash", {"command": "cat ../../etc/passwd"})
-        assert traversed.error is None
+        destructive = await _run(guard, "bash", {"command": "rm -rf ./build"})
+        assert destructive.error is None
+        ssrf = await _run(guard, "bash", {"command": "curl http://127.0.0.1/x"})
+        assert ssrf.error is None
 
     async def test_unknown_execution_tool_passes_guard(self) -> None:
         # Non-matrix tools are not the guard's concern (E/F class).
@@ -316,11 +336,12 @@ class TestFileToolBoundary:
         result = await _run(guard, "read", {"path": "src/main.py"})
         assert result.error is None
 
-    async def test_read_outside_workspace_denied(self) -> None:
+    async def test_read_outside_workspace_unrestricted(self) -> None:
+        # Parallel (read-only) tools are unrestricted by default — even
+        # outside the workspace; per-tool boundaries are the narrowing seam.
         guard = _guard(_settings())
         result = await _run(guard, "read", {"path": "/etc/passwd"})
-        assert result.error is not None
-        assert "Sandbox policy denied" in result.error
+        assert result.error is None
 
     async def test_write_outside_workspace_denied(self) -> None:
         guard = _guard(_settings())
@@ -329,18 +350,18 @@ class TestFileToolBoundary:
 
     async def test_read_only_policy_denies_write_inside_workspace(self) -> None:
         # READ_ONLY: write tools are refused outright (PRD: 全盘只读).
-        guard = _guard(_settings(policy=SandboxPolicy.READ_ONLY))
+        guard = _guard(_settings(write_surface=WriteSurface.NONE))
         result = await _run(guard, "write", {"path": "src/new.py", "content": "x"})
         assert result.error is not None
-        assert "read-only" in result.error
+        assert "write surface: none" in result.error
 
     async def test_read_only_policy_allows_read_inside_workspace(self) -> None:
-        guard = _guard(_settings(policy=SandboxPolicy.READ_ONLY))
+        guard = _guard(_settings(write_surface=WriteSurface.NONE))
         result = await _run(guard, "read", {"path": "src/main.py"})
         assert result.error is None
 
     async def test_edit_read_only_denied(self) -> None:
-        guard = _guard(_settings(policy=SandboxPolicy.READ_ONLY))
+        guard = _guard(_settings(write_surface=WriteSurface.NONE))
         result = await _run(
             guard, "edit", {"path": "a.py", "old_string": "a", "new_string": "b"}
         )
@@ -348,20 +369,30 @@ class TestFileToolBoundary:
 
     async def test_danger_full_access_no_file_boundary(self) -> None:
         # DANGER_FULL_ACCESS → policy declares no boundary — /etc reads pass.
-        guard = _guard(_settings(policy=SandboxPolicy.DANGER_FULL_ACCESS))
+        guard = _guard(_settings(write_surface=WriteSurface.FULL))
         result = await _run(guard, "read", {"path": "/etc/passwd"})
         assert result.error is None
         result2 = await _run(guard, "write", {"path": "/etc/x", "content": "x"})
         assert result2.error is None
 
-    async def test_traversal_path_denied_for_file_tool(self) -> None:
+    async def test_relative_escape_write_denied_for_file_tool(self) -> None:
+        # A `../` path on an EXCLUSIVE tool resolves outside the write
+        # surface — canonical containment denies it (no shape rule).
         guard = _guard(_settings())
-        result = await _run(guard, "read", {"path": "../../etc/passwd"})
+        result = await _run(guard, "write", {"path": "../../etc/passwd", "content": "x"})
         assert result.error is not None
 
     async def test_glob_and_grep_are_bounded(self) -> None:
+        # Default: parallel search tools are unrestricted. A per-tool
+        # parallel boundary narrows glob to the workspace.
         guard = _guard(_settings())
-        result = await _run(guard, "glob", {"pattern": "*.py", "path": "/etc"})
+        assert (await _run(guard, "glob", {"pattern": "*.py", "path": "/etc"})).error is None
+        bounded = _settings()
+        bounded = bounded.model_copy(update={
+            "parallel": ParallelConfig(boundaries={"glob": ToolPaths(paths=(WS,))}),
+        })
+        guard_bounded = _guard(bounded)
+        result = await _run(guard_bounded, "glob", {"pattern": "*.py", "path": "/etc"})
         assert result.error is not None
 
 
@@ -610,7 +641,7 @@ class TestSandboxGuardFactory:
         # HOST needs no probing — deterministic without monkeypatching.
         factory = SandboxGuardInterceptorFactory()
         config = SandboxGuardConfig.model_validate(
-            {"sandbox": {"backend": "host", "policy": "workspace-write"}}
+            {"sandbox": {"backend": "host", "exclusive": {"write_surface": "workspace"}}}
         )
         ctx = AgentContext(
             registry=MagicMock(),
@@ -777,12 +808,13 @@ class TestApprovalZeroInteraction:
         ctx = _CtxStub(runtime)
         result = await chain.around_tool_call(
             ctx,  # type: ignore[arg-type]
-            _call("bash", {"command": "rm -rf /"}),
-            lambda: _ok_result_async("bash"),
+            # A boundary-outside write denies deterministically (the
+            # write surface) — a deny is a legal ToolResult.
+            _call("write", {"path": "/etc/hosts", "content": "x"}),
+            lambda: _ok_result_async("write"),
         )
-        # A deny is a legal ToolResult — the chain contract holds.
         assert result.error is not None
-        assert result.tool_name == "bash"
+        assert result.tool_name == "write"
 
 
 # ---------------------------------------------------------------------------

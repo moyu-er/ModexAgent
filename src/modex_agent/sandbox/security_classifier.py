@@ -6,13 +6,16 @@ toggles but share classification; disabling prompts does not disable guards.
 
 The mapping is fixed; hard findings cannot be configured as approvable:
 
-- ``DENY_RULE`` / ``TRAVERSAL`` / ``SSRF`` → ``HARDLINE``
+- ``DENY_RULE`` → ``HARDLINE``
   (``ToolNode`` maps HARDLINE to ``ApprovalDecision.DENIED`` — a hard
   error ToolResult, never a card).
-- ``BOUNDARY`` → ``DANGEROUS`` when ``escalate_enabled`` (the gray zone
-  a human arbitrates via the standard card). With escalation off
-  (approval disabled or native subagent deployments), the
-  tier result is ``HARDLINE`` — the only tier ``ToolNode`` denies.
+- ``BOUNDARY`` / ``SSRF`` are the approvable gray zones
+  (``APPROVABLE_CATEGORIES``): ``DANGEROUS`` when ``escalate_enabled``
+  — a human arbitrates them on the standard card; without a human
+  channel the tier result is ``HARDLINE`` — the only tier ``ToolNode``
+  denies. The two categories share one branch on purpose: whatever the
+  classifier approves must be waivable at execution time, and the
+  interceptor's marker waiver keys on the same set.
   The immutable classification carries its reason and audit fact; there
   is no mutable last-denial side channel.
 - ``CLEAN`` → ``inner.classify(...)`` verbatim: the existing
@@ -43,12 +46,13 @@ from modex_agent.approval.classification import (
 from modex_agent.approval.constants import ApprovalAuditDecision, ApprovalTier
 from modex_agent.approval.runtime import ApprovalClassifier, ApprovalRuntime
 from modex_agent.sandbox.approval_envelope import validate_approval_envelope
-from modex_agent.sandbox.decision import (
+from modex_agent.sandbox.decision import SecurityDecisionService
+from modex_agent.sandbox.settings import SandboxSettings
+from modex_agent.sandbox.verdict import (
+    APPROVABLE_CATEGORIES,
     GuardCategory,
     GuardVerdict,
-    SecurityDecisionService,
 )
-from modex_agent.sandbox.settings import SandboxSettings
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -123,22 +127,20 @@ class SecurityClassifier(ApprovalClassifier):
 
     def classify(self, tool_call: ToolCall, ctx: AgentContext) -> ToolClassification:
         verdict = self._evaluate(tool_call)
-        match verdict.category:
-            case GuardCategory.CLEAN:
-                return self._inner.classify(tool_call, ctx)
-            case GuardCategory.BOUNDARY:
-                if self._escalate_enabled:
-                    return ToolClassification(
-                        tier=ApprovalTier.DANGEROUS,
-                        source=ClassificationSource.GUARD,
-                        guard_category=verdict.category,
-                        reason=verdict.reason,
-                        audit=GuardAuditFact(decision=ApprovalAuditDecision.ESCALATED),
-                    )
-                # No human channel: preserve the boundary reason and deny directly.
-                return self._deny(verdict, tool_call.tool_name)
-            case GuardCategory.DENY_RULE | GuardCategory.TRAVERSAL | GuardCategory.SSRF:
-                return self._deny(verdict, tool_call.tool_name)
+        if verdict.category is GuardCategory.CLEAN:
+            return self._inner.classify(tool_call, ctx)
+        if verdict.category in APPROVABLE_CATEGORIES and self._escalate_enabled:
+            # The human-arbitrable gray zones (BOUNDARY / SSRF) share one
+            # escalation branch: whatever lands on a card must be waivable
+            # at execution time via APPROVABLE_CATEGORIES.
+            return ToolClassification(
+                tier=ApprovalTier.DANGEROUS,
+                source=ClassificationSource.GUARD,
+                guard_category=verdict.category,
+                reason=verdict.reason,
+                audit=GuardAuditFact(decision=ApprovalAuditDecision.ESCALATED),
+            )
+        return self._deny(verdict, tool_call.tool_name)
 
     def _evaluate(self, tool_call: ToolCall) -> GuardVerdict:
         """Judge via the service's typed tool-effect seam (one dispatch)."""

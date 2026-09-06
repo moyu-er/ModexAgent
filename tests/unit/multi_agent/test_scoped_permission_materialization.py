@@ -12,7 +12,7 @@ from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.multi_agent.descriptor import AgentInstance
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.runtime.approval_decision import ApprovalAuditStore
-from modex_agent.sandbox.settings import SandboxBackend, SandboxPolicy
+from modex_agent.sandbox.settings import SandboxBackend, WriteSurface
 from modex_agent.sandbox.types import EnforcementLevel
 from modex_agent.scope.spec import AgentSpec
 from modex_agent.workspace.scope_path import ScopePath
@@ -25,27 +25,31 @@ from tests.unit.multi_agent.test_delegation_envelope_wiring import (
 
 
 async def materialize(
-    tmp_path: Path, policy: str | None = None, *, ast: bool = False,
+    tmp_path: Path, surface: str | None = None, *, ast: bool = False,
     approval_audit: ApprovalAuditStore | None = None,
 ) -> AgentInstance:
     ws = tmp_path / "ws"
     ws.mkdir(exist_ok=True)
+    exclusive = {"writable_roots": ["../shared"]}
+    if surface is not None:
+        exclusive["write_surface"] = surface
     root = AgentSpec(name="main", interceptor_configs={"sandbox_guard": {"sandbox": {
-        "backend": "host", "policy": policy, "writable_roots": ["../shared"],
-    }}}) if policy else AgentSpec(name="main")
+        "backend": "host", "exclusive": exclusive,
+    }}}) if surface else AgentSpec(name="main")
     deps = await _deps(tmp_path, _pool_assembly(tmp_path, root), ws)
     deps.agent_factory = DefaultAgentFactory(default_llm_provider=deps.llm_provider)
     deps.scope_path = ScopePath(workspace_root=ws, pool_name="main")
     deps.approval_audit = approval_audit
-    template = _compiled_template("scout", allowed_dirs=[Path("../shared")] if policy else [],
-                                  tools=["+ast_grep_replace"] if ast else None)
+    # The subagent declares NOTHING — it inherits the caller's face
+    # (workspace + ../shared) through resolve_agent_sandbox.
+    template = _compiled_template("scout", tools=["+ast_grep_replace"] if ast else None)
     with patch("modex_agent.plugins.defaults.hooks.resolve_modexctl_bin_dir", return_value=tmp_path):
         return await template.materialize(None, "inv", deps)
 
 
-@pytest.mark.parametrize("policy", [None, "workspace-write", "read-only"])
-async def test_real_materialization_reports_effective_capabilities(tmp_path: Path, policy: str | None) -> None:
-    instance = await materialize(tmp_path, policy)
+@pytest.mark.parametrize("surface", [None, "workspace", "none"])
+async def test_real_materialization_reports_effective_capabilities(tmp_path: Path, surface: str | None) -> None:
+    instance = await materialize(tmp_path, surface)
     try:
         snapshot = instance.delegation
         assert snapshot is not None
@@ -54,7 +58,9 @@ async def test_real_materialization_reports_effective_capabilities(tmp_path: Pat
         assert snapshot.source is ApprovalAuditSource.DELEGATION
         assert snapshot.file_guards
         assert snapshot.limitations
-        assert snapshot.policy is (SandboxPolicy.READ_ONLY if policy == "read-only" else SandboxPolicy.WORKSPACE_WRITE)
+        assert snapshot.settings.exclusive.write_surface is (
+            WriteSurface.NONE if surface == "none" else WriteSurface.WORKSPACE
+        )
         assert all(root.is_absolute() for root in snapshot.envelope)
         assert instance.pipeline is not None
         builder = instance.pipeline._turn_runner.turn_context_builder
@@ -64,18 +70,17 @@ async def test_real_materialization_reports_effective_capabilities(tmp_path: Pat
         assert services.delegation is snapshot
         ctx = _make_graph_ctx(services)
         shared_read = ToolCall(tool_name="read", arguments={"path": "../shared/file"}, call_id="shared")
-        if policy:
-            assert services.approval.classifier.classify(shared_read, ctx.agent_ctx).tier is ApprovalTier.NORMAL
+        assert services.approval.classifier.classify(shared_read, ctx.agent_ctx).tier is ApprovalTier.NORMAL
         write = ToolCall(tool_name="write", arguments={"path": "file", "content": "x"}, call_id="write")
-        expected = ApprovalTier.HARDLINE if policy == "read-only" else ApprovalTier.NORMAL
+        expected = ApprovalTier.HARDLINE if surface == "none" else ApprovalTier.NORMAL
         assert services.approval.classifier.classify(write, ctx.agent_ctx).tier is expected
     finally:
         await instance.stop()
 
 
-@pytest.mark.parametrize("policy", [None, "workspace-write"])
+@pytest.mark.parametrize("surface", [None, "workspace"])
 async def test_native_materialization_records_denial_in_shared_audit(
-    tmp_path: Path, policy: str | None,
+    tmp_path: Path, surface: str | None,
 ) -> None:
     from modex_agent.agents.react.context import ReActGraphContext
     from modex_agent.agents.react.runtime import ReactGraphRuntime
@@ -93,7 +98,7 @@ async def test_native_materialization_records_denial_in_shared_audit(
     await manager.open()
     try:
         audit = SqliteApprovalAuditStore(manager, RecordScope())
-        instance = await materialize(tmp_path, policy, approval_audit=audit)
+        instance = await materialize(tmp_path, surface, approval_audit=audit)
         try:
             assert instance.pipeline is not None
             builder = instance.pipeline._turn_runner.turn_context_builder
@@ -153,11 +158,11 @@ async def test_ast_mutation_uses_the_same_workspace_as_its_guard(tmp_path: Path,
         await instance.stop()
 
 
-@pytest.mark.parametrize("policy", [None, "workspace-write"])
-async def test_host_bash_executes_through_tool_node(tmp_path: Path, policy: str | None) -> None:
+@pytest.mark.parametrize("surface", [None, "workspace"])
+async def test_host_bash_executes_through_tool_node(tmp_path: Path, surface: str | None) -> None:
     from dataclasses import replace
 
-    instance = await materialize(tmp_path, policy)
+    instance = await materialize(tmp_path, surface)
     try:
         assert instance.pipeline is not None and instance.pipeline.tool_manager is not None
         builder = instance.pipeline._turn_runner.turn_context_builder
@@ -227,14 +232,17 @@ async def test_external_real_runner_records_limits_without_fake_classifier(tmp_p
     assert snapshot is not None
     assert not snapshot.file_guards
     assert snapshot.backend is None and snapshot.enforcement is None
-    assert snapshot.policy is SandboxPolicy.WORKSPACE_WRITE
+    assert snapshot.settings.exclusive.write_surface is WriteSurface.WORKSPACE
     assert snapshot.envelope == (tmp_path,)
     assert snapshot.limitations
 
 
-@pytest.mark.parametrize("tool", ["read", "write"])
+@pytest.mark.parametrize("tool", ["write"])
 async def test_outside_file_is_error_without_approval(tmp_path: Path, tool: str) -> None:
-    instance = await materialize(tmp_path, "workspace-write")
+    # Exclusive (write) tools are boundary-checked for the subagent;
+    # parallel (read) tools are unrestricted by design, so read outside
+    # no longer produces a denial.
+    instance = await materialize(tmp_path, "workspace")
     try:
         assert instance.pipeline is not None
         builder = instance.pipeline._turn_runner.turn_context_builder

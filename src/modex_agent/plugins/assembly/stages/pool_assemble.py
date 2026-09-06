@@ -256,7 +256,11 @@ class PoolAssembleStage(AssemblyStage):
         # Pool-level extensions (ticket 10) resolve against the
         # pool_runtime-ENRICHED context — the factories may read any
         # pool-layer runtime object (control channel, notification
-        # service, ...).
+        # service, root provider, ...). Propagate the strategy-enriched
+        # pool_runtime into ctx BEFORE building the chain: the sandbox
+        # guard factory reads pool_runtime.root_provider, which only
+        # exists after the strategy_result harvest above.
+        ctx = dataclasses.replace(ctx, pool_runtime=pool_runtime)
         extension_chain = agent_context_chain(ctx, spec=spec)
         pool_runtime = dataclasses.replace(
             pool_runtime,

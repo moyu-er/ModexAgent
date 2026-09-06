@@ -39,11 +39,7 @@ from modex_agent.interceptor.abc import (
     ToolCallInterceptor,
     ToolCallNext,
 )
-from modex_agent.sandbox.decision import (
-    GuardCategory,
-    GuardVerdict,
-    SecurityDecisionService,
-)
+from modex_agent.sandbox.decision import SecurityDecisionService
 from modex_agent.sandbox.guard_presentation import (
     anchor_matches_approval,
     evaluate_call,
@@ -65,6 +61,10 @@ from modex_agent.sandbox.shell_plan import SandboxBinding
 from modex_agent.sandbox.tool_matrix import (
     describe_tool_security,
     extract_call_target,
+)
+from modex_agent.sandbox.verdict import (
+    APPROVABLE_CATEGORIES,
+    GuardVerdict,
 )
 
 if TYPE_CHECKING:
@@ -88,12 +88,14 @@ class SandboxGuardInterceptor(ToolCallInterceptor):
     Human-approved passthrough: a call the user approved on
     a card carries ``TurnCustomKey.HUMAN_APPROVED_CALLS`` in turn state
     (written by ``ApprovalResumer`` on the ALLOW decision). When this
-    interceptor is about to deny with a BOUNDARY verdict and the call's
-    marker anchor matches the arguments (same anchor derivation, same
-    live root), that boundary denial is waived. HARDLINE
-    categories (DENY_RULE / TRAVERSAL / SSRF) never honor the marker, and
-    an anchor mismatch still denies. Command-text anchors do not bind dynamic
-    shell state or prove that all runtime effects match the user's intent.
+    interceptor is about to deny with an approvable-category verdict
+    (BOUNDARY / SSRF — ``APPROVABLE_CATEGORIES``, the same set the
+    ``SecurityClassifier`` escalates to a card) and the call's marker
+    anchor matches the arguments (same anchor derivation, same live
+    root), that denial is waived. Categories outside the approvable set
+    (DENY_RULE) never honor the marker, and an anchor mismatch still
+    denies. Command-text anchors do not bind dynamic shell state or
+    prove that all runtime effects match the user's intent.
     """
 
     def __init__(
@@ -180,7 +182,7 @@ class SandboxGuardInterceptor(ToolCallInterceptor):
         )
         denial = verdict_to_denial(
             verdict,
-            self._settings.policy,
+            self._settings.exclusive.write_surface,
             str(self._root_provider.current()),
             call.tool_name,
             attempted.path or attempted.command or attempted.url,
@@ -213,17 +215,20 @@ class SandboxGuardInterceptor(ToolCallInterceptor):
     def _waive_for_marker(
         self, verdict: GuardVerdict, call: ToolCallContext, ctx: AgentContext
     ) -> bool:
-        """BOUNDARY denial waived iff this exact call was human-approved.
+        """Approvable-category denial waived iff this exact call was human-approved.
 
         The marker (``TurnCustomKey.HUMAN_APPROVED_CALLS`` in turn state,
         written by ``ApprovalResumer`` on the ALLOW decision) maps
         ``tool_call_id → anchor``; the anchor comparison lives in
-        ``guard_presentation.anchor_matches_approval``. Only BOUNDARY
-        honors the marker — HARDLINE categories (DENY_RULE / TRAVERSAL /
-        SSRF) never honor it. A target/root change that alters the stored
-        anchor still denies; command-text anchors do not bind shell state.
+        ``guard_presentation.anchor_matches_approval``. The gate is
+        ``APPROVABLE_CATEGORIES`` — the same set the classifier escalates
+        to a card — so an approved SSRF or BOUNDARY finding executes
+        instead of dying as approved-but-denied. Categories outside the
+        set (DENY_RULE) never honor the marker. A target/root change that
+        alters the stored anchor still denies; command-text anchors do not
+        bind shell state.
         """
-        if verdict.category is not GuardCategory.BOUNDARY:
+        if verdict.category not in APPROVABLE_CATEGORIES:
             return False
         state = ctx.runtime.state if ctx.runtime is not None else None
         if state is None:

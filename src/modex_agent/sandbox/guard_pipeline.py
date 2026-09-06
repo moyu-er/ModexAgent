@@ -3,7 +3,6 @@
 Usage::
     pipeline = GuardPipeline([
         CommandPatternGuard(),
-        PathTraversalGuard(),
     ])
     result = pipeline.check("rm -rf /")
 """

@@ -43,6 +43,7 @@ from modex_agent.runtime.approval_decision import ApprovalAuditStore
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.sandbox.delegation import DelegationSnapshot
+from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
 from modex_agent.tools.manager import InMemoryToolManager
 
 
@@ -667,7 +668,10 @@ def test_builder_retains_approval_audit_and_policy_services(persisted: bool, gra
     audit = MagicMock(spec=ApprovalAuditStore)
     approval = ApprovalRuntime(TieredToolApprovalClassifier(AgentApprovalConfig(enabled=True)))
     guard_only = ApprovalRuntime(TieredToolApprovalClassifier(AgentApprovalConfig(enabled=False)))
-    delegation = DelegationSnapshot(workspace_root=Path.cwd())
+    delegation = DelegationSnapshot(
+        workspace_root=Path.cwd(),
+        settings=SandboxSettings(backend=SandboxBackend.HOST),
+    )
     base = AgentRuntimeServices(
         approval=approval,
         guard_only_approval=guard_only,

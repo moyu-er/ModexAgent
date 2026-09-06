@@ -1,11 +1,12 @@
 """SecurityClassifier — guard verdicts riding the approval tier channel.
 
 Coverage per unified-security Ticket 02: the PRD §判定→动作固定映射表
-(deny rule / traversal / SSRF → HARDLINE; boundary → escalate-aware;
-clean → inner tiered classifier), the escalate=False DENIED semantics
-(HARDLINE + recorded deny reason), CLEAN falling back to the inner
-``TieredToolApprovalClassifier`` unchanged, and the assembly-time
-containment check (approval ``allowed_paths`` ⊆ sandbox envelope).
+(deny rule → HARDLINE; approvable categories boundary/SSRF →
+escalate-aware; clean → inner tiered classifier), the escalate=False
+DENIED semantics (HARDLINE + recorded deny reason), CLEAN falling back
+to the inner ``TieredToolApprovalClassifier`` unchanged, and the
+assembly-time containment check (approval ``allowed_paths`` ⊆ sandbox
+envelope).
 """
 
 from __future__ import annotations
@@ -30,8 +31,8 @@ from modex_agent.sandbox.security_classifier import (
 from modex_agent.sandbox.settings import (
     GuardSettings,
     SandboxBackend,
-    SandboxPolicy,
     SandboxSettings,
+    WriteSurface,
 )
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
@@ -59,18 +60,19 @@ def _ctx() -> AgentContext:
 
 
 def _settings(
-    policy: SandboxPolicy = SandboxPolicy.WORKSPACE_WRITE,
+    write_surface: WriteSurface = WriteSurface.WORKSPACE,
     guard: GuardSettings | None = None,
     writable_roots: list[Path] | None = None,
 ) -> SandboxSettings:
+    exclusive: dict[str, object] = {"write_surface": write_surface.value}
+    if writable_roots is not None:
+        exclusive["writable_roots"] = writable_roots
     kwargs: dict[str, object] = {
         "backend": SandboxBackend.HOST,
-        "policy": policy,
+        "exclusive": exclusive,
     }
     if guard is not None:
         kwargs["guard"] = guard
-    if writable_roots is not None:
-        kwargs["writable_roots"] = writable_roots
     return SandboxSettings.model_validate(kwargs)
 
 
@@ -107,36 +109,44 @@ def _classifier(
 
 
 class TestHardlineMapping:
-    """DENY_RULE / TRAVERSAL / SSRF → HARDLINE regardless of escalate."""
+    """DENY_RULE → HARDLINE regardless of escalate."""
 
     @pytest.mark.parametrize("escalate", [True, False])
     def test_deny_rule_command_maps_to_hardline(self, escalate: bool) -> None:
-        classifier = _classifier(escalate=escalate)
+        # Deny rules are opt-in (deprecated usage) — enable to verify the
+        # mapping itself.
+        classifier = _classifier(
+            escalate=escalate,
+            settings=_settings(guard=GuardSettings(deny_rules=True)),
+        )
         tc = ToolCall(tool_name="bash", arguments={"command": "rm -rf /"}, call_id="c1")
         assert classifier.classify(tc, _ctx()).tier is ApprovalTier.HARDLINE
 
     @pytest.mark.parametrize("escalate", [True, False])
-    def test_traversal_command_maps_to_hardline(self, escalate: bool) -> None:
-        classifier = _classifier(escalate=escalate)
-        tc = ToolCall(
-            tool_name="bash", arguments={"command": "cat ../../etc/passwd"}, call_id="c1"
-        )
-        assert classifier.classify(tc, _ctx()).tier is ApprovalTier.HARDLINE
-
-    @pytest.mark.parametrize("escalate", [True, False])
-    def test_ssrf_url_maps_to_hardline(self, escalate: bool) -> None:
+    def test_ssrf_url_escalates_like_boundary(self, escalate: bool) -> None:
         classifier = _classifier(escalate=escalate)
         tc = ToolCall(
             tool_name="web_reader",
             arguments={"url": "http://169.254.169.254/latest/meta-data"},
             call_id="c1",
         )
-        assert classifier.classify(tc, _ctx()).tier is ApprovalTier.HARDLINE
+        assert classifier.classify(tc, _ctx()).tier is ApprovalTier.DANGEROUS if escalate else ApprovalTier.HARDLINE
+
+    def test_ssrf_bash_command_escalates_like_boundary(self) -> None:
+        # bash curl rides the same evaluate_command seam → SSRF — the
+        # approvable gray zone, one escalation branch with BOUNDARY.
+        classifier = _classifier(escalate=True)
+        tc = ToolCall(
+            tool_name="bash",
+            arguments={"command": "curl http://169.254.169.254/latest/meta-data"},
+            call_id="c1",
+        )
+        assert classifier.classify(tc, _ctx()).tier is ApprovalTier.DANGEROUS
 
     @pytest.mark.parametrize("escalate", [True, False])
     def test_read_only_write_tool_maps_to_hardline(self, escalate: bool) -> None:
         classifier = _classifier(
-            escalate=escalate, settings=_settings(policy=SandboxPolicy.READ_ONLY)
+            escalate=escalate, settings=_settings(write_surface=WriteSurface.NONE)
         )
         tc = ToolCall(
             tool_name="write", arguments={"path": "src/new.py"}, call_id="c1"
@@ -146,7 +156,7 @@ class TestHardlineMapping:
     def test_hardline_deny_reason_carries_verdict_reason(self) -> None:
         # The reason channel: classify returns HARDLINE for deny-rule with
         # the verdict reason recorded for the deny-side surface.
-        classifier = _classifier()
+        classifier = _classifier(settings=_settings(guard=GuardSettings(deny_rules=True)))
         tc = ToolCall(tool_name="bash", arguments={"command": "rm -rf /"}, call_id="c1")
         result = classifier.classify(tc, _ctx())
         recorded = result.deny_reason
@@ -159,30 +169,31 @@ class TestBoundaryMapping:
 
     def test_boundary_file_path_escalates_to_dangerous(self) -> None:
         classifier = _classifier(escalate=True)
-        tc = ToolCall(tool_name="read", arguments={"path": "/etc/passwd"}, call_id="c1")
+        tc = ToolCall(tool_name="write", arguments={"path": "/etc/hosts"}, call_id="c1")
         assert classifier.classify(tc, _ctx()).tier is ApprovalTier.DANGEROUS
 
     def test_boundary_command_escalates_to_dangerous(self) -> None:
         classifier = _classifier(escalate=True)
+        # Write-capable command: a provable read would be CLEAN.
         tc = ToolCall(
-            tool_name="bash", arguments={"command": "cat /etc/passwd"}, call_id="c1"
+            tool_name="bash", arguments={"command": "touch /etc/passwd"}, call_id="c1"
         )
         assert classifier.classify(tc, _ctx()).tier is ApprovalTier.DANGEROUS
 
     def test_boundary_no_escalation_denies_as_hardline_with_reason(self) -> None:
         classifier = _classifier(escalate=False)
-        tc = ToolCall(tool_name="read", arguments={"path": "/etc/passwd"}, call_id="c1")
+        tc = ToolCall(tool_name="write", arguments={"path": "/etc/hosts"}, call_id="c1")
         result = classifier.classify(tc, _ctx())
         assert result.tier is ApprovalTier.HARDLINE
         # DENIED semantics ride the reason channel: ToolNode maps HARDLINE
         # to ApprovalDecision.DENIED; the boundary fact is preserved.
         recorded = result.deny_reason
         assert recorded is not None
-        assert "/etc/passwd" in recorded
+        assert "/etc/hosts" in recorded
 
     def test_boundary_reason_does_not_bleed_into_clean_call(self) -> None:
         classifier = _classifier(escalate=False)
-        denied = ToolCall(tool_name="read", arguments={"path": "/etc/passwd"}, call_id="c1")
+        denied = ToolCall(tool_name="write", arguments={"path": "/etc/hosts"}, call_id="c1")
         denied_result = classifier.classify(denied, _ctx())
         clean = ToolCall(tool_name="read", arguments={"path": "src/main.py"}, call_id="c2")
         result = classifier.classify(clean, _ctx())
@@ -296,7 +307,7 @@ class TestBuildApprovalRuntimeComposite:
         rt = build_approval_runtime(
             self._cfg(),
             root_provider=_FixedRoot(WS),
-            sandbox=_settings(),
+            sandbox=_settings(guard=GuardSettings(deny_rules=True)),
         )
         assert rt is not None
         tc = ToolCall(tool_name="bash", arguments={"command": "rm -rf /"}, call_id="c1")
@@ -369,7 +380,7 @@ class TestContainmentValidation:
                 enabled=True,
                 tools={"write": ToolApprovalEntry(allowed_paths=["/etc/**"])},
             ),
-            settings=_settings(policy=SandboxPolicy.DANGER_FULL_ACCESS),
+            settings=_settings(write_surface=WriteSurface.FULL),
             root_provider=_FixedRoot(WS),
         )
 
@@ -425,22 +436,22 @@ class TestDenyMessageBuilder:
                 f"[boundary:{tool}] {reason} — escalate in the main session"
             ),
         )
-        tc = ToolCall(tool_name="read", arguments={"path": "/etc/passwd"}, call_id="c1")
+        tc = ToolCall(tool_name="write", arguments={"path": "/etc/hosts"}, call_id="c1")
         result = classifier.classify(tc, _ctx())
         assert result.tier is ApprovalTier.HARDLINE
         recorded = result.deny_reason
         assert recorded is not None
-        assert recorded.startswith("[boundary:read]")
+        assert recorded.startswith("[boundary:write]")
         assert recorded.endswith("escalate in the main session")
 
     def test_no_builder_keeps_raw_reason(self) -> None:
         classifier = _classifier(escalate=False)
-        tc = ToolCall(tool_name="read", arguments={"path": "/etc/passwd"}, call_id="c1")
+        tc = ToolCall(tool_name="write", arguments={"path": "/etc/hosts"}, call_id="c1")
         result = classifier.classify(tc, _ctx())
         recorded = result.deny_reason
         assert recorded is not None
         assert "[boundary:" not in recorded
-        assert "/etc/passwd" in recorded
+        assert "/etc/hosts" in recorded
 
 
 class TestGuardOnlyRuntime:
@@ -469,7 +480,7 @@ class TestGuardOnlyRuntime:
 
     def test_guard_verdicts_deny_without_card_channel(self) -> None:
         rt = self._rt()
-        tc = ToolCall(tool_name="read", arguments={"path": "/etc/passwd"}, call_id="c1")
+        tc = ToolCall(tool_name="write", arguments={"path": "/etc/hosts"}, call_id="c1")
         assert rt.classifier.classify(tc, _ctx()).tier is ApprovalTier.HARDLINE
 
     def test_clean_calls_stay_normal(self) -> None:
@@ -481,14 +492,14 @@ class TestGuardOnlyRuntime:
         rt = self._rt(
             lambda reason, tool, _raw: f"[delegation:{tool}] {reason}"
         )
-        tc = ToolCall(tool_name="read", arguments={"path": "/etc/passwd"}, call_id="c1")
+        tc = ToolCall(tool_name="write", arguments={"path": "/etc/hosts"}, call_id="c1")
         result = rt.classifier.classify(tc, _ctx())
         assert result.tier is ApprovalTier.HARDLINE
         classifier = rt.classifier
         assert isinstance(classifier, SecurityClassifier)
         recorded = result.deny_reason
         assert recorded is not None
-        assert recorded.startswith("[delegation:read]")
+        assert recorded.startswith("[delegation:write]")
 
     def test_factory_guard_only_path_and_helper_build_same_shape(self) -> None:
         # Convergence: build_approval_runtime's no-approval branch uses the

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from modex_agent.sandbox.settings import SandboxPolicy
+from modex_agent.sandbox.settings import WriteSurface
 from modex_agent.workspace.boundary import PathEnvelope
 
 if TYPE_CHECKING:
@@ -27,16 +27,16 @@ def approval_envelope(
     """The canonical sandbox envelope; None = no envelope.
 
     The PRD formula: workspace root + ``writable_roots`` (under every
-    policy — READ_ONLY still read-allows those roots, so an approval
-    allowance there is consistent; DANGER_FULL_ACCESS declares no
-    envelope at all). Roots canonicalize through the boundary seam, so
+    surface — ``none`` still read-allows those roots, so an approval
+    allowance there is consistent; ``full`` declares no envelope at
+    all). Roots canonicalize through the boundary seam, so
     relative/symlinked/case-variant roots compare correctly.
     """
-    if settings.policy is SandboxPolicy.DANGER_FULL_ACCESS:
+    if settings.exclusive.write_surface is WriteSurface.FULL:
         return None
     workspace_root = root_provider.current()
     return PathEnvelope(
-        (workspace_root, *settings.writable_roots), base=workspace_root
+        (workspace_root, *settings.exclusive.writable_roots), base=workspace_root
     )
 
 
@@ -68,7 +68,7 @@ def validate_approval_envelope(
     ``*`` glob markers strip to the directory root).
 
     Skipped when the approval config is None/disabled/no-op (nothing
-    gated) or the policy declares no envelope (DANGER_FULL_ACCESS).
+    gated) or the surface declares no envelope (``full``).
     Universal patterns (``*`` / ``**``) pass this containment validation;
     runtime guard judgments remain independent of prompt exemptions.
 

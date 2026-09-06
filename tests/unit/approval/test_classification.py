@@ -58,7 +58,6 @@ def _guard_classifier():  # type: ignore[no-untyped-def]
     from modex_agent.sandbox.settings import (
         GuardSettings,
         SandboxBackend,
-        SandboxPolicy,
         SandboxSettings,
     )
 
@@ -74,7 +73,7 @@ def _guard_classifier():  # type: ignore[no-untyped-def]
             settings=SandboxSettings.model_validate(
                 {
                     "backend": SandboxBackend.HOST,
-                    "policy": SandboxPolicy.WORKSPACE_WRITE,
+                    "exclusive": {"write_surface": "workspace"},
                     "guard": GuardSettings(),
                 }
             ),
@@ -86,11 +85,11 @@ def _guard_classifier():  # type: ignore[no-untyped-def]
 
 
 def _deny_rule_call() -> ToolCall:
-    return ToolCall(tool_name="bash", arguments={"command": "rm -rf /"}, call_id="c1")
+    return ToolCall(tool_name="write", arguments={"path": ".git/config", "content": "x"}, call_id="c1")
 
 
 def _boundary_call() -> ToolCall:
-    return ToolCall(tool_name="read", arguments={"path": "/etc/passwd"}, call_id="c1")
+    return ToolCall(tool_name="write", arguments={"path": "/etc/hosts"}, call_id="c1")
 
 
 def _clean_call() -> ToolCall:
@@ -195,7 +194,6 @@ class TestSecurityClassifierReturnsClassification:
         from modex_agent.sandbox.settings import (
             GuardSettings,
             SandboxBackend,
-            SandboxPolicy,
             SandboxSettings,
         )
 
@@ -211,7 +209,7 @@ class TestSecurityClassifierReturnsClassification:
                 settings=SandboxSettings.model_validate(
                     {
                         "backend": SandboxBackend.HOST,
-                        "policy": SandboxPolicy.WORKSPACE_WRITE,
+                        "exclusive": {"write_surface": "workspace"},
                         "guard": GuardSettings(),
                     }
                 ),
@@ -226,4 +224,4 @@ class TestSecurityClassifierReturnsClassification:
         assert result.audit is not None
         assert result.audit.decision is ApprovalAuditDecision.DENIED
         assert result.reason is not None
-        assert result.reason.startswith("[read]")
+        assert result.reason.startswith("[write]")

@@ -41,7 +41,7 @@ from modex_agent.sandbox.oci_runtime import (
 from modex_agent.sandbox.oci_support import CliResult
 from modex_agent.sandbox.runtime import ResolvedSandbox
 from modex_agent.sandbox.selection import OciEngine
-from modex_agent.sandbox.settings import SandboxBackend, SandboxPolicy, SandboxSettings
+from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings, WriteSurface
 from modex_agent.sandbox.types import EnforcementLevel
 
 _WS = Path("/ws/project")
@@ -142,23 +142,25 @@ def cli(monkeypatch: pytest.MonkeyPatch) -> FakeCli:
 
 
 def _settings(
-    policy: SandboxPolicy = SandboxPolicy.WORKSPACE_WRITE,
+    write_surface: WriteSurface = WriteSurface.WORKSPACE,
     network: bool = False,
     image: str = _IMAGE,
     protected: list[str] | None = None,
     writable_roots: list[Path] | None = None,
 ) -> SandboxSettings:
-    kwargs: dict[str, object] = {
-        "backend": SandboxBackend.OCI,
-        "policy": policy,
-        "network": network,
-        "image": image,
-    }
+    exclusive: dict[str, object] = {"write_surface": write_surface.value}
     if protected is not None:
-        kwargs["protected_subpaths"] = protected
+        exclusive["protected_subpaths"] = protected
     if writable_roots is not None:
-        kwargs["writable_roots"] = writable_roots
-    return SandboxSettings.model_validate(kwargs)
+        exclusive["writable_roots"] = writable_roots
+    return SandboxSettings.model_validate(
+        {
+            "backend": SandboxBackend.OCI,
+            "network": network,
+            "image": image,
+            "exclusive": exclusive,
+        }
+    )
 
 
 async def _resolve(
@@ -279,7 +281,7 @@ class TestCreateArgvCompilation:
     async def test_read_only_mounts_workspace_ro_without_shadows(
         self, cli: FakeCli, tmp_path: Path
     ) -> None:
-        await _resolve(_settings(policy=SandboxPolicy.READ_ONLY), tmp_path)
+        await _resolve(_settings(write_surface=WriteSurface.NONE), tmp_path)
         argv = _run_call(cli)
         volumes = [v for v in argv if v.startswith(f"{_ws_src(tmp_path)}:")]
         assert volumes == [_ws_flag(tmp_path, mode="ro")]
@@ -313,7 +315,7 @@ class TestCreateArgvCompilation:
     async def test_danger_full_access_rw_no_shadows(
         self, cli: FakeCli, tmp_path: Path
     ) -> None:
-        await _resolve(_settings(policy=SandboxPolicy.DANGER_FULL_ACCESS), tmp_path)
+        await _resolve(_settings(write_surface=WriteSurface.FULL), tmp_path)
         argv = _run_call(cli)
         volumes = [v for v in argv if v.startswith(f"{_ws_src(tmp_path)}:")]
         assert volumes == [_ws_flag(tmp_path)]
@@ -341,7 +343,7 @@ class TestConfigHash:
 
     def test_sensitive_to_policy(self) -> None:
         ro = oci_runtime._sandbox_mounts(
-            _settings(policy=SandboxPolicy.READ_ONLY), _WS
+            _settings(write_surface=WriteSurface.NONE), _WS
         )
         ww = oci_runtime._sandbox_mounts(_settings(), _WS)
         assert oci_runtime._config_hash(

@@ -121,13 +121,14 @@ def _declared_depth(pool_spec: PoolSpec, agent_name: str) -> int:
 
 
 def _pool_sandbox_settings(deps: AgentMaterializeDeps) -> SandboxSettings | None:
-    """The pool root's declared sandbox settings, including dormant policy.
+    """The pool root's declared sandbox settings, including dormant tiers.
 
     Reads the same ``interceptor_configs["sandbox_guard"]`` declaration
     the interceptor factory consumes (one declaration, two assemblies —
     the ``_declared_sandbox_settings`` pattern from the bot's pipeline
     wiring). ``None`` only when no section is declared. DEFAULT does not
-    activate a substrate, but an explicit READ_ONLY policy is preserved.
+    activate a substrate, but the declared permission face is preserved
+    through :func:`resolve_agent_sandbox` for delegation.
     """
     from modex_agent.sandbox.settings import SandboxSettings
 
@@ -200,19 +201,14 @@ class AgentTemplate:
         deps: AgentMaterializeDeps,
     ) -> AgentInstance:
         """Validate before building; every strategy shares post-build delegation metadata."""
-        from modex_agent.sandbox.delegation import DelegationSnapshot, delegation_sandbox_settings
-        from modex_agent.sandbox.settings import SandboxBackend
-        from modex_agent.scope.compiler import validate_allowed_dirs
+        from modex_agent.sandbox.delegation import DelegationSnapshot, resolve_agent_sandbox
 
         root = _subagent_workspace_root(deps)
         pool_settings = _pool_sandbox_settings(deps)
-        allowed = tuple(self.spec.allowed_dirs or ())
-        validate_allowed_dirs(allowed, root, *(pool_settings.writable_roots if pool_settings else ()))
+        settings = resolve_agent_sandbox(self.spec.sandbox, pool_settings, root)
         snapshot = DelegationSnapshot(
-            workspace_root=root, allowed_dirs=allowed, depth=self._declared_depth(deps),
-            requested_backend=pool_settings.backend if pool_settings else SandboxBackend.DEFAULT,
+            workspace_root=root, settings=settings, depth=self._declared_depth(deps),
         )
-        settings = delegation_sandbox_settings(snapshot.allowed_dirs, pool=pool_settings)
         if strategy_name_of(self.spec.execution_strategy) == ExecutionStrategyKind.EXTERNAL.value:
             instance = await self._materialize_external(parent_session, invocation_id, deps)
         else:
@@ -331,7 +327,7 @@ class AgentTemplate:
         from modex_agent.sandbox.settings import SandboxBackend
 
         guard_chain: InterceptorChain | None = None
-        if snapshot.requested_backend is not SandboxBackend.DEFAULT:
+        if settings.backend is not SandboxBackend.DEFAULT:
             assert component_ctx.pool_runtime is not None
             sandbox_guard = await SandboxGuardInterceptorFactory().create(
                 SandboxGuardConfig(sandbox=settings),
@@ -553,10 +549,9 @@ class AgentTemplate:
             "Only catalogued file targets are checked; custom/MCP tools and secondary tool effects are not contained.",
         ) if checks_run else (
             "Provider-hosted tools bypass framework guards; no provider-neutral permission capability is available. "
-            "Declared roots/policy are metadata only, not enforced; provider kernel enforcement is unknown.",
+            "Declared roots/surface are metadata only, not enforced; provider kernel enforcement is unknown.",
         )
         snapshot = snapshot.model_copy(update={
-            "policy": settings.policy,
             "backend": resolved.backend if resolved else (SandboxBackend.HOST if checks_run else None),
             "enforcement": resolved.enforcement if resolved else (EnforcementLevel.NONE if checks_run else None),
             "file_guards": checks_run,

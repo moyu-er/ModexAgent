@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
-from pathlib import Path
 from typing import Any, Final, Literal, assert_never
 
 from pydantic import (
@@ -30,6 +29,7 @@ from pydantic import (
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.persistence.config import PersistenceBackend
+from modex_agent.sandbox.settings import SandboxSettings
 from modex_agent.tools.presets import (
     DEFAULT_FORK_MAX_MESSAGES,
     MAX_FORK_MAX_MESSAGES,
@@ -209,14 +209,18 @@ class AgentSpec(BaseModel):
     eager: bool | None = None
     """Registration timing override: ``True`` = eager at boot, ``False`` =
     lazy on first dispatch; ``None`` = position-derived default."""
-    allowed_dirs: list[Path] | None = None
-    """Extra roots for a native subagent's known file reads and writes.
+    sandbox: SandboxSettings | None = None
+    """The subagent's own sandbox declaration — the SAME two-class shape
+    every agent carries (``sandbox.settings.SandboxSettings``).
 
-    None means workspace only. Materialization canonicalizes each directory
-    and validates it against pool workspace + writable_roots; invalid roots
-    fail assembly rather than being silently clipped. Parent read-only policy
-    still forbids writes. External providers record metadata, not enforcement.
-    """
+    ``None`` (the default) inherits the caller's settings wholesale
+    (``resolve_agent_sandbox``): the subagent's permission face equals
+    the caller's. A declared block is authoritative for the permission
+    face (parallel/exclusive/guard) while the substrate face (backend/
+    network/image) stays with the caller; every declared path must fit
+    the caller's envelope — a delegation can only narrow, never amplify,
+    and violations fail assembly. Paths are relative and anchor to the
+    live workspace root (multi-workspace safe)."""
 
     @property
     def is_root(self) -> bool:

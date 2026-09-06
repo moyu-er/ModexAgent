@@ -17,7 +17,7 @@ Sandbox and human approval are independently switchable product features. This i
 | Explicit backend | Disabled | Active guard; BOUNDARY and hard findings return denial `ToolResult`s without suspension |
 | Explicit backend | Enabled | Active guard; BOUNDARY becomes pending through existing approval, even with `tools: {}`; CLEAN reaches inner per-tool rules |
 
-Explicit HOST activates guards without kernel isolation. Available LOCAL/OCI keeps its selected engine even under DANGER_FULL_ACCESS. Policy defaults to `danger-full-access`, which declares no main file boundary; workspace restriction requires `workspace-write` or `read-only`. The [execution PRD](../sandbox-integration/PRD.md) defines backend selection and pre-command fallback.
+Explicit HOST activates guards without kernel isolation. Available LOCAL/OCI keeps its selected engine even under `write_surface: full`. The exclusive (read-write) class defaults to `workspace` (workspace + `writable_roots` writable); `roots` confines writes to the declared roots; `none` refuses file writes; `full` declares no file boundary. The parallel (read-only) class is unrestricted by default. The [execution PRD](../sandbox-integration/PRD.md) defines backend selection and pre-command fallback.
 
 The bot currently has no sandbox opt-in. Its `default` and `coder` native roots enable approval with write/edit `allowed_paths: ["./*"]` only; the `review` root does not declare approval. This does not gate every command or read tool.
 
@@ -25,13 +25,13 @@ The bot currently has no sandbox opt-in. Its `default` and `coder` native roots 
 
 | Verdict | Classification and action |
 |---|---|
-| `DENY_RULE` | HARDLINE, direct error; includes READ_ONLY file writes and protected-path writes |
-| `TRAVERSAL` / `SSRF` | HARDLINE when the enabled check matches; never approvable |
+| `DENY_RULE` | HARDLINE, direct error; includes `write_surface: none` refusals and protected-path writes |
+| `SSRF` | APPROVABLE gray zone: escalates like BOUNDARY (card on main agents, direct denial on subagents) — network is not path-permission scope |
 | `BOUNDARY`, native main with approval enabled | DANGEROUS; existing `ApprovalTransaction` / `GraphInterrupt` / renderer / resume |
 | `BOUNDARY`, no human channel or native subagent | HARDLINE, direct denial; child errors name allowed roots and direct the request to the main session |
 | `CLEAN` | Inner `TieredToolApprovalClassifier`; not a blanket safety claim |
 
-Hard findings precede approvable boundaries. Built-in command deny rules always run under an active guard. `guard.enabled` and its sub-switches control advisory traversal/network checks only, not declared file boundaries.
+Hard findings precede approvable boundaries. The built-in command deny rules (rm-style/destructive patterns) are DEPRECATED USAGE — off by default (`guard.deny_rules`), with interception owned by the path boundary and the kernel substrate; `guard.enabled` and `guard.network` control the advisory network layer, not declared file boundaries. A provably read-only command (`sandbox/readonly.py` — every pipeline segment on a read-only allowlist, no redirects, no substitutions, no assignments, fail-closed per executing shell family) returns CLEAN before the SSRF/boundary layers: the shell-world twin of the unrestricted parallel read, waiving cards for `cat`/`ls`/`grep`-shaped reads outside the envelope. `guard.read_only_bypass: false` restores the friction.
 
 `approval.enabled` defaults to false. For enabled approval, tools absent from `approval.tools` are NORMAL at the inner tier. For a configured tool, `allowed_paths: []` requests approval unless a command exemption matches; `["*"]` skips that tier gate; `["./*"]` is workspace-relative. These are no-prompt rules, not permissions.
 
@@ -39,13 +39,13 @@ Hard findings precede approvable boundaries. Built-in command deny rules always 
 
 ## Canonical Roots
 
-- Restricted native main envelope: canonical workspace + explicit `writable_roots`. DANGER_FULL_ACCESS has no main file envelope.
-- Native child envelope: captured workspace + explicit `allowed_dirs`. Child roots must fit pool workspace + `writable_roots`; invalid declarations fail, and children do not inherit all extra roots implicitly.
-- Native delegation preserves parent READ_ONLY, otherwise narrows to WORKSPACE_WRITE and replaces extra roots with validated `allowed_dirs`. Known file READ and WRITE targets both receive boundary checks; READ_ONLY still forbids writes inside those roots.
+- Native main envelope: canonical workspace + explicit `writable_roots` (under `workspace` surface); `roots` confines writes to the declared roots alone; `full` has no main file envelope.
+- Native child envelope: an undeclared subagent inherits the caller's settings wholesale (equal, never wider); a declared `sandbox` block is authoritative for the permission face while the substrate stays with the caller, and every declared path must fit the caller envelope — a delegation can only narrow, never amplify; violations fail assembly.
+- Parallel-class (read-only) tools are unrestricted by default on main agents AND subagents; exclusive-class boundary checks cover file writes through the write surface and bash through command guards plus the kernel substrate.
 - `workspace/boundary.py` expands home, anchors relative paths to workspace, resolves symlinks and checks path components. String prefixes are not containment; drives/case use host-native semantics.
 - Main decisions use the current workspace provider; materialized native delegation uses a fixed canonical snapshot. Later pool configuration changes do not widen an existing child.
 
-`validate_approval_envelope` validates concrete `allowed_paths` roots against the active sandbox envelope. It skips absent/disabled/empty approval configuration and DANGER_FULL_ACCESS. Universal `*`/`**` and empty entries are skipped by this assembly check, but cannot bypass the runtime guard or expand mounts. Do not treat every allowance pattern as a concrete permission root.
+`validate_approval_envelope` validates concrete `allowed_paths` roots against the active sandbox envelope. It skips absent/disabled/empty approval configuration and `full`. Universal `*`/`**` and empty entries are skipped by this assembly check, but cannot bypass the runtime guard or expand mounts. Do not treat every allowance pattern as a concrete permission root.
 
 ## Multi-Root Example
 
@@ -75,19 +75,21 @@ workspace:
             sandbox_guard:
               sandbox:
                 backend: auto
-                policy: workspace-write
-                network: false
-                writable_roots: ["../shared", "../artifacts"]
+                exclusive:
+                  write_surface: workspace
+                  writable_roots: ["../shared", "../artifacts"]
           agents:
             general:
-              allowed_dirs: ["../shared"]
+              sandbox:
+                exclusive:
+                  writable_roots: ["../shared"]
 ```
 
-Approval is root-only. Sandbox settings belong at `workspace.pools.<pool>.agents.<main>.interceptor_configs.sandbox_guard.sandbox`, paired with the interceptor roster, not at scope root. No child approval block is needed or permitted to enable escalation.
+Approval is root-only. Sandbox settings belong at `workspace.pools.<pool>.agents.<main>.interceptor_configs.sandbox_guard.sandbox`, paired with the interceptor roster, not at scope root. Subagents declare their own permission face through the same `sandbox:` shape on the agent spec (`workspace.pools.<pool>.agents.<name>.sandbox`) — an undeclared subagent inherits the caller wholesale, and a declared block is ceiling-checked against the caller envelope. No child approval block is needed or permitted to enable escalation.
 
 Relative roots resolve against workspace, not the YAML file. Absolute equivalents are `/workspace/shared` and `/workspace/artifacts` on POSIX, or `F:/work/shared` and `F:/work/artifacts` for a Windows workspace at `F:/work/project`. Use the actual host's paths; Windows drive paths, WSL paths and container paths are not interchangeable strings. Runtime canonicalization precedes mount/profile compilation. Declaring roots does not create directories or prove engine mount availability.
 
-The file rules are per-tool no-prompt allowances inside the outer envelope. The bash regexes match only whole `git status` or `pwd` commands, after CLEAN; other CLEAN bash commands request approval. Changing approval to disabled keeps guard denial. A child's known read/write access to artifacts remains denied despite the main's allowance.
+The file rules are per-tool no-prompt allowances inside the outer envelope. The bash regexes match only whole `git status` or `pwd` commands, after CLEAN; other CLEAN write-capable bash commands request approval (provably read-only commands never reach approval — see Verdict Order). Changing approval to disabled keeps guard denial. The parallel (read-only) class — reads, listings, searches, web_reader — is unrestricted by default on main agents and subagents alike; a per-tool `parallel.boundaries` entry narrows one tool. A child's write access beyond its declared envelope remains denied despite the main's allowance.
 
 ## Tool Coverage
 

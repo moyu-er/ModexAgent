@@ -95,6 +95,25 @@ class SandboxGuardInterceptorFactory(ComponentFactory):
                 "sandbox_guard requires pool_runtime.root_provider (the "
                 "workspace root source) — available in pool assemblies"
             )
+        from modex_agent.workspace.boundary import PathEnvelope
+
+        root = root_provider.current()
+        ceiling = PathEnvelope(
+            (root, *cfg.sandbox.exclusive.writable_roots), base=root
+        )
+        for name, boundary in cfg.sandbox.exclusive.boundaries.items():
+            outside = [
+                str(p)
+                for p in boundary.paths
+                if not ceiling.contains(p, base=root)
+            ]
+            if outside:
+                raise ValueError(
+                    f"exclusive.boundaries[{name!r}] escapes the sandbox "
+                    f"envelope ({', '.join(str(r) for r in ceiling.roots)}): "
+                    f"{', '.join(outside)} — a tool boundary only narrows, "
+                    "never widens; extend writable_roots to widen the ceiling"
+                )
         guard = SandboxGuardInterceptor(
             settings=cfg.sandbox,
             runtime=runtime,

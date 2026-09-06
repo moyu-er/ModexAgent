@@ -13,7 +13,12 @@ from modex_agent.core.session_id import SessionInfo
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.ioc.factories.approval import build_approval_runtime
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.sandbox.settings import SandboxBackend, SandboxPolicy, SandboxSettings
+from modex_agent.sandbox.settings import (
+    ExclusiveConfig,
+    SandboxBackend,
+    SandboxSettings,
+    WriteSurface,
+)
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
@@ -104,7 +109,10 @@ def test_factory_approval_channel_matrix(
 
     runtime = build_approval_runtime(
         cfg, root_provider=Root(),
-        sandbox=SandboxSettings(backend=backend, policy=SandboxPolicy.WORKSPACE_WRITE)
+        sandbox=SandboxSettings(
+            backend=backend,
+            exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE),
+        )
         if backend is not None else None,
     )
     expected = active_outside if backend is SandboxBackend.HOST else dormant_outside

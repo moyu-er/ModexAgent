@@ -1,6 +1,6 @@
 """Linux LOCAL runtime: compile bwrap arguments and validate startup.
 
-Compiles a :class:`~modex_agent.sandbox.settings.SandboxSettings` policy into
+Compiles a :class:`~modex_agent.sandbox.settings.SandboxSettings` write surface into
 a bubblewrap argv prefix — the execve-style CLI wrapper the PRD's local
 family is built on (the wrapper configures the namespaces and then becomes
 the target process, so pexpect/marker-protocol semantics carry through
@@ -17,7 +17,11 @@ Final argv shapes (``<prefix>`` ends with the ``--`` separator):
       shell_argv                    = <prefix> + [shell, --noprofile, --norc, -i]
       one_shot_command_argv_prefix  = <prefix>  (command argv follows)
 
-- WORKSPACE_WRITE adds, right after the root ro-bind::
+- ``workspace`` adds, right after the root ro-bind::
+
+      --bind <ws> <ws> ...
+    ``roots`` keeps the workspace ro-bound and rw-binds only the
+    declared ``writable_roots``::
 
       --bind <ws> <ws>                       (workspace writable)
       --ro-bind <ws>/<sub> <ws>/<sub>        (protected_subpaths shadow)
@@ -36,7 +40,7 @@ sandbox lifetime to the agent process. Network isolation is coarse-grained:
 Off-Linux or confirmed pre-command engine unavailability
 probe yields the :class:`HostRuntime` result with the ``degraded_reason``
 carried verbatim — never a silently compiled weaker sandbox.
-``danger-full-access`` keeps the selected engine with ``--bind / /`` and
+``full`` keeps the selected engine with ``--bind / /`` and
 no private tmpfs or read-only shadows; network and process setup still apply.
 """
 
@@ -49,7 +53,7 @@ from modex_agent.workspace.boundary import canonicalize_path
 
 from .platform import Platform, get_platform, resolve_shell
 from .runtime import HostRuntime, ResolvedSandbox, SandboxRuntime, validate_local_startup
-from .settings import SandboxBackend, SandboxPolicy, SandboxSettings
+from .settings import SandboxBackend, SandboxSettings, WriteSurface
 from .types import EnforcementLevel
 
 _get_platform = get_platform
@@ -87,27 +91,25 @@ def _shadow_mounts(root: Path, subpaths: list[str]) -> list[str]:
 def _compile_argv_prefix(
     settings: SandboxSettings, workspace_root: Path
 ) -> list[str]:
-    """Compile the policy into the bwrap argv prefix (ends with ``--``)."""
-    root_bind = "--bind" if settings.policy is SandboxPolicy.DANGER_FULL_ACCESS else "--ro-bind"
+    """Compile the write surface into the bwrap argv prefix (ends with ``--``)."""
+    surface = settings.exclusive.write_surface
+    root_bind = "--bind" if surface is WriteSurface.FULL else "--ro-bind"
     prefix = [_BWRAP, root_bind, "/", "/"]
-    if settings.policy is not SandboxPolicy.DANGER_FULL_ACCESS:
+    if surface is not WriteSurface.FULL:
         prefix.extend(["--tmpfs", "/tmp"])
-    match settings.policy:
-        case SandboxPolicy.READ_ONLY:
+    match surface:
+        case WriteSurface.NONE:
             pass
-        case SandboxPolicy.WORKSPACE_WRITE:
+        case WriteSurface.WORKSPACE:
             ws = workspace_root
             prefix.extend(["--bind", str(ws), str(ws)])
-            prefix.extend(_shadow_mounts(ws, settings.protected_subpaths))
-            for root in settings.writable_roots:
-                # Same bwrap constraint as shadows: a missing source cannot
-                # be bound — the write then hits the ro-bound root and fails
-                # with the actionable denial instead of breaking startup.
-                if not root.exists():
-                    continue
-                prefix.extend(["--bind", str(root), str(root)])
-                prefix.extend(_shadow_mounts(root, settings.protected_subpaths))
-        case SandboxPolicy.DANGER_FULL_ACCESS:
+            prefix.extend(_shadow_mounts(ws, settings.exclusive.protected_subpaths))
+            _bind_roots(prefix, settings, ws)
+        case WriteSurface.ROOTS:
+            # The workspace root stays ro-bound (the root bind above);
+            # only the declared roots gain rw mounts.
+            _bind_roots(prefix, settings, workspace_root)
+        case WriteSurface.FULL:
             pass
         case unreachable:
             assert_never(unreachable)
@@ -116,6 +118,22 @@ def _compile_argv_prefix(
         prefix.append("--unshare-net")
     prefix.append("--")
     return prefix
+
+
+def _bind_roots(prefix: list[str], settings: SandboxSettings, base: Path) -> None:
+    """rw-bind each declared root (anchored to the live workspace) with its
+    protected-subpath shadows.
+
+    Same bwrap constraint as shadows: a missing source cannot be bound —
+    the write then hits the ro-bound root and fails with the actionable
+    denial instead of breaking startup.
+    """
+    for root in settings.exclusive.writable_roots:
+        anchored = canonicalize_path(root, base=base)
+        if not anchored.exists():
+            continue
+        prefix.extend(["--bind", str(anchored), str(anchored)])
+        prefix.extend(_shadow_mounts(anchored, settings.exclusive.protected_subpaths))
 
 
 class BwrapRuntime(SandboxRuntime):

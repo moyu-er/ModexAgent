@@ -29,9 +29,10 @@ import pytest
 
 from modex_agent.sandbox.bwrap_runtime import BwrapRuntime
 from modex_agent.sandbox.settings import (
+    ExclusiveConfig,
     SandboxBackend,
-    SandboxPolicy,
     SandboxSettings,
+    WriteSurface,
 )
 from modex_agent.sandbox.types import EnforcementLevel
 
@@ -43,11 +44,9 @@ pytestmark = pytest.mark.skipif(not _HAS_BWRAP, reason="bwrap not available")
 
 
 async def _resolve_write_policy(workspace: Path) -> list[str]:
-    settings = SandboxSettings(
-        backend=SandboxBackend.LOCAL,
-        policy=SandboxPolicy.WORKSPACE_WRITE,
+    settings = SandboxSettings(backend=SandboxBackend.LOCAL,
         network=False,
-    )
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE))
     resolved = await BwrapRuntime().resolve(settings, workspace)
     assert resolved.backend is SandboxBackend.LOCAL
     assert resolved.enforcement is EnforcementLevel.FULL

@@ -5,7 +5,6 @@ These are text checks, not containment of scripts or dynamic shell expansion.
 SecurityDecisionService always installs the built-in deny rules; its per-tool
 approval exemptions do not override guard findings. The legacy adapter config
 below has separate command-pattern allowlist semantics.
-For path traversal detection see ``guard_traversal.py``.
 For SSRF detection see ``guard_network.py``.
 For command-string path boundary checks see ``guard_path.py``.
 """
@@ -78,7 +77,7 @@ class _DenyRule(NamedTuple):
 # ---------------------------------------------------------------------------
 
 _DEFAULT_DENY_RULES: list[tuple[str, CommandSeverity, str, str]] = [
-    # -- CRITICAL (always blocked) --
+    # -- CRITICAL (blocked when deny rules are enabled) --
     (
         r"\brm\s+-rf\s+/\b",
         CommandSeverity.CRITICAL,

@@ -42,6 +42,7 @@ from modex_agent.workspace.boundary import (
 )
 
 __all__ = [
+    "PermissionClass",
     "ToolCallTarget",
     "ToolEffect",
     "ToolSecurityDescriptor",
@@ -49,6 +50,21 @@ __all__ = [
     "describe_tool_security",
     "extract_call_target",
 ]
+
+
+class PermissionClass(StrEnum):
+    """The two-class permission model every catalogued tool belongs to.
+
+    ``PARALLEL`` is the read-only family — unrestricted by default,
+    narrowable per tool. ``EXCLUSIVE`` is the read-write family —
+    bounded by the declared write surface; bash-class members are
+    bounded by the kernel substrate and command-text guards instead of
+    path arguments. Uncatalogued tools (effect NONE) belong to neither
+    class and claim no boundary coverage.
+    """
+
+    PARALLEL = "parallel"
+    EXCLUSIVE = "exclusive"
 
 
 class ToolEffect(StrEnum):
@@ -98,6 +114,24 @@ class ToolSecurityDescriptor(BaseModel):
     effect: ToolEffect = ToolEffect.NONE
     target_argument: str | None = None
     default_target: str | None = None
+
+    @property
+    def permission_class(self) -> PermissionClass | None:
+        """The permission class this descriptor belongs to.
+
+        Derived from the effect — READ/WEB are the parallel (read-only)
+        family, WRITE/EXECUTE/EXECUTION_INPUT the exclusive (read-write)
+        family. ``None`` for unclassified tools: outside the model.
+        """
+        match self.effect:
+            case ToolEffect.READ | ToolEffect.WEB:
+                return PermissionClass.PARALLEL
+            case ToolEffect.WRITE | ToolEffect.EXECUTE | ToolEffect.EXECUTION_INPUT:
+                return PermissionClass.EXCLUSIVE
+            case ToolEffect.NONE:
+                return None
+            case unreachable:
+                assert_never(unreachable)
 
     @model_validator(mode="after")
     def _claiming_effect_declares_target(self) -> ToolSecurityDescriptor:

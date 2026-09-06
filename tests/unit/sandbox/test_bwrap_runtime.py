@@ -28,7 +28,12 @@ import modex_agent.sandbox.bwrap_runtime as bwrap_mod
 from modex_agent.sandbox.bwrap_runtime import BwrapRuntime
 from modex_agent.sandbox.platform import Platform
 from modex_agent.sandbox.runtime import ResolvedSandbox
-from modex_agent.sandbox.settings import SandboxBackend, SandboxPolicy, SandboxSettings
+from modex_agent.sandbox.settings import (
+    ExclusiveConfig,
+    SandboxBackend,
+    SandboxSettings,
+    WriteSurface,
+)
 from modex_agent.sandbox.types import EnforcementLevel
 
 _WS = Path("/ws/project")
@@ -77,7 +82,7 @@ async def _resolve(
 class TestReadOnlyCompile:
     async def test_argv_snapshot(self, monkeypatch: pytest.MonkeyPatch) -> None:
         resolved = await _resolve(
-            SandboxSettings(backend=SandboxBackend.LOCAL, policy=SandboxPolicy.READ_ONLY),
+            SandboxSettings(backend=SandboxBackend.LOCAL, exclusive=ExclusiveConfig(write_surface=WriteSurface.NONE)),
             monkeypatch,
         )
         assert resolved.shell_argv == [
@@ -105,11 +110,9 @@ class TestReadOnlyCompile:
     ) -> None:
         """network=True is the only case that keeps the host network stack."""
         resolved = await _resolve(
-            SandboxSettings(
-                backend=SandboxBackend.LOCAL,
-                policy=SandboxPolicy.READ_ONLY,
-                network=True,
-            ),
+            SandboxSettings(backend=SandboxBackend.LOCAL,
+        network=True,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.NONE)),
             monkeypatch,
         )
         assert "--unshare-net" not in resolved.shell_argv
@@ -122,7 +125,7 @@ class TestReadOnlyCompile:
         """The one-shot prefix is the bwrap prefix through ``--``; the
         command argv (e.g. ``[sh, -c, cmd]``) is appended by the executor."""
         resolved = await _resolve(
-            SandboxSettings(backend=SandboxBackend.LOCAL, policy=SandboxPolicy.READ_ONLY),
+            SandboxSettings(backend=SandboxBackend.LOCAL, exclusive=ExclusiveConfig(write_surface=WriteSurface.NONE)),
             monkeypatch,
         )
         assert resolved.one_shot_command_argv_prefix == [
@@ -145,7 +148,7 @@ class TestReadOnlyCompile:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         resolved = await _resolve(
-            SandboxSettings(backend=SandboxBackend.LOCAL, policy=SandboxPolicy.READ_ONLY),
+            SandboxSettings(backend=SandboxBackend.LOCAL, exclusive=ExclusiveConfig(write_surface=WriteSurface.NONE)),
             monkeypatch,
         )
         assert resolved.backend is SandboxBackend.LOCAL
@@ -166,9 +169,8 @@ class TestWorkspaceWriteCompile:
         """Default protected_subpaths=[".git"] shadows the workspace .git."""
         (tmp_path / ".git").mkdir()
         resolved = await _resolve(
-            SandboxSettings(
-                backend=SandboxBackend.LOCAL, policy=SandboxPolicy.WORKSPACE_WRITE
-            ),
+            SandboxSettings(backend=SandboxBackend.LOCAL,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE)),
             monkeypatch,
             workspace=tmp_path,
         )
@@ -207,9 +209,8 @@ class TestWorkspaceWriteCompile:
         shadows the earlier one, so ordering is the enforcement itself."""
         (tmp_path / ".git").mkdir()
         resolved = await _resolve(
-            SandboxSettings(
-                backend=SandboxBackend.LOCAL, policy=SandboxPolicy.WORKSPACE_WRITE
-            ),
+            SandboxSettings(backend=SandboxBackend.LOCAL,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE)),
             monkeypatch,
             workspace=tmp_path,
         )
@@ -225,9 +226,8 @@ class TestWorkspaceWriteCompile:
         fails to start — a path that does not exist carries nothing to
         protect, so the shadow is omitted rather than the sandbox broken."""
         resolved = await _resolve(
-            SandboxSettings(
-                backend=SandboxBackend.LOCAL, policy=SandboxPolicy.WORKSPACE_WRITE
-            ),
+            SandboxSettings(backend=SandboxBackend.LOCAL,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE)),
             monkeypatch,
             workspace=tmp_path,
         )
@@ -242,11 +242,8 @@ class TestWorkspaceWriteCompile:
         cache = tmp_path / "cache"
         cache.mkdir()
         resolved = await _resolve(
-            SandboxSettings(
-                backend=SandboxBackend.LOCAL,
-                policy=SandboxPolicy.WORKSPACE_WRITE,
-                writable_roots=[out, cache],
-            ),
+            SandboxSettings(backend=SandboxBackend.LOCAL,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE, writable_roots=[out, cache])),
             monkeypatch,
             workspace=tmp_path,
         )
@@ -264,11 +261,8 @@ class TestWorkspaceWriteCompile:
         denial instead of breaking sandbox startup."""
         ghost = tmp_path / "ghost"
         resolved = await _resolve(
-            SandboxSettings(
-                backend=SandboxBackend.LOCAL,
-                policy=SandboxPolicy.WORKSPACE_WRITE,
-                writable_roots=[ghost],
-            ),
+            SandboxSettings(backend=SandboxBackend.LOCAL,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE, writable_roots=[ghost])),
             monkeypatch,
             workspace=tmp_path,
         )
@@ -281,12 +275,8 @@ class TestWorkspaceWriteCompile:
         (out / ".git").mkdir(parents=True)
         (out / "secrets").mkdir()
         resolved = await _resolve(
-            SandboxSettings(
-                backend=SandboxBackend.LOCAL,
-                policy=SandboxPolicy.WORKSPACE_WRITE,
-                writable_roots=[out],
-                protected_subpaths=[".git", "secrets"],
-            ),
+            SandboxSettings(backend=SandboxBackend.LOCAL,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE, writable_roots=[out], protected_subpaths=[".git", "secrets"])),
             monkeypatch,
             workspace=tmp_path,
         )
@@ -304,11 +294,8 @@ class TestWorkspaceWriteCompile:
     ) -> None:
         (tmp_path / ".git").mkdir()
         resolved = await _resolve(
-            SandboxSettings(
-                backend=SandboxBackend.LOCAL,
-                policy=SandboxPolicy.WORKSPACE_WRITE,
-                protected_subpaths=[],
-            ),
+            SandboxSettings(backend=SandboxBackend.LOCAL,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE, protected_subpaths=[])),
             monkeypatch,
             workspace=tmp_path,
         )
@@ -321,11 +308,8 @@ class TestWorkspaceWriteCompile:
         roots are a WORKSPACE_WRITE concept and must not leak in."""
         (tmp_path / "out").mkdir()
         resolved = await _resolve(
-            SandboxSettings(
-                backend=SandboxBackend.LOCAL,
-                policy=SandboxPolicy.READ_ONLY,
-                writable_roots=[tmp_path / "out"],
-            ),
+            SandboxSettings(backend=SandboxBackend.LOCAL,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.NONE, writable_roots=[tmp_path / "out"])),
             monkeypatch,
         )
         assert str(tmp_path / "out") not in resolved.shell_argv
@@ -351,11 +335,9 @@ class TestDangerFullAccess:
     ) -> None:
         for network in (False, True):
             resolved = await _resolve(
-                SandboxSettings(
-                    backend=SandboxBackend.LOCAL,
-                    policy=SandboxPolicy.DANGER_FULL_ACCESS,
-                    network=network,
-                ),
+                SandboxSettings(backend=SandboxBackend.LOCAL,
+        network=network,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.FULL)),
                 monkeypatch,
             )
             prefix = [
@@ -381,9 +363,8 @@ class TestDegradation:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         resolved = await _resolve(
-            SandboxSettings(
-                backend=SandboxBackend.LOCAL, policy=SandboxPolicy.WORKSPACE_WRITE
-            ),
+            SandboxSettings(backend=SandboxBackend.LOCAL,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE)),
             monkeypatch,
             probe_ok=False,
         )
@@ -434,7 +415,7 @@ class TestHostArgvTail:
         monkeypatch.setattr(bwrap_mod, "_get_platform", lambda: Platform.LINUX)
         monkeypatch.setattr(bwrap_mod, "_resolve_host_shell", lambda: None)
         resolved = await BwrapRuntime().resolve(
-            SandboxSettings(backend=SandboxBackend.LOCAL, policy=SandboxPolicy.READ_ONLY),
+            SandboxSettings(backend=SandboxBackend.LOCAL, exclusive=ExclusiveConfig(write_surface=WriteSurface.NONE)),
             _WS,
         )
         assert resolved.shell_argv == []
@@ -451,7 +432,7 @@ class TestContract:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         resolved = await _resolve(
-            SandboxSettings(backend=SandboxBackend.LOCAL, policy=SandboxPolicy.READ_ONLY),
+            SandboxSettings(backend=SandboxBackend.LOCAL, exclusive=ExclusiveConfig(write_surface=WriteSurface.NONE)),
             monkeypatch,
         )
         with pytest.raises(ValidationError):
@@ -466,9 +447,8 @@ class TestContract:
         from modex_agent.tools.terminal._persistent_session import _resolve_spawn_argv
 
         resolved = await _resolve(
-            SandboxSettings(
-                backend=SandboxBackend.LOCAL, policy=SandboxPolicy.WORKSPACE_WRITE
-            ),
+            SandboxSettings(backend=SandboxBackend.LOCAL,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE)),
             monkeypatch,
         )
         spawn_argv, is_bash = _resolve_spawn_argv(list(resolved.shell_argv))

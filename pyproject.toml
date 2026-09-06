@@ -58,6 +58,7 @@ dependencies = [
   "path>=17.1.1",
   "aiosqlite>=0.20.0,<1",
   "python-dotenv>=1.2.2",
+  "bashlex>=0.5,<1",  # readonly command classification: bash AST parsing
 ]
 
 [project.optional-dependencies]

@@ -46,8 +46,7 @@ so ``-task`` is expressible and V6-guarded).
 
 from __future__ import annotations
 
-import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from enum import StrEnum
 from typing import Any
 
@@ -329,54 +328,6 @@ def compile_scope(
     return ScopeCompilation(agents=compiled)
 
 
-def validate_allowed_dirs(
-    allowed_dirs: Sequence[os.PathLike[str] | str] | None,
-    envelope_root: os.PathLike[str] | str,
-    *extra_envelope_roots: os.PathLike[str] | str,
-) -> None:
-    """Validate every declared child root against the pool envelope at assembly.
-
-    The pool envelope is the workspace root plus any configured
-    ``writable_roots`` (passed as ``extra_envelope_roots`` by the
-    materialization consumer). Containment is the canonical
-    :class:`modex_agent.workspace.boundary.PathEnvelope` check —
-    relative entries anchor to the workspace root, symlinks resolve to
-    their real targets (a link pointing outside the envelope escapes),
-    and cross-drive entries are a typed denial, never a ``commonpath``
-    crash.
-
-    Raises:
-        ValueError: one or more declared directories resolve outside the
-            envelope roots (fail-fast at assembly).
-    """
-    if not allowed_dirs:
-        return
-    from pathlib import Path
-
-    from modex_agent.workspace.boundary import PathEnvelope
-
-    base = Path(os.fspath(envelope_root))
-    roots: tuple[Path | str, ...] = (
-        os.fspath(envelope_root),
-        *(os.fspath(r) for r in extra_envelope_roots),
-    )
-    envelope = PathEnvelope(roots, base=base)
-    outside = [
-        os.fspath(entry)
-        for entry in allowed_dirs
-        if not envelope.contains(os.fspath(entry), base=base)
-    ]
-    if outside:
-        listed = ", ".join(repr(entry) for entry in outside)
-        raise ValueError(
-            f"allowed_dirs entries escape the pool envelope roots "
-            f"({', '.join(str(r) for r in envelope.roots)}): {listed} — declared "
-            f"write-passthrough directories must stay within the envelope "
-            f"(workspace root + writable_roots); fix the declaration or "
-            f"extend the envelope"
-        )
-
-
 def _compile_pool(
     pool: PoolSpec,
     *,
@@ -643,7 +594,10 @@ def _compile_agent(
         execution_strategy=strategy_name_of(agent.execution_strategy),
         provider_kind=(agent.provider_kind.value if agent.provider_kind is not None else None),
         mcp_servers=list(agent.mcp),
-        interceptors=list(agent.interceptors or []) if is_root else [],
+        # The `+` prefix is declaration sugar (incremental-merge face); the
+        # factory resolution and interceptor_configs lookup key on the bare
+        # name — strip through the single strip authority like hooks/tools.
+        interceptors=[strip_add_prefix(entry) for entry in (agent.interceptors or [])] if is_root else [],
         interceptor_configs=dict(agent.interceptor_configs or {}) if is_root else {},
         commands=list(agent.commands) if is_root and agent.commands is not None else None,
         capabilities=capabilities_block,
@@ -681,8 +635,8 @@ def _compile_agent(
                     profile=_profile_name(bound, memory_layer),
                 ),
                 *(
-                    [FieldProvenance(field="allowed_dirs", layer=ProvenanceLayer.LOCAL)]
-                    if agent.allowed_dirs
+                    [FieldProvenance(field="sandbox", layer=ProvenanceLayer.LOCAL)]
+                    if agent.sandbox is not None
                     else []
                 ),
             ],

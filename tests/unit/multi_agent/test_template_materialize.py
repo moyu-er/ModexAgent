@@ -992,13 +992,19 @@ async def test_materialize_subagent_write_boundary_classification():
 
 
 @pytest.mark.asyncio
-async def test_materialize_allowed_dirs_extend_the_write_envelope():
-    """PRD #5: allowed_dirs 内写 → NORMAL (the dirs join the envelope)."""
+async def test_materialize_declared_roots_extend_the_write_envelope():
+    """PRD #5: 声明根内写 → NORMAL (the dirs join the envelope)."""
     from modex_agent.approval.constants import ApprovalTier
     from modex_agent.core.message import ToolCall
+    from modex_agent.sandbox.settings import ExclusiveConfig, SandboxSettings
 
     deps, factory = await _make_deps()
-    template = _compiled_template("scout", allowed_dirs=[Path("/ws/shared")])
+    template = _compiled_template(
+        "scout",
+        sandbox=SandboxSettings(
+            exclusive=ExclusiveConfig(writable_roots=[Path("/ws/shared")])
+        ),
+    )
     parent = SessionIdFactory().create(agent_name="main")
     instance = await template.materialize(
         parent_session=parent, invocation_id="inv1", deps=deps
@@ -1017,14 +1023,21 @@ async def test_materialize_allowed_dirs_extend_the_write_envelope():
 
 
 @pytest.mark.asyncio
-async def test_materialize_allowed_dirs_outside_pool_envelope_fails_fast():
-    """T05a's pure check is consumed here: a declared allowed_dir escaping
-    the workspace root aborts materialization."""
+async def test_materialize_declared_roots_outside_pool_envelope_fails_fast():
+    """A declared root escaping the caller envelope aborts materialization
+    — a delegation can only narrow, never amplify."""
+    from modex_agent.sandbox.settings import ExclusiveConfig, SandboxSettings
+
     deps, factory = await _make_deps()
-    template = _compiled_template("scout", allowed_dirs=[Path("/elsewhere")])
+    template = _compiled_template(
+        "scout",
+        sandbox=SandboxSettings(
+            exclusive=ExclusiveConfig(writable_roots=[Path("/elsewhere")])
+        ),
+    )
     parent = SessionIdFactory().create(agent_name="main")
 
-    with pytest.raises(ValueError, match="allowed_dirs"):
+    with pytest.raises(ValueError, match="can only narrow, never amplify"):
         await template.materialize(
             parent_session=parent, invocation_id="inv1", deps=deps
         )
@@ -1060,12 +1073,13 @@ async def test_materialize_without_root_provider_raises_for_boundary():
 
 
 @pytest.mark.asyncio
-async def test_materialize_pool_sandbox_on_narrows_to_subagent_envelope():
-    """A pool with sandbox on (backend=host, danger-full-access) still
-    narrows the subagent to workspace + allowed_dirs write scope — the
-    delegation boundary does not follow the pool's no-boundary policy,
-    and the snapshot records the pool backend for audit."""
+async def test_materialize_pool_full_access_inherits_to_subagent():
+    """An undeclared subagent inherits the caller's permission face — a
+    full-access pool yields a full-access subagent (equal, never wider
+    than the caller). A DECLARED block still narrows: the second half
+    pins a workspace declaration under the full caller."""
     from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
+    from modex_agent.sandbox.settings import ExclusiveConfig, SandboxSettings, WriteSurface
 
     deps, factory = await _make_deps()
     root = AgentSpec(
@@ -1073,7 +1087,7 @@ async def test_materialize_pool_sandbox_on_narrows_to_subagent_envelope():
         interceptors=["sandbox_guard"],
         interceptor_configs={
             "sandbox_guard": {
-                "sandbox": {"backend": "host", "policy": "danger-full-access"}
+                "sandbox": {"backend": "host", "exclusive": {"write_surface": "full"}}
             }
         },
     )
@@ -1099,7 +1113,8 @@ async def test_materialize_pool_sandbox_on_narrows_to_subagent_envelope():
     assert snapshot is not None
     assert snapshot.backend == "host"
     assert snapshot.enforcement == "none"
-    assert snapshot.policy == "workspace-write"
+    # Inheritance: the undeclared subagent carries the caller's full face.
+    assert snapshot.settings.exclusive.write_surface is WriteSurface.FULL
 
     approval = services.approval
     assert approval is not None
@@ -1110,4 +1125,22 @@ async def test_materialize_pool_sandbox_on_narrows_to_subagent_envelope():
     inside = ToolCall(tool_name="write", arguments={"path": "src/a.py"}, call_id="c1")
     assert approval.classifier.classify(inside, ctx).tier is ApprovalTier.NORMAL
     outside = ToolCall(tool_name="write", arguments={"path": "/etc/hosts"}, call_id="c2")
-    assert approval.classifier.classify(outside, ctx).tier is ApprovalTier.HARDLINE
+    assert approval.classifier.classify(outside, ctx).tier is ApprovalTier.NORMAL
+
+    # A DECLARED workspace block narrows even under a full caller.
+    narrowed = _compiled_template(
+        "scout",
+        sandbox=SandboxSettings(exclusive=ExclusiveConfig()),
+    )
+    instance2 = await narrowed.materialize(
+        parent_session=parent, invocation_id="inv2", deps=deps
+    )
+    services2 = _wired_services(instance2)
+    snapshot2 = services2.delegation
+    assert snapshot2 is not None
+    assert snapshot2.settings.exclusive.write_surface is WriteSurface.WORKSPACE
+    assert snapshot2.backend == "host"
+    approval2 = services2.approval
+    assert approval2 is not None
+    assert approval2.classifier.classify(inside, ctx).tier is ApprovalTier.NORMAL
+    assert approval2.classifier.classify(outside, ctx).tier is ApprovalTier.HARDLINE

@@ -151,7 +151,12 @@ class SandboxRuntime(ABC):
         """
         workspace_root = canonicalize_path(workspace_root)
         settings = settings.model_copy(update={
-            "writable_roots": [canonicalize_path(root, base=workspace_root) for root in settings.writable_roots],
+            "exclusive": settings.exclusive.model_copy(update={
+                "writable_roots": [
+                    canonicalize_path(root, base=workspace_root)
+                    for root in settings.exclusive.writable_roots
+                ],
+            }),
         })
         try:
             resolved = await self.resolve(settings, workspace_root)

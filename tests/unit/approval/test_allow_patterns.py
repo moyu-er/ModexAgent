@@ -146,7 +146,6 @@ class TestDenyAlwaysWins:
         from modex_agent.sandbox.settings import (
             GuardSettings,
             SandboxBackend,
-            SandboxPolicy,
             SandboxSettings,
         )
 
@@ -159,8 +158,8 @@ class TestDenyAlwaysWins:
             sandbox=SandboxSettings.model_validate(
                 {
                     "backend": SandboxBackend.HOST,
-                    "policy": SandboxPolicy.WORKSPACE_WRITE,
-                    "guard": GuardSettings(),
+                    "exclusive": {"write_surface": "workspace"},
+                    "guard": GuardSettings(deny_rules=True),
                 }
             ),
         )

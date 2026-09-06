@@ -38,7 +38,12 @@ from modex_agent.sandbox.selection import (
     resolve_selection,
     select_runtime,
 )
-from modex_agent.sandbox.settings import SandboxBackend, SandboxPolicy, SandboxSettings
+from modex_agent.sandbox.settings import (
+    ExclusiveConfig,
+    SandboxBackend,
+    SandboxSettings,
+    WriteSurface,
+)
 from modex_agent.sandbox.types import EnforcementLevel
 
 _WS = Path("/ws/project")
@@ -437,9 +442,8 @@ class TestSelectorSoleProbeOwner:
             bwrap_mod, "_resolve_host_shell", lambda: "/usr/bin/bash"
         )
         resolved = await BwrapRuntime().resolve(
-            SandboxSettings(
-                backend=SandboxBackend.LOCAL, policy=SandboxPolicy.WORKSPACE_WRITE
-            ),
+            SandboxSettings(backend=SandboxBackend.LOCAL,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE)),
             tmp_path,
         )
         assert resolved.backend is SandboxBackend.LOCAL
@@ -456,9 +460,8 @@ class TestSelectorSoleProbeOwner:
             seatbelt_mod, "_resolve_host_shell", lambda: "/bin/bash"
         )
         resolved = await SeatbeltRuntime().resolve(
-            SandboxSettings(
-                backend=SandboxBackend.LOCAL, policy=SandboxPolicy.WORKSPACE_WRITE
-            ),
+            SandboxSettings(backend=SandboxBackend.LOCAL,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE)),
             tmp_path,
         )
         assert resolved.backend is SandboxBackend.LOCAL

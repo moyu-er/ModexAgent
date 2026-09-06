@@ -27,7 +27,7 @@ from pydantic import ValidationError
 
 from modex_agent.sandbox.decision import GuardCategory, SecurityDecisionService
 from modex_agent.sandbox.guard_presentation import verdict_to_denial
-from modex_agent.sandbox.settings import SandboxPolicy, SandboxSettings
+from modex_agent.sandbox.settings import SandboxSettings, WriteSurface
 from modex_agent.sandbox.tool_matrix import (
     ToolCallTarget,
     ToolEffect,
@@ -78,8 +78,10 @@ class _FixedRoot(WorkspaceRootProvider):
         return self._root
 
 
-def _service(policy: SandboxPolicy = SandboxPolicy.WORKSPACE_WRITE) -> SecurityDecisionService:
-    settings = SandboxSettings.model_validate({"backend": "host", "policy": policy})
+def _service(policy: WriteSurface = WriteSurface.WORKSPACE) -> SecurityDecisionService:
+    settings = SandboxSettings.model_validate(
+        {"backend": "host", "exclusive": {"write_surface": policy.value}}
+    )
     return SecurityDecisionService(settings=settings, workspace_root_provider=_FixedRoot(WS))
 
 
@@ -137,24 +139,24 @@ class TestAstGrepReplaceIsWrite:
         assert verdict.category is write_verdict.category
         assert verdict.reason == write_verdict.reason
         copy = verdict_to_denial(
-            verdict, SandboxPolicy.WORKSPACE_WRITE, str(WS), "ast_grep_replace", "/etc/hosts"
+            verdict, WriteSurface.WORKSPACE, str(WS), "ast_grep_replace", "/etc/hosts"
         )
         write_copy = verdict_to_denial(
-            write_verdict, SandboxPolicy.WORKSPACE_WRITE, str(WS), "write", "/etc/hosts"
+            write_verdict, WriteSurface.WORKSPACE, str(WS), "write", "/etc/hosts"
         )
         assert copy is not None and copy == write_copy
 
     def test_read_only_policy_refuses_like_write(self) -> None:
-        verdict = _service(SandboxPolicy.READ_ONLY).evaluate_tool_call(
+        verdict = _service(WriteSurface.NONE).evaluate_tool_call(
             "ast_grep_replace", self.ARGS
         )
         assert verdict.category is GuardCategory.DENY_RULE
         denial = verdict_to_denial(
-            verdict, SandboxPolicy.READ_ONLY, str(WS), "ast_grep_replace", "/etc/hosts"
+            verdict, WriteSurface.NONE, str(WS), "ast_grep_replace", "/etc/hosts"
         )
         assert denial is not None
         assert "ast_grep_replace" in denial
-        assert "read-only" in denial
+        assert "write surface: none" in denial
 
     def test_inside_workspace_path_is_clean(self) -> None:
         args = dict(self.ARGS, path="src/main.py")
@@ -163,8 +165,11 @@ class TestAstGrepReplaceIsWrite:
 
 class TestJudgmentBehavior:
     def test_bash_input_and_process_use_command_guards(self) -> None:
+        # EXECUTION_INPUT effects dispatch through the command pipeline —
+        # an absolute escape is envelope-bounded (BOUNDARY), proving the
+        # dispatch (traversal is deprecated usage and off by default).
         service = _service()
-        assert service.evaluate_tool_call("bash_input", {"line": "rm -rf /"}).category is GuardCategory.DENY_RULE
+        assert service.evaluate_tool_call("bash_input", {"line": "rm /etc/hosts"}).category is GuardCategory.BOUNDARY
         assert service.evaluate_tool_call("process", {"data": "y"}).is_clean
 
     def test_unknown_tool_makes_no_path_claim(self) -> None:
@@ -233,3 +238,24 @@ class TestAnchorOnTheSeam:
     def test_file_tool_without_path_is_not_markable(self) -> None:
         assert approval_anchor("write", {}, WS) is None
         assert approval_anchor("ast_grep_replace", {"path": ""}, WS) is None
+
+
+class TestPermissionClass:
+    """The two-class derivation: parallel reads vs exclusive read-writes."""
+
+    def test_read_family_is_parallel(self) -> None:
+        from modex_agent.sandbox.tool_matrix import PermissionClass
+
+        for name in ("read", "ls", "glob", "grep", "ast_grep_search", "web_reader"):
+            assert describe_tool_security(name).permission_class is PermissionClass.PARALLEL, name
+
+    def test_write_family_is_exclusive(self) -> None:
+        from modex_agent.sandbox.tool_matrix import PermissionClass
+
+        for name in (
+            "write", "edit", "aci_edit", "ast_grep_replace", "bash", "bash_input", "process",
+        ):
+            assert describe_tool_security(name).permission_class is PermissionClass.EXCLUSIVE, name
+
+    def test_uncatalogued_tools_belong_to_no_class(self) -> None:
+        assert describe_tool_security("mcp_unknown").permission_class is None

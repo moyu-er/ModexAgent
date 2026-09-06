@@ -5,7 +5,7 @@ Owns canonicalization (expanduser → anchor to an explicit base →
 ``is_relative_to``, drive/case-aware on Windows, plain segments on POSIX).
 Every consumer that must answer "is this path inside the allowed roots?"
 converges here: ``WorkspacePolicy``, ``PathBoundaryGuard``,
-``ArgumentMatcher``, ``validate_allowed_dirs``,
+``ArgumentMatcher``, ``resolve_agent_sandbox``,
 ``validate_approval_envelope``, ``approval_anchor``.
 
 Design facts:

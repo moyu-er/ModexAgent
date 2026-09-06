@@ -53,7 +53,12 @@ pytestmark = [
 from modex_agent.sandbox.container_executor import ContainerShellExecutor
 from modex_agent.sandbox.oci_runtime import OciContainerRuntime, _container_name
 from modex_agent.sandbox.selection import OciEngine
-from modex_agent.sandbox.settings import SandboxBackend, SandboxPolicy, SandboxSettings
+from modex_agent.sandbox.settings import (
+    ExclusiveConfig,
+    SandboxBackend,
+    SandboxSettings,
+    WriteSurface,
+)
 from modex_agent.sandbox.types import EnforcementLevel
 
 _IMAGE = "debian:bookworm-slim"
@@ -94,12 +99,10 @@ def workspace(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def settings() -> SandboxSettings:
-    return SandboxSettings(
-        backend=SandboxBackend.OCI,
-        policy=SandboxPolicy.WORKSPACE_WRITE,
+    return SandboxSettings(backend=SandboxBackend.OCI,
         network=False,
         image=_IMAGE,
-    )
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE))
 
 
 @pytest.fixture

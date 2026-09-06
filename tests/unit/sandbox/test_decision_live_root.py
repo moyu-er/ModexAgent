@@ -15,7 +15,6 @@ from pathlib import Path
 from modex_agent.sandbox.decision import GuardCategory, SecurityDecisionService
 from modex_agent.sandbox.settings import (
     SandboxBackend,
-    SandboxPolicy,
     SandboxSettings,
 )
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
@@ -35,10 +34,10 @@ class _SwitchableRoot(WorkspaceRootProvider):
 def _settings(writable_roots: list[Path] | None = None) -> SandboxSettings:
     kwargs: dict[str, object] = {
         "backend": SandboxBackend.HOST,
-        "policy": SandboxPolicy.WORKSPACE_WRITE,
+        "exclusive": {"write_surface": "workspace"},
     }
     if writable_roots is not None:
-        kwargs["writable_roots"] = writable_roots
+        kwargs["exclusive"]["writable_roots"] = writable_roots
     return SandboxSettings.model_validate(kwargs)
 
 
@@ -90,7 +89,9 @@ class TestLiveRootSwitching:
             settings=_settings(), workspace_root_provider=provider
         )
         provider.switch(ws_b)
-        verdict = service.evaluate_command(f"cat {ws_a / 'f.txt'}")
+        # Write-capable command: a provable read would take the readonly
+        # fast path and never reach the boundary layer.
+        verdict = service.evaluate_command(f"rm -rf {ws_a / 'f.txt'}")
         assert verdict.category is GuardCategory.BOUNDARY
 
     def test_writable_roots_extension_still_allowed_after_switch(

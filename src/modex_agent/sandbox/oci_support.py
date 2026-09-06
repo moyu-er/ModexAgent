@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict
 from modex_agent.workspace.boundary import canonicalize_path
 
 from .exceptions import SandboxConfigurationError, SandboxPermissionError
-from .settings import SandboxPolicy, SandboxSettings
+from .settings import SandboxSettings, WriteSurface
 
 __all__ = [
     "CliResult",
@@ -155,24 +155,37 @@ def _sandbox_mounts(
 ) -> list[ContainerMount]:
     """Compile the policy into the ordered mount list.
 
-    READ_ONLY: workspace mounted ``ro`` (no shadows needed — nothing is
-    writable). WORKSPACE_WRITE / DANGER_FULL_ACCESS: workspace ``rw`` with
-    each ``protected_subpath`` shadowed ``ro`` after it, then each extra
-    ``writable_root`` the same way. Later mounts shadow earlier ones at
-    the same destination — the ordering IS the read-only-subpath enforcement.
+    ``none``: workspace mounted ``ro`` (no shadows needed — nothing is
+    writable). ``workspace``: workspace ``rw`` with each
+    ``protected_subpath`` shadowed ``ro`` after it, then each extra
+    ``writable_root`` the same way. ``roots``: workspace stays ``ro``
+    and only the declared roots mount ``rw`` (with their shadows).
+    Later mounts shadow earlier ones at the same destination — the
+    ordering IS the read-only-subpath enforcement.
     """
-    mounts = [ContainerMount.for_path(workspace_root)]
-    match settings.policy:
-        case SandboxPolicy.READ_ONLY:
-            return [mounts[0].model_copy(update={"read_only": True})]
-        case SandboxPolicy.WORKSPACE_WRITE | SandboxPolicy.DANGER_FULL_ACCESS:
-            for sub in settings.protected_subpaths:
+    surface = settings.exclusive.write_surface
+    match surface:
+        case WriteSurface.NONE:
+            return [ContainerMount.for_path(workspace_root).model_copy(update={"read_only": True})]
+        case WriteSurface.ROOTS:
+            mounts: list[ContainerMount] = []
+            for root in settings.exclusive.writable_roots:
+                anchored = canonicalize_path(root, base=workspace_root)
+                mounts.append(ContainerMount.for_path(anchored))
+                for sub in settings.exclusive.protected_subpaths:
+                    shadow = ContainerMount.for_path(canonicalize_path(sub, base=anchored))
+                    mounts.append(shadow.model_copy(update={"read_only": True}))
+            return mounts
+        case WriteSurface.WORKSPACE | WriteSurface.FULL:
+            mounts = [ContainerMount.for_path(workspace_root)]
+            for sub in settings.exclusive.protected_subpaths:
                 shadow = ContainerMount.for_path(canonicalize_path(sub, base=workspace_root))
                 mounts.append(shadow.model_copy(update={"read_only": True}))
-            for root in settings.writable_roots:
-                mounts.append(ContainerMount.for_path(root))
-                for sub in settings.protected_subpaths:
-                    shadow = ContainerMount.for_path(canonicalize_path(sub, base=root))
+            for root in settings.exclusive.writable_roots:
+                anchored = canonicalize_path(root, base=workspace_root)
+                mounts.append(ContainerMount.for_path(anchored))
+                for sub in settings.exclusive.protected_subpaths:
+                    shadow = ContainerMount.for_path(canonicalize_path(sub, base=anchored))
                     mounts.append(shadow.model_copy(update={"read_only": True}))
             return mounts
         case unreachable:

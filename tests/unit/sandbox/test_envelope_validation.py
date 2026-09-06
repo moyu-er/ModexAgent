@@ -1,4 +1,4 @@
-"""Multi-root envelope validation — ``validate_allowed_dirs`` / ``validate_approval_envelope``.
+"""Multi-root envelope validation — ``resolve_agent_sandbox`` ceiling / ``validate_approval_envelope``.
 
 RED coverage for:
 
@@ -19,13 +19,14 @@ from pathlib import Path
 import pytest
 
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
+from modex_agent.sandbox.delegation import resolve_agent_sandbox
 from modex_agent.sandbox.security_classifier import validate_approval_envelope
 from modex_agent.sandbox.settings import (
+    ExclusiveConfig,
     SandboxBackend,
-    SandboxPolicy,
     SandboxSettings,
+    WriteSurface,
 )
-from modex_agent.scope.compiler import validate_allowed_dirs
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 IS_WINDOWS = sys.platform == "win32"
@@ -41,12 +42,15 @@ class _FixedRoot(WorkspaceRootProvider):
 
 def _settings(
     writable_roots: list[Path] | None = None,
-    policy: SandboxPolicy = SandboxPolicy.WORKSPACE_WRITE,
+    write_surface: WriteSurface = WriteSurface.WORKSPACE,
 ) -> SandboxSettings:
-    kwargs: dict[str, object] = {"backend": SandboxBackend.HOST, "policy": policy}
-    if writable_roots is not None:
-        kwargs["writable_roots"] = writable_roots
-    return SandboxSettings.model_validate(kwargs)
+    return SandboxSettings(
+        backend=SandboxBackend.HOST,
+        exclusive=ExclusiveConfig(
+            write_surface=write_surface,
+            writable_roots=list(writable_roots or []),
+        ),
+    )
 
 
 def _approval_cfg(*allowed_paths: str) -> ApprovalConfig:
@@ -58,33 +62,47 @@ def _approval_cfg(*allowed_paths: str) -> ApprovalConfig:
     )
 
 
-# ─── validate_allowed_dirs: pool envelope (multi-root) ───────────────────────
+# ─── resolve_agent_sandbox ceiling: caller envelope (multi-root) ─────────────
 
 
-class TestValidateAllowedDirsMultiRoot:
+class TestResolveAgentSandboxCeiling:
+    """The delegation ceiling — declared roots must fit the caller envelope.
+
+    Containment is the canonical ``PathEnvelope`` check — relative entries
+    anchor to the workspace root, symlinks resolve to their real targets
+    (a link pointing outside the envelope escapes), and cross-drive
+    entries are a typed denial, never a ``commonpath`` crash.
+    """
+
     def test_relative_inside_workspace_passes(self, tmp_path: Path) -> None:
         ws = tmp_path / "workspace"
         ws.mkdir()
-        # A relative entry anchoring INSIDE the workspace canonicalizes in.
-        validate_allowed_dirs([Path("./sub"), Path("inner/deep")], ws)
+        declared = SandboxSettings(
+            exclusive=ExclusiveConfig(writable_roots=[Path("./sub"), Path("inner/deep")])
+        )
+        resolve_agent_sandbox(declared, None, ws)
 
-    def test_relative_escape_is_typed_denial_not_commonpath_crash(
-        self, tmp_path: Path
-    ) -> None:
-        # Repro: relative ../shared-lib against the workspace previously
-        # raised the raw commonpath "same drive" ValueError; the denial
-        # must be the typed allowed_dirs escape error.
+    def test_relative_escape_is_typed_denial(self, tmp_path: Path) -> None:
         ws = tmp_path / "workspace"
         ws.mkdir()
-        with pytest.raises(ValueError, match="allowed_dirs"):
-            validate_allowed_dirs([Path("../shared-lib")], ws)
+        declared = SandboxSettings(
+            exclusive=ExclusiveConfig(writable_roots=[Path("../shared-lib")])
+        )
+        with pytest.raises(ValueError, match="can only narrow, never amplify"):
+            resolve_agent_sandbox(declared, None, ws)
 
-    def test_writable_root_extends_envelope(self, tmp_path: Path) -> None:
-        # A dir under a configured writable root is inside the POOL envelope.
+    def test_caller_writable_root_extends_ceiling(self, tmp_path: Path) -> None:
         ws = tmp_path / "workspace"
         vendor = tmp_path / "vendor"
         vendor.mkdir()
-        validate_allowed_dirs([vendor / "libs"], ws, vendor)
+        caller = SandboxSettings(
+            backend=SandboxBackend.HOST,
+            exclusive=ExclusiveConfig(writable_roots=[vendor]),
+        )
+        declared = SandboxSettings(
+            exclusive=ExclusiveConfig(writable_roots=[vendor / "libs"])
+        )
+        resolve_agent_sandbox(declared, caller, ws)
 
     def test_outside_all_envelope_roots_rejected(self, tmp_path: Path) -> None:
         ws = tmp_path / "workspace"
@@ -92,28 +110,39 @@ class TestValidateAllowedDirsMultiRoot:
         elsewhere = tmp_path / "elsewhere"
         for d in (ws, vendor, elsewhere):
             d.mkdir()
-        with pytest.raises(ValueError, match="allowed_dirs"):
-            validate_allowed_dirs([elsewhere], ws, vendor)
+        caller = SandboxSettings(
+            backend=SandboxBackend.HOST,
+            exclusive=ExclusiveConfig(writable_roots=[vendor]),
+        )
+        declared = SandboxSettings(
+            exclusive=ExclusiveConfig(writable_roots=[elsewhere])
+        )
+        with pytest.raises(ValueError, match="can only narrow, never amplify"):
+            resolve_agent_sandbox(declared, caller, ws)
 
-    def test_symlinked_allowed_dir_resolves_to_real_target(
+    def test_symlinked_declared_dir_resolves_to_real_target(
         self, tmp_path: Path
     ) -> None:
-        # A symlink INSIDE the workspace pointing OUTSIDE escapes — must be
-        # rejected after resolution.
         ws = tmp_path / "workspace"
         outside = tmp_path / "outside"
         ws.mkdir()
         outside.mkdir()
         link = ws / "linked"
         link.symlink_to(outside, target_is_directory=True)
+        declared = SandboxSettings(
+            exclusive=ExclusiveConfig(writable_roots=[link])
+        )
         with pytest.raises(ValueError):
-            validate_allowed_dirs([link], ws)
+            resolve_agent_sandbox(declared, None, ws)
 
     @pytest.mark.skipif(not IS_WINDOWS, reason="Windows cross-drive repro")
     def test_windows_cross_drive_no_commonpath_crash(self, tmp_path: Path) -> None:
         ws = tmp_path  # on the temp drive (e.g. C:)
-        with pytest.raises(ValueError, match="allowed_dirs"):
-            validate_allowed_dirs([Path("D:\\shared")], ws)
+        declared = SandboxSettings(
+            exclusive=ExclusiveConfig(writable_roots=[Path(r"D:\shared")])
+        )
+        with pytest.raises(ValueError, match="can only narrow, never amplify"):
+            resolve_agent_sandbox(declared, None, ws)
 
 
 # ─── validate_approval_envelope: canonical multi-root containment ────────────

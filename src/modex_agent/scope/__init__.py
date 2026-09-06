@@ -22,7 +22,6 @@ from modex_agent.scope.compiler import (
     ToolOrigin,
     ToolReplacement,
     compile_scope,
-    validate_allowed_dirs,
 )
 from modex_agent.scope.defaults import (
     POSITION_DEFAULT_HOOKS,
@@ -125,7 +124,6 @@ __all__ = [
     "merge_memory_declarations",
     "position_default_hooks",
     "spec_hash",
-    "validate_allowed_dirs",
     "validate_declaration",
     "validate_effective_configs",
 ]

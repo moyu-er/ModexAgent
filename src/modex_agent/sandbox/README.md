@@ -11,7 +11,7 @@ Sandbox selects where native commands run; approval decides whether a tool call 
 | Explicit backend | Disabled | Guard checks remain; boundary findings return a denial `ToolResult`, without suspension |
 | Explicit backend | Enabled | Guard runs first; BOUNDARY enters pending approval even with `tools: {}`; CLEAN reaches per-tool approval rules |
 
-Hard deny, traversal and SSRF findings are never approvable. CLEAN means no registered guard finding, not proof that an arbitrary operation is safe. Independent WebReader safety and native delegation checks also remain active with DEFAULT.
+Hard deny findings (write-surface refusals, protected paths) are never approvable;; SSRF escalates like BOUNDARY. CLEAN means no registered guard finding, not proof that an arbitrary operation is safe. Independent WebReader safety and native delegation checks also remain active with DEFAULT.
 
 ## Backends And Policies
 
@@ -22,9 +22,9 @@ Hard deny, traversal and SSRF findings are never approvable. CLEAN means no regi
 | `oci` | Probes Docker, then Podman; uses the selected engine or falls back to HOST if unavailable |
 | `host` | Explicit guard-enabled host execution; no kernel isolation (`enforcement=NONE`) |
 
-Available LOCAL/OCI keeps its selected engine, including under `danger-full-access`. LOCAL and OCI never substitute for each other. Both native main agents and subagents retain ordinary HOST bash when the selected engine is genuinely unavailable; fallback never grants permission.
+Available LOCAL/OCI keeps its selected engine, including under `write_surface: full`. LOCAL and OCI never substitute for each other. Both native main agents and subagents retain ordinary HOST bash when the selected engine is genuinely unavailable; fallback never grants permission.
 
-`policy` defaults to `danger-full-access`, which declares no main file boundary. Set `workspace-write` or `read-only` to restrict known file targets to workspace + `writable_roots`; `read-only` hard-denies file writes. `network` defaults to `false` independently of policy, but HOST has no kernel network isolation. `protected_subpaths` defaults to `[".git"]` for restricted-policy file checks and supported engine write protection, not arbitrary HOST script containment. bwrap full-access retains its writable host-root bind and the network setting.
+The permission face is two-class. The `parallel` class (read/ls/glob/grep/ast_grep_search/lsp_*/web_reader) is UNRESTRICTED by default — a per-tool `parallel.boundaries` entry narrows one tool. The `exclusive` class (write/edit/aci_edit/ast_grep_replace/bash/bash_input/process) is bounded by `exclusive.write_surface`: `workspace` (default — workspace + `writable_roots` writable), `roots` (only `writable_roots` writable; the workspace is NOT implicitly writable), `none` (file writes refused), `full` (no file boundary). bash-class members have no path argument — the kernel substrate and command-text guards bound them; per-tool path boundaries do not apply. `network` defaults to `false` independently of the surface, but HOST has no kernel network isolation. `protected_subpaths` defaults to `[".git"]` for exclusive file-write checks and supported engine write protection, not arbitrary HOST script containment. bwrap full-access retains its writable host-root bind and the network setting.
 
 ## Configuration
 
@@ -56,20 +56,21 @@ workspace:
             sandbox_guard:
               sandbox:
                 backend: auto
-                policy: workspace-write
                 network: false
-                writable_roots: []
+                exclusive:
+                  write_surface: workspace
+                  writable_roots: []
 ```
 
 `allowed_paths` names per-tool no-prompt directories, not filesystem permissions or mounts. Concrete allowance roots must fit the active sandbox envelope. Universal patterns do not waive the runtime guard. `allow_patterns` uses case-insensitive regex fullmatch, not shell globs, and is considered only after guard CLEAN. The bash entry above requests approval for other CLEAN commands; tools omitted from the map have no inner approval gate.
 
-The shipped `examples/bot_project/config/scopes/bot.yml` does not enable sandbox. The `default` and `coder` pools' native roots enable approval with only `write`/`edit` `allowed_paths: ["./*"]`; the `review` root does not declare approval. This is not blanket approval for reads or commands.
+The shipped `examples/bot_project/config/scopes/bot.yml` opts every native pool root (`default`, `coder`, `review`) into the sandbox with `backend: host` + `exclusive.write_surface: workspace` — the bot's basic permission logic: writes and bash commands bounded to the workspace (extra paths declarable via `writable_roots`), parallel reads unrestricted. Subagents inherit this face undeclared. The `default` and `coder` roots additionally enable approval with only `write`/`edit` `allowed_paths: ["./*"]` (in-workspace writes skip the card; out-of-workspace writes escalate); the `review` root does not declare approval, so its guard findings deny directly. This is not blanket approval for reads or commands.
 
-`SandboxSettings` also accepts `image` (OCI defaults to `modex-sandbox:latest`), `protected_subpaths`, and `guard`. `guard.enabled` gates advisory traversal/network checks only; built-in command deny rules and declared file boundaries remain. See the [multi-root example](../../../docs/design/unified-security/PRD.md#multi-root-example) for extra roots and child `allowed_dirs: ["../shared"]`.
+Provably read-only commands (readonly.py: per-shell-family allowlist over a parsed AST — bashlex for the bash family, a conservative segmenter for cmd.exe; no redirects, no substitutions, no assignments, fail-closed) skip the envelope/approval path like parallel tools. `SandboxSettings` also accepts `image` (OCI defaults to `modex-sandbox:latest`), `exclusive.protected_subpaths`, and `guard`. `guard.enabled` gates the advisory network layer; the readonly fast path is `guard.read_only_bypass: true` by default (`false` restores envelope friction for read-shaped commands); the command deny rules are DEPRECATED USAGE — off by default (`guard.deny_rules: true` restores them) — with interception owned by the path boundary and the kernel substrate; declared file boundaries remain. All declared paths are RELATIVE and anchor to the live workspace root on every evaluation — the workspace root itself is never declared. See the [multi-root example](../../../docs/design/unified-security/PRD.md#multi-root-example) for extra roots and the child `sandbox:` declaration.
 
 ## Native Delegation
 
-Native subagents have a fixed known-file read/write envelope: canonical workspace + explicit `allowed_dirs`. Those directories must fit pool workspace + `writable_roots`; invalid declarations fail rather than being clipped. Children do not implicitly inherit every extra pool root. Parent READ_ONLY is preserved; otherwise delegated policy narrows to WORKSPACE_WRITE. The materialized snapshot is stable across later configuration changes.
+Native subagents derive their permission face through `resolve_agent_sandbox` — the one derivation: an undeclared subagent inherits the caller wholesale (a dormant caller normalizes to guard-only HOST), a declared `sandbox:` block (the same two-class shape) is authoritative for the permission face while the substrate stays with the caller, and every declared path must fit the caller envelope — a delegation can only narrow, never amplify; violations fail assembly. The materialized snapshot is stable across later configuration changes.
 
 Native subagents never escalate to humans, even when parent approval is enabled. A known file or extracted command-path boundary returns an error naming allowed roots and directing the request to the main session, without a card or suspension. DEFAULT still installs delegation's guard-only classification without starting a sandbox interceptor or probe. Graph turns are also noninteractive: active guards remain, human escalation does not.
 

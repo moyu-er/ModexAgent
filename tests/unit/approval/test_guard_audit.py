@@ -49,10 +49,11 @@ from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.sandbox.decision import SecurityDecisionService
 from modex_agent.sandbox.security_classifier import SecurityClassifier
 from modex_agent.sandbox.settings import (
+    ExclusiveConfig,
     GuardSettings,
     SandboxBackend,
-    SandboxPolicy,
     SandboxSettings,
+    WriteSurface,
 )
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_graph import (
@@ -99,14 +100,12 @@ class _NoopTool(Tool):
 
 
 def _settings(
-    policy: SandboxPolicy = SandboxPolicy.WORKSPACE_WRITE,
+    write_surface: WriteSurface = WriteSurface.WORKSPACE,
 ) -> SandboxSettings:
-    return SandboxSettings.model_validate(
-        {
-            "backend": SandboxBackend.HOST,
-            "policy": policy,
-            "guard": GuardSettings(),
-        }
+    return SandboxSettings(
+        backend=SandboxBackend.HOST,
+        exclusive=ExclusiveConfig(write_surface=write_surface),
+        guard=GuardSettings(),
     )
 
 
@@ -205,11 +204,11 @@ async def _run_tool_node(
 
 
 def _deny_rule_call() -> ToolCall:
-    return ToolCall(tool_name="bash", arguments={"command": "rm -rf /"}, call_id="c1")
+    return ToolCall(tool_name="write", arguments={"path": ".git/config", "content": "x"}, call_id="c1")
 
 
 def _boundary_call() -> ToolCall:
-    return ToolCall(tool_name="read", arguments={"path": "/etc/passwd"}, call_id="c1")
+    return ToolCall(tool_name="write", arguments={"path": "/etc/hosts"}, call_id="c1")
 
 
 def _clean_call() -> ToolCall:
@@ -241,7 +240,7 @@ class TestGuardDenyAudited:
         assert row.decided_by == SANDBOX_GUARD_DECIDED_BY
         assert row.decision == "denied"
         assert row.deny_reason is not None
-        assert row.tool_name == "bash"
+        assert row.tool_name == "write"
         assert row.tool_call_id == "c1"
         assert row.turn_uuid == "turn-uuid-1"
         assert row.agent_id == "agent"
@@ -256,7 +255,7 @@ class TestGuardDenyAudited:
         assert rows[0].decided_by == SANDBOX_GUARD_DECIDED_BY
         assert rows[0].decision == "denied"
         assert rows[0].deny_reason is not None
-        assert "/etc/passwd" in rows[0].deny_reason
+        assert "/etc/hosts" in rows[0].deny_reason
 
     async def test_query_filters_by_decided_by(self, audit_store: _RecordingAuditStore) -> None:
         await _run_tool_node(_guard_classifier(escalate=True), audit_store, [_deny_rule_call()])

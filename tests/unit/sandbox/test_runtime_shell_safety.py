@@ -14,7 +14,12 @@ import pytest
 
 from modex_agent.sandbox.exceptions import SandboxUnavailableError
 from modex_agent.sandbox.runtime import ResolvedSandbox, SandboxRuntime
-from modex_agent.sandbox.settings import SandboxBackend, SandboxPolicy, SandboxSettings
+from modex_agent.sandbox.settings import (
+    ExclusiveConfig,
+    SandboxBackend,
+    SandboxSettings,
+    WriteSurface,
+)
 from modex_agent.sandbox.shell_plan import ShellAssemblyDeps, build_bash_tool
 from modex_agent.sandbox.types import EnforcementLevel
 from modex_agent.tools.terminal.persistent_bash import (
@@ -151,7 +156,7 @@ async def test_actual_local_launch_unavailable_after_selection(tmp_path: Path, m
         calls.append(argv)
         return subprocess.CompletedProcess(argv, 1, "", "bwrap: Creating new namespace failed: Operation not permitted")
     monkeypatch.setattr(subprocess, "run", cannot_launch)
-    resolved = await BwrapRuntime().resolve_available(SandboxSettings(backend=SandboxBackend.LOCAL, policy=SandboxPolicy.WORKSPACE_WRITE), tmp_path)
+    resolved = await BwrapRuntime().resolve_available(SandboxSettings(backend=SandboxBackend.LOCAL, exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE)), tmp_path)
     assert resolved.backend is SandboxBackend.HOST
     assert "namespace" in (resolved.degraded_reason or "")
     assert calls[0][-5:] == ["/bin/bash", "--noprofile", "--norc", "-c", ":"]
@@ -290,8 +295,8 @@ async def test_runtime_compiles_canonical_relative_roots(
     shared.mkdir()
     (shared / ".git").mkdir()
     (tmp_path / "protected").mkdir()
-    settings = SandboxSettings(backend=SandboxBackend.LOCAL, policy=SandboxPolicy.WORKSPACE_WRITE,
-                               writable_roots=[Path("../shared")], protected_subpaths=[".git", "../protected"])
+    settings = SandboxSettings(backend=SandboxBackend.LOCAL,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE, writable_roots=[Path("../shared")], protected_subpaths=[".git", "../protected"]))
     monkeypatch.setattr("modex_agent.sandbox.bwrap_runtime._get_platform", lambda: Platform.LINUX)
     monkeypatch.setattr("modex_agent.sandbox.seatbelt_runtime._get_platform", lambda: Platform.MACOS)
     monkeypatch.setattr(SandboxRuntime, "_validate_startup", AsyncMock())
@@ -339,8 +344,8 @@ async def test_real_bwrap_writes_permitted_relative_extra_root(tmp_path: Path) -
     shared = tmp_path / "shared"
     workspace.mkdir()
     shared.mkdir()
-    settings = SandboxSettings(backend=SandboxBackend.LOCAL, policy=SandboxPolicy.WORKSPACE_WRITE,
-                               writable_roots=[Path("../shared")])
+    settings = SandboxSettings(backend=SandboxBackend.LOCAL,
+        exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE, writable_roots=[Path("../shared")]))
     assert SecurityDecisionService(settings, FixedRoot(workspace)).evaluate_file_tool("write", "../shared/value").is_clean
     resolved = await BwrapRuntime().resolve_available(settings, workspace)
     assert resolved.backend is SandboxBackend.LOCAL, resolved.degraded_reason
