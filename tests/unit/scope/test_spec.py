@@ -131,14 +131,13 @@ class TestScopeSpecForm:
 
 class TestWorkspaceResourceSelectionFace:
     """Ticket 14 (SPEC §3.1): the workspace layer's resource-selection face
-    — memory backend, path layout, MCP server set — all None = inherit the
-    service-level domain config."""
+    — memory backend, path layout — all None = inherit the service-level
+    domain config."""
 
     def test_selection_fields_default_to_inherit(self) -> None:
         ws = WorkspaceSpec(name="w")
         assert ws.persistence is None
         assert ws.paths is None
-        assert ws.mcp is None
         assert ws.pools == []
 
     def test_persistence_backend_selection(self) -> None:
@@ -155,12 +154,6 @@ class TestWorkspaceResourceSelectionFace:
         assert ws.paths is not None
         assert ws.paths.data_dir_name == ".data"
         assert WorkspacePathsSpec().data_dir_name == ".modex"
-
-    def test_mcp_server_set_selection(self) -> None:
-        ws = WorkspaceSpec(name="w", mcp=["playwright", "fetch"])
-        assert ws.mcp == ["playwright", "fetch"]
-        # The empty set is a declaration (no servers), distinct from None.
-        assert WorkspaceSpec(name="w", mcp=[]).mcp == []
 
     def test_unknown_selection_field_rejected(self) -> None:
         with pytest.raises(ValidationError):

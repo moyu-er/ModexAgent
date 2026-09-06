@@ -366,15 +366,12 @@ class TestRejectApproveLoop:
 
 
 class TestPoolConfig:
-    """Verify the review pool config files exist and are valid."""
+    """Verify the review workflow fixture files exist.
 
-    def test_pool_yml_exists(self) -> None:
-        assert (_FIXTURES / "pools" / "review" / "pool.yml").exists()
-
-    def test_templates_exist(self) -> None:
-        templates_dir = _FIXTURES / "pools" / "review" / "templates"
-        assert (templates_dir / "implementer.yml").exists()
-        assert (templates_dir / "reviewer.yml").exists()
+    The legacy ``fixtures/pools/review`` pool.yml + templates were removed
+    with the deviations-only declaration cleanup — the live review pool
+    lives in ``config/scopes/bot.yml`` under the compile gate.
+    """
 
     def test_agent_prompts_exist(self) -> None:
         agents_dir = _FIXTURES / "agents"

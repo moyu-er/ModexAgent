@@ -8,6 +8,7 @@ import { ModelEditor } from "./ModelEditor";
 import { GlobalMcpView } from "./GlobalMcpView";
 import { GlobalSkillsView } from "./GlobalSkillsView";
 import { ScopeView } from "./ScopeView";
+import { PoolsConfigView } from "./pools/PoolsConfigView";
 import { PromptsView } from "./PromptsView";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useToast } from "../ToastContext";
@@ -46,6 +47,7 @@ const CONFIG_GROUP: NavEntry[] = [
 ];
 
 const POOLS_GROUP: NavEntry[] = [
+  { key: "pools", labelKey: "settings.nav.pools" },
   { key: "scope", labelKey: "settings.nav.scope" },
   { key: "mcp", labelTerm: TERMS.mcp },
   { key: "skills", labelTerm: TERMS.skills },
@@ -60,6 +62,7 @@ const VALID_TABS: ReadonlySet<ViewKey> = new Set([
   "im",
   "model",
   "scope",
+  "pools",
   "mcp",
   "skills",
   "prompts",
@@ -318,6 +321,8 @@ export function SettingsModal({ open, onClose }: Props) {
                   <GlobalSkillsView />
                 ) : view === "scope" ? (
                   <ScopeView />
+                ) : view === "pools" ? (
+                  <PoolsConfigView />
                 ) : view === "prompts" ? (
                   <PromptsView />
                 ) : form && isPersisted ? (

@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.pool import create_pool
 from bot.service.pool.declaration import (
@@ -67,6 +69,18 @@ from .assembly_manifest import (
 )
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
+
+
+@pytest.fixture(autouse=True)
+def _fake_modexctl_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Native-agent assembly resolves the modexctl bin dir eagerly (the
+    native_env hook's env-spec derivation) — point it at a hermetic fake
+    binary so the suite stays hermetic on machines without modexctl
+    installed."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "modexctl.bat").write_text("@exit /b 0\n", encoding="ascii")
+    monkeypatch.setenv("MODEXBOT_BIN_DIR", str(bin_dir))
 
 BOT_BASE = Path(__file__).resolve().parents[3]
 
@@ -189,19 +203,13 @@ async def _create_declared_pool(
         deps,
         "",
     )
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    (bin_dir / "modexctl.bat").write_text("@exit /b 0\n", encoding="ascii")
     broker = InMemoryMessageBroker()
     await broker.start()
     instance = None
     try:
-        with (
-            patch.dict("os.environ", {"MODEXBOT_BIN_DIR": str(bin_dir)}),
-            patch(
-                "modex_agent.tools.mcp_loader.load_per_agent_mcp",
-                new=AsyncMock(return_value=None),
-            ),
+        with patch(
+            "modex_agent.tools.mcp_loader.load_per_agent_mcp",
+            new=AsyncMock(return_value=None),
         ):
             instance = await create_pool(
                 pool_name="default",

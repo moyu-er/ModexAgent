@@ -103,8 +103,8 @@ class MemoryDeclaration(BaseModel):
     """Per-node memory override block — SPEC §3.2 memory row's override face.
 
     Field face is the union of the legacy roster memory blocks: the
-    ``MemoryToggle`` archive/core gates (pool.yml main agents) plus the
-    subagent session token override (templates). Position fixes the preset
+    ``MemoryToggle`` archive/core gates (root agents) plus the
+    subagent session token override. Position fixes the preset
     FAMILY (root — archive/core eligible, non-root — session-only); this block overrides layer toggles within the eligible
     family. The AND gate mirrors ``MemoryToggle``: core memory is fed by
     archive consolidation.
@@ -343,9 +343,9 @@ class WorkspaceSpec(BaseModel):
     """Workspace-layer scope declaration: resource selection + hosted pools.
 
     Ticket 14 completes the resource-selection face (SPEC §3.1): the
-    workspace layer selects the memory backend (``persistence``), the path
-    layout (``paths``), and the shared MCP server set (``mcp``) — with
-    ``pools`` hosting the pool trees. Every selection field is
+    workspace layer selects the memory backend (``persistence``) and the
+    path layout (``paths``) — with ``pools`` hosting the pool trees.
+    Every selection field is
     ``None = inherit``: an absent field falls back to the service-level
     domain config (``bot_config.yml``), so undeclared deployments keep
     today's data layout (SPEC §3.1 继承父层 + 声明差异).
@@ -356,10 +356,6 @@ class WorkspaceSpec(BaseModel):
     name: str
     persistence: WorkspacePersistenceSpec | None = None
     paths: WorkspacePathsSpec | None = None
-    mcp: list[str] | None = None
-    """The workspace's shared MCP server set — names referencing
-    ``config/mcp/registry.json`` (资源引用, SPEC §3.7). ``None`` = no
-    workspace-level set (the full registry remains available)."""
     pools: list[PoolSpec] = Field(default_factory=list)
 
 

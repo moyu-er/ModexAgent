@@ -21,6 +21,7 @@ docs/
 │   ├── llm-provider/                  (ADR-0046) LLM provider protocol engines — PRD
 │   ├── scope-converge/                (ADR-0041) plugin/assembly SPEC, errata, handoff
 │   ├── scope-assembly/                (ADR-0042/0043, implemented 2026-08-22) scope declaration tree + unified assembly SPEC, issues, closure matrix
+│   ├── scope-config-panel/            (ADR-0042 refinement) structured pools config panel + canonical deviations-only serialization — PRD, tickets
 │   ├── graph-orchestration/           (ADR-0033/0034)
 │   ├── static-graph-scheduling/       (ADR-0036)
 │   ├── modexctl-control-plane/        (ADR-0035)

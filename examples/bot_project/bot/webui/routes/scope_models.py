@@ -11,7 +11,7 @@ the handler boundary.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from modex_agent.plugins.abc import PluginSource
 from modex_agent.scope import (
@@ -177,18 +177,88 @@ class ScopeDeclarationSaveResponse(BaseModel):
     restart_required: bool
 
 
+class ScopeModelResponse(BaseModel):
+    """The declaration as a JSON tree (structured panel surface).
+
+    ``model`` is the declaration's nested-mapping form verbatim
+    (``yaml.safe_load`` of the file) — a genuinely open payload whose shape
+    the loader/validator chain owns, not this wire model.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    model: dict[str, JsonValue]
+
+
+class ScopeModelUpdateRequest(BaseModel):
+    """Panel write-back body — the whole declaration as a JSON tree."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    model: dict[str, JsonValue]
+
+
+class ScopePositionDefaultRow(BaseModel):
+    """One position-derived defaults row (SPEC §3.2) for form hints."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    toolset: str
+    registration: str
+
+
+class ScopeCapabilityBundle(BaseModel):
+    """What a capability carries (ADR-0047) — these ride the bundle and are
+    NOT independently declarable in the panel."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tools: list[str]
+    hooks: list[str]
+
+
+class ScopeOptionsResponse(BaseModel):
+    """Every enumerable option the pools panel's controls need — sourced
+    from the same ``ComponentRegistry`` the compile gate uses plus the MCP
+    registry, so the frontend hardcodes nothing."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    toolsets: list[str]
+    context_modes: list[str]
+    execution_strategies: list[str]
+    provider_kinds: list[str]
+    capabilities: list[str]
+    capability_bundles: dict[str, ScopeCapabilityBundle]
+    """Per-capability carried tools/hooks — union over tree positions at
+    default config. Bundle-carried hooks are excluded from the panel's
+    free hook toggles (they follow the capability checkbox)."""
+    hooks: list[str]
+    default_hooks: list[str]
+    interceptors: list[str]
+    commands: list[str]
+    mcp_servers: list[str]
+    position_defaults: dict[str, ScopePositionDefaultRow]
+    """Two rows keyed ``root`` / ``sub`` (position, not agent)."""
+
+
 __all__ = [
     "ScopeAgentBill",
     "ScopeAgentNode",
     "ScopeBillResponse",
     "ScopeCapabilityBill",
+    "ScopeCapabilityBundle",
     "ScopeCapabilityContributionBill",
     "ScopeDeclarationResponse",
     "ScopeDeclarationSaveResponse",
     "ScopeDeclarationUpdateRequest",
     "ScopeFieldBill",
     "ScopeFieldValue",
+    "ScopeModelResponse",
+    "ScopeModelUpdateRequest",
+    "ScopeOptionsResponse",
     "ScopePoolTopology",
+    "ScopePositionDefaultRow",
     "ScopeReplacementBill",
     "ScopeToolBill",
     "ScopeTopologyResponse",

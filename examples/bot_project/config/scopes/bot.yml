@@ -1,29 +1,5 @@
-# Scope declaration for the bot workspace (ADR-0042 / SPEC §3).
-#
-# Single source of truth for scope assembly — the legacy
-# config/pools/<name>/pool.yml + templates/*.yml road is deleted
-# (ticket 11); this declaration is the only pool format.
-#
-# Form: workspace layer (ticket 14 — the full resource-selection face:
-# memory backend, path layout, shared MCP server set, hosted pools)
-# carrying the bidirectional peer topology (ADR-0019: default<->opencode,
-# default<->review). Each pool declares its agents tree — nesting under
-# `agents:` is sugar for the flat parent-reference model. Position-derived
-# defaults (SPEC §3.2) are NOT transcribed: root agents get the full
-# toolset profile, non-roots read-write; only deviations declare
-# `toolset` explicitly.
-#
-# Resource-selection values match the shipped service defaults
-# (bot_config.yml) — data landing is unchanged (split-brain equivalence).
-# Absent selection fields inherit the service-level domain config.
 workspace:
   name: bot
-  persistence:
-    backend: sqlite
-  paths:
-    data_dir_name: .modex
-  mcp:
-  - playwright
   pools:
     default:
       peers:
@@ -31,39 +7,25 @@ workspace:
       - review
       agents:
         default:
-          description: >-
-            General-purpose assistant. Handles broad conversation, web research and
-            content retrieval, and Office-document work. Carries file, shell, and
-            browser tools. Use as the default for ambiguous or cross-domain requests.
+          description: General-purpose assistant. Handles broad conversation, web
+            research and content retrieval, and Office-document work. Carries file,
+            shell, and browser tools. Use as the default for ambiguous or cross-domain
+            requests.
           max_steps: 50
           use_terminal: false
           terminal_visibility: false
           capabilities:
             aci: {}
             experience: {}
-          tools:
           hooks:
           - +reference_collector
-          # Ticket 09: the notification hook is a HOOK-slot component
-          # referenced from the declaration — the declaration road
-          # dispatches it at Stage 4 (the legacy road code-wires it in
-          # create_pool / pool_wiring until ticket 17). experience_review
-          # needs no roster entry: the experience capability contributes
-          # it together with the tool (anchor-bound).
-          # (todo_planning_nudge rides the todo capability automatically; the deprecated task_delegation_nudge is no longer referenced.)
           - +user_notice_cleanup
-          # Per-turn model binding (BIZ BotHooksPlugin factory) — declared
-          # roster entry since the W6 glue eradication retired the
-          # unconditional create_pool injection; the factory derives its
-          # service-scoped deps from the pool assembly context.
           - +model_choice_bind
           hook_configs:
             reference_collector:
               max_sources: 20
-          # The bot's basic permission logic: default write surface is the
-          # workspace (reads unrestricted); extra paths are declarable per
-          # pool. Subagents inherit this face via resolve_agent_sandbox.
-          interceptors: [+sandbox_guard]
+          interceptors:
+          - +sandbox_guard
           interceptor_configs:
             sandbox_guard:
               sandbox:
@@ -76,45 +38,32 @@ workspace:
           - playwright
           agents:
             office-expert:
-              description: >-
-                Creates, reads, edits, converts, and analyzes Office documents (Word, Excel,
-                PowerPoint, PDF) using the OfficeCLI toolchain. Handles formatting, charts,
-                batch operations, and format conversion. Use when the task involves .docx,
-                .xlsx, .pptx, or .pdf file manipulation.
-              max_steps: 100
+              description: Creates, reads, edits, converts, and analyzes Office documents
+                (Word, Excel, PowerPoint, PDF) using the OfficeCLI toolchain. Handles
+                formatting, charts, batch operations, and format conversion. Use when
+                the task involves .docx, .xlsx, .pptx, or .pdf file manipulation.
               capabilities:
                 aci: {}
                 todo: {}
-              context_mode: fresh
     coder:
       agents:
         orchestrator:
-          description: >-
-            Software engineering agent for codebase investigation, implementation
-            planning, design validation, change review, and structured technical
-            analysis. Performs quick codebase lookups, planning, diff review, and
-            design checks. Use when a task needs investigation, planning, review,
-            or design analysis of a codebase.
+          description: Software engineering agent for codebase investigation, implementation
+            planning, design validation, change review, and structured technical analysis.
+            Performs quick codebase lookups, planning, diff review, and design checks.
+            Use when a task needs investigation, planning, review, or design analysis
+            of a codebase.
           max_steps: 200
           use_terminal: false
           terminal_visibility: false
           capabilities:
             aci: {}
             todo: {}
-          tools:
-          # Ticket 11: the notification hook is a HOOK-slot roster
-          # reference (Stage 4 dispatch) — config evolution only
-          # walks the declaration (09 precedent).
-          # (todo_planning_nudge rides the todo capability automatically; the deprecated task_delegation_nudge is no longer referenced.)
           hooks:
           - +user_notice_cleanup
-          # Per-turn model binding — declared roster entry since the W6
-          # glue eradication retired the unconditional create_pool injection.
           - +model_choice_bind
-          # The bot's basic permission logic: default write surface is the
-          # workspace (reads unrestricted); extra paths are declarable per
-          # pool. Subagents inherit this face via resolve_agent_sandbox.
-          interceptors: [+sandbox_guard]
+          interceptors:
+          - +sandbox_guard
           interceptor_configs:
             sandbox_guard:
               sandbox:
@@ -125,23 +74,20 @@ workspace:
             enabled: true
           agents:
             explore:
-              description: >-
-                Read-only codebase search and analysis agent. Searches, reads, and
-                analyzes code, tracing dependencies and returning structured findings
-                with exact file paths and line numbers. Cannot modify files. Use for
-                any read-only investigation requiring more than a few searches, or
-                when parallel analysis of independent questions is valuable.
+              description: Read-only codebase search and analysis agent. Searches,
+                reads, and analyzes code, tracing dependencies and returning structured
+                findings with exact file paths and line numbers. Cannot modify files.
+                Use for any read-only investigation requiring more than a few searches,
+                or when parallel analysis of independent questions is valuable.
               max_steps: 200
               toolset: read_only
               capabilities:
                 ast_grep: {}
                 todo: {}
-              context_mode: fresh
             general:
-              description: >-
-                General-purpose assistant with full capabilities. Handles research,
-                planning, task decomposition, documentation, and implementation when the
-                task doesn't warrant dedicated exploration or is cross-domain.
+              description: General-purpose assistant with full capabilities. Handles
+                research, planning, task decomposition, documentation, and implementation
+                when the task doesn't warrant dedicated exploration or is cross-domain.
                 Use for any task that needs a fresh, isolated context.
               max_steps: 200
               toolset: full
@@ -149,16 +95,14 @@ workspace:
                 aci: {}
                 ast_grep: {}
                 todo: {}
-              context_mode: fresh
     review:
       peers:
       - default
       agents:
         reviewer:
-          description: >-
-            Code review agent responsible for inspecting code changes, running
-            verification, and either approving or requesting revisions from the
-            upstream implementation team. Carries full tools for reading code,
+          description: Code review agent responsible for inspecting code changes,
+            running verification, and either approving or requesting revisions from
+            the upstream implementation team. Carries full tools for reading code,
             running tests, and executing verification commands.
           max_steps: 80
           use_terminal: false
@@ -167,64 +111,47 @@ workspace:
             ast_grep: {}
             experience: {}
             todo: {}
-          # The bot's basic permission logic: default write surface is the
-          # workspace (reads unrestricted); extra paths are declarable per
-          # pool. Subagents inherit this face via resolve_agent_sandbox.
-          interceptors: [+sandbox_guard]
+          hooks:
+          - +user_notice_cleanup
+          - +model_choice_bind
+          interceptors:
+          - +sandbox_guard
           interceptor_configs:
             sandbox_guard:
               sandbox:
                 backend: host
                 exclusive:
                   write_surface: workspace
-          tools:
-          # Ticket 11: the notification hook is a HOOK-slot roster
-          # reference (Stage 4 dispatch) — config evolution only
-          # walks the declaration (09 precedent). experience_review
-          # needs no roster entry: the experience capability contributes
-          # it together with the tool (anchor-bound).
-          # (todo_planning_nudge rides the todo capability automatically; the deprecated task_delegation_nudge is no longer referenced.)
-          hooks:
-          - +user_notice_cleanup
-          # Per-turn model binding — declared roster entry since the W6
-          # glue eradication retired the unconditional create_pool injection.
-          - +model_choice_bind
           agents:
             explore:
-              description: >-
-                Read-only codebase search and analysis agent. Searches, reads, and
-                analyzes code, tracing dependencies and returning structured findings
-                with exact file paths and line numbers. Cannot modify files. Use for
-                any read-only investigation requiring more than a few searches, or
-                when parallel analysis of independent questions is valuable.
+              description: Read-only codebase search and analysis agent. Searches,
+                reads, and analyzes code, tracing dependencies and returning structured
+                findings with exact file paths and line numbers. Cannot modify files.
+                Use for any read-only investigation requiring more than a few searches,
+                or when parallel analysis of independent questions is valuable.
               max_steps: 60
               toolset: read_only
               capabilities:
                 ast_grep: {}
                 todo: {}
-              context_mode: fresh
             general:
-              description: >-
-                General-purpose assistant with full capabilities. Handles research,
-                planning, task decomposition, documentation, and implementation when the
-                task doesn't warrant dedicated exploration or is cross-domain.
+              description: General-purpose assistant with full capabilities. Handles
+                research, planning, task decomposition, documentation, and implementation
+                when the task doesn't warrant dedicated exploration or is cross-domain.
                 Use for any task that needs a fresh, isolated context.
               max_steps: 80
               toolset: full
               capabilities:
                 ast_grep: {}
                 todo: {}
-              context_mode: fresh
     opencode:
       peers:
       - default
       agents:
         opencode:
-          description: >-
-            Autonomous software engineering agent with full file and terminal
-            access. Handles implementation, debugging, refactoring, and
-            verification across a complete codebase end-to-end. Use for heavy
-            coding work that benefits from a dedicated, self-directed coding
-            context.
+          description: Autonomous software engineering agent with full file and terminal
+            access. Handles implementation, debugging, refactoring, and verification
+            across a complete codebase end-to-end. Use for heavy coding work that
+            benefits from a dedicated, self-directed coding context.
           execution_strategy: external
           provider_kind: opencode

@@ -95,7 +95,28 @@ if TYPE_CHECKING:
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
 
-pytestmark = pytest.mark.integration
+
+def _modexctl_resolvable() -> bool:
+    """Mirror the production resolution (env override > venv sibling > PATH).
+
+    ``shutil.which`` alone would skip machines where modexctl is installed
+    next to the interpreter (wheel layout) but not on PATH.
+    """
+    try:
+        from modex_agent.agents.external.cli_resolver import resolve_modexctl_bin_dir
+
+        resolve_modexctl_bin_dir()
+    except Exception:
+        return False
+    return True
+
+
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        not _modexctl_resolvable(), reason="modexctl binary not resolvable"
+    ),
+]
 
 _TP1_PROMPT_NAME = "probe_prompt_tp1"
 _TP1_SENTINEL = "PROBE_PROMPT_ALPHA"
@@ -345,7 +366,6 @@ def _hermetic_config(tmp_path: Path) -> Path:
     declaration_path = config_dir / "scopes" / "bot.yml"
     raw = yaml.safe_load(declaration_path.read_text(encoding="utf-8"))
     workspace = raw.get("workspace", {})
-    workspace.pop("mcp", None)
 
     _hermetic_tool_names = {"experience", "send_file_to_user"}
     _hermetic_capability_names = {"experience", "todo"}

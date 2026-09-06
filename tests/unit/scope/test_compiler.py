@@ -348,8 +348,9 @@ class TestProvenanceLayers:
         assert self._layers(explore)["toolset"] is ProvenanceLayer.LOCAL
         office = compiled[("default", "office-expert")]
         assert self._layers(office)["toolset"] is ProvenanceLayer.FRAMEWORK
-        assert self._layers(office)["max_steps"] is ProvenanceLayer.LOCAL
-        assert office.spec.max_iterations == 100
+        default_root = compiled[("default", "default")]
+        assert self._layers(default_root)["max_steps"] is ProvenanceLayer.LOCAL
+        assert default_root.spec.max_iterations == 50
 
     def test_undeclared_max_steps_is_framework(self) -> None:
         compilation = compile_scope(

@@ -97,7 +97,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/service/pool/` | Pool mode assembly — creates `AgentPool` from the compiled scope declaration (`declaration.py` boots: load → validate → compile; `factory.py` assembles). Split into 8 focused modules |
 | `modex_agent/multi_agent/pool_router.py` | `PoolRouter` (framework) — session→pool dispatch shell, `PoolRoutingStore` persistence, declaration-lookup agent→pool ownership |
 | `modex_agent/multi_agent/pool_instance.py` | `PoolInstance` — pool runtime holder (config, pool, root agent name) |
-| `bot/workspace/wiring/` | `build_workspace_stack` — workspace assembly (stack + resources; the workspace layer's resource selection — memory backend/path layout/MCP set — is declared in `config/scopes/bot.yml`, ticket 14) |
+| `bot/workspace/wiring/` | `build_workspace_stack` — workspace assembly (stack + resources; the workspace layer's resource selection — memory backend/path layout — is declared in `config/scopes/bot.yml`, ticket 14) |
 | `bot/workspace/handle.py` | `PoolWorkspaceResources` — per-workspace resource bundle |
 | `bot/workspace/dispatch.py` | `WorkspaceMessageDispatcher` — per-message workspace routing |
 | `bot/workspace/pool_data.py` | `PoolData` — frozen per-pool data bundle |
@@ -121,7 +121,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `modexbot/main.py` | CLI→service bootstrap |
 | `config/bot_config.yml` | Runtime safety, memory, tool, observability config. `${ENV_VAR}` interpolation |
 | `config/mcp/*.json` | MCP server registry (stdio/SSE/streamable_http) |
-| `config/scopes/bot.yml` | Scope declaration — the single source of pool/agent assembly (workspace resource selection + all pool trees + peer links) |
+| `config/scopes/bot.yml` | Scope declaration — the single source of pool/agent assembly (workspace resource selection + all pool trees + peer links). Deviations-only: default-restating fields are omitted; edit via Settings → Pools (structured panel) or Settings → Scope (raw YAML) |
 | `config/scopes/eval/` | Eval-only declaration face — pool-mode arm overlays plus pool-as-root single-agent harness declarations; never loaded by production boot |
 | `config/graphs/*.yml` | Declarative graph specifications (DAG workflows) — loaded by `GraphSpecLoader` at startup |
 
@@ -177,7 +177,7 @@ is unavailable. Pi remains per-turn. Cancellation, failed startup, pool
 shutdown, and workspace eviction terminate and reap complete provider process
 trees; normal OpenCode turns retain the warm server for reuse.
 
-**WebUI:** external sessions appear in the WebUI session list with their `.pi` / `.opencode` suffix, alongside every other session. Streaming output (text, reasoning, tool calls/results, errors) is rendered through the canonical `TurnEvent` seam → `WebBotEmitter` projection into existing `ServerEvent`/transcript types. External pools are configured through the same scope declaration (Settings → Scope tab).
+**WebUI:** external sessions appear in the WebUI session list with their `.pi` / `.opencode` suffix, alongside every other session. Streaming output (text, reasoning, tool calls/results, errors) is rendered through the canonical `TurnEvent` seam → `WebBotEmitter` projection into existing `ServerEvent`/transcript types. External pools are configured through the same scope declaration (Settings → Pools panel or the Scope YAML tab).
 
 See ADR-0022 and `docs/design/external-agent-integration/` for the full design.
 

@@ -184,8 +184,6 @@ def _strip_hermetic_fields(raw: dict) -> None:
     pool memory resources (and would collide with the probe memory system
     replacing the framework one)."""
     workspace = raw.get("workspace")
-    if isinstance(workspace, dict):
-        workspace.pop("mcp", None)
 
     _hermetic_tool_names = {"experience", "send_file_to_user"}
     _hermetic_capability_names = {"experience", "todo"}

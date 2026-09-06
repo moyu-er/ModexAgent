@@ -673,10 +673,16 @@ class TestTCap1EndToEnd:
         assert isinstance(mapping["dummy_field"], DummySupply)
         assert mapping["dummy_field"].agents == ("root", "sub")
 
-    async def test_native_dispatch_renders_section_at_anchor(self) -> None:
+    async def test_native_dispatch_renders_section_at_anchor(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """The declared dummy's assemble() wiring reaches the context manager
         through the section channel and renders in the assembled prompt at
         the anchor position (after the base prompt, before core memory)."""
+        # use_terminal=True derives the native_env hook, which resolves the
+        # modexctl bin dir eagerly — point it at a hermetic fake binary.
+        (tmp_path / "modexctl").touch()
+        monkeypatch.setenv("MODEXBOT_BIN_DIR", str(tmp_path))
         plugin = _DummyCapabilityPlugin()
         registry = _dummy_registry(plugin)
         _register_native_slots(registry)

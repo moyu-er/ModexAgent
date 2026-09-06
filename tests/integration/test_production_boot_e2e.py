@@ -98,7 +98,6 @@ def _hermetic_config(tmp_path: Path) -> Path:
     declaration_path = dst / "scopes" / "bot.yml"
     raw = yaml.safe_load(declaration_path.read_text(encoding="utf-8"))
     workspace = raw.get("workspace", {})
-    workspace.pop("mcp", None)
 
     def strip_agents(agents: dict) -> None:
         for body in agents.values():
@@ -213,6 +212,14 @@ class TestProductionBootE2E:
                 main = instance.pool._agents.get(instance.root_agent_name)
                 assert main is not None, f"{name}: main agent not registered"
                 assert main.pipeline is not None
+                # The declared sandbox actually wires even in the
+                # workspace-less harness: every pool boot produces a root
+                # provider (project-dir fallback), so the guard factory
+                # never fails and the declared interceptor lands on the
+                # main pipeline.
+                chain = main.pipeline.interceptor_chain
+                assert chain is not None
+                assert any(i.name == "sandbox_guard" for i in chain.interceptors), name
         finally:
             for instance in pools.values():
                 await instance.pool.shutdown_all()

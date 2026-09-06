@@ -41,9 +41,8 @@ from bot.service.model_provider import BotModelProvider
 from bot.service.pool.declaration import (
     apply_workspace_resource_selection,
     load_scope_declaration_opt,
-    validate_workspace_mcp_set,
+    validate_agent_mcp_sets,
     workspace_layer_present,
-    workspace_mcp_prewarm_names,
 )
 from bot.utils.config_loader import ConfigLoader
 from bot.workspace.wiring import build_workspace_stack
@@ -349,11 +348,11 @@ class BotService(AgentBuilderMixin):
         mcp_registry_path = self._project_dir / "config" / "mcp" / "registry.json"
         if read_shared_registry_flag(mcp_registry_path):
             raw_servers = read_registry(mcp_registry_path)
-            # Ticket 14: the declared workspace MCP set is validated loudly
-            # against the registry (typo'd names abort the boot) and scopes
-            # the pre-warm; undeclared workspaces pre-warm everything.
-            validate_workspace_mcp_set(self._scope_spec, raw_servers)
-            prewarm_names = workspace_mcp_prewarm_names(self._scope_spec, raw_servers)
+            # The per-agent mcp selections (what actually attaches tools)
+            # are validated loudly against the registry — typo'd names abort
+            # the boot. Pre-warm covers the full registry; the declared-set
+            # scoping face was deleted with the workspace-level mcp field.
+            validate_agent_mcp_sets(self._scope_spec, raw_servers)
             if raw_servers:
                 # ${ENV} interpolation MUST happen before the registry hashes
                 # and connects, else tokens like ${MY_TOKEN} reach the
@@ -363,7 +362,7 @@ class BotService(AgentBuilderMixin):
                     servers=servers,
                     injector=JsonFileMCPTransportInjector(),
                 )
-                self._mcp_registry.start_connecting(prewarm_names)
+                self._mcp_registry.start_connecting(list(raw_servers))
                 logger.info("Shared MCP registry: %d server(s) connecting concurrently", len(servers))
             else:
                 self._mcp_registry = None

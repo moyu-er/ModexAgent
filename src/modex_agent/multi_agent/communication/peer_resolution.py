@@ -129,9 +129,9 @@ def build_agent_pool_map(
     """The static agent→pool routing map over the DECLARED tree.
 
     Own pool's agents + each peer link's declared root (the link face
-    carries the peer root's name — a declaration fact, so no pool.yml
-    read). Consumed by the ``MODEX_AGENT_POOL_MAP`` env face (the
-    external-pool env spec and the ``native_env`` hook's template).
+    carries the peer root's name — a declaration fact). Consumed by the
+    ``MODEX_AGENT_POOL_MAP`` env face (the external-pool env spec and the
+    ``native_env`` hook's template).
     """
     pool_map: dict[str, str] = {pool_spec.root_agent.name: pool_name}
     for agent in pool_spec.agents:
