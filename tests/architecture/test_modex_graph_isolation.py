@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import pathlib
 import sys
+import tomllib
 
 import pytest
 
@@ -99,7 +100,6 @@ class TestNoModexAgentImports:
         """src/modex_graph/pyproject.toml must NOT list modex_agent as a dependency."""
         if not MODEX_GRAPH_PYPROJECT.exists():
             pytest.skip("src/modex_graph/pyproject.toml does not exist")
-        import tomllib
 
         with open(MODEX_GRAPH_PYPROJECT, "rb") as f:
             data = tomllib.load(f)
@@ -115,19 +115,30 @@ class TestNoModexAgentImports:
 
     def test_root_pyproject_lists_modex_graph_dependency(self) -> None:
         """Root pyproject.toml MUST list modex_graph (or modex-graph) as a dependency."""
-        text = ROOT_PYPROJECT.read_text(encoding="utf-8")
-        assert "modex-graph" in text.lower() or "modex_graph" in text.lower(), (
+        with ROOT_PYPROJECT.open("rb") as f:
+            data = tomllib.load(f)
+        dependencies = data["project"]["dependencies"]
+        normalized = {dependency.lower().replace("_", "-") for dependency in dependencies}
+        assert "modex-graph" in normalized, (
             "Root pyproject.toml must list modex_graph as a dependency of "
             "modex_agent (ADR-0033 D11)."
         )
 
-    def test_root_pyproject_includes_modex_graph_in_wheel_packages(self) -> None:
-        """Root pyproject.toml must include src/modex_graph in wheel packages."""
-        text = ROOT_PYPROJECT.read_text(encoding="utf-8")
-        assert "src/modex_graph" in text, (
-            "Root pyproject.toml must include src/modex_graph in "
-            "[tool.hatch.build.targets.wheel] packages."
-        )
+    def test_wheel_package_ownership_is_separate(self) -> None:
+        """Each distribution must build only the package tree it owns."""
+        with ROOT_PYPROJECT.open("rb") as f:
+            root_data = tomllib.load(f)
+        with MODEX_GRAPH_PYPROJECT.open("rb") as f:
+            graph_data = tomllib.load(f)
+
+        root_packages = root_data["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
+        graph_packages = graph_data["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
+
+        assert root_packages == ["src/modex_agent"]
+        assert graph_packages == ["."]
+        assert graph_data["tool"]["hatch"]["build"]["targets"]["wheel"]["sources"] == {
+            ".": "modex_graph"
+        }
 
 
 class TestImportTimeBlocker:

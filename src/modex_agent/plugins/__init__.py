@@ -26,58 +26,8 @@ system (SPEC §4-§6). Submodules:
 
 from __future__ import annotations
 
-from modex_agent.plugins.abc import (
-    AgentType,
-    ComponentFactory,
-    ComponentSlot,
-    HookFactory,
-    HookRunnerKind,
-    MemoryHookFactory,
-    PluginSource,
-    PrototypeFactory,
-    ReactHookFactory,
-    SimpleFactory,
-)
-from modex_agent.plugins.assembly.builder import AssembledAgent, AssemblyBuilder
-from modex_agent.plugins.assembly.context import (
-    AgentContext,
-    AssemblyContext,
-    PoolContext,
-    PoolRuntimeDeps,
-    WorkspaceContext,
-    agent_context_chain,
-)
-from modex_agent.plugins.assembly.native_core import LlmDefaults
-from modex_agent.plugins.assembly.pipeline import AssemblyPipeline, AssemblyStage
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
-from modex_agent.plugins.capability import (
-    AgentDeclarationView,
-    AgentDeclaredFields,
-    Capability,
-    CapabilityBinding,
-    CapabilityConfig,
-    CapabilityContribution,
-    CapabilitySupply,
-    CapabilityWiring,
-    ChildSummary,
-    FinalRosterView,
-    PoolSupplyAgentEntry,
-    PoolSupplyView,
-    PromptSectionSpec,
-    ToolReplacementSpec,
-    TreePositionView,
-)
-from modex_agent.plugins.loader import (
-    ComponentRegistryLoader,
-    Plugin,
-    PluginDiscoveryConfig,
-    PluginRegistrationContext,
-)
-from modex_agent.plugins.registry import (
-    ComponentNotFoundError,
-    ComponentRegistry,
-    TypedBundle,
-)
+from importlib import import_module
+from typing import Any
 
 __all__ = [
     "AgentContext",
@@ -117,6 +67,7 @@ __all__ = [
     "PoolSupplyAgentEntry",
     "PoolSupplyView",
     "PromptSectionSpec",
+    "SectionPlacement",
     "PrototypeFactory",
     "ReactHookFactory",
     "SimpleFactory",
@@ -126,3 +77,24 @@ __all__ = [
     "WorkspaceContext",
     "agent_context_chain",
 ]
+
+_SYMBOL_MODULE = {
+    **dict.fromkeys(("AgentType", "ComponentFactory", "ComponentSlot", "HookFactory", "HookRunnerKind", "MemoryHookFactory", "PluginSource", "PrototypeFactory", "ReactHookFactory", "SimpleFactory"), "modex_agent.plugins.abc"),
+    **dict.fromkeys(("AssembledAgent", "AssemblyBuilder"), "modex_agent.plugins.assembly.builder"),
+    **dict.fromkeys(("AgentContext", "AssemblyContext", "PoolContext", "PoolRuntimeDeps", "WorkspaceContext", "agent_context_chain"), "modex_agent.plugins.assembly.context"),
+    "LlmDefaults": "modex_agent.plugins.assembly.native_core",
+    **dict.fromkeys(("AssemblyPipeline", "AssemblyStage"), "modex_agent.plugins.assembly.pipeline"),
+    **dict.fromkeys(("AssemblySpec", "MemoryOverrides"), "modex_agent.plugins.assembly.spec"),
+    **dict.fromkeys(("AgentDeclarationView", "AgentDeclaredFields", "Capability", "CapabilityBinding", "CapabilityConfig", "CapabilityContribution", "CapabilitySupply", "CapabilityWiring", "ChildSummary", "FinalRosterView", "PoolSupplyAgentEntry", "PoolSupplyView", "PromptSectionSpec", "SectionPlacement", "ToolReplacementSpec", "TreePositionView"), "modex_agent.plugins.capability"),
+    **dict.fromkeys(("ComponentRegistryLoader", "Plugin", "PluginDiscoveryConfig", "PluginRegistrationContext"), "modex_agent.plugins.loader"),
+    **dict.fromkeys(("ComponentNotFoundError", "ComponentRegistry", "TypedBundle"), "modex_agent.plugins.registry"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _SYMBOL_MODULE.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value

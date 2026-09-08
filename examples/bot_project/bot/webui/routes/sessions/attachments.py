@@ -54,7 +54,7 @@ async def handle_download_attachment(request: web.Request) -> web.Response:
     deleted outbound) degrades symmetrically to 404 (ADR-0013 §3/§5).
     """
     from bot.service.attachment_index import find_attachment
-    from modex_agent.media.models import AttachmentLocator
+    from modex_agent.core.media import AttachmentLocator
 
 
     server: WebUIServer = request.app["server"]

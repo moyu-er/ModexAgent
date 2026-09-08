@@ -83,7 +83,7 @@ class ThirdPartyDemoCapability(Capability):
             hooks=(HOOK_NAME,),                   # enters the merged hook roster
             sections=(PromptSectionSpec(
                 section_id=SECTION_ID,
-                order=45,                         # position inside the capability-section block
+                order=45,                         # order inside the selected fixed anchor
                 config={"greeting": greeting},    # feeds assemble()
             ),),
         )
@@ -109,7 +109,7 @@ What the compiler does with this, in order:
 2. **C1**: `contribute` runs; the tool and hook names flow into the roster merge **base** — which means the ordinary `tools:`/`hooks:` `±` merge sees them (see §5).
 3. **C2**: `bind` runs (here the inherited default); the surviving sections land in `binding.active_sections` and the vouched hooks in `binding.hooks`.
 4. **S** (pool assembly): `supply` runs once per pool — but only if the capability is effective on at least one agent in that pool. Nobody enables it → no store, no service, nothing built.
-5. **A** (per-agent assembly): `assemble` runs once per capability-effective agent; the wiring's `prompt_providers` render inside the capability-section anchor (after fork context, before core memory), ordered by each section's `order`.
+5. **A** (per-agent assembly): `assemble` runs once per capability-effective agent; each active section produces exactly one `prompt_provider`, positionally. Providers render at the section's fixed `HEAD` or `TAIL` anchor, ordered by `order` within that anchor.
 
 ### 3.3 The pool supply and the loud read
 
@@ -211,9 +211,9 @@ Pick deliberately and document the choice — both are correct; only silence is 
 
 ## 6. Sections: what to promise
 
-A section is one `PromptSectionSpec` — `<capability>.<name>` id, integer `order`, optional config dict. All capability sections render inside ONE fixed block in the system prompt (after fork context, before core memory), sorted by ascending `order`; the block's position is not configurable, by design (KV-cache prefix stability). When you write `assemble`:
+A section is one `PromptSectionSpec` — `<capability>.<name>` id, integer `order`, `SectionPlacement`, and optional config dict. `HEAD` is the default fixed anchor after fork context and before core memory; `TAIL` is the fixed final system-prompt anchor for volatile reference catalogs. Sections are sorted by ascending `order` within their anchor; arbitrary insertion positions are not supported. When you write `assemble`:
 
-- Build one `SystemPromptProvider` per active section; return them in ascending `order` within your wiring (`prompt_providers`).
+- Build exactly one `SystemPromptProvider` for each active section and return providers in the same positional order as `binding.active_sections`; assembly validates the one-to-one mapping before placement and sorting.
 - Derive the provider's **version from stable data** — a constant for static content, a content hash when content tracks a store. An unchanged version means zero re-fetches (prefix-cache hit semantics); wall-clock or per-turn state in the version defeats the cache.
 - Emit empty content rather than raising when the section's data is empty — the pipeline skips empty sections.
 

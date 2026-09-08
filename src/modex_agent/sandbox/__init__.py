@@ -1,7 +1,6 @@
-# Sandbox module — isolated command/code execution with security guards.
+# Legacy sandbox adapter facade for command/code execution.
 #
-# Public seam (ADR-0005 facade-only; slimmed in candidate ⑤ Part A per
-# ADR-0007):
+# Public adapter seam (ADR-0005 / ADR-0007):
 #   - selection entry points (get_default_sandbox / get_sandbox /
 #     get_local_sandbox / get_cloud_sandbox / list_available_adapters)
 #   - the SandboxAdapter ABC (the extension contract)
@@ -11,6 +10,8 @@
 # behind `sandbox.guard` / `sandbox.guard_*`; env builder behind
 # `sandbox.env_builder`; workspace policy behind `sandbox.workspace_policy`;
 # platform/docker helpers behind `sandbox.platform` / `sandbox.docker_utils`.
+# Current CLI substrate consumers import settings, selection, and runtimes
+# directly from their owning modules; these adapters remain dormant.
 # For usage examples, see examples/sandbox/.
 
 from .adapters.base import SandboxAdapter

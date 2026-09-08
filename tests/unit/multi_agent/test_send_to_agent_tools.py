@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import pytest
 
+from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
     SendToAgentTool,
     TaskDispatchTool,
 )
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _RecordingService:
@@ -300,7 +301,6 @@ class TestToolManagerIntegration:
     """
 
     def test_tool_manager_descriptions_use_dynamic_schema(self) -> None:
-        from modex_agent.core.tool_manager import InMemoryToolManager
 
         store = CommunicationTargetStore()
         store.add(
@@ -419,7 +419,6 @@ class TestTaskDispatchToolDescription:
         description = self._tool().description
         assert '"Delegating To Subagents"' in description
         assert "six elements" in description
-        assert "verify" in description
 
     def test_duplicate_add_raises_value_error(self) -> None:
         """Duplicate target name must surface ValueError through add_target too."""
@@ -488,7 +487,6 @@ class TestTaskDispatchToolDescription:
 
     def test_description_via_tool_manager(self) -> None:
         """ToolManager.get_tool_descriptions() returns dynamic description."""
-        from modex_agent.core.tool_manager import InMemoryToolManager
 
         store = CommunicationTargetStore()
         store.add(

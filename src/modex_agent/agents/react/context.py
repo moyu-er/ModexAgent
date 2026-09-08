@@ -21,8 +21,8 @@ from .state import ReActTurnState
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
-    from modex_agent.core.runtime_context import RuntimeContextManager
     from modex_agent.core.tool_manager import ToolManager
+    from modex_agent.runtime.context import RuntimeContextManager
 
 
 class ReActGraphContext(GraphContext[ReActTurnState]):

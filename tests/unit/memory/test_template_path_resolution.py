@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.layers.config import CoreMemoryConfig
+from modex_agent.memory.scope import MemoryContext
 
 
 @pytest.mark.asyncio

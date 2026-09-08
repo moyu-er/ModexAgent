@@ -7,13 +7,13 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.core.layers import SessionMemoryManager
 from modex_agent.memory.core.lock import StorageLock
 from modex_agent.memory.core.models import StorageRevision
 from modex_agent.memory.core.split_stores import MemoryStoreBundle
 from modex_agent.memory.core.store_metadata import StoreMetadata
 from modex_agent.memory.layers.config import SessionMemoryConfig, StorageFactory
+from modex_agent.memory.scope import MemoryContext
 
 
 def _get_bundle_lock(bundle: MemoryStoreBundle) -> StorageLock | None:

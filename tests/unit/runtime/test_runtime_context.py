@@ -1,0 +1,114 @@
+"""Tests for the runtime context subsystem.
+
+Covers:
+- InMemoryRuntimeContext: generic state + tool tracking
+- RuntimeContextManager: session-scoped context lifecycle
+"""
+
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.runtime.context import (
+    InMemoryRuntimeContext,
+    RuntimeContextManager,
+    ToolCallRecord,
+)
+
+
+def _session(session_id: str) -> SessionInfo:
+    """Build a SessionInfo for the manager API (which reads session.session_id).
+
+    Constructed directly (not via from_str) so the bare-id test keys carry no
+    '.' separator without tripping from_str's UserWarning.
+    """
+    return SessionInfo(session_id=session_id, agent_name="test")
+
+
+class TestInMemoryRuntimeContext:
+    """Verify generic state + tool-call tracking."""
+
+    async def test_clear_empties_all_state(self):
+        ctx = InMemoryRuntimeContext()
+        await ctx.set("foo", "bar")
+        await ctx.record_tool_call("search", {"q": "x"}, "result")
+        assert await ctx.has("foo")
+        assert len(await ctx.get_tool_calls()) == 1
+
+        await ctx.clear()
+
+        assert not await ctx.has("foo")
+        assert await ctx.get_tool_calls() == []
+
+    async def test_generic_set_get_has(self):
+        ctx = InMemoryRuntimeContext()
+        assert not await ctx.has("key")
+        assert await ctx.get("key", "default") == "default"
+
+        await ctx.set("key", 42)
+        assert await ctx.has("key")
+        assert await ctx.get("key") == 42
+
+    async def test_record_tool_call_appends(self):
+        ctx = InMemoryRuntimeContext()
+        await ctx.record_tool_call("tool_a", {"x": 1}, "r1")
+        await ctx.record_tool_call("tool_b", {"y": 2}, "r2")
+
+        calls = await ctx.get_tool_calls()
+        assert len(calls) == 2
+        assert calls[0].tool_name == "tool_a"
+        assert calls[1].tool_name == "tool_b"
+        assert calls[0].arguments == {"x": 1}
+        assert calls[0].result == "r1"
+        assert isinstance(calls[0].timestamp, float)
+
+    async def test_has_called(self):
+        ctx = InMemoryRuntimeContext()
+        assert not await ctx.has_called("send_to_agent")
+
+        await ctx.record_tool_call("send_to_agent", {"target_agent": "main"}, "ok")
+        assert await ctx.has_called("send_to_agent")
+        assert not await ctx.has_called("other_tool")
+
+    async def test_tool_calls_are_immutable(self):
+        ctx = InMemoryRuntimeContext()
+        await ctx.record_tool_call("t", {"a": 1}, "r")
+        calls = await ctx.get_tool_calls()
+        assert isinstance(calls[0], ToolCallRecord)
+        # frozen Pydantic model
+        with pytest.raises(ValidationError):
+            calls[0].tool_name = "x"  # type: ignore[misc]
+
+
+class TestRuntimeContextManager:
+    """Verify manager owns isolated per-session contexts."""
+
+    async def test_session_isolation(self):
+        mgr = RuntimeContextManager()
+        ctx_a = await mgr.get_context(_session("session_1"))
+        ctx_b = await mgr.get_context(_session("session_2"))
+        assert ctx_a is not ctx_b
+
+        await ctx_a.set("k", "v")
+        assert not await ctx_b.has("k")
+
+    async def test_same_session_reuses_context(self):
+        mgr = RuntimeContextManager()
+        ctx1 = await mgr.get_context(_session("s1"))
+        ctx2 = await mgr.get_context(_session("s1"))
+        assert ctx1 is ctx2
+
+    async def test_clear_context(self):
+        mgr = RuntimeContextManager()
+        ctx = await mgr.get_context(_session("session_x"))
+        await ctx.record_tool_call("t", {}, "r")
+        assert len(await ctx.get_tool_calls()) == 1
+
+        await mgr.clear_context(_session("session_x"))
+        assert await ctx.get_tool_calls() == []
+
+    async def test_clear_unknown_session_noop(self):
+        mgr = RuntimeContextManager()
+        await mgr.clear_context(_session("nonexistent"))  # should not raise

@@ -40,25 +40,25 @@ from bot.service.pool.declaration import (
     declared_pool_build,
 )
 from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
+from bot.workspace.handle import WorkspaceHandle
 from bot.workspace.pool_data import build_pool_data
 from bot.workspace.wiring.stack import declared_assembly_deps
 from pydantic import BaseModel
 
-from modex_agent.core.constants import FinishReason
-from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.core.message import ChatMessage
+from modex_agent.adapters.output import OutputAdapter
+from modex_agent.core import AgentCommKind
+from modex_agent.core.llm_struct import FinishReason, LLMResponse, RuntimeSafetyPolicy
+from modex_agent.core.message import ChatMessage, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.session_registry import InMemorySessionRegistry
-from modex_agent.core.types import InputMessage, LLMResponse, ToolCall
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import SessionRetentionPolicy
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.tools import CommunicationTarget
-from modex_agent.pipeline.adapters import OutputAdapter
+from modex_agent.persistence.session_registry import InMemorySessionRegistry
 from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import (
@@ -299,6 +299,9 @@ async def _build_env(
             declared=declared,
             assembly_deps=deps,
             project_dir=tmp_path,
+            workspace_handle=WorkspaceHandle(
+                target=tmp_path, data_root=tmp_path / '.modex',
+            ),
             workspace_registry=object(),
             workspace_resources=object(),
             data_dir=tmp_path / ".modex",

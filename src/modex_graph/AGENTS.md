@@ -13,9 +13,21 @@ Normal execution, pause recovery, and crash recovery all rely on the same `node/
 `scheduler/bootstrap.py:bootstrap(ctx, graph, *, mode: BootstrapMode) -> list[str]` is the single entry point both schedulers call at the top of `run_async`. The caller passes an explicit keyword-only `mode` (no default — convergence rule 15):
 
 - **`BootstrapMode.FRESH`** — new run or re-invoke (`start_run` / `start_invoke` / subgraph `execute`). Zero scanning; returns `[graph.entry_node]` immediately. No auto-promote, no seed derivation, no instance-status guesswork.
-- **`BootstrapMode.RECOVERY`** — crash/pause recovery (`recover_crashed` / orphan pickup / `resume` from PAUSED). Full derivation: auto-promotes `STAGED` + `CONSUMED_PENDING` delivers for `COMPLETED` nodes BEFORE seed derivation (so promoted `PENDING` rows are visible to the seed scan), then derives seeds from `CRASHED` / orphan-`RUNNING` invocations and `PENDING` delivers, ordered topologically (BFS from `entry_node`, `END` included). An empty seed set (all-`COMPLETED` graph, no `PENDING` delivers) falls back to `[entry_node]`.
+- **`BootstrapMode.RECOVERY`** — crash/pause recovery (`recover_crashed` / classified orphan pickup / `resume` from PAUSED). Uses explicit `graph_run_version` membership. For a non-null run version, a missing or mismatched latest START invocation returns `[entry_node]` with `reached_end=False` before promotion/scanning, even if an older run completed. Otherwise, only matching latest node records participate in completed-deliver promotion and invocation seed derivation. Seeds come from `CRASHED` / orphan-`RUNNING` / `CANCELED` invocations and the unchanged `PENDING` deliver scan, ordered by BFS. Canceled invocations reconsume `CONSUMED_PENDING` inputs; no-input cancellations also re-execute. When no seeds remain, matching invocation history yields `[]`; no matching history (including Null persistence) yields entry. New PENDING input may activate an already-completed node.
+
+**Logical-run membership:** FRESH admission writes its original graph invocation version into `GraphMetadata.attrs[GRAPH_RUN_VERSION_KEY]` (`graph_run_version`); recovery attempts increment graph `version` but retain this attr. `ctx.graph_run_version`, `InvocationContext`, `NodeInvocationRecord`, and `GraphIORecord` carry the nullable membership value. Compare by exact equality: `None` identifies legacy/unscoped records and matches only `None`, not all runs. SQLite node/IO stores add nullable INTEGER columns, leaving old rows NULL; InMemory preserves the same model fields. `load_latest` still selects by node version, and the caller checks membership. Node/IO primary keys, including Snowflakes, have no run-boundary or ordering role. This membership does not add a run filter to deliver stores.
 
 `bootstrap` does NOT restore `ctx.state` (the caller initializes it), does NOT create instances, and does NOT mark anything READY. The scheduler receives the seed list and decides how to use it (`LinearScheduler` takes `seeds[0]`; `ParallelScheduler` creates instances for re-execute and fresh-start seeds, while PENDING-deliver seeds are discovered by `_recheck_pending`'s store scan).
+
+Bootstrap restores `ctx.reached_end` when END is a seed or no work remains after a matching-run END completed. The orchestrator reuses output only from matching-run latest I/O when that completed END is unchanged; it does not replay END just to rebuild `state.result`. Recovery I/O placeholders retain the same run's prior output, including across interrupted recovery attempts. Parallel re-execution seeds reserve their pending deliver IDs so the store scan does not schedule a duplicate invocation for newly supplied resume input.
+
+### Immediate Pause And Stop
+
+`GraphRunControl` is a per-execution, irreversible control handle. Both schedulers use `wait_for_tasks` to observe pause/stop while nodes are blocked, and `cancel_and_drain` to cancel their owned tasks once and await asynchronous cleanup. `wait_for_settlement` retains and shields cleanup through repeated caller cancellation, then propagates faults before delayed cancellation; the orchestrator uses this same boundary for finalization. Admission checks prevent ready tasks from entering a node after a request. `GraphDrained` reaches the caller only after owned work is drained; node/cleanup faults remain faults, not pauses. Cooperative asyncio cancellation cannot preempt synchronous blocking code or roll back external side effects.
+
+The orchestrator owns graph status persistence and emission: persist `PAUSING` / `STOPPING` when requesting control, drain node cleanup/output, then publish `PAUSED` / `STOPPED`. The owner stays reserved through final status output; resume requires its exit. Resume uses the same graph instance, node identities, stores, and logical `graph_run_version`, but a new attempt/version and `GraphRunControl`, with `BootstrapMode.RECOVERY`. `GraphOutputKind.STATUS_CHANGED` (`graph_status_changed`) carries typed `GraphOutput.status: GraphInstanceStatus | None`; the coordinator's `emit_output(status=...)` supports that event. SQLite upgrades the status CHECK constraint while preserving all graph invocation versions and metadata. Abandoned `PAUSING` / `STOPPING` invocations finalize as `CRASHED`, like abandoned `RUNNING` invocations.
+
+Resumed unfinished work, including agent/provider/tool work, is at-least-once: re-execution can repeat external effects. Nodes own idempotency; graph pause is neither a mid-call checkpoint nor a rollback. For ownership, restart/I/O semantics, or validation scope, read `docs/design/graph-orchestration/external-control.md`; live-provider and hard-kill validation are not claimed there.
 
 ### Scheduler: no fresh/recovery distinction
 
@@ -27,7 +39,7 @@ Normal execution, pause recovery, and crash recovery all rely on the same `node/
 
 `Node.run()` lifecycle: `begin_invocation → integrate → execute → complete_invocation → promote_staged_by_source → dispatch → promote_delivers`.
 
-- `begin_invocation(node_id)` — create a new invocation record with `version = max(existing) + 1`. Continuous increment, no reset, no recovery marker. A crashed v=3 becomes v=4 on retry, identical to a normal v=4. Orphan cleanup: a prior `RUNNING` record is marked `CRASHED` (the node was interrupted without graceful shutdown — there is no `suspended` state).
+- `begin_invocation(node_id, graph_run_version=ctx.graph_run_version)` — create a record with node `version = max(existing) + 1` and explicit logical-run membership. Node versions keep increasing across fresh runs and retries; `graph_run_version` is neither the node version nor a retry flag. Orphan cleanup marks a prior `RUNNING` record `CRASHED` (there is no `suspended` state).
 - `integrate` — `collect_consumable_delivers` (returns `PENDING` + `CONSUMED_PENDING`) + `mark_consumed`. Idempotent (prevents duplicate consumption).
 - `execute` — `await self.execute(ctx, integrated_input)` (async void).
 - `complete_invocation(invocation)` — mark `COMPLETED` (STRICT CAS; no state argument — `node_states` carries lifecycle + version-chain facts only, no `state_json`).
@@ -35,7 +47,7 @@ Normal execution, pause recovery, and crash recovery all rely on the same `node/
 - `dispatch` — fire each affected target as a scheduling wakeup (`ctx.dispatch(target, state_update={})`); content flows through the store, not the dispatch payload.
 - `promote_delivers` — advance this node's `CONSUMED_PENDING` inputs to `CONSUMED_COMPLETED`.
 
-Exception handling: `GraphInterrupt` / other `GraphBubbleUp` → `cancel_invocation` (terminal `CANCELED`) + re-raise; other `Exception` → `crash_invocation` + re-raise; `finally` → `finalize_invocation` (orphan `RUNNING` → `CRASHED` safety net). There is no `suspend_invocation` — a `GraphInterrupt` cancels the current invocation and propagates; recovery is a fresh re-invocation that reconsumes consumable delivers.
+Exception handling: `GraphInterrupt` / other `GraphBubbleUp` / `asyncio.CancelledError` → `cancel_invocation` (terminal `CANCELED`) + re-raise; other `Exception` → `crash_invocation` + re-raise; `finally` → `finalize_invocation` (orphan `RUNNING` → `CRASHED` safety net). There is no node-level `suspend_invocation`; recovery is a fresh invocation that reconsumes consumable delivers.
 
 ### Deliver admission: two paths, unified store rescan
 
@@ -54,7 +66,7 @@ Dispatch = pure wakeup (control plane); store scan = sole data plane. The two co
 | InMemory | `InMemoryNodeStateStore`, `InMemoryDeliverStore`, `InMemoryGraphInstanceStore` | No (process-local) | Not supported (data lost on restart) |
 | SQLite | `SqliteNodeStateStore`, `SqliteDeliverStore`, `SqliteGraphInstanceStore` | Yes | Supported — `load_latest` + `collect_consumable_delivers` idempotent restoration |
 
-All three implement the same `NodeStateStore` / `DeliverStore` / `GraphInstanceStore` ABCs. `bootstrap` with `mode=FRESH` returns `[entry_node]` regardless of store; `mode=RECOVERY` on Null/InMemory stores derives an empty seed set (no persisted invocations) and falls back to `[entry_node]`.
+All three implement the same `NodeStateStore` / `DeliverStore` / `GraphInstanceStore` ABCs. `bootstrap` with `mode=FRESH` returns `[entry_node]` regardless of store. InMemory supports pause/resume while its stores remain alive; Null stores have no invocation history and recovery falls back to `[entry_node]`.
 
 ## Trigger Model
 
@@ -139,13 +151,13 @@ per-instance metadata without schema changes to `GraphMetadata`.
 version only). Prior versions remain frozen as an audit trail, and
 `begin_invocation` copies the latest attrs into the new version.
 
-The stale-`RUNNING` sweeper uses this seam. `ProcessIdentity` +
+The stale-execution sweeper uses this seam. `ProcessIdentity` +
 `ProcessRegistry` live in `modex_agent.runtime` (the graph engine stays
 framework-agnostic — it only provides the `attrs` write surface). The
 orchestrator writes `executor_process_id` into `attrs` on
 `begin_invocation`; `StaleInstanceSweeper` (business layer,
 `examples/bot_project/bot/service/stale_instance_sweeper.py`) loads
-`RUNNING` instances, compares their executor against the alive-process
+`RUNNING` / `PAUSING` / `STOPPING` instances, compares their executor against the alive-process
 set from `ProcessRegistry.alive_process_ids()`, and marks stale ones
 (absent/dead executor, or explicit `None`) `CRASHED` via
 `update_status`. It marks `CRASHED` only — it does NOT trigger recovery
@@ -164,6 +176,7 @@ instances.
 | `scheduler/parallel.py` | `ParallelScheduler` — multi-instance, ON_RECEIVE / ON_ALL_PREDS triggers, ctx passed directly (no copy) |
 | `scheduler/bootstrap.py` | `bootstrap(ctx, graph, *, mode: BootstrapMode)` + `BootstrapMode` (FRESH/RECOVERY) — unified entry point |
 | `scheduler/base.py` | `Scheduler[S]` ABC |
+| `run_control.py` | `GraphRunControl` - shared control-aware task wait and cancel/drain ownership |
 | `scheduler/instance.py` | `NodeInstance` — in-memory instance state (DORMANT/READY/RUNNING/COMPLETED/CRASHED) |
 | `scheduler/_dispatch_utils.py` | Shared dispatch-handler helpers — topology validation + deliver routing (converged from both schedulers) |
 | `node_factory.py` | `NodeFactory` ABC + `DefaultNodeFactory` registry |

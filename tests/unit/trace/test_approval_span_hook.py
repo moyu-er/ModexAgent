@@ -6,7 +6,6 @@ from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import (
     AgentKind,
@@ -21,6 +20,7 @@ from modex_agent.runtime.models import (
     TurnIdentity,
 )
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.trace.approval_span_hook import ApprovalSpanHook
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.semconv import (
@@ -47,7 +47,7 @@ def _make_context(*, with_trace: bool = True) -> AgentContext:
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
-        tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
+        tool_manager=InMemoryToolManager(),
         session=session,
         runtime=AgentRuntime(services=AgentRuntimeServices(), state=state),
         identity=identity,

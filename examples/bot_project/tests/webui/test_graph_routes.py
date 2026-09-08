@@ -8,7 +8,9 @@ event store — the handlers only access those two attributes (G7).
 
 from __future__ import annotations
 
+import asyncio
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,6 +25,8 @@ from modex_agent.orchestration import GraphOrchestrator
 from modex_graph import (
     DefaultGraphState,
     EdgeSpec,
+    FunctionNodeFactory,
+    GraphContext,
     GraphInstanceStatus,
     GraphOutput,
     GraphPayload,
@@ -31,7 +35,9 @@ from modex_graph import (
     InMemoryGraphIORecordStore,
     InMemoryGraphSpecStore,
     NodeRegistry,
+    NodeSpec,
     NullCoordinatorFactory,
+    SchedulerKind,
 )
 from modex_graph.scheduler.bootstrap import BootstrapMode
 
@@ -50,14 +56,14 @@ _VALID_YAML = (
 )
 
 
-def _make_orchestrator() -> tuple[
+def _make_orchestrator(node_registry: NodeRegistry | None = None) -> tuple[
     GraphOrchestrator, dict[int, list[GraphOutput]], InMemoryGraphSpecStore
 ]:
     spec_store = InMemoryGraphSpecStore()
     instance_store = InMemoryGraphInstanceStore()
     event_store: dict[int, list[GraphOutput]] = {}
     orchestrator = GraphOrchestrator(
-        node_registry=NodeRegistry(),
+        node_registry=node_registry if node_registry is not None else NodeRegistry(),
         state_classes={"default": DefaultGraphState},
         spec_store=spec_store,
         instance_store=instance_store,
@@ -602,20 +608,164 @@ async def test_get_events_empty_when_no_events(tmp_path: Path) -> None:
 # ── Control endpoints ────────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_pause_instance(tmp_path: Path) -> None:
-    orch, _, spec_store = _make_orchestrator()
-    spec_id = _save_spec(spec_store)
+class _BlockingNodeFactory(FunctionNodeFactory):
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cleanup_started = asyncio.Event()
+        self.finish_cleanup = asyncio.Event()
+        self.cleaned = asyncio.Event()
+        super().__init__({"blocked": self._execute})
+
+    async def _execute(self, ctx: GraphContext[DefaultGraphState]) -> None:
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            self.cleanup_started.set()
+            await self.finish_cleanup.wait()
+            self.cleaned.set()
+
+
+@pytest.fixture
+async def running_graph() -> AsyncIterator[tuple[GraphOrchestrator, int, _BlockingNodeFactory]]:
+    factory = _BlockingNodeFactory()
+    registry = NodeRegistry()
+    registry.register("blocking", factory)
+    orch, _, spec_store = _make_orchestrator(registry)
+    spec_id = spec_store.save(
+        GraphSpec(
+            name="blocking-graph",
+            state_class="default",
+            scheduler=SchedulerKind.PARALLEL,
+            nodes=[NodeSpec(name="work", node_type="blocking", config={"function": "blocked"})],
+            edges=[
+                EdgeSpec(source="__start__", target="work"),
+                EdgeSpec(source="work", target="__end__"),
+            ],
+        )
+    )
     gid = await orch.create_instance(spec_id)
-    orch._instance_store.update_status(gid, GraphInstanceStatus.RUNNING)
+    execution = orch.start_run(gid)
+    try:
+        await asyncio.wait_for(factory.started.wait(), timeout=2)
+        assert orch.get_state(gid).metadata.status is GraphInstanceStatus.RUNNING
+        yield orch, gid, factory
+    finally:
+        factory.finish_cleanup.set()
+        await orch.cleanup()
+        await execution
+
+
+@pytest.mark.asyncio
+async def test_pause_waits_for_drain_and_returns_authoritative_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    orch, _, spec_store = _make_orchestrator()
+    gid = await orch.create_instance(_save_spec(spec_store))
+    entered = asyncio.Event()
+    drained = asyncio.Event()
+
+    async def pause(self: GraphOrchestrator, instance_id: int) -> None:
+        entered.set()
+        await drained.wait()
+        # Completion can win the control race; the route must not invent PAUSED.
+        self._instance_store.update_status(instance_id, GraphInstanceStatus.COMPLETED)
+
+    monkeypatch.setattr(GraphOrchestrator, "pause", pause)
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    request = asyncio.ensure_future(client.post(f"/api/graphs/instances/{gid}/pause"))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        assert not request.done()
+        drained.set()
+        response = await asyncio.wait_for(request, timeout=2)
+        assert response.status == 200, await response.text()
+        assert (await response.json())["status"] == "completed"
+    finally:
+        drained.set()
+        await request
+        await orch.cleanup()
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_resume_reports_synchronous_admission_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    orch, _, spec_store = _make_orchestrator()
+    gid = await orch.create_instance(_save_spec(spec_store))
+    orch._instance_store.update_status(gid, GraphInstanceStatus.PAUSED)
+
+    def start_resume(self: GraphOrchestrator, instance_id: int) -> asyncio.Task[None]:
+        raise ValueError("resume already in progress")
+
+    monkeypatch.setattr(GraphOrchestrator, "start_resume", start_resume)
     client = _make_client(orch, {}, tmp_path)
     await client.start_server()
     try:
-        resp = await client.post(f"/api/graphs/instances/{gid}/pause")
+        response = await client.post(f"/api/graphs/instances/{gid}/resume")
+        assert response.status == 409, await response.text()
+        assert (await response.json())["error"] == "resume already in progress"
+    finally:
+        await orch.cleanup()
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_resume_returns_before_background_run_completes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    orch, _, spec_store = _make_orchestrator()
+    gid = await orch.create_instance(_save_spec(spec_store))
+    orch._instance_store.update_status(gid, GraphInstanceStatus.PAUSED)
+    finish = asyncio.Event()
+
+    async def resume(self: GraphOrchestrator, instance_id: int) -> None:
+        self._instance_store.update_status(instance_id, GraphInstanceStatus.RUNNING)
+        await finish.wait()
+
+    monkeypatch.setattr(GraphOrchestrator, "resume", resume)
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    try:
+        response = await asyncio.wait_for(client.post(f"/api/graphs/instances/{gid}/resume"), timeout=2)
+        assert response.status == 200, await response.text()
+        assert (await response.json())["graph_instance_id"] == str(gid)
+        assert not finish.is_set()
+        duplicate = await client.post(f"/api/graphs/instances/{gid}/resume")
+        assert duplicate.status == 400, await duplicate.text()
+    finally:
+        finish.set()
+        await orch.cleanup()
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_pause_instance(
+    tmp_path: Path, running_graph: tuple[GraphOrchestrator, int, _BlockingNodeFactory],
+) -> None:
+    orch, gid, factory = running_graph
+    client = _make_client(orch, {}, tmp_path)
+    await client.start_server()
+    request = asyncio.ensure_future(client.post(f"/api/graphs/instances/{gid}/pause"))
+    try:
+        await asyncio.wait_for(factory.cleanup_started.wait(), timeout=2)
+        assert not request.done()
+        assert not factory.cleaned.is_set()
+        assert orch.get_state(gid).metadata.status is GraphInstanceStatus.PAUSING
+
+        factory.finish_cleanup.set()
+        resp = await asyncio.wait_for(request, timeout=2)
         assert resp.status == 200, await resp.text()
         data = await resp.json()
         assert data["status"] == "paused"
+        assert factory.cleaned.is_set()
+        assert orch.get_state(gid).metadata.status is GraphInstanceStatus.PAUSED
+        assert orch.get_graph_context(gid) is None
     finally:
+        factory.finish_cleanup.set()
+        await request
         await client.close()
 
 
@@ -638,19 +788,30 @@ async def test_resume_instance(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_stop_instance(tmp_path: Path) -> None:
-    orch, _, spec_store = _make_orchestrator()
-    spec_id = _save_spec(spec_store)
-    gid = await orch.create_instance(spec_id)
-    orch._instance_store.update_status(gid, GraphInstanceStatus.RUNNING)
+async def test_stop_instance(
+    tmp_path: Path, running_graph: tuple[GraphOrchestrator, int, _BlockingNodeFactory],
+) -> None:
+    orch, gid, factory = running_graph
     client = _make_client(orch, {}, tmp_path)
     await client.start_server()
+    request = asyncio.ensure_future(client.post(f"/api/graphs/instances/{gid}/stop"))
     try:
-        resp = await client.post(f"/api/graphs/instances/{gid}/stop")
+        await asyncio.wait_for(factory.cleanup_started.wait(), timeout=2)
+        assert not request.done()
+        assert not factory.cleaned.is_set()
+        assert orch.get_state(gid).metadata.status is GraphInstanceStatus.STOPPING
+
+        factory.finish_cleanup.set()
+        resp = await asyncio.wait_for(request, timeout=2)
         assert resp.status == 200, await resp.text()
         data = await resp.json()
         assert data["status"] == "stopped"
+        assert factory.cleaned.is_set()
+        assert orch.get_state(gid).metadata.status is GraphInstanceStatus.STOPPED
+        assert orch.get_graph_context(gid) is None
     finally:
+        factory.finish_cleanup.set()
+        await request
         await client.close()
 
 
@@ -810,19 +971,13 @@ async def test_p1_1_graph_routes_accept_ws_query_param(tmp_path: Path) -> None:
 async def test_p1_3_resume_evicted_instance_via_recovery_path(
     tmp_path: Path,
 ) -> None:
-    """P1-3: resuming a PAUSED instance that was evicted from
-    ``_active_instances`` (simulating bot restart) must go through the
-    recovery path (``_run_existing_instance``), not ``start_run``.
-    """
-    import asyncio
-
+    """P1-3: a reconstructed owner resumes persisted PAUSED metadata via recovery."""
     from pydantic import BaseModel
 
     from modex_agent.orchestration import GraphOrchestrator
     from modex_graph import (
         DefaultGraphState,
         EdgeSpec,
-        GraphContext,
         GraphInstanceStatus,
         GraphSpec,
         InMemoryGraphInstanceStore,
@@ -887,16 +1042,24 @@ async def test_p1_3_resume_evicted_instance_via_recovery_path(
     assert meta.status is GraphInstanceStatus.PAUSED
     assert gid in orch._active_instances  # type: ignore[attr-defined]
 
-    # Simulate eviction (bot restart): instance gone from _active_instances
-    orch._active_instances.clear()  # type: ignore[attr-defined]
-    orch._running_gids.clear()  # type: ignore[attr-defined]
-
-    # Resume must go through recovery path (start_resume → _run_existing_instance)
-    orch.start_resume(gid)  # type: ignore[attr-defined]
-    await asyncio.sleep(0.3)
-
-    # Instance should be back in _active_instances (recovery rebuilt it)
-    assert gid in orch._active_instances  # type: ignore[attr-defined]
+    # Release the old owner's resources, then reconstruct over the same stores.
+    await orch.cleanup()
+    assert gid not in orch._active_instances  # type: ignore[attr-defined]
+    recovered = GraphOrchestrator(
+        node_registry=node_registry,
+        state_classes={"default": DefaultGraphState},
+        spec_store=spec_store,
+        instance_store=instance_store,
+        coordinator_factory=NullCoordinatorFactory(),
+    )
+    try:
+        # Null node persistence has no history; the rebuilt node interrupts again.
+        with pytest.raises(_GraphInterrupt):
+            await recovered.start_resume(gid)
+        assert recovered.get_state(gid).metadata.status is GraphInstanceStatus.PAUSED
+        assert gid in recovered._active_instances  # type: ignore[attr-defined]
+    finally:
+        await recovered.cleanup()
 
 
 # ── G12: Topology endpoint (§11.3) ─────────────────────────────────────────────

@@ -25,8 +25,9 @@ from modex_agent.plugins.assembly.context import (
 )
 from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
 from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.defaults.capabilities.experience.tool_factory import ExperienceToolFactory
 from modex_agent.plugins.defaults.communication import TaskToolFactory
-from modex_agent.plugins.defaults.tools import ExperienceToolFactory, TodoToolFactory
+from modex_agent.plugins.defaults.tools import TodoToolFactory
 from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import compile_scope
@@ -41,11 +42,11 @@ _BOT_PROJECT: Final = _ROOT / "examples" / "bot_project"
 _DECLARATION_PATH: Final = _BOT_PROJECT / "config" / "scopes" / "bot.yml"
 _AUDIT_STRATEGY_NAME: Final = "supply_audit"
 _DEAD_POOL_RUNTIME_FIELDS: Final = frozenset({"todo_store", "communication"})
-_SUPPLY_CAPABILITY_NAMES: Final = frozenset({"experience", "subagents", "todo"})
+_SUPPLY_CAPABILITY_NAMES: Final = frozenset({"experience", "skills", "subagents", "todo"})
 _EXPECTED_SUPPLY_KEYS: Final[dict[str, frozenset[str]]] = {
-    "default": frozenset({"experience", "subagents", "todo"}),
-    "coder": frozenset({"subagents", "todo"}),
-    "review": frozenset({"experience", "subagents", "todo"}),
+    "default": frozenset({"experience", "skills", "subagents", "todo"}),
+    "coder": frozenset({"skills", "subagents", "todo"}),
+    "review": frozenset({"experience", "skills", "subagents", "todo"}),
     "opencode": frozenset(),
 }
 
@@ -101,13 +102,21 @@ def test_retired_pool_runtime_supply_fields_stay_dead() -> None:
     assert field_names.isdisjoint(_DEAD_POOL_RUNTIME_FIELDS)
     assert set(dir(PoolRuntimeDeps())).isdisjoint(_DEAD_POOL_RUNTIME_FIELDS)
 
-    source_hits = [
-        f"{path.relative_to(_ROOT)}:{line_number}:{line.strip()}"
-        for source_root in (_ROOT / "src", _ROOT / "examples")
-        for path in source_root.rglob("*.py")
-        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
-        if any(f"pool_runtime.{field}" in line for field in _DEAD_POOL_RUNTIME_FIELDS)
-    ]
+    source_hits: list[str] = []
+    for source_root in (_ROOT / "src", _ROOT / "examples"):
+        for root, directories, files in source_root.walk():
+            # Installed dependencies and runtime data are not project source.
+            directories[:] = [
+                name for name in directories
+                if not name.startswith(".") and name not in {"node_modules", "__pycache__"}
+            ]
+            for name in files:
+                if not name.endswith(".py"):
+                    continue
+                path = root / name
+                for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                    if any(f"pool_runtime.{field}" in line for field in _DEAD_POOL_RUNTIME_FIELDS):
+                        source_hits.append(f"{path.relative_to(_ROOT)}:{line_number}:{line.strip()}")
     assert source_hits == []
 
 

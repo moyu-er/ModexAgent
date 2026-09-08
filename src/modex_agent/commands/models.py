@@ -4,20 +4,19 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.commands.constants import (
     CommandAction,
     CommandDispatchPolicy,
     CommandParseStatus,
 )
-from modex_agent.core.types import InputMessage
+from modex_agent.messaging.models import ApprovalAction, InputMessage
 from modex_agent.runtime.models import JsonValue, TurnSnapshot
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from modex_agent.commands.skill import SkillResolver
     from modex_agent.control.types import ControlCommand
-    from modex_agent.core.skills import SkillManager
     from modex_agent.runtime.store import TurnStateStore
 
 
@@ -40,7 +39,7 @@ class CommandContext:
     session_id: str
     input_msg: InputMessage
     agent_name: str
-    skill_manager: SkillManager | None = None
+    skill_resolver: SkillResolver | None = None
     turn_store: TurnStateStore | None = None
     pending_approval: TurnSnapshot | None = None
     runtime_info: Mapping[str, JsonValue] = field(default_factory=dict)

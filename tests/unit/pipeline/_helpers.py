@@ -11,14 +11,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from modex_agent.core.agent_runtime_config import BusyInputMode
-from modex_agent.core.constants import ExecutionStrategyKind
-from modex_agent.core.context import ContextManager, InMemoryContextManager
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.tool_manager import ToolManager
-from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.memory.context import ContextManager, InMemoryContextManager
+from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
+from modex_agent.pipeline.busy_input import BusyInputMode
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
@@ -38,7 +38,7 @@ def _make_react_pipeline(
     dream_engine: Any | None = None,
     dream_interval: float | None = None,
     max_iterations: int = 10,
-    skill_manager: Any | None = None,
+    skill_resolver: Any | None = None,
     hooks: list[Any] | None = None,
     router: Any | None = None,
     deduplicator: Any | None = None,
@@ -76,7 +76,7 @@ def _make_react_pipeline(
         tool_manager=tool_manager,  # type: ignore[arg-type]
         sanitizer=sanitizer if isinstance(sanitizer, Callable) else None,
         command_processor=command_processor,
-        skill_manager=skill_manager,
+        skill_resolver=skill_resolver,
         context_builder=context_builder,
         agent_descriptor=agent_descriptor,
         max_iterations=max_iterations,

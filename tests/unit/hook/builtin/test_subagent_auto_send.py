@@ -7,17 +7,17 @@ from unittest.mock import AsyncMock
 
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _make_context(graph_instance_id: int | None) -> AgentContext:
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
-        tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
+        tool_manager=InMemoryToolManager(),
         session=SessionInfo(
             session_id="638aaa67.explore",
             agent_name="explore",

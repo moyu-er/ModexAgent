@@ -14,9 +14,9 @@ from bot.eval.sentinel.execution import HostSentinelExecutionPlane
 from bot.eval.sentinel.orchestrator import SentinelInstance
 from evals.sentinel.tasks import MEMORY_CHAIN_V1_CHAIN, SentinelArm
 
+from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.types import LLMResponse
 from modex_agent.trace.experiment_attrs import ExperimentLinkage
 
 PINNED_SENTINEL_TOOLS: Final = (
@@ -131,5 +131,4 @@ async def test_declared_sentinel_arm_assembly_matches_the_pin(
             assert memory_config.core is None
             assert memory_config.dream_engine is None
     finally:
-        await assembled.instance.stop()
-        await assembled.memory_system.close()
+        await assembled.close()

@@ -8,7 +8,7 @@ injection at load() position 8)::
 
 Writes ``experience_section_pre_migration.txt`` (utf-8, ``newline=""``) —
 the exact bytes the retired special case appended to the prompt pipeline
-(``ExperienceProvider(await manager.build_prompt(context=ctx))`` with the
+(``ExperienceProvider(await manager.render_prompt(context=ctx))`` with the
 BIZ manager construction: a scope-less ``FileExperienceSource``), with the
 fixture root normalized to ``<ROOT>`` (the rendered ``directory=""``
 attributes embed absolute paths — the normalization is mechanical and is
@@ -28,8 +28,10 @@ from pathlib import Path
 
 import anyio
 
-from modex_agent.core.experience import ExperienceManager, FileExperienceSource
-from modex_agent.core.scope import MemoryContext
+from modex_agent.plugins.defaults.capabilities.experience.catalog import ExperienceCatalog
+from modex_agent.plugins.defaults.capabilities.experience.metadata import (
+    PerFileExperienceMetaStore,
+)
 
 _GOLDEN_DIR = Path(__file__).resolve().parent
 _GOLDEN_FILE = _GOLDEN_DIR / "experience_section_pre_migration.txt"
@@ -91,13 +93,13 @@ async def capture_section_bytes(root: Path) -> str:
     verbatim rendering.
     """
     exp_dir = _write_fixtures(root)
-    manager = ExperienceManager(source=FileExperienceSource(directories=[exp_dir]))
-    # The retired load()'s exact call shape: a MemoryContext threads through
-    # to the source (a no-op for the scope-less BIZ construction, which the
-    # golden pins).
-    section = await manager.build_prompt(
-        context=MemoryContext(session_id="s1", user_id="user-1", agent_id="main")
+    catalog = ExperienceCatalog(
+        experience_dir=exp_dir, meta_store=PerFileExperienceMetaStore(exp_dir)
     )
+    # The retired load()'s exact call shape: a MemoryContext threads through
+    # to the source (a no-op for the scope-less construction, which the
+    # golden pins).
+    section = await catalog.render_index()
     return section.replace(str(root.resolve()), "<ROOT>")
 
 

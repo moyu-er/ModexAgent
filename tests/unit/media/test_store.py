@@ -13,8 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.media import store as media_store
-from modex_agent.media.store import LocalFileMediaStore, StoredFile
+from modex_agent.core.media import (
+    MediaRefCollisionError,
+    StoredFile,
+    StoredMediaKind,
+)
+from modex_agent.media.store import LocalFileMediaStore
 
 _MB: int = 1024 * 1024
 
@@ -99,19 +103,19 @@ class TestStoredMediaKinds:
             "conv-main",
             "att-1",
             b"read snapshot",
-            kind=media_store.StoredMediaKind.READS,
+            kind=StoredMediaKind.READS,
         )
 
         assert path == store.media_dir / "reads" / "conv-main" / "att-1"
         assert store.read(
             "conv-main",
             "att-1",
-            kind=media_store.StoredMediaKind.READS,
+            kind=StoredMediaKind.READS,
         ) == path
         assert store.read_bytes(
             "conv-main",
             "att-1",
-            kind=media_store.StoredMediaKind.READS,
+            kind=StoredMediaKind.READS,
         ) == b"read snapshot"
 
     def test_resolve_bytes_finds_upload(self, tmp_path: Path) -> None:
@@ -128,7 +132,7 @@ class TestStoredMediaKinds:
             "conv-main",
             "read-1",
             b"snapshot",
-            kind=media_store.StoredMediaKind.READS,
+            kind=StoredMediaKind.READS,
         )
 
         resolved = store.resolve_bytes("conv-main", "read-1")
@@ -148,7 +152,7 @@ class TestStoredMediaKinds:
         resolved = store.read_bytes(
             "conv-main",
             "missing",
-            kind=media_store.StoredMediaKind.READS,
+            kind=StoredMediaKind.READS,
         )
 
         assert resolved is None
@@ -160,13 +164,13 @@ class TestStoredMediaKinds:
             "conv-main",
             "read-1",
             b"snapshot",
-            kind=media_store.StoredMediaKind.READS,
+            kind=StoredMediaKind.READS,
         )
 
         upload_as_read = store.read_bytes(
             "conv-main",
             "upload-1",
-            kind=media_store.StoredMediaKind.READS,
+            kind=StoredMediaKind.READS,
         )
         read_as_upload = store.read_bytes("conv-main", "read-1")
 
@@ -182,10 +186,10 @@ class TestStoredMediaKinds:
             "conv-main",
             "same-id",
             b"snapshot",
-            kind=media_store.StoredMediaKind.READS,
+            kind=StoredMediaKind.READS,
         )
 
-        with pytest.raises(media_store.MediaRefCollisionError) as raised:
+        with pytest.raises(MediaRefCollisionError) as raised:
             store.resolve_bytes("conv-main", "same-id")
 
         assert raised.value.session_id == "conv-main"
@@ -198,13 +202,13 @@ class TestStoredMediaKinds:
             "conv-main",
             "same-id",
             b"snapshot",
-            kind=media_store.StoredMediaKind.READS,
+            kind=StoredMediaKind.READS,
         )
 
         removed = store.delete(
             "conv-main",
             "same-id",
-            kind=media_store.StoredMediaKind.READS,
+            kind=StoredMediaKind.READS,
         )
 
         assert removed is True
@@ -212,7 +216,7 @@ class TestStoredMediaKinds:
         assert store.read(
             "conv-main",
             "same-id",
-            kind=media_store.StoredMediaKind.READS,
+            kind=StoredMediaKind.READS,
         ) is None
 
     def test_list_and_budget_ignore_reads(self, tmp_path: Path) -> None:
@@ -222,7 +226,7 @@ class TestStoredMediaKinds:
             "conv-main",
             "read-1",
             b"snapshot",
-            kind=media_store.StoredMediaKind.READS,
+            kind=StoredMediaKind.READS,
         )
 
         listed = store.list_session("conv-main")

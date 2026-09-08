@@ -9,11 +9,11 @@ import pytest
 from bot.eval.memory_metrics import reduce_memory_spans
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.constants import RuntimeInfoKey
-from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.context import RuntimeInfoKey
 from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 from modex_agent.memory.injection.full_injection import FullInjectionPolicy
 from modex_agent.memory.layers.config import CoreMemoryConfig, MemoryLayerConfigSet
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.system import MemorySystemContextManager, create_memory_system
 from modex_agent.trace.store import SpanModel
 

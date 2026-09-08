@@ -19,11 +19,9 @@ if TYPE_CHECKING:
 
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo, session_id_prefix_of
-from modex_agent.core.session_registry import SessionRegistry
-from modex_agent.core.session_store import SessionStore
-from modex_agent.core.types import InputMessage
-from modex_agent.messaging.broker import AddressKind, MessageBroker
-from modex_agent.messaging.broker_bridge import BrokerInputPayload
+from modex_agent.messaging import AddressKind, BrokerInputPayload, InputMessage, MessageBroker
+from modex_agent.persistence.session_registry import SessionRegistry
+from modex_agent.persistence.session_store import SessionStore
 from modex_agent.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
 from modex_graph.exceptions import GraphInterrupt
 
@@ -280,21 +278,15 @@ class AgentPool(AgentRegistry):
         content + approval_decision + attachments_resolved + routing headers.
         Writers persist only — the poller starts the turn (P2).
         """
-        payload_model = BrokerInputPayload(
-            content=message.content,
-            session_id=message.session.session_id_prefix,
+        payload_model = BrokerInputPayload.from_input_message(
+            message,
             agent_session_id=session_id,
-            metadata=dict(message.metadata) if message.metadata else {},
-            sender_id=message.sender_id,
-            chat_id=message.chat_id,
-            approval_decision=message.approval_decision.to_dict()
-            if message.approval_decision is not None
-            else None,
-            attachments_resolved=[a.to_dict() for a in message.attachments_resolved],
-            workspace=str(message.workspace) if message.workspace is not None else None,
-            message_type=AgentMessageType.EXTERNAL_INPUT,  # extra field, allowed by extra="allow"
+            message_type=AgentMessageType.EXTERNAL_INPUT,
         )
-        payload: dict[str, Any] = payload_model.model_dump(exclude_none=True)
+        payload: dict[str, Any] = payload_model.model_dump(
+            mode="json",
+            exclude_none=True,
+        )
 
         # Stamp the parent link when the target is a subagent session, so the
         # poller's dispatch path can read it from the envelope. submit_input
@@ -332,14 +324,15 @@ class AgentPool(AgentRegistry):
         return await self._agent_bus.sessions_with_pending()
 
     async def consume_inbox(
-        self, session_id: str, *, only_types: set[str] | None = None
+        self, session_id: str, *, only_types: set[str] | None = None,
+        limit: int = _DRAIN_BATCH_LIMIT,
     ) -> list[AgentMessageEnvelope]:
         """Non-blocking consume of a batch of inbox envelopes for a session."""
         if self._agent_bus is None:
             raise RuntimeError("AgentPool.agent_bus not wired")
         return await self._agent_bus.consume(
             session_id,
-            limit=self._DRAIN_BATCH_LIMIT,
+            limit=limit,
             only_types=only_types,
         )
 
@@ -353,6 +346,16 @@ class AgentPool(AgentRegistry):
         if self._agent_bus is None:
             raise RuntimeError("AgentPool.agent_bus not wired")
         return await self._agent_bus.peek(session_id, limit=limit)
+
+    async def acknowledge_inbox(self, session_id: str, message_id: str) -> None:
+        if self._agent_bus is None:
+            raise RuntimeError("AgentPool.agent_bus not wired")
+        await self._agent_bus.acknowledge(session_id, message_id)
+
+    def release_inbox(self, session_id: str, message_ids: list[str]) -> None:
+        if self._agent_bus is None:
+            raise RuntimeError("AgentPool.agent_bus not wired")
+        self._agent_bus.release(session_id, message_ids)
 
     async def materialize_agent(
         self,
@@ -675,6 +678,8 @@ class AgentPool(AgentRegistry):
         """
         if self._tree is None:
             raise RuntimeError("AgentPool.tree not wired before session eviction")
+        if await self._tree.is_session_paused(session_id):
+            return
         with contextlib.suppress(Exception):
             await self._tree.on_session_evicted(session_id)
         agent_name = self._session_agents.get(session_id)
@@ -767,7 +772,6 @@ class AgentPool(AgentRegistry):
             specialties=descriptor.specialties or None,
             status=status,
             allowed_tools=descriptor.allowed_tools,
-            allowed_skills=descriptor.allowed_skills,
             capabilities=descriptor.address.capabilities or None,
             exposed_to_agents=descriptor.exposed_to_agents,
             comm_kind=descriptor.comm_kind,
@@ -785,7 +789,6 @@ class AgentPool(AgentRegistry):
     def find_profiles(
         self,
         capability: str | None = None,
-        skill: str | None = None,
         tool: str | None = None,
         caller: str | None = None,
     ) -> list[AgentProfile]:
@@ -795,10 +798,6 @@ class AgentPool(AgentRegistry):
             if capability is not None:
                 caps = profile.capabilities or []
                 if capability not in caps:
-                    continue
-            if skill is not None:
-                skills = profile.allowed_skills
-                if skills is not None and skill not in skills:
                     continue
             if tool is not None:
                 tools = profile.allowed_tools

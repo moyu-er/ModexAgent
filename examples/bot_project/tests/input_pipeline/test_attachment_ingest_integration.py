@@ -16,13 +16,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
+from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
 from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 
+from modex_agent.core.media import AttachmentLocator, Kind
 from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
-from modex_agent.media.models import AttachmentLocator, Kind
 from modex_agent.workspace.runtime import bind_workspace_root
 from tests.input_pipeline.assembly_support import (
     TEST_ASSEMBLY_CTX,
@@ -30,11 +30,6 @@ from tests.input_pipeline.assembly_support import (
 )
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
-
-
-class _NoSkill(SkillRegistry):
-    async def resolve(self, pool: str, name: str, content: str) -> ParsedSkill | None:
-        return None
 
 
 def _bot_model_config() -> BotModelConfig:
@@ -84,7 +79,8 @@ async def test_pipeline_turns_attachment_ref_into_persisted_attachment() -> None
         pipeline = await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
+            skill_registry=PoolSkillResolverRegistry(lambda _workspace, _pool: None),
+            bot_model_config=_bot_model_config(),
         )
 
         env = UserInputEnvelope(
@@ -140,7 +136,8 @@ async def test_pipeline_noop_when_no_attachments() -> None:
         pipeline = await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
             ctx=TEST_ASSEMBLY_CTX,
-            skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
+            skill_registry=PoolSkillResolverRegistry(lambda _workspace, _pool: None),
+            bot_model_config=_bot_model_config(),
         )
 
         env = UserInputEnvelope(external_id="u1", content="hi", channel="websocket")

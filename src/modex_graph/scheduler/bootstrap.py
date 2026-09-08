@@ -6,7 +6,7 @@ The caller passes an explicit ``mode``:
   ``[graph.entry_node]`` immediately. No auto-promote, no seed derivation.
 - ``BootstrapMode.RECOVERY`` — crash/pause recovery. Full derivation:
   auto-promote STAGED + CONSUMED_PENDING delivers for COMPLETED nodes BEFORE
-  seed derivation, then derive seeds from CRASHED/orphan RUNNING invocations
+  seed derivation, then derive seeds from CRASHED/orphan RUNNING/CANCELED invocations
   and PENDING delivers, ordered topologically (BFS from ``entry_node``).
 
 Side effects (RECOVERY only):
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from ..compiled_graph import CompiledGraph
     from ..context import GraphContext
     from ..persistence.deliver_store import DeliverRecord
-    from ..persistence.graph_metadata import NodeInvocationRecord
+    from ..persistence.graph_metadata import GraphMetadata, NodeInvocationRecord
     from ..state import GraphState
 
     S = TypeVar("S", bound="GraphState")
@@ -58,6 +58,20 @@ class BootstrapMode(StrEnum):
     RECOVERY = "recovery"
 
 
+# The original graph version at fresh admission. Retries retain this membership;
+# node/IO primary keys have no ordering or provenance role.
+GRAPH_RUN_VERSION_KEY = "graph_run_version"
+
+
+def graph_run_version(metadata: GraphMetadata | None) -> int | None:
+    """Read durable logical membership; absent values identify legacy unscoped runs."""
+    value = metadata.attrs.get(GRAPH_RUN_VERSION_KEY) if metadata is not None else None
+    # attrs is the persisted extension boundary, not an untyped runtime fallback.
+    if value is not None and not isinstance(value, int):
+        raise ValueError("graph_run_version must be an integer or None")
+    return value
+
+
 def bootstrap[S: "GraphState"](
     ctx: GraphContext[S],
     graph: CompiledGraph[S],
@@ -74,7 +88,8 @@ def bootstrap[S: "GraphState"](
 
     Returns:
         Seed node names ordered topologically (BFS from ``entry_node``).
-        ``FRESH`` and empty-seed ``RECOVERY`` both return ``[entry_node]``.
+        Empty-seed ``RECOVERY`` returns ``[]`` when matching run history exists;
+        without history it returns ``[entry_node]``, as does ``FRESH``.
     """
     if mode is BootstrapMode.FRESH:
         return [graph.entry_node]
@@ -84,27 +99,29 @@ def bootstrap[S: "GraphState"](
     coordinator = ctx.coordinator
     node_state_store = coordinator.node_state_store
 
+    run_version = ctx.graph_run_version
+    if run_version is not None:
+        start = node_state_store.load_latest(graph.nodes[graph.entry_node].node_id)
+        if start is None or start.graph_run_version != run_version:
+            ctx.reached_end = False
+            return [graph.entry_node]
+
     # 1. Auto-promote DOUBLE — both BEFORE seed derivation so promoted
     #    PENDING rows are visible to the pending-deliver seed scan.
-    #    START is skipped (empty-seed fallback covers it: if START has
-    #    PENDING delivers from external input, the seed scan catches it;
-    #    if not, empty seeds -> [entry_node] which IS START).
-    #    END is included — END completes and can have leftover STAGED rows
+    #    START and END are included: either can have leftover STAGED rows
     #    or CONSUMED_PENDING delivers that need promotion.
 
     # 1a. Find COMPLETED invocations + promote their STAGED delivers.
     completed_invocations: set[int] = set()
     invocation_records: dict[str, NodeInvocationRecord | None] = {}
     for name, node in graph.nodes.items():
-        if name == GraphNode.START:
-            continue
         record = node_state_store.load_latest(node.node_id)
+        if record is not None and record.graph_run_version != run_version:
+            record = None
         invocation_records[name] = record
         if record is not None and record.status == InvocationStatus.COMPLETED:
             completed_invocations.add(record.invocation_id)
-            coordinator.promote_staged_by_source(
-                coordinator.graph_instance_id, node.node_id
-            )
+            coordinator.promote_staged_by_source(coordinator.graph_instance_id, node.node_id)
 
     # 1b. Collect consumable delivers AFTER staged promotion (so the cache
     #     sees newly-promoted PENDING rows). Reuse this cache for both the
@@ -125,26 +142,20 @@ def bootstrap[S: "GraphState"](
                     and d.consumed_by_invocation_id is not None
                     and d.consumed_by_invocation_id in completed_invocations
                 ):
-                    coordinator.promote_delivers(
-                        node.node_id, d.consumed_by_invocation_id
-                    )
+                    coordinator.promote_delivers(node.node_id, d.consumed_by_invocation_id)
 
     # 2. Seed derivation.
-    #    (a) CRASHED / orphan RUNNING invocations -> needs re-execution.
+    #    (a) CRASHED / orphan RUNNING / CANCELED invocations -> re-execution.
     #    (b) Nodes with PENDING delivers -> seed (reuse delivers cache).
     seeds: list[str] = []
 
     for name in graph.nodes:
-        if name == GraphNode.START:
-            continue
         record = invocation_records.get(name)
         if record is None:
             continue
         if record.status == InvocationStatus.COMPLETED:
             continue
-        if record.status == InvocationStatus.CANCELED:
-            continue
-        # CRASHED / orphan RUNNING -> needs re-execution.
+        # CRASHED / orphan RUNNING / CANCELED -> fresh invocation, same inputs.
         seeds.append(name)
 
     for name in graph.nodes:
@@ -154,11 +165,17 @@ def bootstrap[S: "GraphState"](
         if any(d.status == DeliverConsumptionStatus.PENDING for d in delivers):
             seeds.append(name)
 
-    # 3. Empty seeds -> [entry_node]. Recovery on a near-complete graph
-    #    re-invokes from entry; the scheduler's normal flow skips
-    #    already-COMPLETED nodes.
+    # Recovery may enter END directly or find it already completed. Preserve
+    # the terminal routing fact without replaying completed work or its result.
+    end_record = invocation_records.get(GraphNode.END)
+    ctx.reached_end = GraphNode.END in seeds or (
+        not seeds and end_record is not None and end_record.status == InvocationStatus.COMPLETED
+    )
+
+    # 3. No matching invocation means this run never began (or Null stores).
+    #    Existing completed work must not be replayed by a recovery fallback.
     if not seeds:
-        return [graph.entry_node]
+        return [] if any(invocation_records.values()) else [graph.entry_node]
 
     # 4. BFS ordering from entry_node (includes END as a valid BFS node
     #    for fan-in closure) so LinearScheduler can use seeds[0] as the
@@ -187,4 +204,4 @@ def bootstrap[S: "GraphState"](
     return ordered
 
 
-__all__ = ["BootstrapMode", "bootstrap"]
+__all__ = ["BootstrapMode", "GRAPH_RUN_VERSION_KEY", "bootstrap", "graph_run_version"]

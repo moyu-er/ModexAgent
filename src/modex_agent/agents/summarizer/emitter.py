@@ -76,7 +76,7 @@ class SummarizerTrajectoryEmitter(ContentEmitter[Any]):
             self._current_content += full_content
 
     async def _on_event(self, event: Any, data: Any = None) -> None:
-        from modex_agent.core.types import ToolCall
+        from modex_agent.core.message import ToolCall
 
         event_name = event.value if isinstance(event, Enum) else str(event)
 

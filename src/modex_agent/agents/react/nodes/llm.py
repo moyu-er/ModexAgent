@@ -16,16 +16,15 @@ from modex_agent.agents.react.constants import (
     ReActScope,
 )
 from modex_agent.agents.react.context import ReActGraphContext, get_agent_ctx
+from modex_agent.agents.react.ids import next_call_id
 from modex_agent.agents.react.injection_drainer import InjectionDrainer
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.media_injection import inject_multimodal
 from modex_agent.agents.react.message_builder import build_assistant_message
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import FinishReason
-from modex_agent.core.ids import next_call_id
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.types import LLMResponse
 from modex_agent.runtime.dispatch import renew_dispatch_deadline
 from modex_agent.runtime.enums import (
     MessageDeltaSource,
@@ -129,7 +128,7 @@ class LLMNode(Node[ReActTurnState]):
             # assistant history message, and ToolNode must all observe the
             # SAME id per call, or chat spans / tool spans / exported
             # trajectories cannot be joined by id. Providers that omit ids
-            # get a Snowflake fallback (see core.ids.next_call_id).
+            # get a Snowflake fallback (see agents.react.ids.next_call_id).
             if response.tool_calls:
                 response = response.model_copy(
                     update={

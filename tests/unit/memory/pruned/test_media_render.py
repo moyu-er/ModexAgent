@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from modex_agent.core.message import ImageUrl, ImageUrlPart, TextPart, build_media_ref
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import ImageUrl, ImageUrlPart, MessageRole, TextPart, build_media_ref
 from modex_agent.memory.pruned.render import render_transcript
 from modex_agent.memory.xml_truncate import truncate_xml_safe
 

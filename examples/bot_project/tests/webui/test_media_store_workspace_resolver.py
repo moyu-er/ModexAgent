@@ -15,7 +15,8 @@ from pathlib import Path
 import pytest
 from bot.service.media_store import WorkspaceScopedMediaStore
 
-from modex_agent.media.store import LocalFileMediaStore, MediaStore
+from modex_agent.core.media import MediaStore
+from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root, is_workspace_root_bound
 

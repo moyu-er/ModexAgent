@@ -22,49 +22,46 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from modex_agent.adapters.output import OutputAdapter
     from modex_agent.commands.models import CommandHandlingResult, CommandProcessor
+    from modex_agent.commands.skill import SkillResolver
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.agent import Agent, AgentContext
-    from modex_agent.core.context import ContextManager, ContextState
     from modex_agent.core.emitter import ContentEmitter
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-    from modex_agent.core.runtime_context import RuntimeContextManager
-    from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
-    from modex_agent.core.types import InputMessage
     from modex_agent.hook.runner import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
-    from modex_agent.media.store import MediaStore
+    from modex_agent.memory.context import ContextManager, ContextState
     from modex_agent.memory.context_governance import ContextGovernance
+    from modex_agent.messaging.models import InputMessage
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.multi_agent.router import RouteResult
     from modex_agent.multi_agent.session_tree.session_binding import (
         SessionBindingStore,
     )
-    from modex_agent.pipeline.adapters import OutputAdapter
     from modex_agent.pipeline.turn_context_config import (
         TurnContextConfigPipeline,
         TurnContextDescriptor,
     )
+    from modex_agent.runtime.context import RuntimeContextManager
     from modex_agent.runtime.models import TurnSnapshot
     from modex_agent.runtime.store import TurnStateStore
     from modex_agent.utils.context_builder import MultiAgentContextBuilder
     from modex_graph.context import GraphContext
 
+from modex_agent.adapters.emitter import StreamingAwareEmitter
 from modex_agent.approval.response import parse_input_command
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.commands.models import CommandContext
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import StreamingAwareEmitter
+from modex_agent.core.media import Attachment, MediaStore
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import OutputMessageType
-from modex_agent.media.models import Attachment
-from modex_agent.pipeline.adapters import OutputMessage
+from modex_agent.messaging.models import ApprovalAction, OutputMessage, OutputMessageType
 from modex_agent.pipeline.context_assembler import assemble_context
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
@@ -141,7 +138,7 @@ class TurnContextBuilder:
         tool_manager: ToolManager,
         sanitizer: Callable[[str], str] | None,
         command_processor: CommandProcessor | None,
-        skill_manager: SkillManager | None,
+        skill_resolver: SkillResolver | None,
         context_builder: MultiAgentContextBuilder | None,
         agent_descriptor: AgentDescriptor | None,
         max_iterations: int,
@@ -161,7 +158,7 @@ class TurnContextBuilder:
         self._tool_manager = tool_manager
         self._sanitizer = sanitizer
         self._command_processor = command_processor
-        self._skill_manager = skill_manager
+        self._skill_resolver = skill_resolver
         self._context_builder = context_builder
         self._agent_descriptor = agent_descriptor
         self._max_iterations = max_iterations
@@ -312,7 +309,7 @@ class TurnContextBuilder:
             session_id=session_id,
             input_msg=input_msg,
             agent_name=self._agent.name,
-            skill_manager=self._skill_manager,
+            skill_resolver=self._skill_resolver,
             turn_store=pool_data.turn_store if pool_data is not None else self._turn_store,
             pending_approval=pending_snapshot,
         )
@@ -415,7 +412,6 @@ class TurnContextBuilder:
             _is_approval_cmd,
             agent_descriptor=self._agent_descriptor,
             tool_manager=self._tool_manager,
-            skill_manager=self._skill_manager,
             context_builder=self._context_builder,
             append_user_message=append_user_message,
             model_info=caps,
@@ -487,7 +483,7 @@ class TurnContextBuilder:
             media_store = self._media_store_resolver()
 
         # ---- typed AgentRuntime with ReActTurnState (new) ----
-        if snapshot_turn_store is not None:
+        if snapshot_turn_store is not None or governance is not None or base_services is not None:
             from modex_agent.agents.react.state import ReActTurnState
             from modex_agent.runtime.enums import AgentKind, TurnCustomKey
             from modex_agent.runtime.enums import TurnPhase as RTurnPhase
@@ -498,12 +494,12 @@ class TurnContextBuilder:
                 agent_kind=AgentKind.REACT,
                 phase=RTurnPhase.CREATED,
             )
-            services = AgentRuntimeServices(
+            services = replace(
+                base_services if base_services is not None else AgentRuntimeServices(),
                 hooks=(base_services.hooks if base_services is not None else None)
                 or self._hook_runner,
                 interceptors=(base_services.interceptors if base_services is not None else None)
                 or self._interceptor_chain,
-                approval=base_services.approval if base_services is not None else None,
                 governance=governance,
                 turn_store=(
                     base_services.turn_store
@@ -525,30 +521,9 @@ class TurnContextBuilder:
                 media_store=media_store,
             )
             agent_context.runtime = AgentRuntime(services=services, state=react_state)
-            agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
-            agent_context.runtime.state.custom[TurnCustomKey.MAX_TURNS] = 3
-        elif governance is not None:
-            # Lightweight runtime for governance-only mode (no turn_store)
-            from modex_agent.agents.react.state import ReActTurnState
-            from modex_agent.runtime.enums import AgentKind
-            from modex_agent.runtime.enums import TurnPhase as RTurnPhase
-            from modex_agent.runtime.services import AgentRuntime
-
-            agent_context.runtime = AgentRuntime(
-                services=AgentRuntimeServices(
-                    governance=governance,
-                    trace_store=snapshot_trace_store,
-                    control_channel=self._control_channel
-                    or (base_services.control_channel if base_services is not None else None),
-                    model_info=(base_services.model_info if base_services is not None else None),
-                    media_store=media_store,
-                ),
-                state=ReActTurnState(
-                    identity=turn_identity,
-                    agent_kind=AgentKind.REACT,
-                    phase=RTurnPhase.CREATED,
-                ),
-            )
+            if snapshot_turn_store is not None:
+                agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
+                agent_context.runtime.state.custom[TurnCustomKey.MAX_TURNS] = 3
 
         # Trace linkage metadata for the turn's spans (subagent parentage).
         if agent_context.runtime is not None and input_metadata is not None:

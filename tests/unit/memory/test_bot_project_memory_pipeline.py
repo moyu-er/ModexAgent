@@ -15,9 +15,7 @@ from typing import Any
 import pytest
 
 from modex_agent.agents.summarizer.abc import ArchiveGenerator
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.scope import MemoryContext
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.memory.archive_models import (
     ArchiveChannel,
     ArchiveDocuments,
@@ -28,6 +26,7 @@ from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry, MemoryStoreRegistry
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 from tests.unit.memory.conftest import FixedTokenEstimator
 

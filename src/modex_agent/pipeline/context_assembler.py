@@ -7,28 +7,24 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.constants import RuntimeInfoKey
-from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.emitter import AgentResult
+from modex_agent.core.media import Kind
 from modex_agent.core.message import (
     ContentPart,
     ImageUrl,
     ImageUrlPart,
+    MessageRole,
     TextPart,
     build_media_ref,
 )
-from modex_agent.core.types import InputMessage, MessageRole, ReminderKind
-from modex_agent.media.models import Kind
-from modex_agent.memory.history import (
-    ListMessageHistory,
-    history_to_list,
-)
+from modex_agent.memory.context import ContextManager, ContextState, RuntimeInfoKey
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.messaging.models import InputMessage, ReminderKind
 from modex_agent.multi_agent.message_format import build_agent_reminder_record
 from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
     from modex_agent.core.capabilities import ModelInfo
-    from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.multi_agent.router import RouteResult
@@ -46,7 +42,6 @@ async def assemble_context(
     *,
     agent_descriptor: AgentDescriptor | None = None,
     tool_manager: ToolManager | None = None,
-    skill_manager: SkillManager | None = None,
     context_builder: MultiAgentContextBuilder | None = None,
     append_user_message: bool = True,
     model_info: ModelInfo | None = None,
@@ -126,7 +121,6 @@ async def assemble_context(
     context_state = await ctx_mgr.load(
         session_id,
         tool_manager=tool_manager,
-        skill_manager=skill_manager,
         runtime_info=runtime_info,
     )
 
@@ -169,7 +163,7 @@ async def assemble_context(
             agent_session_id=session_id,
             metadata=input_metadata,
         )
-        base_history = await history_to_list(context_state.history)
+        base_history = [message.to_dict() for message in await context_state.history.to_list()]
         if base_history and base_history[-1].get("role") == MessageRole.USER:
             base_history = base_history[:-1]
         built_messages = context_builder.build_messages(

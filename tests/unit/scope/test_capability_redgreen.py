@@ -51,9 +51,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind
+from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.core.prompt import SystemPromptProvider
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool
+from modex_agent.core.tool_manager import Tool
 from modex_agent.hook.abc import Hook
 from modex_agent.hook.runner import HookRunner
 from modex_agent.memory.hooks import MemoryHookRunner
@@ -103,6 +103,7 @@ from modex_agent.scope import (
     spec_hash,
     validate_declaration,
 )
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -493,9 +494,14 @@ class _RecordingContextManager(MemorySystemContextManager):
         super().__init__(**kwargs)
         self.recorded_sections: tuple[SystemPromptProvider, ...] | None = None
 
-    def set_capability_sections(self, sections: tuple[SystemPromptProvider, ...]) -> None:
+    def set_capability_sections(
+        self,
+        sections: tuple[SystemPromptProvider, ...],
+        *,
+        tail_sections: tuple[SystemPromptProvider, ...] = (),
+    ) -> None:
         self.recorded_sections = tuple(sections)
-        super().set_capability_sections(sections)
+        super().set_capability_sections(sections, tail_sections=tail_sections)
 
 
 def _mock_memory_system() -> MagicMock:
@@ -667,10 +673,16 @@ class TestTCap1EndToEnd:
         assert isinstance(mapping["dummy_field"], DummySupply)
         assert mapping["dummy_field"].agents == ("root", "sub")
 
-    async def test_native_dispatch_renders_section_at_anchor(self) -> None:
+    async def test_native_dispatch_renders_section_at_anchor(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """The declared dummy's assemble() wiring reaches the context manager
         through the section channel and renders in the assembled prompt at
         the anchor position (after the base prompt, before core memory)."""
+        # use_terminal=True derives the native_env hook, which resolves the
+        # modexctl bin dir eagerly — point it at a hermetic fake binary.
+        (tmp_path / "modexctl").touch()
+        monkeypatch.setenv("MODEXBOT_BIN_DIR", str(tmp_path))
         plugin = _DummyCapabilityPlugin()
         registry = _dummy_registry(plugin)
         _register_native_slots(registry)

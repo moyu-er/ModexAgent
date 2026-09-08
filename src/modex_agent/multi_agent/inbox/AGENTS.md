@@ -28,9 +28,9 @@ separate turn).
 | `server_local.py` | `LocalFileInboxMQ` — file-based implementation: `pending.jsonl` per session + `FileDeliveredIdTracker` (internal); one `asyncio.Lock` per session for single-process safety; `sessions_with_pending` reads the original `session_id` back from the first pending record's `agent_session_id` metadata. `LocalFileInboxServer` is kept as a deprecated alias |
 | `server_memory.py` | `InMemoryInboxServer` — in-memory implementation for tests (extends `InboxMQ`) |
 | `producer.py` | `InboxProducer` — local-cache dedup (`OrderedDict`, LRU); converts `AgentMessageEnvelope` to `InboxMessage` and persists via `receive()`; stores `source_kind`/`source_name` in metadata so `consume` can rebuild the original `AgentAddress` (preserving the channel/human origin of `external_input`) |
-| `consumer.py` | `InboxConsumer` — local-cache dedup; wraps a server's `consume` |
+| `consumer.py` | `InboxConsumer` — shared reserve/consume/acknowledge/release receipt lifecycle for Poller and fold-in. Unacknowledged work persists through the pool's SessionRegistry; live claims prevent nested consumers from processing a held batch twice. `peek` merges saved receipts and MQ intake. |
 | `tracker.py` | `DeliveredIdTracker` ABC + `FileDeliveredIdTracker` — **deprecated** (T11). Delivered-id tracking is now internal to `InboxMQ`; the ABC is kept only for backwards compatibility. `FileDeliveredIdTracker` remains as a private helper used by `LocalFileInboxMQ` |
-| `types.py` | `InboxMessage` dataclass — `session_id`, `source`, `content`, `message_type`, `message_id`, `timestamp`, `metadata` |
+| `types.py` | `InboxMessage` and `SessionWork` frozen Pydantic models. `SessionWork.pending` contains reserved InboxMessages; `SESSION_WORK_METADATA_KEY` names their existing SessionRegistry metadata slot. |
 | `__init__.py` | Re-exports the public surface |
 
 The SQLite backend adapter is `SqliteInboxMQ` in `modex_agent.persistence.adapters.inbox_mq`. It implements the same `InboxMQ` ABC against the workspace `state.db`, closing the cross-process atomicity gap the file backend has (T20).
@@ -56,6 +56,11 @@ The SQLite backend adapter is `SqliteInboxMQ` in `modex_agent.persistence.adapte
 - `consume(only_types=...)` is how fold-in avoids eating `external_input`:
   filtered messages are **not** consumed — they stay pending for the next
   between-turn.
+- Every receiver acknowledges each message only after processing succeeds and
+  releases its batch's claims in `finally`. Releasing an unacknowledged message
+  makes its saved receipt available for reentry, without another MQ delivery.
+- `set_on_consumed` fires on acknowledgement, not on destructive MQ removal.
+  `SessionTreeManager` wires the shared registry through the bus at construction.
 
 ### Common Patterns
 - Instantiate: `server = LocalFileInboxMQ(Path("data/inbox/<pool>"))` then

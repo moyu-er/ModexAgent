@@ -26,9 +26,10 @@ from pydantic import (
     model_validator,
 )
 
-from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind
+from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.persistence.config import PersistenceBackend
+from modex_agent.sandbox.settings import SandboxSettings
 from modex_agent.tools.presets import (
     DEFAULT_FORK_MAX_MESSAGES,
     MAX_FORK_MAX_MESSAGES,
@@ -102,10 +103,9 @@ class MemoryDeclaration(BaseModel):
     """Per-node memory override block — SPEC §3.2 memory row's override face.
 
     Field face is the union of the legacy roster memory blocks: the
-    ``MemoryToggle`` archive/core gates (pool.yml main agents) plus the
-    subagent session token override (templates). Position fixes the preset
-    FAMILY (root → archive/core/experience eligible, non-root →
-    session-only); this block overrides layer toggles within the eligible
+    ``MemoryToggle`` archive/core gates (root agents) plus the
+    subagent session token override. Position fixes the preset
+    FAMILY (root — archive/core eligible, non-root — session-only); this block overrides layer toggles within the eligible
     family. The AND gate mirrors ``MemoryToggle``: core memory is fed by
     archive consolidation.
     """
@@ -209,6 +209,18 @@ class AgentSpec(BaseModel):
     eager: bool | None = None
     """Registration timing override: ``True`` = eager at boot, ``False`` =
     lazy on first dispatch; ``None`` = position-derived default."""
+    sandbox: SandboxSettings | None = None
+    """The subagent's own sandbox declaration — the SAME two-class shape
+    every agent carries (``sandbox.settings.SandboxSettings``).
+
+    ``None`` (the default) inherits the caller's settings wholesale
+    (``resolve_agent_sandbox``): the subagent's permission face equals
+    the caller's. A declared block is authoritative for the permission
+    face (parallel/exclusive/guard) while the substrate face (backend/
+    network/image) stays with the caller; every declared path must fit
+    the caller's envelope — a delegation can only narrow, never amplify,
+    and violations fail assembly. Paths are relative and anchor to the
+    live workspace root (multi-workspace safe)."""
 
     @property
     def is_root(self) -> bool:
@@ -331,9 +343,9 @@ class WorkspaceSpec(BaseModel):
     """Workspace-layer scope declaration: resource selection + hosted pools.
 
     Ticket 14 completes the resource-selection face (SPEC §3.1): the
-    workspace layer selects the memory backend (``persistence``), the path
-    layout (``paths``), and the shared MCP server set (``mcp``) — with
-    ``pools`` hosting the pool trees. Every selection field is
+    workspace layer selects the memory backend (``persistence``) and the
+    path layout (``paths``) — with ``pools`` hosting the pool trees.
+    Every selection field is
     ``None = inherit``: an absent field falls back to the service-level
     domain config (``bot_config.yml``), so undeclared deployments keep
     today's data layout (SPEC §3.1 继承父层 + 声明差异).
@@ -344,10 +356,6 @@ class WorkspaceSpec(BaseModel):
     name: str
     persistence: WorkspacePersistenceSpec | None = None
     paths: WorkspacePathsSpec | None = None
-    mcp: list[str] | None = None
-    """The workspace's shared MCP server set — names referencing
-    ``config/mcp/registry.json`` (资源引用, SPEC §3.7). ``None`` = no
-    workspace-level set (the full registry remains available)."""
     pools: list[PoolSpec] = Field(default_factory=list)
 
 

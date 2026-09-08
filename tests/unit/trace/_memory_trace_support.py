@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.cleanup import CleanupResult
 from modex_agent.memory.core.models import CompressionReason
 from modex_agent.memory.hooks import LlmUsage, MemoryHookContext
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.semconv import GenAiAttr, SpanKind, SpanStatusCode
 from modex_agent.trace.store import SpanModel

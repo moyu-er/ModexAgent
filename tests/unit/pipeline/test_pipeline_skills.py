@@ -1,13 +1,13 @@
-"""Unit tests for AgentPipeline skill_manager integration."""
+"""Unit tests for AgentPipeline skill-resolver integration."""
 
 import asyncio
 
 import pytest
 
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.skills import DefaultSkillBuilder, InlineSkillSource, SkillManager
-from modex_agent.core.skills.models import Skill
-
+from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
+from modex_agent.plugins.defaults.capabilities.skills.models import Skill
+from modex_agent.plugins.defaults.capabilities.skills.source import InlineSkillSource
 from tests.unit.pipeline._helpers import _make_react_pipeline
 
 
@@ -27,7 +27,7 @@ class FakeContextManager:
         self.base_system_prompt = base_system_prompt
 
     async def load(self, session_id, **kwargs):
-        from modex_agent.core.context import ContextState
+        from modex_agent.memory.context import ContextState
 
         return ContextState(system_prompt=self.base_system_prompt, history=[])
 
@@ -100,23 +100,23 @@ class FakeOutputAdapter:
 
 class TestAgentPipelineSkills:
     @pytest.mark.asyncio
-    async def test_pipeline_stores_skill_manager(self):
+    async def test_pipeline_stores_skill_resolver(self):
         cm = FakeContextManager(base_system_prompt="Base")
         tm = FakeToolManager()
         source = InlineSkillSource([Skill(name="ps1", content="pipeline skill")])
-        sm = SkillManager(source=source, builder=DefaultSkillBuilder())
+        catalog = SkillCatalog(source=source)
         pipeline = _make_react_pipeline(
             agent=FakeAgent(),
             context_manager=cm,
             tool_manager=tm,
             input_adapter=FakeInputAdapter(),
             output_adapter=FakeOutputAdapter(),
-            skill_manager=sm,
+            skill_resolver=catalog,
         )
-        assert pipeline.skill_manager is sm
+        assert pipeline.skill_resolver is catalog
 
     @pytest.mark.asyncio
-    async def test_pipeline_without_skill_manager(self):
+    async def test_pipeline_without_skill_resolver(self):
         cm = FakeContextManager(base_system_prompt="Base")
         tm = FakeToolManager()
         pipeline = _make_react_pipeline(
@@ -125,9 +125,9 @@ class TestAgentPipelineSkills:
             tool_manager=tm,
             input_adapter=FakeInputAdapter(),
             output_adapter=FakeOutputAdapter(),
-            skill_manager=None,
+            skill_resolver=None,
         )
-        assert pipeline.skill_manager is None
+        assert pipeline.skill_resolver is None
 
     @pytest.mark.asyncio
     async def test_pipeline_sanitizer_can_be_disabled_with_none(self):

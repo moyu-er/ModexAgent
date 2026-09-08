@@ -11,7 +11,8 @@ import asyncio
 import inspect
 
 from modex_agent.core.message import ContentFormat, TextPart
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool, ToolResult
+from modex_agent.core.tool_manager import Tool, ToolResult
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _TerminalishTool(Tool):

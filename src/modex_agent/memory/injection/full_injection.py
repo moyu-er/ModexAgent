@@ -5,7 +5,6 @@ import time
 from dataclasses import dataclass
 from typing import Final
 
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.core.models import (
     InjectionResult,
     MemoryBudget,
@@ -19,6 +18,7 @@ from modex_agent.memory.hooks import (
     SectionProvenance,
 )
 from modex_agent.memory.injection.policy import MemoryInjectionPolicy
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.tags import CoreMemoryTag
 from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 from modex_agent.utils.xml import xml_attr, xml_text

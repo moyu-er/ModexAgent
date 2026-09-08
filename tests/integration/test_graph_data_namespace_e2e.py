@@ -176,7 +176,7 @@ async def test_custom_data_namespace_type_reaches_state_schema_compilation(
         assert note_field.annotation is ProbeGraphState
         validated = state_cls.model_validate({"note": {"probe_marker": "w6-checked"}})
         # Dynamic create_model product -- getattr is the dynamic-model seam.
-        note_value = getattr(validated, "note")
+        note_value = validated.note
         assert isinstance(note_value, ProbeGraphState)
         assert note_value.probe_marker == "w6-checked"
 

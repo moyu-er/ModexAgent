@@ -260,10 +260,27 @@ async def test_topology_workspace_form(tmp_path: Path) -> None:
         assert set(pools) == {"main", "helper"}
         assert pools["main"]["peers"] == ["helper"]
         agents = {a["name"]: a for a in pools["main"]["agents"]}
-        assert agents["main"] == {"name": "main", "parent": None, "root": True}
-        assert agents["worker"] == {"name": "worker", "parent": "main", "root": False}
+        assert agents["main"] == {
+            "name": "main",
+            "parent": None,
+            "root": True,
+            "skills_eligible": True,
+        }
+        assert agents["worker"] == {
+            "name": "worker",
+            "parent": "main",
+            "root": False,
+            "skills_eligible": True,
+        }
         helper_agents = pools["helper"]["agents"]
-        assert helper_agents == [{"name": "helper", "parent": None, "root": True}]
+        assert helper_agents == [
+            {
+                "name": "helper",
+                "parent": None,
+                "root": True,
+                "skills_eligible": True,
+            }
+        ]
     finally:
         await client.close()
 
@@ -283,7 +300,14 @@ async def test_topology_pool_as_root_no_special_casing(tmp_path: Path) -> None:
             {
                 "name": "solo",
                 "peers": [],
-                "agents": [{"name": "solo", "parent": None, "root": True}],
+                "agents": [
+                    {
+                        "name": "solo",
+                        "parent": None,
+                        "root": True,
+                        "skills_eligible": True,
+                    }
+                ],
             }
         ]
         # The bill path works for pool-as-root too (no workspace layer).
@@ -316,10 +340,11 @@ async def test_bill_field_layers_and_values(tmp_path: Path) -> None:
         }
         # Declared override map → local layer; the value is the effective
         # capability set in registry-enumeration order (todo + experience
-        # declared, subagents auto-applied via children/peers).
+        # declared, skills auto-applied to native agents, and subagents
+        # auto-applied via children/peers).
         assert _field(main, "capabilities") == {
             "field": "capabilities",
-            "value": ["experience", "subagents", "todo"],
+            "value": ["experience", "skills", "subagents", "todo"],
             "layer": "local",
             "profile": None,
         }
@@ -374,11 +399,11 @@ async def test_bill_field_layers_and_values(tmp_path: Path) -> None:
         assert _field(worker, "toolset")["value"] == "read_write"
         assert _field(worker, "toolset")["layer"] == "framework"
         assert _field(worker, "eager")["value"] == "lazy"
-        # No override declared → framework layer; only the auto-applied
-        # subagents capability (non-root position).
+        # No override declared → framework layer; Skills auto-applies to every
+        # native agent and subagents auto-applies by non-root position.
         assert _field(worker, "capabilities") == {
             "field": "capabilities",
-            "value": ["subagents"],
+            "value": ["skills", "subagents"],
             "layer": "framework",
             "profile": None,
         }
@@ -458,6 +483,18 @@ async def test_bill_reports_third_party_auto_capability_provenance(tmp_path: Pat
         assert response.status == 200, await response.text()
         root = _agent(await response.json(), "capability", "root")
         assert root["capabilities"] == [
+            {
+                "capability": "skills",
+                "state": "auto",
+                "registration_source": None,
+                "contributions": [
+                    {
+                        "kind": "section",
+                        "name": "skills.injection",
+                        "gate": "vouched",
+                    }
+                ],
+            },
             {
                 "capability": "third_party_auto",
                 "state": "auto",
@@ -564,7 +601,7 @@ async def test_declaration_capabilities_round_trip(tmp_path: Path) -> None:
     """The capabilities face round-trips through the editor API: PUT a
     declaration carrying a ``capabilities: {todo: {}}`` block, GET it
     back byte-identically, and the recomputed bill reports the capability
-    effective (todo tools in the roster)."""
+    effective (todo tools in the roster, plus auto-applied Skills)."""
     _write_declaration(tmp_path, _POOL_ROOT_DECLARATION)
     client = _make_client(tmp_path)
     await client.start_server()
@@ -589,7 +626,7 @@ async def test_declaration_capabilities_round_trip(tmp_path: Path) -> None:
         root = _agent(await bill.json(), "capability", "root")
         assert _field(root, "capabilities") == {
             "field": "capabilities",
-            "value": ["todo"],
+            "value": ["skills", "todo"],
             "layer": "local",
             "profile": None,
         }
@@ -650,5 +687,210 @@ async def test_bill_409_when_disk_declaration_invalid(tmp_path: Path) -> None:
         # the declaration shape, not a validity claim.
         topo = await client.get("/api/scope/topology")
         assert topo.status == 200, await topo.text()
+    finally:
+        await client.close()
+
+
+# ── Structured model road (pools config panel) ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_model_returns_declaration_tree(tmp_path: Path) -> None:
+    _write_declaration(tmp_path, _WORKSPACE_DECLARATION)
+    client = _make_client(tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get("/api/scope/model")
+        assert resp.status == 200, await resp.text()
+        model = (await resp.json())["model"]
+        assert model["workspace"]["name"] == "bot"
+        pools = model["workspace"]["pools"]
+        assert set(pools) == {"main", "helper"}
+        assert pools["main"]["agents"]["main"]["max_steps"] == 50
+        assert "worker" in pools["main"]["agents"]["main"]["agents"]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_put_model_writes_canonical_yaml(tmp_path: Path) -> None:
+    """The structured save road strips spec/position defaults and keeps the
+    root terminal face explicit — the panel cannot write default-restating
+    declarations."""
+    path = _write_declaration(tmp_path, _WORKSPACE_DECLARATION)
+    client = _make_client(tmp_path)
+    await client.start_server()
+    try:
+        model = {
+            "workspace": {
+                "name": "bot",
+                "pools": {
+                    "main": {
+                        "agents": {
+                            "main": {
+                                "description": "Root of the main pool.",
+                                "max_steps": 100,  # spec default — stripped
+                                "context_mode": "fresh",  # default — stripped
+                                "capabilities": {"todo": {}},
+                                "agents": {
+                                    "worker": {"description": "Child agent."},
+                                },
+                            }
+                        }
+                    }
+                },
+            }
+        }
+        resp = await client.put("/api/scope/model", json={"model": model})
+        assert resp.status == 200, await resp.text()
+        assert (await resp.json()) == {"saved": True, "restart_required": True}
+
+        text = path.read_text(encoding="utf-8")
+        assert "max_steps" not in text
+        assert "context_mode" not in text
+        assert "use_terminal: false" in text
+        assert "terminal_visibility: false" in text
+
+        got = await client.get("/api/scope/model")
+        assert got.status == 200
+        reloaded = (await got.json())["model"]
+        assert reloaded["workspace"]["pools"]["main"]["agents"]["main"]["capabilities"] == {
+            "todo": {}
+        }
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_put_model_rejects_invalid_tree(tmp_path: Path) -> None:
+    path = _write_declaration(tmp_path, _WORKSPACE_DECLARATION)
+    client = _make_client(tmp_path)
+    await client.start_server()
+    try:
+        # V3: two roots in one pool.
+        two_roots = {
+            "pool": {"name": "broken", "agents": {"a": {}, "b": {}}},
+        }
+        resp = await client.put("/api/scope/model", json={"model": two_roots})
+        assert resp.status == 400, await resp.text()
+        data = await resp.json()
+        assert any(issue["rule"] == "V3" for issue in data["issues"])
+        # The on-disk true source is untouched.
+        assert path.read_text(encoding="utf-8") == _WORKSPACE_DECLARATION
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_get_options_enumerates_registries(tmp_path: Path) -> None:
+    _write_declaration(tmp_path, _WORKSPACE_DECLARATION)
+    mcp_dir = tmp_path / "config" / "mcp"
+    mcp_dir.mkdir(parents=True, exist_ok=True)
+    (mcp_dir / "registry.json").write_text(
+        '{"mcpServers": {"fetch": {"type": "stdio", "command": "x"}}}',
+        encoding="utf-8",
+    )
+    client = _make_client(tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get("/api/scope/options")
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        assert data["toolsets"] == ["full", "read_write", "read_only", "none", "web"]
+        assert data["context_modes"] == ["fresh", "fork"]
+        # DefaultPlugin capabilities + the test's third-party registration.
+        assert "aci" in data["capabilities"]
+        assert "third_party_auto" in data["capabilities"]
+        assert "deliver_retry" in data["default_hooks"]
+        assert "deliver_retry" in data["hooks"]
+        assert data["mcp_servers"] == ["fetch"]
+        # Capability bundles: carried tools/hooks ride the capability and are
+        # not free-standing toggles in the panel.
+        bundles = data["capability_bundles"]
+        assert bundles["aci"]["tools"] == ["aci_edit"]
+        assert set(bundles["todo"]["hooks"]) == {
+            "todo_continuation",
+            "todo_reorientation",
+            "todo_planning_nudge",
+        }
+        assert set(bundles["todo"]["tools"]) == {"todo_write", "todo_read"}
+        # Position-dependent bundle contents are unioned across probes.
+        assert "subagent_auto_send" in bundles["subagents"]["hooks"]
+        assert "task" in bundles["subagents"]["tools"]
+        assert data["position_defaults"]["root"] == {
+            "toolset": "full",
+            "registration": "eager",
+        }
+        assert data["position_defaults"]["sub"] == {
+            "toolset": "read_write",
+            "registration": "lazy",
+        }
+    finally:
+        await client.close()
+
+
+# ── Draft preview road (live effective state) ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_preview_returns_draft_bill_without_writing(tmp_path: Path) -> None:
+    """The preview compiles the DRAFT (max_steps 88, todo capability dropped)
+    and the on-disk true source stays byte-identical."""
+    path = _write_declaration(tmp_path, _WORKSPACE_DECLARATION)
+    before = path.read_text(encoding="utf-8")
+    client = _make_client(tmp_path)
+    await client.start_server()
+    try:
+        draft = {
+            "workspace": {
+                "name": "bot",
+                "pools": {
+                    "main": {
+                        "agents": {
+                            "main": {
+                                "description": "Root of the main pool.",
+                                "max_steps": 88,
+                                # todo capability dropped from the draft.
+                                "capabilities": {"experience": {}},
+                                "agents": {
+                                    "worker": {"description": "Child agent."},
+                                },
+                            }
+                        }
+                    },
+                    "helper": {"agents": {"helper": {"description": "x"}}},
+                },
+            }
+        }
+        resp = await client.post("/api/scope/preview", json={"model": draft})
+        assert resp.status == 200, await resp.text()
+        bill = await resp.json()
+        main = _agent(bill, "main", "main")
+        assert _field(main, "max_steps")["value"] == 88
+        # The dropped capability's bundle hooks are gone from the effective
+        # roster; declared/default hooks stay.
+        hooks = {h["hook"] for h in main["hooks"]}
+        assert "todo_continuation" not in hooks
+        assert "deliver_retry" in hooks
+        # Nothing written.
+        assert path.read_text(encoding="utf-8") == before
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_invalid_draft(tmp_path: Path) -> None:
+    path = _write_declaration(tmp_path, _WORKSPACE_DECLARATION)
+    client = _make_client(tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.post(
+            "/api/scope/preview",
+            json={"model": {"pool": {"name": "broken", "agents": {"a": {}, "b": {}}}}},
+        )
+        assert resp.status == 400, await resp.text()
+        data = await resp.json()
+        assert any(issue["rule"] == "V3" for issue in data["issues"])
+        assert path.read_text(encoding="utf-8") == _WORKSPACE_DECLARATION
     finally:
         await client.close()

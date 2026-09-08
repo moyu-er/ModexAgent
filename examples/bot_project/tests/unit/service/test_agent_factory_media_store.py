@@ -32,7 +32,6 @@ async def test_agent_factory_wires_media_store_resolver_without_calling_it(
     factory = agent_factory_module._build_agent_factory(
         provider=None,
         tool_manager=None,
-        skill_manager=None,
         inbox_server=None,
         inbox_consumer=None,
         shared_hooks=None,

@@ -1,4 +1,4 @@
-<!-- Updated: 2026-08-28 | capability-bundles doc sync (ADR-0047) -->
+<!-- Updated: 2026-09-02 | D2 Skills vertical slice -->
 
 # bot_project
 
@@ -66,7 +66,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 - **IM pipeline** (S4→S2→S3→S5→S6→S7→S8): Full path with control commands
 - **WebUI pipeline** (S4→S5→S6→S7→S8): No S2/S3 (UI handles workspace/pool/session controls)
 - **Single persistence path**: `PersistUserMessageStage` (S7) is the only place user messages are written to transcript store
-- **Skill resolution**: `SkillParseStage` (S6) validates `/skillName` commands via pluggable `SkillRegistry` ABC
+- **Skill resolution**: `SkillParseStage` (S6) resolves `/skillName` commands through the shared `SkillResolver` contract
 
 ### WebUI vs IM Differences
 
@@ -86,7 +86,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/input_pipeline/context.py` | `BotInputContext` — concrete context with pool store, transcript store, enqueue callback |
 | `bot/input_pipeline/assembly.py` | `build_im_pipeline()` / `build_webui_pipeline()` — stage ordering per channel |
 | `bot/input_pipeline/stages/resolve_pool.py` | S5 — pool/agent resolution + `RoutingMeta` StrEnum for envelope metadata keys |
-| `bot/input_pipeline/stages/skill_parse.py` | S6 — skill validation via `SkillRegistry` ABC + `PoolSkillManagerRegistry` concrete impl |
+| `bot/input_pipeline/stages/skill_parse.py` | S6 — per-pool root `SkillResolver` lookup + canonical command resolution via `PoolSkillResolverRegistry` |
 | `bot/input_pipeline/stages/persist_user_message.py` | S7 — single persistence path for user messages |
 | `bot/input_pipeline/stages/enqueue.py` | S8 — builds `InputMessage` and enqueues |
 | `bot/input_pipeline/stages/environment_control.py` | S2 — IM-only `/cd`, `/pool`, `/exit`, `/pwd` interception |
@@ -97,7 +97,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/service/pool/` | Pool mode assembly — creates `AgentPool` from the compiled scope declaration (`declaration.py` boots: load → validate → compile; `factory.py` assembles). Split into 8 focused modules |
 | `modex_agent/multi_agent/pool_router.py` | `PoolRouter` (framework) — session→pool dispatch shell, `PoolRoutingStore` persistence, declaration-lookup agent→pool ownership |
 | `modex_agent/multi_agent/pool_instance.py` | `PoolInstance` — pool runtime holder (config, pool, root agent name) |
-| `bot/workspace/wiring/` | `build_workspace_stack` — workspace assembly (stack + resources; the workspace layer's resource selection — memory backend/path layout/MCP set — is declared in `config/scopes/bot.yml`, ticket 14) |
+| `bot/workspace/wiring/` | `build_workspace_stack` — workspace assembly (stack + resources; the workspace layer's resource selection — memory backend/path layout — is declared in `config/scopes/bot.yml`, ticket 14) |
 | `bot/workspace/handle.py` | `PoolWorkspaceResources` — per-workspace resource bundle |
 | `bot/workspace/dispatch.py` | `WorkspaceMessageDispatcher` — per-message workspace routing |
 | `bot/workspace/pool_data.py` | `PoolData` — frozen per-pool data bundle |
@@ -121,7 +121,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `modexbot/main.py` | CLI→service bootstrap |
 | `config/bot_config.yml` | Runtime safety, memory, tool, observability config. `${ENV_VAR}` interpolation |
 | `config/mcp/*.json` | MCP server registry (stdio/SSE/streamable_http) |
-| `config/scopes/bot.yml` | Scope declaration — the single source of pool/agent assembly (workspace resource selection + all pool trees + peer links) |
+| `config/scopes/bot.yml` | Scope declaration — the single source of pool/agent assembly (workspace resource selection + all pool trees + peer links). Deviations-only: default-restating fields are omitted; edit via Settings → Pools (structured panel) or Settings → Scope (raw YAML) |
 | `config/scopes/eval/` | Eval-only declaration face — pool-mode arm overlays plus pool-as-root single-agent harness declarations; never loaded by production boot |
 | `config/graphs/*.yml` | Declarative graph specifications (DAG workflows) — loaded by `GraphSpecLoader` at startup |
 
@@ -177,7 +177,7 @@ is unavailable. Pi remains per-turn. Cancellation, failed startup, pool
 shutdown, and workspace eviction terminate and reap complete provider process
 trees; normal OpenCode turns retain the warm server for reuse.
 
-**WebUI:** external sessions appear in the WebUI session list with their `.pi` / `.opencode` suffix, alongside every other session. Streaming output (text, reasoning, tool calls/results, errors) is rendered through the canonical `TurnEvent` seam → `WebBotEmitter` projection into existing `ServerEvent`/transcript types. External pools are configured through the same scope declaration (Settings → Scope tab).
+**WebUI:** external sessions appear in the WebUI session list with their `.pi` / `.opencode` suffix, alongside every other session. Streaming output (text, reasoning, tool calls/results, errors) is rendered through the canonical `TurnEvent` seam → `WebBotEmitter` projection into existing `ServerEvent`/transcript types. External pools are configured through the same scope declaration (Settings → Pools panel or the Scope YAML tab).
 
 See ADR-0022 and `docs/design/external-agent-integration/` for the full design.
 
@@ -427,6 +427,19 @@ These are **consumed at different points** than `build_session_only_memory`:
 
 ## Skills (global library + per-agent assignment)
 
+`SkillsCapability` auto-applies to every native agent; an explicit
+`capabilities: {skills: false}` veto removes that agent's prompt and command
+resolution, while external agents are structurally excluded from capabilities.
+One pool-level `SkillsSupply` owns the `agent_name -> SkillCatalog` mapping.
+Main and subagent assembly only call `resolver_for(agent_name)`; they do not
+construct catalogs.
+
+There are two inbound command onramps. Bot `SkillParseStage` obtains each pool's
+root resolver from `PoolInstance.skill_resolver`; framework
+`SkillCommandHandler` receives the bound resolver through `CommandContext`.
+Both call `SkillResolver.resolve_command()` and therefore use the same catalog
+and canonical XML renderer.
+
 The global skill **library** has two sources, REPO PRIORITY:
 
 - `local_skills/<name>/` — the repo library (CRUD target: `upload_skill` /
@@ -438,7 +451,7 @@ The global skill **library** has two sources, REPO PRIORITY:
 
 Per-agent skill dirs live at `skills/<pool>/<agent>/<name>/`. Disk is the single
 source of truth: neither the scope declaration nor the WebUI carries a `skills`
-field; the runtime `SkillManager` and the WebUI both read
+field; the runtime `SkillCatalog` and the WebUI `SkillsStore` both read
 `skills/<pool>/<agent>/` directly. A per-agent dir may be either:
 
 - a **real copy** — committed in the repo for portability, or manually placed;
@@ -463,7 +476,7 @@ are the converged seams; no platform preconditions on any OS.
   result and parses it. If history doesn't carry results reliably, fall back to
   a server fetch endpoint (see spec §12 — deferred).
 - Registered via `capabilities: {todo: {}}` on any agent in the scope declaration (root or nested; ADR-0047). Both root agents and subagents can opt in; the bundled nested agents (office-expert, explore, general) all include `todo`. `TodoContinuationHook` (react runner, factory-declared `priority=-1000`), `TodoReorientationHook` (memory runner), and `TodoPlanningNudgeHook` (react runner, one-shot planning reminder — fresh-turn arming, at most one injection per logical turn) are roster-dispatched only on agents where the capability is effective — the retired unconditional registration branches are gone, and the WebUI todo panel reads the same capability supply. `hooks: [-todo_planning_nudge]` surgically removes the nudge.
-- Prompt injection: the "## Task Tracking" discipline section renders through the `todo` capability's section channel (`capabilities: {todo: {}}` → `TodoCapability.assemble` → the capability-section anchor in `MemorySystemContextManager.load()`; compile-time gated). The planning-nudge hook rides the same bundle as the section's behavior-level backstop (the retired per-attempt-arming implementation died with the migration; the revived hook arms at `start_node_turn`).
+- Prompt injection: the "## Task Discipline" discipline section renders through the `todo` capability's section channel (`capabilities: {todo: {}}` → `TodoCapability.assemble` → the capability-section anchor in `MemorySystemContextManager.load()`; compile-time gated). The planning-nudge hook rides the same bundle as the section's behavior-level backstop (the retired per-attempt-arming implementation died with the migration; the revived hook arms at `start_node_turn`).
 
 ## Subdirectories
 

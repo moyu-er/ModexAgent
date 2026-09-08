@@ -1,16 +1,15 @@
 """Tests: unconfigured tools are always NORMAL; configured tools check paths."""
 from pathlib import Path
 
-import pytest
-from modex_agent.approval.runtime import TieredToolApprovalClassifier
 from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from modex_agent.approval.constants import ApprovalTier
-from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
-from modex_agent.core.types import ToolCall
+from modex_agent.approval.runtime import TieredToolApprovalClassifier
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 def make_ctx():
@@ -33,7 +32,7 @@ class TestUnconfiguredToolsNeverNeedApproval:
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
         tc = ToolCall(tool_name="ls", call_id="1", arguments={"path": "/home"})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
+        assert c.classify(tc, make_ctx()).tier is ApprovalTier.NORMAL
 
     def test_read_file_with_any_path_is_normal(self):
         config = AgentApprovalConfig(
@@ -43,7 +42,7 @@ class TestUnconfiguredToolsNeverNeedApproval:
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
         tc = ToolCall(tool_name="read_file", call_id="1", arguments={"path": "/etc/passwd"})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
+        assert c.classify(tc, make_ctx()).tier is ApprovalTier.NORMAL
 
     def test_cat_with_any_path_is_normal(self):
         config = AgentApprovalConfig(
@@ -53,7 +52,7 @@ class TestUnconfiguredToolsNeverNeedApproval:
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
         tc = ToolCall(tool_name="cat", call_id="1", arguments={"path": "/etc/hosts"})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
+        assert c.classify(tc, make_ctx()).tier is ApprovalTier.NORMAL
 
     def test_search_content_with_any_path_is_normal(self):
         config = AgentApprovalConfig(
@@ -63,7 +62,7 @@ class TestUnconfiguredToolsNeverNeedApproval:
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
         tc = ToolCall(tool_name="search_content", call_id="1", arguments={"directory": "/home"})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
+        assert c.classify(tc, make_ctx()).tier is ApprovalTier.NORMAL
 
 
 class TestConfiguredToolsCheckPaths:
@@ -77,7 +76,7 @@ class TestConfiguredToolsCheckPaths:
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
         tc = ToolCall(tool_name="edit", call_id="1", arguments={"path": "/etc/shadow"})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.DANGEROUS
+        assert c.classify(tc, make_ctx()).tier is ApprovalTier.DANGEROUS
 
     def test_configured_tool_inside_allowed_paths_is_normal(self):
         config = AgentApprovalConfig(
@@ -87,4 +86,4 @@ class TestConfiguredToolsCheckPaths:
         matcher = ArgumentMatcher(project_root=Path("/project"))
         c = TieredToolApprovalClassifier(config=config, argument_matcher=matcher)
         tc = ToolCall(tool_name="edit", call_id="1", arguments={"path": "./project/file.txt"})
-        assert c.classify(tc, make_ctx()) == ApprovalTier.NORMAL
+        assert c.classify(tc, make_ctx()).tier is ApprovalTier.NORMAL

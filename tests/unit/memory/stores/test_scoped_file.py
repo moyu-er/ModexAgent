@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.scope import MemoryContext, MemoryLayerName, SessionScope, UserScope
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+from modex_agent.memory.scope import MemoryContext, MemoryLayerName, SessionScope, UserScope
 
 
 @pytest.mark.asyncio

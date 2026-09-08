@@ -20,20 +20,16 @@ from typing import Any
 
 from pydantic import Field
 
-# ADR-0033 D14 bridge: LLMResponse, MessageDelta, and all referenced types
-# are now Pydantic BaseModels (Batches 1-3). Forward-ref resolution for
-# LLMResponse.error_info → LLMErrorInfo and MessageDelta.message → ChatMessage
-# goes through model_rebuild() calls below — no module-namespace injection
-# hack is needed anymore.
+# ADR-0033 D14 bridge: MessageDelta and all referenced types are Pydantic
+# BaseModels. Its ChatMessage forward reference is resolved below.
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
-from modex_agent.core.llm_struct import LLMErrorInfo  # noqa: F401 — needed for model_rebuild()
-from modex_agent.core.message import (  # noqa: F401 — needed for model_rebuild()
+from modex_agent.core.message import (  # noqa: F401 - needed for model_rebuild()
     ChatMessage,
     ContentPart,
+    MessageRole,
 )
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import LLMResponse, MessageRole
 from modex_agent.runtime.codec import RuntimeStateCodec, RuntimeStateCodecConfig
 from modex_agent.runtime.enums import (
     AgentKind,
@@ -63,7 +59,6 @@ from modex_graph.state import GraphState
 from .constants import ReActNode
 
 MessageDelta.model_rebuild()
-LLMResponse.model_rebuild()
 
 
 # =========================================================================
@@ -194,9 +189,8 @@ def get_react_state(ctx: AgentContext) -> ReActTurnState | None:
 
 
 # Resolve forward references for ReActTurnState (uses `from __future__ import
-# annotations`). MessageDelta's forward ref to ChatMessage and LLMResponse's
-# forward ref to LLMErrorInfo were already resolved by the model_rebuild()
-# calls above.
+# annotations`). MessageDelta's forward ref to ChatMessage was already
+# resolved by the model_rebuild() call above.
 ReActTurnState.model_rebuild()
 
 

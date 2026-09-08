@@ -17,7 +17,7 @@ from bot.eval.harbor.pool_budget import (
     pool_budget_config_from_env,
 )
 from bot.eval.harbor.smoke_runtime import SmokeMode
-from modex_agent.core.constants import ReasoningEffort
+from modex_agent.core.llm_request import ReasoningEffort
 
 REQUIRED_LANGFUSE_CONTAINERS: Final = frozenset(
     {

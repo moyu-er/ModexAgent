@@ -49,10 +49,14 @@ class FaultInjectingNodeStateStore(NodeStateStore):
             return operation()
 
         previous_method = self._last_method
-        if previous_method is not None and (
-            previous_method,
-            method_name,
-        ) in self._crash_between:
+        if (
+            previous_method is not None
+            and (
+                previous_method,
+                method_name,
+            )
+            in self._crash_between
+        ):
             self._raise_injected()
 
         position = self._crash_points.get(method_name)
@@ -76,8 +80,16 @@ class FaultInjectingNodeStateStore(NodeStateStore):
                 assert_never(unreachable)
         return result
 
-    def begin_invocation(self, node_id: str) -> InvocationContext:
-        return self._invoke("begin_invocation", lambda: self._wrapped.begin_invocation(node_id))
+    def begin_invocation(
+        self,
+        node_id: str,
+        *,
+        graph_run_version: int | None = None,
+    ) -> InvocationContext:
+        return self._invoke(
+            "begin_invocation",
+            lambda: self._wrapped.begin_invocation(node_id, graph_run_version=graph_run_version),
+        )
 
     def complete_invocation(self, invocation: InvocationContext) -> None:
         self._invoke(

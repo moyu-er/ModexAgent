@@ -1,8 +1,8 @@
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.core.constants import InterfaceFormat, ReasoningEffort
-from modex_agent.ioc.configs.llm import LLMConfig, Modality, ModelCapabilities
+from modex_agent.core.llm_request import ReasoningEffort
+from modex_agent.ioc.configs.llm import InterfaceFormat, LLMConfig, Modality, ModelCapabilities
 from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.providers.http.formats.anthropic import AnthropicProtocol
 from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol

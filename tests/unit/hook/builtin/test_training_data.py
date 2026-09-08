@@ -9,10 +9,8 @@ import pytest
 from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult
+from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook import HookErrorPolicy, HookPayload, HookPoint, HookRunner, HookSpec
 from modex_agent.hook.abc import FinallyGraphHook
 from modex_agent.hook.builtin.training_data import TRAINING_RELEVANT_ATTR, TrainingDataHook
@@ -25,6 +23,7 @@ from modex_agent.runtime.enums import (
 )
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.root_span_hook import RootSpanHook
 from modex_agent.trace.scoring import TrajectoryMetrics

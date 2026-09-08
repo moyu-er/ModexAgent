@@ -9,6 +9,7 @@
 import { useState, type FC } from "react";
 import { useT } from "../../../i18n";
 import { SectionLabel } from "../../ui/SectionLabel";
+import { GraphStatusBadge, statusLabelKey } from "../shared";
 import type { GraphTimelineEvent } from "../../../hooks/useGraphExecution.diff";
 
 /** kind → dot fill class(§6.2 Rev 4 状态色系 — graph-status token,
@@ -20,6 +21,7 @@ const KIND_DOT_CLS: Readonly<Record<string, string>> = {
   node_crashed: "fill-graph-status-crashed",
   graph_completed: "fill-graph-status-completed",
   graph_crashed: "fill-graph-status-crashed",
+  graph_failed: "fill-graph-status-crashed",
 };
 
 function dotCls(kind: string): string {
@@ -32,6 +34,7 @@ interface TimelineRowProps {
 }
 
 const TimelineRow: FC<TimelineRowProps> = ({ event, inferredLabel }) => {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   const hasPayload = Boolean(
     (event.event?.result !== undefined && event.event?.result !== null) ||
@@ -63,9 +66,12 @@ const TimelineRow: FC<TimelineRowProps> = ({ event, inferredLabel }) => {
           type="button"
           disabled={!hasPayload}
           onClick={(): void => setExpanded((v) => !v)}
-          className="flex items-center gap-1.5 text-left disabled:cursor-default"
+          className="flex flex-wrap items-center gap-1.5 text-left disabled:cursor-default"
         >
           <span className="font-mono text-xs text-body">{event.kind}</span>
+          {event.event?.status ? (
+            <GraphStatusBadge status={event.event.status} label={t(statusLabelKey(event.event.status))} />
+          ) : null}
           {event.derived ? (
             <span className="font-mono text-xs text-faint">
               ({inferredLabel})

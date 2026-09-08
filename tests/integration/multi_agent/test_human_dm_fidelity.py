@@ -21,19 +21,17 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-from modex_agent.approval.views import ApprovalDecisionInput
-from modex_agent.approval.types import ApprovalAction
+from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
-from modex_agent.core.types import InputMessage
-from modex_agent.media.models import Attachment, AttachmentLocator, Kind
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput, InputMessage
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
-from modex_agent.multi_agent.inbox_poller import InboxPoller
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
+from modex_agent.multi_agent.inbox_poller import InboxPoller
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.state import AgentState
 
@@ -91,11 +89,11 @@ async def test_human_dm_round_trips_approval_and_attachments() -> None:
     poller = InboxPoller(pool, interval=0.05)
     pool.attach_poller(poller)
 
-    from modex_agent.core.session_registry import InMemorySessionRegistry
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStore
     from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrackStore
     from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
+    from modex_agent.persistence.session_registry import InMemorySessionRegistry
 
     tree_manager = SessionTreeManager(
         tree_store=InMemorySessionTreeStore(),

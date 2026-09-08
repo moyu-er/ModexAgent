@@ -1,6 +1,6 @@
-"""Stale-RUNNING graph instance sweeper.
+"""Stale active graph instance sweeper.
 
-Periodic business-layer task that scans RUNNING graph instances and marks
+Periodic business-layer task that scans RUNNING/PAUSING/STOPPING instances and marks
 stale ones as CRASHED. An instance is stale when its ``executor_process_id``
 attr is either absent (NULL — no process ever claimed it) or belongs to a
 process no longer in the alive set.
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 class StaleInstanceSweeper:
-    """Scan RUNNING graph instances and mark stale ones CRASHED.
+    """Scan active graph instances and mark stale ones CRASHED.
 
     Args:
         instance_store: The graph instance store to scan and update.
@@ -47,13 +47,19 @@ class StaleInstanceSweeper:
         self._process_registry = process_registry
 
     async def sweep(self) -> list[int]:
-        """Scan RUNNING instances, mark stale ones CRASHED.
+        """Scan RUNNING/PAUSING/STOPPING instances, mark stale ones CRASHED.
 
         Returns the list of swept ``graph_instance_id``s. An instance is
         stale when ``executor_process_id`` is NULL (absent/None) or not in
         the alive set. Alive instances are left untouched.
         """
-        running = self._instance_store.load_by_status(GraphInstanceStatus.RUNNING)
+        running = [
+            metadata
+            for status in (
+                GraphInstanceStatus.RUNNING, GraphInstanceStatus.PAUSING, GraphInstanceStatus.STOPPING,
+            )
+            for metadata in self._instance_store.load_by_status(status)
+        ]
         if not running:
             return []
         alive = self._process_registry.alive_process_ids()
@@ -67,7 +73,7 @@ class StaleInstanceSweeper:
                 swept.append(meta.graph_instance_id)
         if swept:
             logger.info(
-                "stale_instance_sweeper: marked %d RUNNING instance(s) CRASHED: %s",
+                "stale_instance_sweeper: marked %d active instance(s) CRASHED: %s",
                 len(swept),
                 swept,
             )

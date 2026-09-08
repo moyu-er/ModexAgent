@@ -19,7 +19,7 @@ from modex_agent.persistence.adapters.kv_store import SqliteKVStore
 from modex_agent.persistence.adapters.message_store import SqliteMessageStore
 from modex_agent.persistence.connection import ConnectionManager
 from modex_agent.persistence.migration import DatabaseKind
-from modex_agent.persistence.session_cleanup import SqliteSessionDatabaseCleaner
+from modex_agent.persistence.session_artifacts import SqliteSessionDatabaseCleaner
 
 if TYPE_CHECKING:
     from modex_agent.core.scope import RecordScope

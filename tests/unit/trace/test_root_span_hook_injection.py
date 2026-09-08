@@ -22,14 +22,13 @@ import pytest
 
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult
+from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.pricing import PriceBook, PriceEntry
 from modex_agent.trace.root_span_hook import RootSpanHook
@@ -87,7 +86,7 @@ def _make_context(
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
-        tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
+        tool_manager=InMemoryToolManager(),
         session=session,
         runtime=AgentRuntime(services=AgentRuntimeServices(), state=state),
     )

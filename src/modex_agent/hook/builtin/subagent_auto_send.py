@@ -85,10 +85,11 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.constants import ExecutionStrategyKind, StopReason
+from modex_agent.core.agent import ExecutionStrategyKind
+from modex_agent.core.emitter import StopReason
 from modex_agent.core.message_utils import sanitize_reminder_content
-from modex_agent.core.types import ReminderKind
 from modex_agent.hook.abc import OutcomeFinallyHook
+from modex_agent.messaging.models import ReminderKind
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext

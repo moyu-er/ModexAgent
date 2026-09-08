@@ -21,7 +21,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
 
-from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig
+from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.events import EmitterConfig
 from modex_agent.core.turn_events import TurnEvent
 
 logger = logging.getLogger(__name__)

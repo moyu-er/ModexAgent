@@ -22,7 +22,7 @@ _BOT_PROJECT = Path(__file__).resolve().parents[3]
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.mcp.client import BaseMCPClient
 from modex_agent.tools.mcp.injector import MCPTransportInjector
 from modex_agent.tools.mcp.manager import MCPClientManager
@@ -85,7 +85,7 @@ _ONE_TOOL = [{"name": "search", "description": "stub tool", "inputSchema": {}}]
 
 
 def _tool_manager() -> InMemoryToolManager:
-    return InMemoryToolManager(config=ToolManagerConfig())
+    return InMemoryToolManager()
 
 
 # ── Registry branch ──

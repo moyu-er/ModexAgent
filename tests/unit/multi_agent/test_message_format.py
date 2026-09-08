@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from modex_agent.core import message_utils
 from modex_agent.core.agent import AgentImplementation
-from modex_agent.core.constants import StopReason
+from modex_agent.core.emitter import StopReason
 from modex_agent.multi_agent import message_format
 from modex_agent.multi_agent.message_format import (
     ResultMeta,

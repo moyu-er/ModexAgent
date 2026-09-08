@@ -218,7 +218,7 @@ async def handle_list_agent_skills(request: web.Request) -> web.Response:
 
 
 async def handle_assign_skill(request: web.Request) -> web.Response:
-    """POST /api/pools/{pool}/agents/{agent}/skills/{name} -- assign a skill copy."""
+    """POST /api/pools/{pool}/agents/{agent}/skills/{name} -- assign a skill live."""
     server: WebUIServer = request.app["server"]
     if (miss := pool_cfg_required(server)) is not None:
         return miss
@@ -236,7 +236,7 @@ async def handle_assign_skill(request: web.Request) -> web.Response:
 
 
 async def handle_unassign_skill(request: web.Request) -> web.Response:
-    """DELETE /api/pools/{pool}/agents/{agent}/skills/{name} -- remove a skill copy."""
+    """DELETE /api/pools/{pool}/agents/{agent}/skills/{name} -- unassign a skill live."""
     server: WebUIServer = request.app["server"]
     if (miss := pool_cfg_required(server)) is not None:
         return miss

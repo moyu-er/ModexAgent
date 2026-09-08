@@ -4,10 +4,16 @@ from __future__ import annotations
 import pytest
 
 from modex_agent.core.message import ChatMessage
+from modex_agent.core.session_id import SessionInfo
 from modex_agent.runtime.codec import RuntimeStateCodecRegistry
 from modex_agent.runtime.enums import AgentKind, MessageDeltaSource, SnapshotReason, TurnPhase
-from modex_agent.runtime.models import MessageDelta, ResumePoint, StateQueryScope, TurnIdentity, TurnSnapshot
-from modex_agent.core.session_id import SessionInfo
+from modex_agent.runtime.models import (
+    MessageDelta,
+    ResumePoint,
+    StateQueryScope,
+    TurnIdentity,
+    TurnSnapshot,
+)
 
 
 class _FakeCodec:

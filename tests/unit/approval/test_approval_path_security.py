@@ -18,18 +18,17 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.approval.runtime import TieredToolApprovalClassifier
 from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from modex_agent.approval.constants import ApprovalTier
+from modex_agent.approval.runtime import TieredToolApprovalClassifier
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
-from modex_agent.core.types import ToolCall
 from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.standard.file_tool import EditFileTool, ReadFileTool, WriteFileTool
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
-
 
 # ---------------------------------------------------------------------------
 # Bug A — canonical tool-name contract
@@ -92,8 +91,8 @@ def _call(path: str, call_id: str = "c1") -> ToolCall:
 def test_in_project_paths_are_normal(tmp_path: Path, path: str) -> None:
     # Anchor an absolute in-project path so it resolves under tmp_path.
     abs_inside = (tmp_path / "real.txt").resolve()
-    assert _classifier(tmp_path).classify(_call(str(abs_inside)), _ctx()) == ApprovalTier.NORMAL
-    assert _classifier(tmp_path).classify(_call(path), _ctx()) == ApprovalTier.NORMAL
+    assert _classifier(tmp_path).classify(_call(str(abs_inside)), _ctx()).tier is ApprovalTier.NORMAL
+    assert _classifier(tmp_path).classify(_call(path), _ctx()).tier is ApprovalTier.NORMAL
 
 
 @pytest.mark.parametrize(
@@ -106,7 +105,7 @@ def test_in_project_paths_are_normal(tmp_path: Path, path: str) -> None:
     ],
 )
 def test_outside_and_traversal_paths_are_dangerous(tmp_path: Path, path: str) -> None:
-    assert _classifier(tmp_path).classify(_call(path), _ctx()) == ApprovalTier.DANGEROUS
+    assert _classifier(tmp_path).classify(_call(path), _ctx()).tier is ApprovalTier.DANGEROUS
 
 
 def test_matcher_dotdot_escape_is_not_allowed(tmp_path: Path) -> None:
@@ -231,8 +230,8 @@ def test_classifier_absolute_allowed_paths_end_to_end(tmp_path: Path) -> None:
         arguments={"path": str(tmp_path / "leak.txt")},
         call_id="c2",
     )
-    assert classifier.classify(inside, _ctx()) == ApprovalTier.NORMAL
-    assert classifier.classify(outside, _ctx()) == ApprovalTier.DANGEROUS
+    assert classifier.classify(inside, _ctx()).tier is ApprovalTier.NORMAL
+    assert classifier.classify(outside, _ctx()).tier is ApprovalTier.DANGEROUS
 
 
 # ---------------------------------------------------------------------------
@@ -270,8 +269,8 @@ def test_classifier_anchors_to_live_workspace_not_static_project_root(
         argument_matcher=ArgumentMatcher(root_provider=_StubRootProvider(workspace)),
     )
 
-    assert classifier.classify(_call(str(workspace / "f.txt")), _ctx()) == ApprovalTier.NORMAL
-    assert classifier.classify(_call(str(bot_project_dir / "f.txt")), _ctx()) == ApprovalTier.DANGEROUS
+    assert classifier.classify(_call(str(workspace / "f.txt")), _ctx()).tier is ApprovalTier.NORMAL
+    assert classifier.classify(_call(str(bot_project_dir / "f.txt")), _ctx()).tier is ApprovalTier.DANGEROUS
 
 
 def test_matcher_follows_workspace_switch(tmp_path: Path) -> None:

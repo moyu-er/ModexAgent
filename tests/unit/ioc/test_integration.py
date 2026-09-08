@@ -3,8 +3,8 @@
 import tempfile
 from pathlib import Path
 
+from modex_agent.core.llm_struct import DEFAULT_TOOL_TIMEOUT_SECONDS
 from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.core.constants import DefaultValues
 from modex_agent.ioc.configs.safety import SafetyConfig
 from modex_agent.ioc.merge import deep_merge
 
@@ -58,7 +58,7 @@ class TestSafetyConfigDefaults:
         cfg = SafetyConfig()
         assert cfg.llm.request_timeout is None
         assert cfg.llm.max_retries == 3
-        assert cfg.turn.tool_timeout == DefaultValues.TOOL_TIMEOUT_SECONDS
+        assert cfg.turn.tool_timeout == DEFAULT_TOOL_TIMEOUT_SECONDS
 
     def test_safety_partial_llm_override(self) -> None:
         from modex_agent.ioc.configs.safety import LLMSafetyConfig
@@ -68,4 +68,4 @@ class TestSafetyConfigDefaults:
         )
         assert cfg.llm.request_timeout == 30.0
         assert cfg.llm.max_retries == 3  # default preserved
-        assert cfg.turn.tool_timeout == DefaultValues.TOOL_TIMEOUT_SECONDS  # default preserved
+        assert cfg.turn.tool_timeout == DEFAULT_TOOL_TIMEOUT_SECONDS  # default preserved

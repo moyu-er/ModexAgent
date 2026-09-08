@@ -11,9 +11,8 @@ from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
 
-from modex_agent.approval.types import ApprovalAction
-from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
 from modex_agent.workspace.runtime import bind_workspace_root
 
 
@@ -85,7 +84,7 @@ async def test_persist_skips_approval_decision() -> None:
                 RoutingMeta.FULL_SESSION_ID: "ext.main",
                 RoutingMeta.RESOLVED_AGENT: "main",
                 RoutingMeta.APPROVAL_DECISION: ApprovalDecisionInput(
-                    "c1", ApprovalAction.ALLOW
+                    tool_call_id="c1", action=ApprovalAction.ALLOW
                 ),
                 # NOTE: no WORKSPACE — decision must skip before that subscript
             },

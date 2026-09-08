@@ -108,16 +108,15 @@ class E2BSandbox(SandboxAdapter):
         self._sandbox_created_at: float | None = None
         self._artifacts_metadata: list[SandboxArtifact] = []
 
-    def _set_api_key_env(self):
-        old_key = os.environ.get("E2B_API_KEY")
-        os.environ["E2B_API_KEY"] = self.api_key
-        return old_key
+    def _create_sandbox(self) -> "Sandbox":
+        """Create a sandbox, passing the API key as an SDK parameter.
 
-    def _restore_api_key_env(self, old_key) -> None:
-        if old_key is not None:
-            os.environ["E2B_API_KEY"] = old_key
-        else:
-            os.environ.pop("E2B_API_KEY", None)
+        Never writes the key into the global ``os.environ`` — that is not
+        concurrency-safe (two adapters with different keys would race).
+        """
+        if self.api_key is not None:
+            return Sandbox.create(api_key=self.api_key)
+        return Sandbox.create()
 
     def _is_sandbox_alive(self) -> bool:
         """Check if the sandbox is still alive and not timed out."""
@@ -320,10 +319,9 @@ class E2BSandbox(SandboxAdapter):
         # Clean up any existing sandbox first
         await self.cleanup()
 
-        old_key = self._set_api_key_env()
         try:
             # Create new sandbox
-            self._active_sandbox = await asyncio.to_thread(Sandbox.create)
+            self._active_sandbox = await asyncio.to_thread(self._create_sandbox)
             self._sandbox_created_at = time.time()
             sandbox = self._active_sandbox
 
@@ -370,8 +368,6 @@ class E2BSandbox(SandboxAdapter):
                 error=str(e),
                 execution_time_ms=(time.time() - start_time) * 1000,
             )
-        finally:
-            self._restore_api_key_env(old_key)
 
     async def execute_command(
         self,
@@ -392,10 +388,9 @@ class E2BSandbox(SandboxAdapter):
         # Clean up any existing sandbox first
         await self.cleanup()
 
-        old_key = self._set_api_key_env()
         try:
             # Create new sandbox
-            self._active_sandbox = await asyncio.to_thread(Sandbox.create)
+            self._active_sandbox = await asyncio.to_thread(self._create_sandbox)
             self._sandbox_created_at = time.time()
             sandbox = self._active_sandbox
 
@@ -433,8 +428,6 @@ class E2BSandbox(SandboxAdapter):
                 error=str(e),
                 execution_time_ms=(time.time() - start_time) * 1000,
             )
-        finally:
-            self._restore_api_key_env(old_key)
 
     async def cleanup(self, sandbox_id: str | None = None) -> None:
         """Clean up the E2B sandbox and release resources."""

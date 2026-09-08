@@ -24,11 +24,10 @@ import pytest
 
 from modex_agent.core.agent import AgentCommKind, AgentContext
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
-from modex_agent.core.types import InputMessage
 from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.messaging.broker import Address, BrokerMessage, MessageBroker
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import AgentPool
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
@@ -47,6 +46,7 @@ from modex_agent.multi_agent.inbox_poller import InboxPoller
 from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.tools.manager import InMemoryToolManager
 
 # -- Shared fixtures -------------------------------------------------------
 
@@ -120,6 +120,12 @@ class _FakePool:
 
     async def peek_inbox(self, sid: str, limit: int = 1) -> list[AgentMessageEnvelope]:
         return await self._bus.peek(sid, limit=limit)
+
+    async def acknowledge_inbox(self, sid: str, message_id: str) -> None:
+        await self._bus.acknowledge(sid, message_id)
+
+    def release_inbox(self, sid: str, message_ids: list[str]) -> None:
+        self._bus.release(sid, message_ids)
 
     async def dispatch_envelope(
         self, sid: str, instance: object, envelope: AgentMessageEnvelope
@@ -325,6 +331,7 @@ class TestInboxConsumerConsumeDedup:
             metadata={},
         )
         mock_server = MagicMock()
+        mock_server.peek = AsyncMock(return_value=[msg])
         mock_server.consume = AsyncMock(side_effect=[[msg], [msg]])
         consumer = InboxConsumer(server=mock_server)
 

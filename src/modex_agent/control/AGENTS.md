@@ -61,8 +61,8 @@ the ReAct `LLMNode`, `ToolNode._execute_batch`, and two interceptor wrappers:
 
 ### (B) Task-based — busy-input INTERRUPT
 
-`AgentPipeline._process_message_locked()` (`modex_agent/pipeline/pipeline.py`):
-when a new message arrives in `BusyInputMode.INTERRUPT`, it calls
+`AgentPipeline._process_message()` (`modex_agent/pipeline/pipeline.py`):
+when a new message arrives in `BusyInputMode.INTERRUPT` (`modex_agent/pipeline/busy_input.py`), it calls
 `existing_task.cancel()` on the running asyncio task — pure
 `asyncio.CancelledError`, no channel command. If cancellation lands during a
 tool batch, `ToolNode` converges it through the same cleanup/result path as (A).

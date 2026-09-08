@@ -35,8 +35,8 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
     # Archive config (new field, migrated from long_term if old config used)
     archive_config = None
     if cfg.archive is not None and cfg.archive.enabled:
-        from modex_agent.core.scope import build_scope
         from modex_agent.memory.layers.config import ArchiveMemoryConfig
+        from modex_agent.memory.scope import build_scope
 
         archive_config = ArchiveMemoryConfig(
             max_entries=cfg.archive.max_entries,
@@ -48,8 +48,8 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
     # Core memory config (new field, migrated from long_term if old config used)
     core_memory_config = None
     if cfg.core is not None and cfg.core.enabled:
-        from modex_agent.core.scope import build_scope
         from modex_agent.memory.layers.config import CoreMemoryConfig
+        from modex_agent.memory.scope import build_scope
 
         core_memory_config = CoreMemoryConfig(
             default_templates_dir=cfg.core.default_templates_dir,

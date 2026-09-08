@@ -9,14 +9,14 @@ import pytest
 
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.core.constants import FinishReason, StopReason
-from modex_agent.core.emitter import AgentResult
+from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
+from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
+from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
-from modex_agent.core.session_id import SessionInfo
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ def _make_ctx(**kw):
     """Create a real AgentContext with typed runtime state."""
     from modex_agent.core.agent import AgentContext
     from modex_agent.memory.history import ListMessageHistory
-    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.tools.manager import InMemoryToolManager
     state = ReActTurnState(
         identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("s1"), turn_id="t1"),
         agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,

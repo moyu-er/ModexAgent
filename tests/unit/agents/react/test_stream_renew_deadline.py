@@ -20,10 +20,10 @@ import pytest
 
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.stream_events import LLMStreamEvent
-from modex_agent.core.types import LLMResponse
 from modex_agent.interceptor.abc import InterceptorScope
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.dispatch import (
@@ -38,7 +38,7 @@ from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
 def _make_ctx():
     from modex_agent.core.agent import AgentContext
-    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.tools.manager import InMemoryToolManager
 
     state = ReActTurnState(
         identity=TurnIdentity(

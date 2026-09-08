@@ -11,11 +11,12 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
+from modex_agent.core import AgentCommKind
+from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.capabilities import ModelInfo
-from modex_agent.core.constants import ExecutionStrategyKind, ReasoningEffort
+from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.prompt import SystemPromptProvider
-from modex_agent.core.skills import SkillManager
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool
+from modex_agent.core.tool_manager import Tool
 from modex_agent.hook import Hook, HookSpec
 from modex_agent.hook.runner import HookRunner
 from modex_agent.ioc.configs.memory import ArchiveConfig, CoreMemoryConfig, MemoryConfig
@@ -23,7 +24,6 @@ from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.presets import subagent_memory
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.descriptor import (
     AgentDescriptor,
     AgentInstance,
@@ -37,16 +37,18 @@ from modex_agent.plugins.assembly.context import (
     agent_context_chain,
 )
 from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
-from modex_agent.plugins.capability import CapabilityWiring
+from modex_agent.plugins.capability import CapabilityWiring, SectionPlacement
+from modex_agent.tools.manager import InMemoryToolManager
 
 if TYPE_CHECKING:
-    from modex_agent.core.context import ContextManager
+    from modex_agent.adapters.output import OutputAdapter
+    from modex_agent.commands.skill import SkillResolver
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.provider import LLMProvider
+    from modex_agent.memory.context import ContextManager
     from modex_agent.messaging import MessageBroker
     from modex_agent.multi_agent.factory import AgentFactory
     from modex_agent.multi_agent.pool import AgentPool
-    from modex_agent.pipeline.adapters import OutputAdapter
     from modex_agent.plugins.registry import ComponentRegistry
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
@@ -89,7 +91,7 @@ class NativeAssemblyInputs:
         memory_config: MemoryConfig | None = None,
         llm_provider: LLMProvider | None = None,
         tool_manager: InMemoryToolManager | None = None,
-        skill_manager: SkillManager | None = None,
+        skill_resolver: SkillResolver | None = None,
         output_adapter: OutputAdapter | None = None,
         root_provider: WorkspaceRootProvider | None = None,
         safety: RuntimeSafetyPolicy | None = None,
@@ -98,6 +100,7 @@ class NativeAssemblyInputs:
         extra_hooks: tuple[Hook, ...] = (),
         execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
         tool_transform: Callable[[Tool], Tool] | None = None,
+        depth: int = 0,
     ) -> None:
         self.agent_factory = agent_factory
         self.broker = broker
@@ -108,7 +111,7 @@ class NativeAssemblyInputs:
         self.memory_config = memory_config
         self.llm_provider = llm_provider
         self.tool_manager = tool_manager
-        self.skill_manager = skill_manager
+        self.skill_resolver = skill_resolver
         self.output_adapter = output_adapter
         self.root_provider = root_provider
         self.safety = safety
@@ -117,6 +120,7 @@ class NativeAssemblyInputs:
         self.extra_hooks = extra_hooks
         self.execution_strategy = execution_strategy
         self.tool_transform = tool_transform
+        self.depth = depth
 
 
 class NativeAssemblyResult:
@@ -372,7 +376,6 @@ async def assemble_native_agent(
             registry=chain.mcp_registry,
             tool_transform=inputs.tool_transform,
         )
-    skill_manager = inputs.skill_manager
     system_prompt = await prompt_provider.get_or_refresh()
     hook_runner = HookRunner()
     await _dispatch_hooks(spec, registry, chain, hook_runner, inputs.memory_system)
@@ -389,25 +392,48 @@ async def assemble_native_agent(
         hook_runner.add(HookSpec(hook=hook))
         seen_hook_names.add(hook.name)
 
-    # Capability-section anchor (SPEC §7.3): the merged prompt providers
-    # (spec.capabilities iteration order; within one wiring, the
-    # capability's own section order) feed the capability-section anchor
-    # of the native memory context manager — the sections must be set
-    # before the first load(), which happens at runtime after this
-    # assembly returns.
-    merged_sections: list[SystemPromptProvider] = [
+    # Capability sections have a one-to-one positional relationship with
+    # prompt providers. Validate it before placement and stable ordering.
+    placed_sections: dict[
+        SectionPlacement, list[tuple[int, SystemPromptProvider]]
+    ] = {SectionPlacement.HEAD: [], SectionPlacement.TAIL: []}
+    for compiled_cap in spec.capabilities:
+        active_sections = compiled_cap.binding.active_sections
+        providers = capability_wirings[compiled_cap.name].prompt_providers
+        if len(active_sections) != len(providers):
+            raise ValueError(
+                f"capability {compiled_cap.name!r} produced {len(providers)} prompt providers "
+                f"for {len(active_sections)} active sections; each active section must "
+                "produce exactly one prompt provider"
+            )
+        for section, section_provider in zip(active_sections, providers, strict=True):
+            placed_sections[section.placement].append(
+                (section.order, section_provider)
+            )
+
+    head_sections = tuple(
         provider
-        for compiled_cap in spec.capabilities
-        for provider in capability_wirings[compiled_cap.name].prompt_providers
-    ]
-    if merged_sections:
+        for _, provider in sorted(
+            placed_sections[SectionPlacement.HEAD], key=lambda item: item[0]
+        )
+    )
+    tail_sections = tuple(
+        provider
+        for _, provider in sorted(
+            placed_sections[SectionPlacement.TAIL], key=lambda item: item[0]
+        )
+    )
+    if head_sections or tail_sections:
         # isinstance is justified at this extension boundary: a custom
         # MEMORY_SYSTEM replaces the whole prompt assembly (SPEC Errata-7
         # replacement-face semantics — the same class of loss as
         # Errata-8(c)), so capability sections are native-only. The custom
         # owner opted out of native prompt assembly; skip, never raise.
         if isinstance(context_manager, MemorySystemContextManager):
-            context_manager.set_capability_sections(tuple(merged_sections))
+            context_manager.set_capability_sections(
+                head_sections,
+                tail_sections=tail_sections,
+            )
         else:
             logger.debug(
                 "Capability sections for agent %r skipped: context manager "
@@ -438,12 +464,13 @@ async def assemble_native_agent(
         memory_config=memory_config,
         roles=list(spec.roles),
         role_description=spec.description,
+        depth=inputs.depth,
     )
     instance = await inputs.agent_factory.create_agent(
         descriptor,
         broker=inputs.broker,
         tool_manager=tool_manager,
-        skill_manager=skill_manager,
+        skill_resolver=inputs.skill_resolver,
         context_manager=context_manager,
         output_adapter=inputs.output_adapter,
         llm_provider=provider,

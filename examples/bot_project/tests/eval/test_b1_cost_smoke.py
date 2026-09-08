@@ -9,10 +9,9 @@ import pytest
 from bot.eval.live_gates import b1_cost_runtime, b1_cost_smoke
 
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import FinishReason
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.types import LLMResponse
 from modex_agent.hook import BeforeGraphHook, HookSpec
 from modex_agent.runtime.models import JsonValue
 from modex_agent.runtime.services import AgentRuntimeServices

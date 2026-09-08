@@ -20,13 +20,13 @@ from modex_agent.agents.external.backend_provider import (
     PoolScopedBackendProvider,
     TurnContext,
 )
-from modex_agent.agents.external.paths import ProviderKind
 from modex_agent.agents.external.types import (
     BackendResult,
     BackendStatus,
     Emission,
     ExecOptions,
 )
+from modex_agent.core.agent import ProviderKind
 
 
 class _CloseCountingBackend(StreamingProviderBackend):

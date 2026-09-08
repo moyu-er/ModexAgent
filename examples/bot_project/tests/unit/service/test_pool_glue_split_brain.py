@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.pool import create_pool
 from bot.service.pool.declaration import (
@@ -21,9 +23,11 @@ from bot.service.pool.declaration import (
     declared_pool_build,
 )
 from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
+from bot.workspace.handle import WorkspaceHandle
 from bot.workspace.pool_data import build_pool_data
 from bot.workspace.wiring.stack import declared_assembly_deps
 
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
 from modex_agent.hook import HookRunner
@@ -31,7 +35,6 @@ from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import (
     ComponentRegistryLoader,
@@ -46,6 +49,18 @@ from .assembly_manifest import (
 )
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
+
+
+@pytest.fixture(autouse=True)
+def _fake_modexctl_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Native-agent assembly resolves the modexctl bin dir eagerly (the
+    native_env hook's env-spec derivation) — point it at a hermetic fake
+    binary so the suite stays hermetic on machines without modexctl
+    installed."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "modexctl.bat").write_text("@exit /b 0\n", encoding="ascii")
+    monkeypatch.setenv("MODEXBOT_BIN_DIR", str(bin_dir))
 
 BOT_BASE = Path(__file__).resolve().parents[3]
 FIXTURES = Path(__file__).parent / "fixtures" / "split_brain_09"
@@ -118,23 +133,20 @@ async def _declared_boot(tmp_path: Path):
     registry = await _load_registry()
     deps = declared_assembly_deps(declared.root, max_context_tokens=_MAX_CONTEXT_TOKENS)
     pool_data = await _build_pool_data(tmp_path, declared.pool.root_agent, deps)
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    (bin_dir / "modexctl.bat").write_text("@exit /b 0\n", encoding="ascii")
     broker = InMemoryMessageBroker()
     await broker.start()
-    with (
-        patch.dict("os.environ", {"MODEXBOT_BIN_DIR": str(bin_dir)}),
-        patch(
-            "modex_agent.tools.mcp_loader.load_per_agent_mcp",
-            new=AsyncMock(return_value=None),
-        ),
+    with patch(
+        "modex_agent.tools.mcp_loader.load_per_agent_mcp",
+        new=AsyncMock(return_value=None),
     ):
         instance = await create_pool(
             pool_name="default",
             declared=declared,
             assembly_deps=deps,
             project_dir=BOT_BASE,
+            workspace_handle=WorkspaceHandle(
+                target=tmp_path / '.modex', data_root=tmp_path / '.modex',
+            ),
             workspace_registry=object(),
             workspace_resources=object(),
             data_dir=tmp_path / ".modex",
@@ -165,7 +177,9 @@ async def test_declared_glue_components_are_roster_dispatched(
     factory code-wired constructions never run for this pool."""
     instance, pool_data, broker = await _declared_boot(tmp_path)
     try:
-        from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
+        from modex_agent.plugins.defaults.capabilities.experience.review_hook import (
+            ExperienceReviewHook,
+        )
 
         main_instance = instance.pool._agents.get(  # noqa: SLF001
             instance.root_agent_name
@@ -175,14 +189,14 @@ async def test_declared_glue_components_are_roster_dispatched(
         review_hooks = [h for h in react_hooks if isinstance(h, ExperienceReviewHook)]
         assert len(review_hooks) == 1, "exactly one ExperienceReviewHook (Stage-4 dispatch)"
         hook = review_hooks[0]
-        # The chain-supplied infra: the bot-global default provider (not any
-        # pool provider) + the pool's memory system + the experience
-        # capability supply's dir (the retired pool_data carrier died with
-        # the supply face, SPEC §8.3).
-        assert hook._agent._provider is not None  # noqa: SLF001
+        # The chain-supplied infra: the pool's memory system + the experience
+        # capability supply (the retired pool_data carrier died with the
+        # supply face, SPEC §8.3). The reviewer is registered on the supply
+        # (built on the bot-global default provider).
         assert hook._memory_system is pool_data.context_manager.memory_system  # noqa: SLF001
         supply = instance.pool.materialize_deps.capability_supply["experience"]  # noqa: SLF001
-        assert hook._get_dir() == supply.experience_dir  # noqa: SLF001
+        assert supply.review_agent_for(instance.root_agent_name) is not None
+        assert hook._catalog.experience_dir == supply.experience_dir  # noqa: SLF001
 
         memory_hooks = dump_memory_hooks(pool_data)
         # The default pool's MAIN does not declare the todo capability:

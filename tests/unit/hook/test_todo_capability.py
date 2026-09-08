@@ -52,6 +52,7 @@ from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import ToolOrigin, compile_scope
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 from tests.unit.scope.goldens.assertor import (
@@ -120,7 +121,9 @@ class TestProtocolShape:
         assert isinstance(registry.resolve_capability("todo"), TodoCapability)
 
     def test_applies_default_false(self) -> None:
-        declaration = AgentSpec(name="main", capabilities={"todo": {}})
+        declaration = AgentSpec(
+            name="main", capabilities={"skills": False, "todo": {}}
+        )
         spec = ScopeSpec(kind=ScopeKind.POOL, pool=PoolSpec(name="p", agents=[declaration]))
         # No declared override → the pure opt-in predicate never auto-applies.
         assert TodoCapability().applies(MagicMock()) is False
@@ -148,7 +151,9 @@ class TestProtocolShape:
 
 class TestDualAnchor:
     def test_both_tools_and_hooks_reach_merged_rosters(self) -> None:
-        tools, hooks = _compile_hooks(AgentSpec(name="main", capabilities={"todo": {}}))
+        tools, hooks = _compile_hooks(
+            AgentSpec(name="main", capabilities={"skills": False, "todo": {}})
+        )
 
         assert "todo_write" in tools
         assert "todo_read" in tools
@@ -159,7 +164,7 @@ class TestDualAnchor:
     def test_veto_todo_write_fails_loud_naming_both_tools(self) -> None:
         agent = AgentSpec(
             name="main",
-            capabilities={"todo": {}},
+            capabilities={"skills": False, "todo": {}},
             tools=["-todo_write"],
         )
 
@@ -176,7 +181,7 @@ class TestDualAnchor:
     def test_veto_todo_read_fails_loud_naming_both_tools(self) -> None:
         agent = AgentSpec(
             name="main",
-            capabilities={"todo": {}},
+            capabilities={"skills": False, "todo": {}},
             tools=["-todo_read"],
         )
 
@@ -185,7 +190,11 @@ class TestDualAnchor:
 
     def test_capability_false_disables_whole_bundle(self) -> None:
         tools, hooks = _compile_hooks(
-            AgentSpec(name="main", capabilities={"todo": False}, tools=["-todo_write"])
+            AgentSpec(
+                name="main",
+                capabilities={"skills": False, "todo": False},
+                tools=["-todo_write"],
+            )
         )
 
         assert "todo_write" not in tools and "todo_read" not in tools
@@ -199,7 +208,7 @@ class TestDualAnchor:
         tools, hooks = _compile_hooks(
             AgentSpec(
                 name="main",
-                capabilities={"todo": {}},
+                capabilities={"skills": False, "todo": {}},
                 hooks=["-todo_continuation"],
             )
         )
@@ -220,7 +229,7 @@ class TestDualAnchor:
                 agents=[
                     AgentSpec(
                         name="main",
-                        capabilities={"todo": {}},
+                        capabilities={"skills": False, "todo": {}},
                         hooks=["-todo_planning_nudge"],
                     )
                 ],
@@ -234,7 +243,11 @@ class TestDualAnchor:
         assert "todo_planning_nudge" not in hooks
         assert "todo_continuation" in hooks
         assert "todo_reorientation" in hooks
-        binding = compiled.spec.capabilities[0].binding
+        binding = next(
+            capability.binding
+            for capability in compiled.spec.capabilities
+            if capability.name == "todo"
+        )
         assert binding.active_sections == (
             PromptSectionSpec(section_id="todo.discipline", order=30),
         )
@@ -242,10 +255,22 @@ class TestDualAnchor:
     def test_binding_carries_the_section_spec(self) -> None:
         spec = ScopeSpec(
             kind=ScopeKind.POOL,
-            pool=PoolSpec(name="p", agents=[AgentSpec(name="main", capabilities={"todo": {}})]),
+            pool=PoolSpec(
+                name="p",
+                agents=[
+                    AgentSpec(
+                        name="main",
+                        capabilities={"skills": False, "todo": {}},
+                    )
+                ],
+            ),
         )
         compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_registry())
-        binding = compilation.agents[0].spec.capabilities[0].binding
+        binding = next(
+            capability.binding
+            for capability in compilation.agents[0].spec.capabilities
+            if capability.name == "todo"
+        )
         assert binding.active_sections == (
             PromptSectionSpec(section_id="todo.discipline", order=30),
         )
@@ -373,16 +398,13 @@ class TestRuntimeGateDeath:
         registry."""
         from modex_agent.agents.react.state import ReActTurnState
         from modex_agent.core.agent import AgentContext
-        from modex_agent.core.constants import StopReason
-        from modex_agent.core.emitter import AgentResult
+        from modex_agent.core.emitter import AgentResult, StopReason
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.core.tool_manager import InMemoryToolManager
-        from modex_agent.core.types import TodoStatus
         from modex_agent.memory.history import ListMessageHistory
         from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
         from modex_agent.runtime.models import TurnIdentity
         from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-        from modex_agent.runtime.store import JsonFileTodoStore, TodoItem
+        from modex_agent.runtime.todo import JsonFileTodoStore, TodoItem, TodoStatus
 
         identity = TurnIdentity(
             agent_id="test", session=SessionInfo.from_str("session.agent"), turn_id="turn-1"

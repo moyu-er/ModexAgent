@@ -23,11 +23,11 @@ from bot.webui.events import (
 from bot.webui.sqlite_transcript_store import SqliteTranscriptStore
 from bot.webui.transcript_store import ResilientTranscriptStore
 
-from modex_agent.core.cleanup import SessionCleanupResult
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.session_store import SqliteSessionStore
+from modex_agent.persistence.session_artifacts import SessionCleanupResult
 from modex_agent.workspace.paths import WorkspacePaths
 
 

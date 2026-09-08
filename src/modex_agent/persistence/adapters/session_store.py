@@ -1,4 +1,4 @@
-"""SQLite-backed :class:`~modex_agent.core.session_store.SessionStore`.
+"""SQLite-backed :class:`~modex_agent.persistence.session_store.SessionStore`.
 
 Session metadata is stored in the ``sessions`` table. The ``scope_key`` JSON
 column holds structured isolation dimensions (agent_id, session_prefix,
@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.session_store import SessionStore
+from modex_agent.persistence.session_store import SessionStore
 
 if TYPE_CHECKING:
     from modex_agent.persistence.connection import ConnectionManager

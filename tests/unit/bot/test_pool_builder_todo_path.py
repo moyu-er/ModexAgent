@@ -23,7 +23,7 @@ from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.capabilities.todo import TodoCapability, TodoSupply
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.runtime.store import JsonFileTodoStore
+from modex_agent.runtime.todo import JsonFileTodoStore
 from modex_agent.scope.compiler import compile_scope
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.workspace.context import WorkspaceContext

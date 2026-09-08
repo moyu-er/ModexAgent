@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 from ...core.capabilities import Modality, ModelCapabilities
+from ...core.media import Kind, StoredMediaKind
 from ...core.message import ImageUrl, ImageUrlPart, TextPart, build_media_ref
 from ...core.tool_manager import (
     ExclusiveTool,
@@ -21,8 +22,6 @@ from ...core.tool_manager import (
 )
 from ...media.media_utils import compress_image
 from ...media.mime import classify_kind, sniff_mime
-from ...media.models import Kind
-from ...media.store import StoredMediaKind
 
 logger = logging.getLogger(__name__)
 

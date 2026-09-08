@@ -12,7 +12,6 @@ Run: pytest tests/integration/test_think_tag_streaming.py -v -m integration
 
 from __future__ import annotations
 
-import asyncio
 import os
 from pathlib import Path
 

@@ -25,9 +25,10 @@ _COL_UPDATED_AT = "updated_at"
 _NODE_ID_MAP_ADAPTER = TypeAdapter(dict[str, str])
 _ATTRS_ADAPTER = TypeAdapter(dict[str, int | str | None])
 
-_ALLOWED_STATUSES = frozenset(
-    {"pending", "running", "paused", "stopped", "crashed", "completed", "failed"}
-)
+_ALLOWED_STATUSES = frozenset(GraphInstanceStatus)
+_ACTIVE_STATUSES = frozenset({
+    GraphInstanceStatus.RUNNING, GraphInstanceStatus.PAUSING, GraphInstanceStatus.STOPPING,
+})
 
 _SELECT_COLS = (
     f"{_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, {_COL_VERSION}, "
@@ -195,7 +196,7 @@ class InMemoryGraphInstanceStore(GraphInstanceStore):
         if not versions:
             raise ValueError(f"Graph instance {graph_instance_id} not found")
         latest = versions[-1]
-        if latest.status == GraphInstanceStatus.RUNNING:
+        if latest.status in _ACTIVE_STATUSES:
             versions[-1] = latest.model_copy(update={"status": GraphInstanceStatus.CRASHED})
         new_version = latest.version + 1
         versions.append(
@@ -219,12 +220,14 @@ class InMemoryGraphInstanceStore(GraphInstanceStore):
 
     def suspend_invocation(self, ctx: GraphInvocationContext) -> None:
         self._cas(ctx, GraphInstanceStatus.RUNNING, GraphInstanceStatus.PAUSED)
+        self._cas(ctx, GraphInstanceStatus.PAUSING, GraphInstanceStatus.PAUSED)
 
     def crash_invocation(self, ctx: GraphInvocationContext) -> None:
         self._cas(ctx, None, GraphInstanceStatus.CRASHED)
 
     def finalize_invocation(self, ctx: GraphInvocationContext) -> None:
-        self._cas(ctx, GraphInstanceStatus.RUNNING, GraphInstanceStatus.CRASHED)
+        for status in _ACTIVE_STATUSES:
+            self._cas(ctx, status, GraphInstanceStatus.CRASHED)
 
     def _cas(
         self, ctx: GraphInvocationContext, expected: GraphInstanceStatus | None, new: GraphInstanceStatus
@@ -254,7 +257,7 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
             conn.execute(f"DROP TABLE IF EXISTS {_INSTANCE_TABLE}")
             existing = set()
         statuses = ", ".join(f"'{s}'" for s in sorted(_ALLOWED_STATUSES))
-        conn.execute(
+        create_table_sql = (
             f"CREATE TABLE IF NOT EXISTS {_INSTANCE_TABLE} ("
             f"{_COL_GRAPH_INSTANCE_ID} INTEGER NOT NULL, "
             f"{_COL_SPEC_ID} INTEGER NOT NULL, "
@@ -271,10 +274,33 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
             f"PRIMARY KEY ({_COL_GRAPH_INSTANCE_ID}, {_COL_VERSION})"
             f")"
         )
+        conn.execute(create_table_sql)
         if existing and _COL_ATTRS_JSON not in existing:
             conn.execute(
                 f"ALTER TABLE {_INSTANCE_TABLE} ADD COLUMN {_COL_ATTRS_JSON} TEXT"
             )
+        schema = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (_INSTANCE_TABLE,),
+        ).fetchone()[0]
+        if any(f"'{status.value}'" not in schema for status in _ALLOWED_STATUSES):
+            # SQLite cannot alter CHECK constraints. Rebuild without discarding
+            # invocation versions, identity maps, attrs, or audit timestamps.
+            replacement = f"{_INSTANCE_TABLE}_status_upgrade"
+            conn.execute("SAVEPOINT graph_status_upgrade")
+            try:
+                conn.execute(create_table_sql.replace(_INSTANCE_TABLE, replacement, 1))
+                conn.execute(
+                    f"INSERT INTO {replacement} ({_SELECT_COLS}) "
+                    f"SELECT {_SELECT_COLS} FROM {_INSTANCE_TABLE}"
+                )
+                conn.execute(f"DROP TABLE {_INSTANCE_TABLE}")
+                conn.execute(f"ALTER TABLE {replacement} RENAME TO {_INSTANCE_TABLE}")
+            except Exception:
+                conn.execute("ROLLBACK TO graph_status_upgrade")
+                raise
+            finally:
+                conn.execute("RELEASE graph_status_upgrade")
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_INSTANCE_TABLE}_spec "
             f"ON {_INSTANCE_TABLE} ({_COL_SPEC_ID})"
@@ -287,7 +313,7 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_INSTANCE_TABLE}_active "
             f"ON {_INSTANCE_TABLE} ({_COL_STATUS}) "
-            f"WHERE {_COL_STATUS} IN ('running', 'paused', 'crashed')"
+            f"WHERE {_COL_STATUS} IN ('running', 'pausing', 'paused', 'stopping', 'crashed')"
         )
         conn.commit()
 
@@ -404,7 +430,7 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
         latest = self.load(graph_instance_id)
         if latest is None:
             raise ValueError(f"Graph instance {graph_instance_id} not found")
-        if latest.status == GraphInstanceStatus.RUNNING:
+        if latest.status in _ACTIVE_STATUSES:
             self._conn.execute(
                 f"UPDATE {_INSTANCE_TABLE} SET {_COL_STATUS} = ?, {_COL_UPDATED_AT} = ? "
                 f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_VERSION} = ?",
@@ -440,12 +466,14 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
 
     def suspend_invocation(self, ctx: GraphInvocationContext) -> None:
         self._cas(ctx, GraphInstanceStatus.RUNNING, GraphInstanceStatus.PAUSED)
+        self._cas(ctx, GraphInstanceStatus.PAUSING, GraphInstanceStatus.PAUSED)
 
     def crash_invocation(self, ctx: GraphInvocationContext) -> None:
         self._cas(ctx, None, GraphInstanceStatus.CRASHED)
 
     def finalize_invocation(self, ctx: GraphInvocationContext) -> None:
-        self._cas(ctx, GraphInstanceStatus.RUNNING, GraphInstanceStatus.CRASHED)
+        for status in _ACTIVE_STATUSES:
+            self._cas(ctx, status, GraphInstanceStatus.CRASHED)
 
     def _cas(
         self, ctx: GraphInvocationContext, expected: GraphInstanceStatus | None, new: GraphInstanceStatus

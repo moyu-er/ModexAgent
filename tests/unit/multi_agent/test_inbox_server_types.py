@@ -2,9 +2,11 @@
 """InboxServer consume type-filter + sessions_with_pending."""
 
 from __future__ import annotations
+
 from pathlib import Path
 
 import pytest
+
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.inbox.types import InboxMessage
 

@@ -20,14 +20,13 @@ from bot.eval.experiment_runner import _NoopEmitter
 from bot.service.pool.declaration import boot_scope_spec
 from bot.workspace.handle import WorkspaceHandle, WorkspaceHandleRootProvider
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.core.constants import StopReason
-from modex_agent.core.context import ContextState
+from modex_agent.core.emitter import StopReason
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import MessageRole
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.memory.context import ContextState
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.plugins.assembly.single_agent import (
     SingleAgentAssembled,
@@ -173,6 +172,9 @@ async def dispatch_turn() -> TurnDispatch:
             runtime_dir,
             model=os.environ["TEST_LLM_MODEL"],
         )
+        component_registry = ComponentRegistry()
+        with PluginRegistrationContext(component_registry) as registration:
+            DefaultPlugin().register(registration)
         declaration = load_scope_declaration(_REACT_HARNESS_DECLARATION)
         overlay = ScopeOverlay(
             pools={
@@ -187,10 +189,8 @@ async def dispatch_turn() -> TurnDispatch:
             data_dir=runtime_dir,
             graphs_dirs=(),
             default_llm_provider="default",
+            registry=component_registry,
         )
-        component_registry = ComponentRegistry()
-        with PluginRegistrationContext(component_registry) as registration:
-            DefaultPlugin().register(registration)
         hooks = (
             tuple(spec.hook for spec in services.hooks.hook_specs)
             if services.hooks is not None
@@ -240,8 +240,7 @@ async def dispatch_turn() -> TurnDispatch:
             result = await pipeline.agent.run(context, _NoopEmitter())
         finally:
             if assembled is not None:
-                await assembled.instance.stop()
-                await assembled.memory_system.close()
+                await assembled.close()
             elif services.hooks is not None:
                 await services.hooks.aclose()
             if services.trace_store is not None:

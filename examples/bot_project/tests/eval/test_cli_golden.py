@@ -4,8 +4,7 @@ import pytest
 import typer
 from bot.eval import cli as eval_cli
 
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.providers import HTTPStreamProvider
 from modex_agent.trace.cassette import llm_call_key
 

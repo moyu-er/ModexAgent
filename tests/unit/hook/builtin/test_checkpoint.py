@@ -14,7 +14,6 @@ from modex_agent.agents.react.state import (
 )
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook import HookErrorPolicy, HookPayload, HookPoint, HookRunner, HookSpec
 from modex_agent.hook.abc import AfterIterationHook
 from modex_agent.hook.builtin.checkpoint import (
@@ -32,6 +31,7 @@ from modex_agent.runtime.models import (
 )
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.runtime.store import TurnStateStore
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _RecordingStore(TurnStateStore):

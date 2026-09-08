@@ -9,10 +9,8 @@ import pytest
 from modex_agent.approval.constants import ApprovalTier
 from modex_agent.control.exceptions import PolicyViolationError
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
-from modex_agent.core.types import MessageRole
 from modex_agent.hook import (
     AfterApprovalHook,
     BeforeGraphHook,
@@ -30,6 +28,7 @@ from modex_agent.runtime.models import (
     ApprovalTransaction,
     ToolArguments,
 )
+from modex_agent.tools.manager import InMemoryToolManager
 
 # ---------------------------------------------------------------------------
 # Helper: minimal AgentContext
@@ -40,7 +39,7 @@ def _make_minimal_context() -> AgentContext:
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
-        tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
+        tool_manager=InMemoryToolManager(),
         session=SessionInfo.from_str("test.agent"),
     )
 

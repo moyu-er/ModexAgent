@@ -2,9 +2,8 @@
 
 import asyncio
 import tempfile
+from datetime import UTC
 from pathlib import Path
-
-import pytest
 
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
@@ -280,7 +279,6 @@ class TestLocalFileInboxServer:
 
 class TestInboxMessage:
     async def test_timestamp_is_utc(self):
-        from datetime import timezone
 
         msg = InboxMessage(session_id="s1", source="a", content="hello", message_type="test")
-        assert msg.timestamp.tzinfo == timezone.utc
+        assert msg.timestamp.tzinfo == UTC

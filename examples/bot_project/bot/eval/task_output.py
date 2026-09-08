@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.constants import StopReason
+from modex_agent.core.emitter import StopReason
 
 
 class WorldResult(BaseModel):

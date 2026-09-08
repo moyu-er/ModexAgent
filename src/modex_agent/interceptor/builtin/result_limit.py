@@ -5,9 +5,8 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from modex_agent.core.message import TextPart
+from modex_agent.core.message import MessageRole, TextPart
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.core.types import MessageRole
 from modex_agent.interceptor.abc import (
     ToolCallContext,
     ToolCallInterceptor,

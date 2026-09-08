@@ -21,9 +21,8 @@ from unittest.mock import AsyncMock, MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig
-from modex_agent.core.events import AgentEvent
+from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
+from modex_agent.core.events import AgentEvent, EmitterConfig
 from modex_agent.core.session_id import SessionInfo
 
 E = TypeVar("E", bound=AgentEvent)
@@ -159,7 +158,7 @@ class TestQQBotServiceIntegration:
 
             from modex_agent.agents.react import ReActEvent
             from modex_agent.core.emitter import AgentResult
-            from modex_agent.core.types import ToolCall
+            from modex_agent.core.message import ToolCall
 
             # Create mock adapter
             mock_adapter = MagicMock()
@@ -213,8 +212,8 @@ class TestQQBotServiceIntegration:
         """
         from modex_agent.agents.react import ReActAgent, ReActEvent
         from modex_agent.core.agent import AgentContext
+        from modex_agent.core.llm_struct import LLMResponse
         from modex_agent.core.provider import CallbackStreamProvider
-        from modex_agent.core.types import LLMResponse
 
         # Create mock provider that tracks which API is called
         class MockProvider(CallbackStreamProvider):
@@ -295,7 +294,7 @@ class TestQQBotServiceIntegration:
 
     def test_output_adapter_send_delta_interface(self):
         """Test that OutputAdapter has the send_delta interface."""
-        from modex_agent.pipeline.adapters import OutputAdapter
+        from modex_agent.adapters.output import OutputAdapter
 
         # Check that send_delta method exists
         assert hasattr(OutputAdapter, "send_delta")
@@ -305,16 +304,25 @@ class TestQQBotServiceIntegration:
     @pytest.mark.asyncio
     async def test_end_to_end_event_flow(self):
         """Test complete event flow from Agent to QQ Output."""
+        from modex_agent.adapters.emitter import StreamingAwareEmitter
+        from modex_agent.adapters.output import OutputAdapter
         from modex_agent.agents.react import ReActAgent, ReActEvent
         from modex_agent.core.agent import AgentContext
-        from modex_agent.core.emitter import StreamingAwareEmitter
 
         # Track events
         events_received = []
 
-        class MockAdapter:
+        class MockAdapter(OutputAdapter):
             def __init__(self):
-                self.streaming_mode = StreamingMode.NONE
+                self._streaming_mode = StreamingMode.NONE
+
+            @property
+            def name(self) -> str:
+                return "mock"
+
+            @property
+            def streaming_mode(self):
+                return self._streaming_mode
 
             async def send_delta(self, delta, session_id, metadata=None):
                 events_received.append(("send_delta", delta))
@@ -341,8 +349,8 @@ class TestQQBotServiceIntegration:
         emitter = TestEmitter(adapter, "test_session")
 
         # Create mock provider
+        from modex_agent.core.llm_struct import LLMResponse
         from modex_agent.core.provider import CallbackStreamProvider
-        from modex_agent.core.types import LLMResponse
 
         class MockProvider(CallbackStreamProvider):
             async def chat_stream(
@@ -411,12 +419,12 @@ class TestQQBotServiceIntegration:
 
         sys.path.insert(0, str(Path(__file__).parent.parent.parent / "examples" / "bot_project"))
 
-        from modex_agent.core.skills import (
-            FileSkillSource,
+        from modex_agent.plugins.defaults.capabilities.skills.builder import (
             DefaultSkillBuilder,
-            ResolutionContext,
-            SkillManager,
         )
+        from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
+        from modex_agent.plugins.defaults.capabilities.skills.models import ResolutionContext
+        from modex_agent.plugins.defaults.capabilities.skills.source import FileSkillSource
 
         skills_dir = (
             Path(__file__).parent.parent.parent
@@ -435,14 +443,14 @@ class TestQQBotServiceIntegration:
             layout="directory",
             skill_filename="SKILL.md",
         )
-        sm = SkillManager(source=source, builder=DefaultSkillBuilder())
+        sm = SkillCatalog(source=source, builder=DefaultSkillBuilder())
 
         class FakeTM:
             def has_tool(self, name: str) -> bool:
                 return name == "read_file"
 
         ctx = ResolutionContext(tool_manager=FakeTM())
-        prompt = await sm.build_prompt(ctx)
+        prompt = await sm.render_prompt(ctx)
 
         # Should be a compact table, not inlined content
         assert "<available_skills>" in prompt

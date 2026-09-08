@@ -13,14 +13,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bot.service.external_strategy import ExternalAwareFactory
-from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.ioc.configs.observability import TraceBackend
 from modex_agent.multi_agent import DefaultAgentFactory
+from modex_agent.persistence.session_registry import SessionRegistry
 
 if TYPE_CHECKING:
     from bot.workspace.handle import WorkspaceResolverCell
-    from modex_agent.media.store import MediaStore
+    from modex_agent.core.media import MediaStore
     from modex_agent.multi_agent.session_tree.session_binding import (
         SessionBindingStore,
     )
@@ -80,7 +80,6 @@ def _cell_sessions_dir(cell: WorkspaceResolverCell | None) -> Path | None:
 def _build_agent_factory(
     provider: Any,
     tool_manager: Any,
-    skill_manager: Any,
     inbox_server: Any,
     inbox_consumer: Any,
     shared_hooks: Any,
@@ -100,7 +99,6 @@ def _build_agent_factory(
         factory: DefaultAgentFactory = ExternalAwareFactory(
             default_llm_provider=provider,
             default_tool_manager=tool_manager,
-            skill_manager=skill_manager,
             inbox_server=inbox_server,
             inbox_consumer=inbox_consumer,
             default_hooks=shared_hooks,
@@ -115,7 +113,6 @@ def _build_agent_factory(
         factory = DefaultAgentFactory(
             default_llm_provider=provider,
             default_tool_manager=tool_manager,
-            skill_manager=skill_manager,
             inbox_server=inbox_server,
             inbox_consumer=inbox_consumer,
             default_hooks=shared_hooks,

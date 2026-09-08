@@ -224,7 +224,7 @@ class TurnCustomKey(StrEnum):
     # Reply deliver pattern.
     GRAPH_DOWNSTREAM_HAS_END = "_graph_downstream_has_end"
     # Parallel-scheduler rolling-pool ceiling for this turn (int, ADR-0048
-    # D2). Optional per-turn override of DefaultValues.MAX_PARALLEL_TOOL_CALLS;
+    # D2). Optional per-turn override of the ReAct scheduler default;
     # 1 = exact serial execution (regression escape hatch).
     MAX_PARALLEL_TOOL_CALLS = "max_parallel_tool_calls"
     # Turn-scoped monotonic tool-call seq counter (int, ADR-0048 G2-b):
@@ -233,3 +233,13 @@ class TurnCustomKey(StrEnum):
     # model order regardless of completion order. Turn-scoped (not
     # batch-scoped) so a turn with multiple batches stays globally ordered.
     TOOL_SEQ_COUNTER = "_tool_seq_counter"
+    # Per-turn SandboxEnforcementSnapshot: backend, enforcement and reason.
+    # Diagnostic data only, not authorization. Written for an explicit
+    # sandbox binding and absent under the DEFAULT dormant tier.
+    SANDBOX_ENFORCEMENT = "_sandbox_enforcement"
+    # Per-turn {call_id: approval_anchor} captured when approval is applied.
+    # Known file tools use a canonical target; commands bind their text and
+    # any explicit canonical cwd; URL tools bind their URL. Unknown tools
+    # receive no anchor. The execution backstop waives only a matching
+    # BOUNDARY finding, never hard denies. The map survives snapshot restore.
+    HUMAN_APPROVED_CALLS = "_human_approved_calls"

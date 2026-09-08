@@ -24,9 +24,9 @@ async def test_main_agent_gets_loop_detection_hook():
     position-default row and `_dispatch_hooks` resolves it through the
     HOOK-slot factory. The bare DefaultAgentFactory.create_agent path carries
     NO LoopDetectionHook — roster dispatch is the single registration path."""
+    from modex_agent.core import AgentCommKind
     from modex_agent.hook import HookSpec
     from modex_agent.multi_agent.address import AgentAddress
-    from modex_agent.multi_agent.comm_kind import AgentCommKind
     from modex_agent.multi_agent.descriptor import AgentDescriptor
     from modex_agent.plugins.abc import ComponentSlot
     from modex_agent.plugins.defaults import DefaultPlugin
@@ -63,9 +63,9 @@ async def test_main_agent_gets_loop_detection_hook():
 async def test_subagent_gets_loop_detection_hook():
     """Subagents share the same position-default row (both positions carry
     POSITION_DEFAULT_HOOKS) — the roster resolution is identical."""
+    from modex_agent.core import AgentCommKind
     from modex_agent.hook import HookSpec
     from modex_agent.multi_agent.address import AgentAddress
-    from modex_agent.multi_agent.comm_kind import AgentCommKind
     from modex_agent.multi_agent.descriptor import AgentDescriptor
     from modex_agent.plugins.abc import ComponentSlot
     from modex_agent.plugins.defaults import DefaultPlugin

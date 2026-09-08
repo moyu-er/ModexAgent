@@ -17,10 +17,16 @@ from typing import Any
 
 import pytest
 
-from modex_agent.core.constants import FinishReason, ReasoningEffort
-from modex_agent.core.llm_request import LLMRequest
-from modex_agent.core.llm_struct import LLMErrorKind
-from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, TextPart
+from modex_agent.core.llm_request import LLMRequest, ReasoningEffort
+from modex_agent.core.llm_struct import FinishReason, LLMErrorKind, TokenUsage
+from modex_agent.core.message import (
+    ChatMessage,
+    ImageUrl,
+    ImageUrlPart,
+    MessageRole,
+    TextPart,
+    ToolCall,
+)
 from modex_agent.core.stream_events import (
     Finish,
     LLMStreamEvent,
@@ -31,7 +37,6 @@ from modex_agent.core.stream_events import (
     ToolCallComplete,
     UsageSnapshot,
 )
-from modex_agent.core.types import MessageRole, TokenUsage, ToolCall
 from modex_agent.providers.http.formats.openai_responses import OpenAIResponsesProtocol
 from modex_agent.providers.http.protocol import ProtocolConfig
 from modex_agent.providers.http.sse import SseFrame

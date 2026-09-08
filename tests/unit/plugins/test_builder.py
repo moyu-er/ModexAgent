@@ -23,14 +23,13 @@ import pytest
 
 from modex_agent.plugins.assembly.builder import AssembledAgent, AssemblyBuilder
 
-
 # ---- AssembledAgent (frozen output) ----
 
 
 class TestAssembledAgent:
     def test_is_frozen_dataclass(self) -> None:
         assert dataclasses.is_dataclass(AssembledAgent)
-        assert getattr(AssembledAgent, "__dataclass_params__").frozen is True
+        assert AssembledAgent.__dataclass_params__.frozen is True
 
     def test_has_exactly_10_fields(self) -> None:
         fields = dataclasses.fields(AssembledAgent)

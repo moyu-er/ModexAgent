@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.scope import MemoryContext
 from modex_agent.ioc.configs.memory import (
     DreamEngineConfig,
     LongTermConfig,
@@ -15,6 +14,7 @@ from modex_agent.ioc.configs.memory import (
 from modex_agent.ioc.factories.memory import _build_memory_layer_config
 from modex_agent.memory.layers import MemoryLayerFactory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+from modex_agent.memory.scope import MemoryContext
 
 
 @pytest.mark.asyncio

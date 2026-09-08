@@ -2,8 +2,8 @@
 
 Covers the declaration-boot helpers in ``bot.service.pool.declaration``:
 the config-view override resolution (继承父层 + 声明差异), the single
-stack-shape mechanism (N15), the loud MCP-set validation, the pre-warm
-set, and ``declared_pool_root`` over both root forms.
+stack-shape mechanism (N15), the loud agent-level MCP-set validation, and
+``declared_pool_root`` over both root forms.
 """
 
 from __future__ import annotations
@@ -16,9 +16,8 @@ from bot.service.pool.declaration import (
     apply_workspace_resource_selection,
     declared_pool_root,
     load_scope_declaration_opt,
-    validate_workspace_mcp_set,
+    validate_agent_mcp_sets,
     workspace_layer_present,
-    workspace_mcp_prewarm_names,
 )
 
 from modex_agent.ioc.configs.app import AppConfig
@@ -144,61 +143,75 @@ class TestStackShapeMechanism:
         assert load_scope_declaration_opt(tmp_path / "config" / "scopes" / "bot.yml") is None
 
 
-class TestMcpSetValidation:
+class TestAgentMcpSetValidation:
     def test_unknown_name_fails_loud(self, tmp_path: Path) -> None:
         path = _write_declaration(
             tmp_path,
-            "workspace:\n  name: w\n  mcp:\n  - playwright\n  - typo-server\n  pools: {}\n",
+            "workspace:\n"
+            "  name: w\n"
+            "  pools:\n"
+            "    main:\n"
+            "      agents:\n"
+            "        main:\n"
+            "          mcp: [playwright, typo-server]\n",
         )
         spec = load_scope_declaration_opt(path)
 
         with pytest.raises(UnknownMcpServer, match="typo-server"):
-            validate_workspace_mcp_set(spec, {"playwright"})
+            validate_agent_mcp_sets(spec, {"playwright"})
 
     def test_known_names_pass(self, tmp_path: Path) -> None:
         path = _write_declaration(
             tmp_path,
-            "workspace:\n  name: w\n  mcp:\n  - playwright\n  pools: {}\n",
+            "workspace:\n"
+            "  name: w\n"
+            "  pools:\n"
+            "    main:\n"
+            "      agents:\n"
+            "        main:\n"
+            "          mcp: [playwright]\n",
         )
         spec = load_scope_declaration_opt(path)
-        validate_workspace_mcp_set(spec, {"playwright", "other"})
+        validate_agent_mcp_sets(spec, {"playwright", "other"})
 
-    def test_undeclared_workspace_skips_validation(self, tmp_path: Path) -> None:
+    def test_no_agent_selections_skips_validation(self, tmp_path: Path) -> None:
         path = _write_declaration(
             tmp_path, "workspace:\n  name: w\n  pools: {}\n"
         )
         spec = load_scope_declaration_opt(path)
-        validate_workspace_mcp_set(spec, {})
+        validate_agent_mcp_sets(spec, {})
+
+    def test_pool_as_root_form_validates(self, tmp_path: Path) -> None:
+        path = _write_declaration(
+            tmp_path,
+            "pool:\n"
+            "  name: solo\n"
+            "  agents:\n"
+            "    solo:\n"
+            "      mcp: [typo-server]\n",
+        )
+        spec = load_scope_declaration_opt(path)
+
+        with pytest.raises(UnknownMcpServer, match="typo-server"):
+            validate_agent_mcp_sets(spec, {"playwright"})
 
     def test_empty_registry_is_degenerate_not_a_typo(self, tmp_path: Path) -> None:
         path = _write_declaration(
             tmp_path,
-            "workspace:\n  name: w\n  mcp:\n  - playwright\n  pools: {}\n",
+            "workspace:\n"
+            "  name: w\n"
+            "  pools:\n"
+            "    main:\n"
+            "      agents:\n"
+            "        main:\n"
+            "          mcp: [playwright]\n",
         )
         spec = load_scope_declaration_opt(path)
         # No MCP registry configured at all — warning, not boot failure.
-        validate_workspace_mcp_set(spec, {})
+        validate_agent_mcp_sets(spec, {})
 
-    def test_prewarm_scopes_to_declared_set(self, tmp_path: Path) -> None:
-        path = _write_declaration(
-            tmp_path,
-            "workspace:\n  name: w\n  mcp:\n  - playwright\n  pools: {}\n",
-        )
-        spec = load_scope_declaration_opt(path)
-        assert workspace_mcp_prewarm_names(spec, {"playwright": 1, "other": 2}) == [
-            "playwright"
-        ]
-
-    def test_prewarm_defaults_to_full_registry(self, tmp_path: Path) -> None:
-        path = _write_declaration(
-            tmp_path, "workspace:\n  name: w\n  pools: {}\n"
-        )
-        spec = load_scope_declaration_opt(path)
-        assert workspace_mcp_prewarm_names(spec, {"playwright": 1, "other": 2}) == [
-            "playwright",
-            "other",
-        ]
-        assert workspace_mcp_prewarm_names(None, {"a": 1}) == ["a"]
+    def test_absent_declaration_skips_validation(self) -> None:
+        validate_agent_mcp_sets(None, {"playwright"})
 
 
 class TestDeclaredPoolRoot:

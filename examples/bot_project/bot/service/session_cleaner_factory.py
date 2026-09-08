@@ -7,14 +7,14 @@ from types import TracebackType
 from typing import assert_never
 
 from bot.service.session_gc import SessionCleanerOperations
-from modex_agent.core.cleanup import (
+from modex_agent.core.scope import RecordScope
+from modex_agent.persistence.config import PersistenceBackend
+from modex_agent.persistence.managers import WorkspacePersistenceManager
+from modex_agent.persistence.session_artifacts import (
     DefaultSessionArtifactCleaner,
     SessionArtifactCleaner,
     SessionCleanupResult,
 )
-from modex_agent.core.scope import RecordScope
-from modex_agent.persistence.config import PersistenceBackend
-from modex_agent.persistence.managers import WorkspacePersistenceManager
 from modex_agent.workspace.paths import WorkspacePaths
 
 

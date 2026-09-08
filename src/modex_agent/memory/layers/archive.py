@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from modex_agent.core.scope import MemoryContext, Scope
 from modex_agent.memory.archive_models import (
     ArchiveBundleResult,
     ArchiveChannel,
@@ -26,6 +25,7 @@ from modex_agent.memory.history_search import (
     RecentFirstHistorySearch,
 )
 from modex_agent.memory.layers.config import ArchiveMemoryConfig, StorageFactory
+from modex_agent.memory.scope import MemoryContext, Scope
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
 logger = logging.getLogger(__name__)

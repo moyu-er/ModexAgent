@@ -19,10 +19,9 @@ from bot.eval.judge._models import (
     Verdict,
 )
 from bot.eval.judge._verdicts import failure_result, result_from_output
-from modex_agent.core.constants import FinishReason
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.llm_struct import FinishReason
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.provider import LLMProvider
-from modex_agent.core.types import MessageRole
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.trace.otel_store import OtelSpanTraceStore

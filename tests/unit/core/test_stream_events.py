@@ -11,8 +11,7 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from modex_agent.core.constants import FinishReason
-from modex_agent.core.llm_struct import LLMErrorInfo, LLMErrorKind
+from modex_agent.core.llm_struct import FinishReason, LLMErrorInfo, LLMErrorKind, TokenUsage
 from modex_agent.core.stream_events import (
     Finish,
     LLMStreamEvent,
@@ -23,7 +22,6 @@ from modex_agent.core.stream_events import (
     ToolCallComplete,
     UsageSnapshot,
 )
-from modex_agent.core.types import TokenUsage
 
 _ADAPTER: TypeAdapter[LLMStreamEvent] = TypeAdapter(LLMStreamEvent)
 

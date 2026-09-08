@@ -14,17 +14,17 @@ from typing import Any
 
 import pytest
 
-from modex_agent.core.history import ListMessageHistory
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.archive_models import ArchiveChannel
 from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.core.system import MemorySystem
+from modex_agent.memory.history import ListMessageHistory
 from modex_agent.memory.hooks import MemoryHook
 from modex_agent.memory.prompt_pipeline.providers import (
     ForkContextProvider,
     ForkContextSpec,
 )
+from modex_agent.memory.scope import MemoryContext
 
 # ── ForkContextProvider ──────────────────────────────────────────────────
 

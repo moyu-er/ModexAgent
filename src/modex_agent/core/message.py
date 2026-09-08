@@ -15,8 +15,30 @@ from typing import Annotated, Any, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from modex_agent.core.capabilities import Modality
-from modex_agent.core.types import MessageRole, ToolCall
 from modex_agent.utils.timezone import get_user_timezone
+
+
+class MessageRole(StrEnum):
+    """LLM conversation role."""
+
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+    TOOL = "tool"
+    AGENT = "agent"
+    COMPACT = "compact"
+    PENDING = "pending"
+    SYSTEM_REMINDER = "system_reminder"
+
+
+class ToolCall(BaseModel):
+    """Tool invocation requested by an LLM."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tool_name: str
+    arguments: dict[str, Any]
+    call_id: str | None = None
 
 
 class ContentFormat(StrEnum):
@@ -238,10 +260,7 @@ class ChatMessage(BaseModel):
         content_format 为 PLAIN 时自动省略，created_at 格式化为本地时间字符串。
         tool_calls 序列化为 OpenAI wire format（id/type/function）以保持存储兼容。
         """
-        try:
-            result = self.model_dump(mode="json", exclude_none=True)
-        except Exception:
-            result = self._to_dict_fallback()
+        result = self.model_dump(mode="json", exclude_none=True)
         if "content_format" in result and self.content_format == ContentFormat.PLAIN:
             result.pop("content_format", None)
         if "created_at" in result and self.created_at is not None:
@@ -260,37 +279,6 @@ class ChatMessage(BaseModel):
                 for i, tc in enumerate(dumped_calls)
             ]
         return result
-
-    def _to_dict_fallback(self) -> dict[str, Any]:
-        """手动序列化，递归处理嵌套对象。"""
-        result: dict[str, Any] = {}
-        # 使用 __dict__ 避免再次触发 model_dump 序列化错误
-        raw = dict(self.__dict__)
-        # Pydantic v2 数据存储在 __pydantic_private__ / __pydantic_extra__ 中
-        if hasattr(self, "__pydantic_extra__") and self.__pydantic_extra__:
-            raw.update(self.__pydantic_extra__)
-        for key, value in raw.items():
-            if key.startswith("_"):
-                continue
-            if value is None:
-                continue
-            result[key] = self._serialize_value(value)
-        return result
-
-    @staticmethod
-    def _serialize_value(value: Any) -> Any:
-        """递归序列化单个值。"""
-        if value is None:
-            return None
-        if isinstance(value, str | int | float | bool):
-            return value
-        if isinstance(value, list):
-            return [ChatMessage._serialize_value(v) for v in value]
-        if isinstance(value, dict):
-            return {k: ChatMessage._serialize_value(v) for k, v in value.items()}
-        if isinstance(value, BaseModel):
-            return value.model_dump()
-        return str(value)
 
     def get(self, key: str, default: Any = None) -> Any:
         """兼容 dict 的 get 语义。"""

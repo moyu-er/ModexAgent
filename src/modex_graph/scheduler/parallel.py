@@ -44,9 +44,8 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
     imperative state mutations are visible directly across concurrent tasks.
 
     **Recovery**: at the top of ``run_async``, ``bootstrap(ctx, graph)``
-    restores ``ctx.state`` from the newest full snapshot, auto-promotes
-    CONSUMED_PENDING delivers, and returns seed node names (CRASHED /
-    RUNNING nodes + nodes with PENDING delivers, BFS-ordered). Re-execute
+    auto-promotes committed delivers and returns seed node names (CRASHED /
+    RUNNING / CANCELED nodes + nodes with PENDING delivers, BFS-ordered). Re-execute
     seeds are marked READY immediately; PENDING-deliver seeds are
     discovered by ``_recheck_pending``'s store scan.
 
@@ -94,7 +93,6 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         self._on_receive_queue: dict[str, deque[str]] = {}
         # Store scans must not reschedule delivers already handled by in-memory dispatch.
         self._scheduled_deliver_ids: set[int] = set()
-        self._wakeup: asyncio.Event | None = None
 
     # ── Scheduler ABC implementation ───────────────────────────────────
 
@@ -110,7 +108,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         running.
 
         Recovery: at the top, `bootstrap(ctx, graph)` produces seed node
-        names. Re-execute seeds (CRASHED/RUNNING) are marked READY; fresh
+        names. Re-execute seeds (CRASHED/RUNNING/CANCELED) are marked READY; fresh
         start creates the entry instance. PENDING-deliver seeds are left
         for `_recheck_pending`'s store scan to discover and create
         instances for.
@@ -123,7 +121,6 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         self._ctx = ctx
         ctx.scheduler_kind = SchedulerKind.PARALLEL
         ctx.set_dispatch_handler(self._handle_dispatch)
-        self._wakeup = asyncio.Event()
 
         # Reset in-memory scheduler state.
         self._instances = {}
@@ -137,13 +134,13 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         self._instance_seq = 0
 
         # Unified bootstrap: query store -> produce seed node names.
-        # Restores ctx.state and auto-promotes CONSUMED_PENDING delivers.
+        # Auto-promotes committed delivers; the caller initializes ctx.state.
         seeds = bootstrap(ctx, self.graph, mode=mode)
 
-        # Mark re-execute seeds (CRASHED/RUNNING) and entry_node as READY.
+        # Mark re-execute seeds (CRASHED/RUNNING/CANCELED) and entry_node as READY.
         # entry_node is always READY when present in seeds (bootstrap puts
         # it there for fresh starts and re-invocations). Other seeds are
-        # READY only if their latest invocation is CRASHED or RUNNING.
+        # READY only if their latest invocation needs re-execution.
         # PENDING-deliver seeds are left for _recheck_pending's store scan.
         for seed_name in seeds:
             node = self.graph.nodes[seed_name]
@@ -153,17 +150,23 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                 and record.status in (
                     InvocationStatus.CRASHED,
                     InvocationStatus.RUNNING,
+                    InvocationStatus.CANCELED,
                 )
             ):
                 iid = self._create_instance(seed_name)
                 self._mark_ready(iid)
+                # This invocation integrates these inputs. The store rescan must
+                # not queue another invocation for the same recovery seed.
+                self._scheduled_deliver_ids.update(
+                    d.deliver_id
+                    for d in ctx.coordinator.collect_consumable_delivers(node.node_id, 0)
+                    if d.status == DeliverConsumptionStatus.PENDING
+                )
 
         # Discover PENDING delivers from the store and create/queue instances.
         # Handles PENDING-deliver seeds not marked READY above, including the
         # case where only PENDING-deliver seeds exist (no re-execute seeds).
         self._recheck_pending()
-
-        ctx.control.set_wakeup(self._wakeup)
 
         running: dict[asyncio.Task[None], str] = {}
 
@@ -180,48 +183,17 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                 if not running:
                     break
 
-                assert self._wakeup is not None
-                wakeup_wait = asyncio.ensure_future(self._wait_for_wakeup())
-                try:
-                    done, _ = await asyncio.wait(
-                        {*running.keys(), wakeup_wait},
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                finally:
-                    if not wakeup_wait.done():
-                        wakeup_wait.cancel()
-                self._wakeup.clear()
-
-                self._recheck_pending()
+                done = await ctx.control.wait_for_tasks(running.keys())
 
                 for task in done:
-                    if task is wakeup_wait:
-                        continue
-                    iid = running.pop(task)
-                    try:
-                        task.result()
-                    except Exception:
-                        for t in running:
-                            t.cancel()
-                        await asyncio.gather(*running, return_exceptions=True)
-                        raise
+                    running.pop(task)
+                    task.result()
+                ctx.control.check()
+                self._recheck_pending()
         finally:
-            # Cancel any remaining in-flight tasks on ALL exit paths
-            # (GraphDrained, owner-task CancelledError, unhandled Exception,
-            #  normal completion). On normal exit `running` is empty → no-op.
-            # On the inner `except Exception` path, tasks are already
-            # cancelled+gathered but still in the dict → cancel is no-op,
-            # gather returns immediately.
-            for task in running:
-                task.cancel()
-            if running:
-                await asyncio.gather(*running, return_exceptions=True)
+            await ctx.control.cancel_and_drain(running.keys())
 
         return ctx.state
-
-    async def _wait_for_wakeup(self) -> None:
-        if self._wakeup is not None:
-            await self._wakeup.wait()
 
     # ── Instance lifecycle ────────────────────────────────────────────
 
@@ -251,8 +223,8 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         instance = self._instances[instance_id]
         instance.status = NodeInstanceStatus.READY
         self._ready.add(instance_id)
-        if self._wakeup is not None:
-            self._wakeup.set()
+        if self._ctx is not None:
+            self._ctx.control.notify_deliver(instance.node_name)
 
     # ── Execution ─────────────────────────────────────────────────────
 
@@ -268,6 +240,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         ``max_iterations`` checked before execution; overflow raises
         ``GraphRecursionError``. ``GraphBubbleUp`` propagates (not caught).
         """
+        ctx.control.check()
         instance = self._instances[instance_id]
 
         # Opt-in engine-level safety net (per-instance-execution counting).
@@ -292,6 +265,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
 
         try:
             await ctx.runtime.before_node(ctx, instance.node_name)
+            ctx.control.check()
             await node.run(ctx, graph=self.graph)
             await ctx.runtime.after_node(ctx, instance.node_name)
         finally:

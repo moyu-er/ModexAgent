@@ -75,7 +75,7 @@ from modex_agent.plugins.defaults.hooks import (
 from modex_agent.plugins.defaults.tools import TodoToolFactory
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.runtime.store import JsonFileTodoStore, TodoItem, TodoStore
+from modex_agent.runtime.todo import JsonFileTodoStore, TodoItem, TodoStore
 from modex_agent.tools.standard.todo_tool import TodoReadTool
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths

@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.agents.external import ExternalPaths, ProviderKind
+from modex_agent.agents.external import ExternalPaths
+from modex_agent.core.agent import ProviderKind
 
 
 class TestProviderKind:

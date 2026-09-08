@@ -7,10 +7,8 @@ from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.enqueue import EnqueueStage
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 
-from modex_agent.approval.types import ApprovalAction
-from modex_agent.approval.views import ApprovalDecisionInput
-from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput, InputMessage
 
 
 def _ctx(enqueued: list[InputMessage]) -> BotInputContext:
@@ -27,7 +25,7 @@ def _ctx(enqueued: list[InputMessage]) -> BotInputContext:
 
 @pytest.mark.asyncio
 async def test_enqueue_lifts_approval_decision_to_input_message() -> None:
-    decision = ApprovalDecisionInput("call_1", ApprovalAction.ALLOW)
+    decision = ApprovalDecisionInput(tool_call_id="call_1", action=ApprovalAction.ALLOW)
     enqueued: list[InputMessage] = []
     env = UserInputEnvelope(external_id="u1", content="", channel="websocket")
     env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"

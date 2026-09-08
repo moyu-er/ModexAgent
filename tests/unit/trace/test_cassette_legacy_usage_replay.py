@@ -26,9 +26,9 @@ from pathlib import Path
 from typing import Any
 
 from modex_agent.core.llm_request import LLMRequest
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.llm_struct import LLMResponse, TokenUsage
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.types import LLMResponse, MessageRole, TokenUsage
 from modex_agent.trace.cassette import CassetteRecorder, CassetteReplayEngine
 
 _TRACE_ID = "trace-legacy-usage-001"

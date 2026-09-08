@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.pool import create_pool
 from bot.service.pool.declaration import (
@@ -28,9 +30,11 @@ from bot.service.pool.declaration import (
     declared_pool_build,
 )
 from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
+from bot.workspace.handle import WorkspaceHandle
 from bot.workspace.pool_data import build_pool_data
 from bot.workspace.wiring.stack import declared_assembly_deps
 
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
 from modex_agent.hook import HookRunner
@@ -46,7 +50,6 @@ from modex_agent.multi_agent.tools import (
     SendToPeerTool,
     TaskDispatchTool,
 )
-from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import (
     ComponentRegistryLoader,
@@ -54,6 +57,7 @@ from modex_agent.plugins.loader import (
 )
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.tools.terminal.persistent_bash import persistent_bash_supported
+from modex_agent.tools.workspace_scoped import WorkspaceScopedTool
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -65,6 +69,18 @@ from .assembly_manifest import (
 )
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
+
+
+@pytest.fixture(autouse=True)
+def _fake_modexctl_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Native-agent assembly resolves the modexctl bin dir eagerly (the
+    native_env hook's env-spec derivation) — point it at a hermetic fake
+    binary so the suite stays hermetic on machines without modexctl
+    installed."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "modexctl.bat").write_text("@exit /b 0\n", encoding="ascii")
+    monkeypatch.setenv("MODEXBOT_BIN_DIR", str(bin_dir))
 
 BOT_BASE = Path(__file__).resolve().parents[3]
 
@@ -187,25 +203,22 @@ async def _create_declared_pool(
         deps,
         "",
     )
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    (bin_dir / "modexctl.bat").write_text("@exit /b 0\n", encoding="ascii")
     broker = InMemoryMessageBroker()
     await broker.start()
     instance = None
     try:
-        with (
-            patch.dict("os.environ", {"MODEXBOT_BIN_DIR": str(bin_dir)}),
-            patch(
-                "modex_agent.tools.mcp_loader.load_per_agent_mcp",
-                new=AsyncMock(return_value=None),
-            ),
+        with patch(
+            "modex_agent.tools.mcp_loader.load_per_agent_mcp",
+            new=AsyncMock(return_value=None),
         ):
             instance = await create_pool(
                 pool_name="default",
                 declared=declared,
                 assembly_deps=deps,
                 project_dir=BOT_BASE,
+                workspace_handle=WorkspaceHandle(
+                    target=tmp_path, data_root=tmp_path / '.modex',
+                ),
                 workspace_registry=object(),
                 workspace_resources=object(),
                 data_dir=tmp_path / ".modex",
@@ -323,7 +336,13 @@ async def test_lazy_materialization_from_compiled_spec(tmp_path: Path) -> None:
             + (["bash_input"] if persistent_bash_supported() else [])
         )
         assert isinstance(tool_manager.get_tool("send_to_agent"), SendToAgentTool)
-        assert type(tool_manager.get_tool("edit")).__name__ == "AciEditTool"
+        # Assembly wraps path-resolving tools in the workspace-scoped
+        # wrapper (native_core's wrap_standard_tools) — the ACI edit is
+        # the inner tool.
+        edit = tool_manager.get_tool("edit")
+        if isinstance(edit, WorkspaceScopedTool):
+            edit = edit.inner
+        assert type(edit).__name__ == "AciEditTool"
         # Session-only subagent memory (the compiled spec's memory face).
         assert materialized.descriptor.memory_config.archive is None
         assert materialized.descriptor.memory_config.core is None

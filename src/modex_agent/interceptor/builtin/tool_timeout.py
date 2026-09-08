@@ -23,7 +23,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from modex_agent.core.constants import DefaultValues
+from modex_agent.core.llm_struct import DEFAULT_TOOL_TIMEOUT_SECONDS
 from modex_agent.core.message import ContentFormat, TextPart
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.interceptor.abc import (
@@ -89,7 +89,7 @@ class ToolTimeoutInterceptor(ToolCallInterceptor):
         safety = ctx.runtime.safety if ctx.runtime else None
         if safety is not None:
             return safety.turn.tool_timeout_seconds
-        return DefaultValues.TOOL_TIMEOUT_SECONDS
+        return DEFAULT_TOOL_TIMEOUT_SECONDS
 
     @staticmethod
     def _resolve_margin(ctx: AgentContext) -> float:

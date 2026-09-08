@@ -89,12 +89,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import logging
 import os
 import re
 import shutil
 import sys
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import Enum, StrEnum
 from pathlib import Path
@@ -113,9 +115,9 @@ from modex_agent.tools.terminal._foreground_probe import (
 from modex_agent.tools.terminal.env import build_full_env
 from modex_agent.tools.terminal.prompt import _strip_ansi_and_da1, is_waiting_for_input
 from modex_agent.tools.terminal.pty_keys import CTRL_C, ENTER_KEY
+from modex_agent.tools.terminal.subprocess_tool import ShellLaunchOwner
 from modex_agent.tools.terminal.types import (
     ShellFamily,
-    _family_from_path,
     detect_platform_shell,
 )
 
@@ -171,7 +173,10 @@ _SHELL_HINT = (
     "a byte to the program that owns the terminal; a silent command will finish or time "
     "out on its own; log out (exit) to return to the local shell]"
 )
-_SHELL_EXITED_NOTICE = "[shell exited — it will restart fresh on the next call]"
+_SHELL_EXITED_NOTICE = (
+    "[shell exited; execution is uncertain and was not replayed. Inspect side effects "
+    "before retrying; the next call starts a fresh shell on the same backend]"
+)
 _NO_OUTPUT = "[no output]"
 _TRUNCATED_HEAD_NOTICE = (
     "[... earlier output of this command was dropped (output budget exceeded) ...]"
@@ -449,18 +454,15 @@ _UNSUPPORTED_HOST_MESSAGE = (
 _BASH_SPAWN_ARGS = ["--noprofile", "--norc", "-i"]
 
 
-def _resolve_shell(shell: str | None) -> tuple[str, bool]:
-    """Resolve ``(shell_path, is_bash)`` for the persistent session spawn.
+def _resolve_shell() -> tuple[str, bool]:
+    """Resolve ``(shell_path, is_bash)`` for the host-mode spawn.
 
-    An explicit *shell* wins as-is (bash-ness inferred from its path).
-    Otherwise ``detect_platform_shell()`` supplies the host shell: a bash
-    family result is used directly; zsh/sh results defer to a
-    ``shutil.which("bash")`` hit first because the marker protocol and the
-    spawn flags are bash-specific. Detection failure or a Windows-family
-    result falls back to ``/bin/bash``.
+    ``detect_platform_shell()`` supplies the host shell: a bash family
+    result is used directly; zsh/sh results defer to a
+    ``shutil.which("bash")`` hit first because the marker protocol and
+    the spawn flags are bash-specific. Detection failure or a
+    Windows-family result falls back to ``/bin/bash``.
     """
-    if shell is not None:
-        return shell, _family_from_path(shell) is ShellFamily.BASH
     info = detect_platform_shell()
     if info is None or info.family not in (ShellFamily.BASH, ShellFamily.ZSH, ShellFamily.SH):
         return "/bin/bash", True
@@ -470,6 +472,39 @@ def _resolve_shell(shell: str | None) -> tuple[str, bool]:
     if bash_path is not None:
         return bash_path, True
     return info.path, False
+
+
+def _bash_named_in_argv(argv: tuple[str, ...]) -> bool:
+    """True when an argv element names a bash executable.
+
+    Scans last-to-first (an injected launcher prefix puts the shell after
+    it: ``docker ... /bin/bash --noprofile``, ``env bash``) — flag
+    elements never have a shell basename. Only an exact ``bash`` basename
+    matches; other shells stay non-bash (they reject the bash-only
+    ``set +H`` startup line).
+    """
+    return any(Path(element).name.lower() == "bash" for element in reversed(argv))
+
+
+def _resolve_spawn_argv(shell_argv: Sequence[str] | None) -> tuple[tuple[str, ...], bool]:
+    """Resolve ``(spawn_argv, is_bash)`` for the persistent session spawn.
+
+    An explicit *shell_argv* wins verbatim — a sandbox launcher prefix
+    (``["docker", "exec", "-it", "<ctr>", "/bin/bash", ...]``) reaches
+    ``pexpect.spawn`` unmodified; the caller owns the shell flags.
+    Bash-ness (which only gates the bash-only ``set +H`` startup line)
+    is inferred from the argv. ``None`` is host mode: ``_resolve_shell``
+    picks the shell and the bash-specific spawn flags are appended,
+    yielding exactly the ``spawn(path, flags)`` call the pre-argv seam
+    made.
+    """
+    if shell_argv is None:
+        path, is_bash = _resolve_shell()
+        return (path, *_BASH_SPAWN_ARGS) if is_bash else (path,), is_bash
+    argv = tuple(shell_argv)
+    if not argv:
+        raise ValueError("shell_argv must be a non-empty sequence of spawn arguments")
+    return argv, _bash_named_in_argv(argv)
 
 
 def _kill_process_session(session_pid: int) -> None:
@@ -542,13 +577,15 @@ class PersistentShellManager:
         timeout_seconds: int | None = _DEFAULT_TIMEOUT_SECONDS,
         max_output_chars: int | None = _DEFAULT_MAX_OUTPUT_CHARS,
         max_sessions: int = 8,
-        shell: str | None = None,
+        shell_argv: Sequence[str] | None = None,
+        launch_owner: ShellLaunchOwner | None = None,
     ) -> None:
         self._initial_cwd = initial_cwd
         self._timeout_seconds = timeout_seconds
         self._max_output_chars = max_output_chars
         self._max_sessions = max_sessions
-        self._shell = shell
+        self._shell_argv = shell_argv
+        self._launch_owner = launch_owner
         self._sessions: dict[str, PersistentShellSession] = {}
 
     @property
@@ -576,7 +613,9 @@ class PersistentShellManager:
                 initial_cwd=self._initial_cwd,
                 timeout_seconds=self._timeout_seconds,
                 max_output_chars=self._max_output_chars,
-                shell=self._shell,
+                shell_argv=self._shell_argv,
+                launch_owner=self._launch_owner,
+                session_id=session_id,
             )
             self._sessions[key] = session
             self._reap_beyond_limit()
@@ -599,11 +638,21 @@ class PersistentShellManager:
             await session.close()
 
 
+class PersistentShellStartError(RuntimeError):
+    """Shell initialization failed before the target command was sent."""
+
+
+class _PersistentShellUnavailableError(PersistentShellStartError):
+    """The launcher is confirmed missing, not denied or misconfigured."""
+
+
 class PersistentShellSession:
     """One long-lived interactive shell PTY driven by the marker protocol.
 
-    The shell resolves at construction (bash-first via
-    ``detect_platform_shell()``; see :func:`_resolve_shell`) and spawns
+    The spawn command resolves at construction (an explicit
+    ``shell_argv`` launcher prefix wins verbatim; host mode resolves the
+    shell bash-first via ``detect_platform_shell()`` and appends the
+    bash spawn flags — see :func:`_resolve_spawn_argv`) and spawns
     lazily on the first command. All blocking pexpect calls (spawn, send,
     read_nonblocking, close) run through ``loop.run_in_executor`` — the
     same offload pattern as ``backends/pexpect_pty.py`` — so a full PTY
@@ -626,12 +675,16 @@ class PersistentShellSession:
         initial_cwd: str | None = None,
         timeout_seconds: int | None = _DEFAULT_TIMEOUT_SECONDS,
         max_output_chars: int | None = _DEFAULT_MAX_OUTPUT_CHARS,
-        shell: str | None = None,
+        shell_argv: Sequence[str] | None = None,
+        launch_owner: ShellLaunchOwner | None = None,
+        session_id: str | None = None,
     ) -> None:
         self._initial_cwd = initial_cwd
         self._timeout_seconds = timeout_seconds
         self._max_output_chars = max_output_chars
-        self._shell_path, self._is_bash_shell = _resolve_shell(shell)
+        self._shell_argv, self._is_bash_shell = _resolve_spawn_argv(shell_argv)
+        self._launch_owner = launch_owner
+        self._session_id = session_id
         self._proc: Any = None  # pexpect.spawn handle (untyped third-party)
         self._pending: _PendingWait | None = None
         self._phase: _Phase = _Phase.IDLE
@@ -652,8 +705,14 @@ class PersistentShellSession:
 
     @property
     def shell_path(self) -> str:
-        """Resolved shell executable this session spawns (lazily)."""
-        return self._shell_path
+        """The executable this session spawns: argv[0] (an injected
+        launcher's first element) or the resolved host shell."""
+        return self._shell_argv[0]
+
+    @property
+    def shell_argv(self) -> tuple[str, ...]:
+        """The full spawn command — launcher prefix + shell + flags."""
+        return self._shell_argv
 
     # ------------------------------------------------------------------
     # Public API
@@ -728,6 +787,15 @@ class PersistentShellSession:
             if pending is not None:
                 self._pending = pending
             raise
+        except OSError as exc:
+            if pending is None:
+                raise
+            self._terminate_session_sync()
+            return (
+                f"[Error] Shell execution is uncertain and was not replayed: {exc}. "
+                "Inspect side effects before retrying; the next call starts a fresh "
+                "shell on the same backend."
+            )
 
     async def send_input(self, line: str) -> str:
         """Feed one stdin line to a stdin-waiting command and await its completion.
@@ -776,6 +844,19 @@ class PersistentShellSession:
     async def _ensure_started(self) -> None:
         if self._proc is not None and self._is_alive():
             return
+        owner = self._launch_owner
+        if owner is not None:
+            self._shell_argv, self._is_bash_shell = _resolve_spawn_argv(owner.shell_argv(self._session_id))
+        try:
+            await self._start_shell()
+        except _PersistentShellUnavailableError as exc:
+            self._terminate_session_sync()
+            if owner is None or not await owner.fallback(self._session_id, str(exc)):
+                raise
+            self._shell_argv, self._is_bash_shell = _resolve_spawn_argv(owner.shell_argv(self._session_id))
+            await self._start_shell()
+
+    async def _start_shell(self) -> None:
         if sys.platform == "win32":
             raise PersistentShellUnsupportedError(_UNSUPPORTED_HOST_MESSAGE)
         self._terminate_session_sync()
@@ -784,6 +865,9 @@ class PersistentShellSession:
         except ImportError as exc:
             raise PersistentShellUnsupportedError(_UNSUPPORTED_HOST_MESSAGE) from exc
 
+        if self._initial_cwd is not None and not Path(self._initial_cwd).is_dir():
+            raise NotADirectoryError(f"Shell working directory is unavailable: {self._initial_cwd}")
+
         # Env parity with SubprocessTool: the same full pipeline
         # (PAGER=cat, bundled-bin PATH, registry PATH, hook overrides) plus
         # NO_COLOR — read once at spawn; a persistent shell cannot take
@@ -791,35 +875,73 @@ class PersistentShellSession:
         env = build_full_env(overrides=_modex_env.get())
         env["NO_COLOR"] = "1"
 
-        spawn_args = _BASH_SPAWN_ARGS if self._is_bash_shell else []
+        # Spawn seam: argv[0] is the command; the rest its args (a sandbox
+        # launcher prefix, or host mode's resolved bash flags).
+        spawn_command = self._shell_argv[0]
+        spawn_args = list(self._shell_argv[1:])
 
         def _spawn() -> Any:
-            proc = pexpect.spawn(
-                self._shell_path,
-                spawn_args,
-                echo=False,
-                dimensions=(50, 200),
-                cwd=self._initial_cwd,
-                env=env,
-                encoding="utf-8",
-                codec_errors="replace",
-            )
+            try:
+                proc = pexpect.spawn(
+                    spawn_command,
+                    spawn_args,
+                    echo=False,
+                    dimensions=(50, 200),
+                    cwd=self._initial_cwd,
+                    env=env,
+                    encoding="utf-8",
+                    codec_errors="replace",
+                )
+            except pexpect.ExceptionPexpect:
+                # pexpect conflates "missing" and "not executable". Only
+                # confirmed absence across the launch PATH permits fallback.
+                candidates = (
+                    [Path(spawn_command)] if os.path.dirname(spawn_command)
+                    else [Path(directory) / spawn_command for directory in os.get_exec_path(env)]
+                )
+                for candidate in candidates:
+                    try:
+                        candidate.stat()
+                    except (FileNotFoundError, NotADirectoryError):
+                        continue
+                    break
+                else:
+                    raise FileNotFoundError(errno.ENOENT, "shell launcher is missing", spawn_command)
+                raise
             # Echo is off at the pty level from the start, so pexpect's 50 ms
             # pre-send delay (a password-echo race guard) is pure latency here.
             proc.delaybeforesend = None
             return proc
 
         loop = asyncio.get_running_loop()
-        self._proc = await loop.run_in_executor(None, _spawn)
-        # Controlled PS1: its appearance without a marker is the layer-2
-        # "command returned abnormally" signal; PS2 cleared and history
-        # expansion off (`set +H`, bash-only) keep results clean. The
-        # settle drain absorbs the shell's initial banner.
-        if self._is_bash_shell:
-            await self._send(f"PS1='{_PS1_TOKEN} '; PS2=''; set +H\n")
-        else:
-            await self._send(f"PS1='{_PS1_TOKEN} '; PS2=''\n")
-        await self._drain_until_quiet(_SETTLE_MAX_S)
+        try:
+            self._proc = await loop.run_in_executor(None, _spawn)
+            # Only initialization text is sent here, never the target command.
+            if self._is_bash_shell:
+                await self._send(f"PS1='{_PS1_TOKEN} '; PS2=''; set +H\n")
+            else:
+                await self._send(f"PS1='{_PS1_TOKEN} '; PS2=''\n")
+            startup = await self._drain_until_quiet(_SETTLE_MAX_S)
+        except (OSError, pexpect.ExceptionPexpect) as exc:
+            spawn_failed = self._proc is None
+            self._terminate_session_sync()
+            if isinstance(exc, OSError):
+                if (
+                    exc.errno == errno.ENOENT and spawn_failed
+                    and (self._initial_cwd is None or Path(self._initial_cwd).is_dir())
+                ):
+                    raise _PersistentShellUnavailableError(
+                        f"Shell startup failed; target command was not sent: {exc}"
+                    ) from exc
+                raise
+            raise PersistentShellStartError(
+                f"Shell startup failed; target command was not sent: {exc}"
+            ) from exc
+        if not self._is_alive():
+            self._terminate_session_sync()
+            raise PersistentShellStartError(
+                f"Shell startup failed; target command was not sent: {_sanitize(startup)}"
+            )
 
     def _is_alive(self) -> bool:
         if self._proc is None:
@@ -868,10 +990,22 @@ class PersistentShellSession:
         import pexpect
 
         loop = asyncio.get_running_loop()
+        worker = loop.run_in_executor(
+            None, proc.read_nonblocking, _READ_SIZE, _POLL_INTERVAL_S
+        )
         try:
-            return await loop.run_in_executor(
-                None, proc.read_nonblocking, _READ_SIZE, _POLL_INTERVAL_S
-            )
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            # Cancelling an executor future does not stop its thread. Keep
+            # the caller's session lock until this reader has relinquished
+            # the PTY, before on_cancel or a replacement can read/close it.
+            while not worker.done():
+                # Repeated cancellation still must join the same I/O.
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.wait({worker})
+            if not worker.cancelled():
+                worker.exception()  # observe EOF/timeout without masking cancellation
+            raise
         except pexpect.exceptions.TIMEOUT:
             return ""
         except pexpect.exceptions.EOF:
@@ -891,17 +1025,20 @@ class PersistentShellSession:
             return
         await self._drain_until_quiet(_SETTLE_MAX_S)
 
-    async def _drain_until_quiet(self, max_seconds: float) -> None:
+    async def _drain_until_quiet(self, max_seconds: float) -> str:
         """Read-and-discard until a quiet streak or *max_seconds* elapses."""
         deadline = monotonic() + max_seconds
         quiet = 0.0
+        chunks: list[str] = []
         while monotonic() < deadline:
             chunk = await self._read_chunk()
             if chunk is None:
-                return
+                break
+            chunks.append(chunk)
             quiet = quiet + _POLL_INTERVAL_S if not chunk else 0.0
             if quiet >= _SETTLE_QUIET_S:
-                return
+                break
+        return "".join(chunks)
 
     # ------------------------------------------------------------------
     # Terminal-state evidence

@@ -371,7 +371,7 @@ class TestResolverPassesFullChain:
         PoolContext) -> TodoWriteTool(require_todo_supply(pool_runtime)
         .store)`` — the pool's capability supply is the read surface."""
         from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
-        from modex_agent.runtime.store import TodoItem, TodoStore
+        from modex_agent.runtime.todo import TodoItem, TodoStore
         from modex_agent.tools.standard.todo_tool import TodoWriteTool
 
         class _Store(TodoStore):
@@ -415,7 +415,7 @@ class TestWorkspaceSpecConsumption:
 
     async def test_factory_reads_declared_selection_through_chain(self) -> None:
         """A WorkspaceContext-declared factory reads the workspace layer's
-        declared selection (backend/paths/MCP set) off the chain."""
+        declared selection (backend/paths) off the chain."""
         from modex_agent.scope.spec import (
             ScopeKind,
             ScopeSpec,
@@ -428,7 +428,6 @@ class TestWorkspaceSpecConsumption:
             name="wired",
             persistence=WorkspacePersistenceSpec(backend="sqlite"),
             paths=WorkspacePathsSpec(data_dir_name=".modex"),
-            mcp=["playwright"],
         )
         spec = ScopeSpec(kind=ScopeKind.WORKSPACE, workspace=declared)
 

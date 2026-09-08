@@ -1,6 +1,5 @@
 """Tests for framework.ioc.factories.governance."""
 
-import pytest
 
 from modex_agent.ioc.configs.memory import (
     BudgetConfig,

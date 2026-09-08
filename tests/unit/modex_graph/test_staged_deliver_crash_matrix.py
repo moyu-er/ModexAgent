@@ -8,7 +8,10 @@ import pytest
 from helpers import CounterState, make_runtime
 
 from modex_agent.agents.agent_node import AgentNode
-from modex_agent.core.session_registry import InMemorySessionRegistry, SessionRegistry
+from modex_agent.persistence.session_registry import (
+    InMemorySessionRegistry,
+    SessionRegistry,
+)
 from modex_graph import (
     CompiledGraph,
     DeliverConsumptionStatus,

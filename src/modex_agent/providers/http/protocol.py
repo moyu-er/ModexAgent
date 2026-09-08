@@ -31,8 +31,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.core.constants import ReasoningEffort
-from modex_agent.core.llm_request import LLMRequest
+from modex_agent.core.llm_request import LLMRequest, ReasoningEffort
 from modex_agent.core.llm_struct import LLMErrorInfo
 from modex_agent.core.stream_events import LLMStreamEvent
 from modex_agent.providers.http.errors import classify_http_error as classify_default_http_error

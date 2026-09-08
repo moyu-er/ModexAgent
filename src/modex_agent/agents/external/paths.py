@@ -6,19 +6,15 @@ env-snapshot files, AGENTS.md marker). It is **not** a Pydantic model — it is
 a process-local path accessor receiving an already-validated workdir from
 its callers (the external assembly's workspace resolution).
 
-``ProviderKind`` is re-exported from ``modex_agent.core.constants`` for
-backward compatibility — it was moved there to break the
-``multi_agent.descriptor → agents.external.paths`` eager import cycle (the
-canonical home is now next to ``ExecutionStrategyKind``, which it is paired
-with in pool-config validation).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from modex_agent.core.constants import ProviderKind  # noqa: F401 — re-export
-
+if TYPE_CHECKING:
+    from modex_agent.core.agent import ProviderKind
 
 def sanitize_session_id(session_id: str) -> str:
     """Sanitize a provider session ID for use as a filename.

@@ -22,8 +22,7 @@ from bot.control.models import (
     SendRequest,
 )
 
-from modex_agent.core.agent import AgentCommKind
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.agent import AgentCommKind, ExecutionStrategyKind
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore

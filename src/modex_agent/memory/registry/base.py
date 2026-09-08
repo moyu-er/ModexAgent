@@ -5,14 +5,14 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Collection
 
-from modex_agent.core.scope import (
+from modex_agent.memory.core.split_stores import MemoryStoreBundle
+from modex_agent.memory.scope import (
     MemoryAgentRole,
     MemoryContext,
     MemoryLayerName,
     Scope,
     ScopeRecord,
 )
-from modex_agent.memory.core.split_stores import MemoryStoreBundle
 
 
 class MemoryStoreRegistry(ABC):

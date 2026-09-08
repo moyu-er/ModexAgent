@@ -16,12 +16,10 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.core.constants import ReasoningEffort
-from modex_agent.core.llm_request import LLMRequest
+from modex_agent.core.llm_request import LLMRequest, ReasoningEffort
 from modex_agent.core.llm_struct import LLMErrorKind
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.stream_events import LLMStreamEvent, TextDelta
-from modex_agent.core.types import MessageRole
 from modex_agent.providers.http.errors import classify_http_error
 from modex_agent.providers.http.protocol import LLMProtocol, ProtocolConfig, WireRequest
 from modex_agent.providers.http.sse import SseFrame

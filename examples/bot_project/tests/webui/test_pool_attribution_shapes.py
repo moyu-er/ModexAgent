@@ -16,14 +16,14 @@ from bot.service.web_ui_service import WebUIService
 from bot.webui.emitter import WebBotEmitter
 from bot.workspace.handle import PoolWorkspaceResources, WorkspaceResolverCell
 
-from modex_agent.core.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.pipeline.adapters import OutputAdapter
 from modex_graph.spec import NodeSpec
 
 from ..declaration_driver import build_declared

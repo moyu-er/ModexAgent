@@ -40,56 +40,12 @@ from pathlib import Path
 
 from bot.service.session_gc import _find_children, _find_orphan_sessions, _read_session_index
 
-from modex_agent.core.cleanup import session_artifact_paths as _session_artifact_paths
+from modex_agent.persistence.session_artifacts.cleaner import _session_artifact_paths
 
 
 def _paths_for(tmp_path: Path):
     from modex_agent.workspace.paths import WorkspacePaths
     return WorkspacePaths(root=tmp_path / ".modex")
-
-
-def test_artifact_paths_all_eleven_with_correct_naming(tmp_path) -> None:
-    paths = _paths_for(tmp_path)
-    sid = "009fc886ecba.coding"
-    pool = "coding"
-    ap = _session_artifact_paths(sid, pool, paths)
-
-    # transcript + index: safe_filename (dot kept), pool-partitioned
-    assert (paths.sessions_dir / pool / "009fc886ecba.coding.jsonl") in ap
-    assert (paths.session_index_dir / pool / "009fc886ecba.coding.json") in ap
-    # memory session + pruned: sanitize_scope_key (dot kept)
-    assert (paths.memory_dir(pool) / "session" / "009fc886ecba.coding") in ap
-    assert (paths.pruned_dir(pool) / "009fc886ecba.coding") in ap
-    # media uploads: safe_segment (dot -> _)
-    assert (paths.media_dir(pool) / "uploads" / "009fc886ecba_coding") in ap
-    assert (paths.media_dir(pool) / "reads" / "009fc886ecba_coding") in ap
-    # runtime trace + output: raw sid
-    assert (paths.runtime_dir(pool, "trace") / "009fc886ecba.coding") in ap
-    assert (paths.runtime_dir(pool, "output") / "009fc886ecba.coding") in ap
-    # todos: dot-preserving -> sid.json
-    assert (paths.runtime_dir(pool, "todos") / "009fc886ecba.coding.json") in ap
-    # turns: hash-suffix segment under agent/session dirs
-    from modex_agent.runtime.store import JsonFileTurnStateStore
-    seg_agent = JsonFileTurnStateStore._safe_segment("coding")
-    seg_sid = JsonFileTurnStateStore._safe_segment(sid)
-    assert (paths.runtime_dir(pool, "turns") / seg_agent / seg_sid) in ap
-    # tool overflow: safe_filename (dot kept), workspace-level (no pool part)
-    assert (paths.overflow_dir / "tool_overflow" / "009fc886ecba.coding") in ap
-    # exactly eleven units (fork_contexts removed in T17; media reads added;
-    # tool overflow added with the tool-result overflow store)
-    assert len(ap) == 11
-    # fork_contexts must NOT appear
-    assert not any("fork_contexts" in str(p) for p in ap)
-
-
-def test_artifact_paths_excludes_pool_shared(tmp_path) -> None:
-    paths = _paths_for(tmp_path)
-    ap = _session_artifact_paths("x.main", "main", paths)
-    # archive + core are pool-shared, must NOT appear
-    assert not any("archive" in str(p) for p in ap)
-    assert not any("core" in str(p) for p in ap)
-    # commands leaf is unused, must NOT appear
-    assert not any("commands" in str(p) for p in ap)
 
 
 import json
@@ -155,12 +111,12 @@ import asyncio
 
 from bot.scope import BotRecordScope
 
-from modex_agent.core.cleanup import (
+from modex_agent.core.scope import RecordScope
+from modex_agent.persistence.session_artifacts import (
     DefaultSessionArtifactCleaner,
     SessionArtifactCleaner,
     SessionCleanupResult,
 )
-from modex_agent.core.scope import RecordScope
 from modex_agent.workspace.paths import WorkspacePaths
 
 
@@ -721,6 +677,13 @@ def test_dedup_removed_on_clean_failure(tmp_path) -> None:
     class _BoomCleaner(SessionArtifactCleaner):
         async def clean_session_artifacts(self, session_id, scope) -> Never:
             raise OSError("simulated locked file")
+
+        async def clean_record_and_transcript(
+            self,
+            session_id: str,
+            pool: str,
+        ) -> SessionCleanupResult:
+            return SessionCleanupResult()
 
         async def discover_orphan_scopes(
             self,

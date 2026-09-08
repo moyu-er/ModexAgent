@@ -1,10 +1,7 @@
 """Shared memory utilities."""
 
-import contextlib
-import os
 import re
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any
 
 from modex_agent.core.message import ChatMessage
@@ -75,27 +72,6 @@ def _is_meaningless_summary(summary: str) -> bool:
         "<invoke name=",
     )
     return bool(any(p in text for p in _tool_xml_patterns))
-
-
-def safe_atomic_replace(tmp_path: Path, target_path: Path) -> None:
-    """Replace target with tmp file, with fallback for Windows file-locking.
-
-    On Unix, ``os.replace`` is atomic and reliable. On Windows, it can fail
-    with ``PermissionError`` when the target is held open by another process
-    (antivirus, file indexer, concurrent writer). Falls back to a direct write
-    in that case.
-
-    Args:
-        tmp_path: Temporary file with the new content.
-        target_path: Destination file to replace.
-    """
-    try:
-        os.replace(str(tmp_path), str(target_path))
-    except OSError:
-        content = tmp_path.read_text(encoding="utf-8")
-        target_path.write_text(content, encoding="utf-8")
-        with contextlib.suppress(OSError):
-            tmp_path.unlink()
 
 
 _RUNTIME_PREFIX_RE = re.compile(

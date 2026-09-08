@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.scope import MemoryContext, MemoryLayerName
 from modex_agent.memory.archive_models import ArchiveChannel, ArchiveWrite
 from modex_agent.memory.core.lock import AioRWLock
 from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
 from modex_agent.memory.layers.config import ArchiveMemoryConfig
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+from modex_agent.memory.scope import MemoryContext, MemoryLayerName
 
 
 async def test_commit_cursor_race_with_append_bundle(tmp_path: Path):

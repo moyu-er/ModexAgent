@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from modexbot.cli import (
     _launch_subprocess,
     _restart_bot,
@@ -37,41 +38,88 @@ def test_cli_version() -> None:
     assert "modexbot" in result.output.lower()
 
 
-def test_venv_python_path_respects_platform() -> None:
-    """_VENV_PYTHON points to the correct interpreter inside the venv."""
-    from modexbot.cli import _VENV_PYTHON
+@pytest.mark.parametrize("platform", ["win32", "linux", "darwin"])
+@pytest.mark.parametrize("missing", [None, "modexctl", "modexbot", "both"])
+def test_source_checkout_never_switches_to_nested_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str, missing: str | None
+) -> None:
+    """Installers and startup use the same root, even when it needs repair."""
+    import modexbot.cli as cli
 
-    venv_str = str(_VENV_PYTHON)
-    if sys.platform == "win32":
-        assert ".venv\\Scripts\\python.exe" in venv_str
-    else:
-        assert ".venv/bin/python" in venv_str
+    repo = tmp_path / "repo with spaces"
+    package = repo / "examples" / "bot_project"
+    (repo / "src" / "modex_agent").mkdir(parents=True)
+    (repo / "pyproject.toml").touch()
+    bindir = "Scripts" if platform == "win32" else "bin"
+    suffix = ".exe" if platform == "win32" else ""
+    for root in (repo, package):
+        scripts = root / ".venv" / bindir
+        scripts.mkdir(parents=True)
+        (scripts / f"python{suffix}").touch()
+        for command in ("modexbot", "modexctl"):
+            if root != repo or missing not in (command, "both"):
+                (scripts / f"{command}{suffix}").touch()
+    monkeypatch.setattr(cli, "_REPO_ROOT", repo)
+    monkeypatch.setattr(cli, "_PKG_ROOT", package)
+    monkeypatch.setattr(cli.sys, "platform", platform)
+
+    selected = cli._resolve_venv_python()
+
+    assert selected == repo / ".venv" / bindir / f"python{suffix}"
 
 
-def test_resolve_venv_python_candidates() -> None:
-    """_resolve_venv_python checks repo_root/.venv first, then bot_project/.venv."""
-    from modexbot.cli import _PKG_ROOT, _REPO_ROOT, _resolve_venv_python
+def test_launch_rejects_incomplete_root_before_starting_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import modexbot.cli as cli
 
-    result = _resolve_venv_python()
+    bin_dir = "Scripts" if sys.platform == "win32" else "bin"
+    suffix = ".exe" if sys.platform == "win32" else ""
+    python = tmp_path / ".venv" / bin_dir / f"python{suffix}"
+    python.parent.mkdir(parents=True)
+    python.touch()
+    (python.parent / f"modexbot{suffix}").touch()
+    monkeypatch.setattr(cli, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(cli, "_VENV_PYTHON", python)
 
-    # Either candidate could be returned depending on what exists on this machine.
-    valid: list[Path]
-    if sys.platform == "win32":
-        valid = [
-            _REPO_ROOT / ".venv" / "Scripts" / "python.exe",
-            _PKG_ROOT / ".venv" / "Scripts" / "python.exe",
-        ]
-    else:
-        valid = [
-            _REPO_ROOT / ".venv" / "bin" / "python",
-            _PKG_ROOT / ".venv" / "bin" / "python",
-        ]
-    assert result in valid
+    with patch("modexbot.cli.subprocess.Popen") as spawn, pytest.raises(cli.typer.Exit):
+        cli._launch_subprocess("raise AssertionError('must not run')")
+
+    spawn.assert_not_called()
+
+
+def test_resolve_venv_python_keeps_bundled_interpreter_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import modexbot.cli as cli
+
+    monkeypatch.setattr(cli, "_REPO_ROOT", tmp_path / "repo")
+    monkeypatch.setattr(cli, "_PKG_ROOT", tmp_path / "package")
+
+    assert cli._resolve_venv_python() == Path(sys.executable)
+
+
+def test_in_process_start_rejects_wrong_source_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import modexbot.cli as cli
+
+    monkeypatch.setattr(cli, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(cli, "_VENV_PYTHON", tmp_path / ".venv" / "Scripts" / "python.exe")
+    monkeypatch.setattr(cli.sys, "prefix", str(tmp_path / "other-env"))
+
+    with patch("modexbot.cli._write_pid") as write_pid, pytest.raises(RuntimeError):
+        cli._run_bot(str(tmp_path / "config"), 21800, False)
+
+    write_pid.assert_not_called()
 
 
 def test_launch_subprocess_uses_python_c() -> None:
     """_launch_subprocess uses python -c to run the given script."""
-    with patch("modexbot.cli.subprocess.Popen") as mock_popen:
+    with (
+        patch("modexbot.cli._VENV_PYTHON", Path(sys.executable)),
+        patch("modexbot.cli.subprocess.Popen") as mock_popen,
+    ):
         mock_popen.return_value = MagicMock()
         _launch_subprocess("print('hello')")
         args = mock_popen.call_args[0][0]
@@ -85,7 +133,8 @@ def test_launch_subprocess_redirects_to_log() -> None:
     """_launch_subprocess appends stdout/stderr to logs/bot.log."""
     tmp_path = Path(tempfile.mktemp(suffix=".log"))
     try:
-        with patch("modexbot.cli.subprocess.Popen") as mock_popen, \
+        with patch("modexbot.cli._VENV_PYTHON", Path(sys.executable)), \
+             patch("modexbot.cli.subprocess.Popen") as mock_popen, \
              patch("modexbot.cli._log_file", return_value=tmp_path):
             mock_popen.return_value = MagicMock()
             _launch_subprocess("pass")
@@ -100,7 +149,10 @@ def test_launch_subprocess_redirects_to_log() -> None:
 
 def test_launch_subprocess_has_cwd() -> None:
     """_launch_subprocess runs from the package root."""
-    with patch("modexbot.cli.subprocess.Popen") as mock_popen:
+    with (
+        patch("modexbot.cli._VENV_PYTHON", Path(sys.executable)),
+        patch("modexbot.cli.subprocess.Popen") as mock_popen,
+    ):
         mock_popen.return_value = MagicMock()
         _launch_subprocess("pass")
         kwargs = mock_popen.call_args[1]

@@ -5,18 +5,23 @@ import logging
 from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
-
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
-from modex_agent.media.models import Attachment
 
+from ..adapters.output import OutputAdapter
 from ..adapters.platform import StreamingMode
-from ..core.constants import DefaultValues
-from ..core.types import InputMessage, OutputMessage
-from ..pipeline.adapters import InputAdapter, OutputAdapter
+from ..pipeline.adapters import InputAdapter
 from .broker import Address, AddressKind, BrokerMessage, MessageBroker
+from .models import (
+    DEFAULT_CHANNEL,
+    DEFAULT_CHAT_ID,
+    BrokerInputPayload,
+    BrokerOutputPayload,
+    InputMessage,
+    OutputMessage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,9 +85,10 @@ def _broker_msg_to_input_message(
     *,
     session_factory: SessionIdFactory | None = None,
 ) -> InputMessage:
-    payload = msg.payload
+    payload = BrokerInputPayload.model_validate(msg.payload)
+    raw_payload = msg.payload
     sender = msg.sender
-    metadata = dict(payload.get("metadata", {}))
+    metadata = dict(payload.metadata)
     # 透传 AgentMessageEnvelope 路由字段到 metadata
     for key in (
         "session_id",
@@ -92,16 +98,16 @@ def _broker_msg_to_input_message(
         "message_type",
         "invocation_id",
     ):
-        value = payload.get(key) or msg.headers.get(key)
+        value = raw_payload.get(key) or msg.headers.get(key)
         if value:
             metadata[key] = value
 
-    raw_session = payload.get("session_id", str(sender))
+    raw_session = payload.session_id or str(sender)
     session: SessionInfo | None = None
 
     # Orphan 隔离：来自 agent 的消息若缺失 session_id，隔离到 synthetic session
     if sender.kind == "agent":
-        cid = payload.get("session_id") or msg.headers.get("session_id")
+        cid = payload.session_id or msg.headers.get("session_id")
         if not cid:
             import uuid
 
@@ -119,87 +125,21 @@ def _broker_msg_to_input_message(
         session = SessionInfo.from_str(raw_session)
 
     return InputMessage(
-        content=payload.get("content", ""),
+        content=payload.content,
         session=session,
         source=str(sender),
         sender_id=sender.name
         if sender.kind == "user"
-        else payload.get("sender_id", DefaultValues.SENDER_ID),
-        channel=msg.headers.get("channel", DefaultValues.CHANNEL),
-        chat_id=msg.headers.get("chat_id", DefaultValues.CHAT_ID),
+        else payload.sender_id,
+        channel=msg.headers.get("channel", DEFAULT_CHANNEL),
+        chat_id=msg.headers.get("chat_id", DEFAULT_CHAT_ID),
         metadata=metadata,
-        approval_decision=approval_decision_from_payload(payload),
-        attachments_resolved=attachments_resolved_from_payload(payload),
+        content_format=payload.content_format,
+        truncatable_paths=payload.truncatable_paths,
+        workspace=Path(payload.workspace) if payload.workspace is not None else None,
+        approval_decision=payload.approval_decision,
+        attachments_resolved=payload.attachments_resolved,
     )
-
-
-def approval_decision_from_payload(payload: dict[str, Any]) -> Any:
-    """Reconstruct an ``ApprovalDecisionInput`` from a broker payload, or None."""
-    from modex_agent.approval.views import ApprovalDecisionInput
-
-    return ApprovalDecisionInput.from_dict(payload.get("approval_decision"))
-
-
-def metadata_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Rebuild free-form ``InputMessage.metadata`` from a broker payload.
-
-    ``submit_input`` serializes the full ``InputMessage`` via
-    :class:`BrokerInputPayload`; without parsing it back here the free-form
-    metadata (e.g. harness trace ids) is silently dropped in transit — the
-    same field-drift failure class as ``approval_decision``. Returns ``{}``
-    for payloads that do not carry a valid ``BrokerInputPayload`` metadata
-    mapping (inter-agent envelopes keep their metadata on the envelope, not
-    the payload).
-    """
-    try:
-        return dict(BrokerInputPayload.model_validate(payload).metadata)
-    except ValidationError:
-        return {}
-
-
-def attachments_resolved_from_payload(payload: dict[str, Any]) -> list[Attachment]:
-    """Rebuild the gate-accepted inbound Attachment records from a broker payload.
-
-    The broker serialization boundary (:class:`BrokerInputPayload`) carries the
-    resolved attachments as metadata-only dicts; without rebuilding them here
-    the path-reference injection (ADR-0013 §10, mechanism B) is silently lost
-    in transit — the same field-drift failure that once dropped
-    ``approval_decision``. Shared by the BrokerInputAdapter reconstruction and
-    the pool's raw-broker-message dispatch. Returns ``[]`` when none.
-    """
-    raw = payload.get("attachments_resolved") or []
-    return [Attachment.from_dict(d) for d in raw if isinstance(d, dict)]
-
-
-class BrokerInputPayload(BaseModel):
-    """Serialized ``InputMessage`` payload that crosses the message broker.
-
-    Built by both :func:`build_input_broker_message` (framework bridge) and
-    ``PoolRouter._route_to_pool`` (bot layer); the pool dispatch side reads it
-    back as a plain dict from ``BrokerMessage.payload``. Carrying it as a typed
-    model prevents field-name drift at the construction edge — the exact
-    failure that silently dropped ``approval_decision`` and turned a webui
-    approve click into an empty user turn (provider 400).
-
-    ``extra="allow"`` lets future/auxiliary fields (e.g. transport metadata
-    piggy-backing on the payload) pass through without a model edit; declared
-    fields stay typed and visible. Serialize with ``model_dump(exclude_none=True)``
-    so an absent ``approval_decision`` stays absent (callers rely on key
-    absence, not a ``None`` value, to detect "no decision").
-    """
-
-    model_config = ConfigDict(extra="allow")
-
-    content: str = ""
-    session_id: str = ""
-    agent_session_id: str = ""
-    message_type: str = ""
-    metadata: dict[str, Any] = Field(default_factory=dict)
-    sender_id: str = ""
-    chat_id: str = ""
-    approval_decision: dict[str, Any] | None = None
-    attachments_resolved: list[dict[str, Any]] = Field(default_factory=list)
-    workspace: str | None = None
 
 
 def build_input_broker_message(msg: InputMessage, recipient: Address) -> BrokerMessage:
@@ -211,21 +151,12 @@ def build_input_broker_message(msg: InputMessage, recipient: Address) -> BrokerM
     arrives as an empty user turn — polluting history and leaving a dangling
     assistant ``tool_calls`` that triggers a provider 400.
     """
-    payload = BrokerInputPayload(
-        content=msg.content,
-        session_id=msg.session.session_id_prefix,
+    payload = BrokerInputPayload.from_input_message(
+        msg,
         agent_session_id=str(msg.session),
-        metadata=dict(msg.metadata) if msg.metadata else {},
-        sender_id=msg.sender_id,
-        chat_id=msg.chat_id,
-        approval_decision=msg.approval_decision.to_dict()
-        if msg.approval_decision is not None
-        else None,
-        attachments_resolved=[a.to_dict() for a in msg.attachments_resolved],
-        workspace=str(msg.workspace) if msg.workspace is not None else None,
     )
     return BrokerMessage(
-        payload=payload.model_dump(exclude_none=True),
+        payload=payload.model_dump(mode="json", exclude_none=True),
         sender=Address(kind=AddressKind.CHANNEL, name=msg.source or "unknown"),
         recipient=recipient,
         headers={
@@ -267,15 +198,9 @@ class BrokerOutputAdapter(OutputAdapter):
 
     async def send(self, message: OutputMessage, session_id: str) -> None:
         metadata = dict(message.metadata) if message.metadata else {}
+        payload = BrokerOutputPayload.from_output_message(message, session_id=session_id)
         broker_msg = BrokerMessage(
-            payload={
-                "content": message.content,
-                "metadata": metadata,
-                "session_id": metadata.get("session_id", session_id),
-                "agent_session_id": metadata.get("agent_session_id", session_id),
-                "message_id": metadata.get("message_id", ""),
-                "in_reply_to": metadata.get("in_reply_to", ""),
-            },
+            payload=payload.model_dump(mode="json"),
             sender=self.sender,
             correlation_id=metadata.get("correlation_id", session_id),
             headers={
@@ -464,11 +389,12 @@ class BrokerBridgeService:
             return
         try:
             async for broker_msg in self.broker.subscribe([route.match_topic]):
+                payload = BrokerOutputPayload.model_validate(broker_msg.payload)
                 out_msg = OutputMessage(
-                    content=broker_msg.payload.get("content", ""),
-                    metadata=broker_msg.payload.get("metadata", {}),
+                    content=payload.content,
+                    metadata=payload.metadata,
                 )
-                session_id = broker_msg.payload.get("session_id", "default")
+                session_id = payload.session_id
                 if self._send_timeout is not None:
                     try:
                         await asyncio.wait_for(

@@ -8,7 +8,6 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 
-from modex_agent.core.scope import MemoryContext, Scope
 from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 from modex_agent.memory.core.layers import CoreMemoryManager
 from modex_agent.memory.core.models import CoreMemoryContents
@@ -26,6 +25,7 @@ from modex_agent.memory.hooks import (
     MemoryUpdateRef,
 )
 from modex_agent.memory.layers.config import CoreMemoryConfig, StorageFactory
+from modex_agent.memory.scope import MemoryContext, Scope
 from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 
 logger = logging.getLogger(__name__)

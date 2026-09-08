@@ -5,13 +5,12 @@
 
 ## Purpose
 
-Agent-facing tool implementations for memory and experience file operations. Provides scoped file tools (read/write/edit/list) for summarizer agents and experience tools for the main agent's experience management.
+Agent-facing scoped file tools (read/write/edit/list) for summarizer agents. The 6 experience tools moved to the `experience` capability package (plan §10).
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
-| `experience.py` | 6 experience tools: `ExperienceReadTool`, `ExperienceWriteTool`, `ExperienceEditTool`, `ExperienceListTool`, `ExperienceRenameDirTool`, `ExperienceDeleteTool`. Each wraps a standard file tool with `ExperiencePathResolver` for path containment, name validation, auto-correction, and metadata tracking |
 | `scoped_read.py` | `ScopedReadFileTool` — read-only file tool restricted to `allowed_dirs` |
 | `scoped_write.py` | `ScopedWriteFileTool` — write tool restricted to `allowed_dirs` |
 | `scoped_edit.py` | `ScopedEditFileTool` — find-and-replace edit tool restricted to `allowed_dirs` |
@@ -48,8 +47,4 @@ ExperienceWriteTool.execute(name, content)
 
 ### Dependencies
 - `modex_agent.core.tool_manager` — `Tool` base class
-- `modex_agent.core.experience.source` — `sanitize_name()`
-- `modex_agent.core.experience.validation` — `validate_experience_md()`
-- `modex_agent.core.experience.name_sync` — `auto_correct_frontmatter_name()`
-- `modex_agent.core.experience.meta` — `ExperienceMetaStore`
 - `modex_agent.utils.xml` — `xml_text()`

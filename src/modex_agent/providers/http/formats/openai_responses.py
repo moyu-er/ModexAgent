@@ -47,11 +47,12 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag
 
-from modex_agent.core.constants import FinishReason, ReasoningEffort
-from modex_agent.core.llm_request import LLMRequest
+from modex_agent.core.llm_request import LLMRequest, ReasoningEffort
 from modex_agent.core.llm_struct import (
+    FinishReason,
     LLMErrorInfo,
     LLMErrorKind,
+    TokenUsage,
     is_content_filter_text,
     is_context_overflow_text,
 )
@@ -60,6 +61,7 @@ from modex_agent.core.message import (
     ChatMessage,
     ContentPart,
     ImageUrlPart,
+    MessageRole,
     TextPart,
     parse_media_ref,
 )
@@ -73,7 +75,6 @@ from modex_agent.core.stream_events import (
     ToolCallComplete,
     UsageSnapshot,
 )
-from modex_agent.core.types import MessageRole, TokenUsage
 from modex_agent.providers.http.protocol import LLMProtocol, ProtocolConfig
 from modex_agent.providers.http.sse import SseFrame
 from modex_agent.providers.http.tool_stream import (

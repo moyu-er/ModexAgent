@@ -201,3 +201,24 @@ class TestDeletePrompt:
         assert controller.restart_required is False
         controller.delete_prompt("orphan")
         assert controller.restart_required is False
+
+
+class TestSkillAssignmentRestart:
+    def test_assign_does_not_set_restart_required(self, tmp_path: Path) -> None:
+        _seed_pool_yml(tmp_path, "main", main_agent_name="main")
+        controller = _make_controller(tmp_path)
+        controller.upload_skill("hot", {"SKILL.md": "# hot\n"})
+
+        controller.assign_skill("main", "main", "hot")
+
+        assert controller.restart_required is False
+
+    def test_unassign_does_not_set_restart_required(self, tmp_path: Path) -> None:
+        _seed_pool_yml(tmp_path, "main", main_agent_name="main")
+        controller = _make_controller(tmp_path)
+        controller.upload_skill("hot", {"SKILL.md": "# hot\n"})
+        controller.assign_skill("main", "main", "hot")
+
+        controller.unassign_skill("main", "main", "hot")
+
+        assert controller.restart_required is False

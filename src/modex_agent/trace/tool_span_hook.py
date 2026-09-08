@@ -5,7 +5,7 @@ import time
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Final
 
-from modex_agent.core.types import ToolCall
+from modex_agent.core.message import ToolCall
 from modex_agent.hook.abc import AfterToolExecutionHook, BeforeToolExecutionHook
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.trace.base_hook import BaseTraceHook

@@ -36,7 +36,7 @@ function node(
 }
 
 function instance(
-  status: string,
+  status: GraphInstance["status"],
   nodes: GraphNodeStatus[],
 ): GraphInstance {
   return {
@@ -387,6 +387,55 @@ describe("useGraphExecution — WS mode", () => {
   });
 
   // ── Graph-level events ────────────────────────────────────────────────────
+
+  it("applies authoritative lifecycle events, including same-timestamp drain transitions", async () => {
+    const fake = new FakeWsClient(true);
+    const { result } = renderHook(() => useGraphExecution("ws1", "inst-1", EDGES, asWsClient(fake)));
+    await flush();
+    for (const status of ["pausing", "paused", "running", "stopping", "stopped"] as const) {
+      act(() => fake.injectGraphEvent({ kind: "graph_status_changed", status, timestamp: 100 }));
+      expect(result.current.instance?.status).toBe(status);
+    }
+    expect(result.current.timeline.filter((event) => event.kind === "graph_status_changed")).toHaveLength(5);
+  });
+
+  it("preserves a live status event arriving during the initial snapshot", async () => {
+    let resolveSnapshot!: (value: GraphInstance) => void;
+    mockGetInstance.mockImplementation(() => new Promise((resolve) => { resolveSnapshot = resolve; }));
+    const fake = new FakeWsClient(true);
+    const { result } = renderHook(() => useGraphExecution("ws1", "inst-1", EDGES, asWsClient(fake)));
+    act(() => fake.injectGraphEvent({ kind: "graph_status_changed", status: "pausing", timestamp: 100 }));
+    await act(async () => resolveSnapshot(BASE_INSTANCE));
+    expect(result.current.instance?.status).toBe("pausing");
+  });
+
+  it("reconciles missed statuses and node results after subscription acknowledgement", async () => {
+    const fake = new FakeWsClient(true);
+    const { result } = renderHook(() => useGraphExecution("ws1", "inst-1", EDGES, asWsClient(fake)));
+    await flush();
+    act(() => fake.simulateDisconnect());
+    await flush();
+    mockGetInstance.mockResolvedValue(instance("paused", [node("a", "suspended")]));
+    act(() => {
+      fake.simulateConnect();
+      fake.injectRawMessage({ type: "graph_subscribed", graph_instance_id: "inst-1" });
+    });
+    await flush();
+    expect(result.current.instance?.status).toBe("paused");
+    expect(result.current.instance?.nodes[0]?.status).toBe("suspended");
+  });
+
+  it("keeps graph_failed and its error observable across refresh", async () => {
+    const fake = new FakeWsClient(true);
+    const { result } = renderHook(() => useGraphExecution("ws1", "inst-1", EDGES, asWsClient(fake)));
+    await flush();
+    act(() => fake.injectGraphEvent({ kind: "graph_failed", error: "drain failed", timestamp: 100 }));
+    expect(result.current.instance?.status).toBe("failed");
+    mockGetInstance.mockResolvedValue(instance("failed", []));
+    act(() => { void result.current.refresh(); });
+    await flush();
+    expect(result.current.timeline.find((event) => event.kind === "graph_failed")?.event?.error).toBe("drain failed");
+  });
 
   it("graph_completed → instance status = completed + timeline event", async () => {
     const fake = new FakeWsClient(true);

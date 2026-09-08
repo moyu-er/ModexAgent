@@ -1,10 +1,9 @@
 """Agent 事件基类和 Emitter 配置
 
-提供 AgentEvent ABC 和 EmitterConfig 数据类，支持事件过滤。
+提供 AgentEvent ABC 和 EmitterConfig（frozen Pydantic），支持事件过滤。
 """
 
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AgentEvent:
@@ -19,8 +18,7 @@ class AgentEvent:
     pass
 
 
-@dataclass
-class EmitterConfig:
+class EmitterConfig(BaseModel):
     """Emitter 配置
 
     控制哪些事件类型会被发送，避免不必要的处理和传输。
@@ -38,18 +36,13 @@ class EmitterConfig:
         )
     """
 
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
     # 启用的事件类型（None 表示全部启用）
-    enabled_events: set[str] | None = None
+    enabled_events: frozenset[str] | None = None
 
     # 禁用的事件类型（优先级高于 enabled_events）
-    disabled_events: set[str] = field(default_factory=set)
-
-    # 模型内容过滤器（可选）
-    # 例如：过滤掉 <think> 标签内容
-    content_filter: Callable[[str], str] | None = None
-
-    # 工具结果最大长度（超出截断）
-    max_tool_result_length: int = 10000
+    disabled_events: frozenset[str] = Field(default_factory=frozenset)
 
     def is_enabled(self, event_name: str) -> bool:
         """检查事件是否启用

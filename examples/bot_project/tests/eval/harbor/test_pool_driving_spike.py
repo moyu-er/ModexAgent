@@ -9,25 +9,25 @@ import pytest
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.pool import create_pool
 from bot.service.pool.declaration import boot_scope_declaration, declared_pool_build
+from bot.workspace.handle import WorkspaceHandle
 from bot.workspace.pool_data import PoolData, build_pool_data
 from plugins.bot_strategies import BotDefaultLLMConfig
 
+from modex_agent.adapters.output import NullOutputAdapter
 from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.core.constants import FinishReason
 from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.llm_struct import FinishReason, LLMResponse, RuntimeSafetyPolicy
+from modex_agent.core.message import ChatMessage, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage, LLMResponse, ToolCall
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.memory.presets import main_agent_memory
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_instance import PoolInstance
-from modex_agent.pipeline.adapters import NullOutputAdapter
 from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
@@ -216,6 +216,9 @@ async def _create_scripted_pool(
         on_subagent_created=on_subagent_created,
         bot_model_config=None,
         model_choice_registry=ModelChoiceRegistry(),
+        workspace_handle=WorkspaceHandle(
+            target=_BOT_PROJECT, data_root=data_dir,
+        ),
         workspace_registry=object(),
         workspace_resources=object(),
         component_registry=await _scripted_registry(provider),
@@ -264,14 +267,17 @@ async def test_real_pool_drives_direct_answer_to_emitter_completion(tmp_path: Pa
     assert result.content == "direct pool answer"
     assert poller_task.done()
     assert poller._inflight == {}
+    # The tracing capability (FILE backend — the boot fallback's default)
+    # persists the turn's spans even under a custom emitter factory: the
+    # retired trace gap (emitter-carried pools lost every span) is closed.
     spans = await JsonlSpanQuery(tmp_path / "runtime_state" / "coder" / "trace").list_by_session(
         _ROOT_SESSION.session_id
     )
-    assert spans == []
+    assert {span.name for span in spans} == {"chat", "invoke_agent"}
 
 
 @pytest.mark.asyncio
-async def test_real_pool_drives_delegated_subagent_and_exposes_trace_gap(
+async def test_real_pool_drives_delegated_subagent_and_persists_trace(
     tmp_path: Path,
 ) -> None:
     completion: asyncio.Future[AgentResult] = asyncio.get_running_loop().create_future()
@@ -307,8 +313,17 @@ async def test_real_pool_drives_delegated_subagent_and_exposes_trace_gap(
     assert parent_id == _ROOT_SESSION.session_id
     assert child_result.content == "child pool answer"
     assert parent_result.content == "delegated pool answer"
+    # Trace persistence covers the delegation too: the orchestrator's
+    # handoff chain and the subagent's own turn both reach the pool's
+    # span store under their session ids.
     query = JsonlSpanQuery(tmp_path / "runtime_state" / "coder" / "trace")
     root_spans = await query.list_by_session(_ROOT_SESSION.session_id)
     child_spans = await query.list_by_session(child_id)
-    assert root_spans == []
-    assert child_spans == []
+    assert {span.name for span in root_spans} == {
+        "chat",
+        "execute_tool_batch",
+        "execute_tool",
+        "agent.handoff",
+        "invoke_agent",
+    }
+    assert {span.name for span in child_spans} == {"chat", "invoke_agent"}

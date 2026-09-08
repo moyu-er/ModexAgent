@@ -22,8 +22,8 @@ from __future__ import annotations
 import sqlite3
 from typing import TYPE_CHECKING
 
-from modex_agent.agents.external.paths import ProviderKind
 from modex_agent.agents.external.session_store import ExternalSessionMapStore
+from modex_agent.core.agent import ProviderKind
 from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:

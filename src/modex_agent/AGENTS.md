@@ -1,9 +1,9 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-26 -->
+<!-- Updated: 2026-09-02 -->
 
 # modex_agent
 
-Core multi-agent framework package (334+ Python files across 25 modules). All abstractions, implementations, and the three-layer runtime model (Hook / Interceptor / Control) plus Approval, Experience, and Media.
+Core multi-agent framework package: abstractions, implementations, the three-layer runtime model (Hook / Interceptor / Control), and bundled capabilities including Experience and Skills.
 
 > [!NOTE]
 > "Hook / Interceptor / Control" names three packages, but they are not peers
@@ -21,40 +21,39 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 
 ## Module Overview
 
-| Module | Files | Subdirectories | Purpose |
-|--------|-------|----------------|---------|
-| `core/` | 25 py | `skills/`, `experience/` | ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, `SessionArtifactCleaner`/`SessionDatabaseCleaner`, types (see `core/AGENTS.md`). The graph engine was extracted to `modex_graph` (ADR-0033). |
-| `agents/` | 2 py | `react/`, `external/`, `experience/`, `summarizer/` | Agent implementations — `ReActAgent` (built on `modex_graph`), `ExternalAgent` (Pi/OpenCode CLI harness), `ExperienceReviewAgent`, `SessionCompactorAgent` (tool-less single-LLM-call compact summary). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). (see `agents/AGENTS.md`) |
-| `memory/` | 18 py | `consolidation/`, `core/`, `injection/`, `layers/`, `pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Three-layer memory — session/archive/core, compaction, consolidation, governance, injection. Split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) + `MemoryStoreBundle` (see `memory/AGENTS.md`) |
-| `persistence/` | 26 py | `adapters/`, `managers/`, `migrations/` | Hybrid persistence layer (ADR-0023, ADR-0028~0031). `ConnectionManager` + `MigrationRunner` (per-workspace SQLite), `PersistenceBackend`/`PersistenceConfig`, `ColumnProjection` (ADR-0030), `SqliteSessionDatabaseCleaner`, SQLite adapters for the split store + runtime-state ABCs. All timestamps are INTEGER ms (ADR-0029) |
-| `multi_agent/` | 20 py | `inbox/` | Star-topology orchestration — `AgentPool`, inbox (`InboxMQ`), `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
-| `tools/` | 8 py | `ast/`, `lsp/`, `mcp/`, `overflow/`, `standard/`, `terminal/`, `web/` | Tool subsystem — registry, executor, MCP, terminal (pexpect/tmux/winpty), overflow, standard tools (see `tools/AGENTS.md`) |
-| `sandbox/` | 17 py | `adapters/` | Sandboxed execution — Subprocess, Docker, E2B, Landlock, guards, environment builder (see `sandbox/AGENTS.md`) |
-| `pipeline/` | 7 py | — | `AgentPipeline` orchestration, I/O adapters, approval renderer, snapshot handling (see `pipeline/AGENTS.md`) |
-| `runtime/` | 9 py | — | `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, codec, snapshot policy (see `runtime/AGENTS.md`) |
-| `commands/` | 7 py | — | Slash command processor — parse, two-stage dispatch, approval/continue/transform actions (see `commands/AGENTS.md`) |
-| `control/` | 6 py | — | Control transport — `InMemoryControlChannel` (the live `/stop` + pause mechanism), `ControlCommand`, `AgentControlError` exceptions (see `control/AGENTS.md`) |
-| `hook/` | 4 py | `builtin/` | Lifecycle hooks — `HookRunner`, `HookPoint`, 6 builtin hooks (see `hook/AGENTS.md`) |
-| `interceptor/` | 4 py | `builtin/` | AOP interceptor chain — `InterceptorChain`, 3 builtin interceptors (see `interceptor/AGENTS.md`) |
-| `ioc/` | 2 py | `configs/`, `factories/` | `AppConfig` (Pydantic), 13 typed configs, 8 factory modules (see `ioc/AGENTS.md`) |
-| `approval/` | 6 py | — | Tiered tool approval — tiers, decisions, response parsing (see `approval/AGENTS.md`) |
-| `messaging/` | 4 py | — | `MessageBroker`, `BrokerBridgeService` (see `messaging/AGENTS.md`) |
-| `plugins/` | 5 py | `assembly/`, `defaults/capabilities/` | Plugin-unified agent assembly — 11-slot `ComponentRegistry`, `ComponentFactory` ABC, `Plugin` ABC, `AssemblyPipeline` (4 stages), `DefaultPlugin`; the `CAPABILITY` slot hosts capability bundles (ADR-0047) with the five FW-bundled packages in `defaults/capabilities/` (see `plugins/AGENTS.md` and `docs/design/capability-bundles/AUTHOR-GUIDE.md`) |
-| `scope/` | 9 py | — | Scope declaration tree (ADR-0042) — `ScopeSpec`/`AgentSpec` frozen types + YAML loader (incl. the `capabilities:` override map, ADR-0047), position-derived defaults, two-phase `ScopeTreeValidator` (V1-V13), `ProfileStore` + `STANDARD_PROFILES`, pure `ScopeCompiler` (per-agent `AssemblySpec`s + effective toolsets + provenance bill + the C0/C1/C2 capability compile protocol), N2 spec-hash/generation seam (see `scope/AGENTS.md`) |
-| `providers/` | 1 py | `http/` | LLM providers — direct-HTTP event-stream subsystem (http/, ADR-0046: HTTPStreamProvider + protocol engines) (see `providers/AGENTS.md`) |
-| `workspace/` | 13 py | — | `WorkspaceContext` ABC, `DefaultWorkspaceContext` — cd/exit/restore workspace switching with callback notification and persistence (see `workspace/AGENTS.md`) |
-| `input_pipeline/` | 5 py | — | Extensible user-input stage pipeline — `UserInputEnvelope`, `InputStage` ABC, `Continue`/`Terminate`, `UserInputPipeline` (see `input_pipeline/AGENTS.md`) |
-| `trace/` | 4 py | — | Tracing and observability — `TraceStore`, `TraceHooks`, `TraceType` |
-| `utils/` | 12 py | — | tokenizer, context_builder, deduplicator, sanitizer, helpers, process-tree termination, `time` (`now_ms`/`now_s` — ADR-0029 single source of truth) |
-| `adapters/` | 2 py | — | `PlatformAdapter` ABC, `AdapterRegistry`, `StreamingMode` |
-| `media/` | 6 py | — | Attachment/media handling (ADR-0013) — `MediaStore` ABC, MIME classification, security gate, storage routing (`LocalFileMediaStore`) |
-| `registry/` | 1 py | — | Shared registry utilities |
+| Module | Subdirectories | Purpose |
+|--------|----------------|---------|
+| `core/` | — | Foundational contracts and values: agents, emitters, `MessageHistory`, system-prompt seams, messages, LLMs, tools, media, session identity, and canonical `RecordScope`. Session persistence lives in `persistence/` (see `core/AGENTS.md`). |
+| `agents/` | `react/`, `external/`, `summarizer/` | Agent implementations — `ReActAgent`, `ExternalAgent`, and `SessionCompactorAgent` (see `agents/AGENTS.md`). |
+| `memory/` | `consolidation/`, `core/`, `injection/`, `layers/`, `prompt_pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Context management, configurable memory scopes, governance, concrete message histories, and session/archive/core memory with pluggable split stores (see `memory/AGENTS.md`). |
+| `persistence/` | `adapters/`, `managers/`, `migrations/`, `session_artifacts/` | Hybrid persistence layer (ADR-0023, ADR-0028~0031). Owns `SessionStore`, `SessionRegistry`, file/SQLite adapters, migrations, and session artifact cleanup. |
+| `multi_agent/` | `communication/`, `inbox/`, `session_tree/` | Star-topology orchestration — `AgentPool`, `AgentTemplate`, `PoolInstance`, inbox, and `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
+| `tools/` | `ast/`, `lsp/`, `mcp/`, `overflow/`, `standard/`, `terminal/`, `web/` | Tool subsystem — concrete `InMemoryToolManager`, filtering, MCP, terminal, overflow, and standard tools (see `tools/AGENTS.md`) |
+| `sandbox/` | `adapters/` | Opt-in execution substrate and shared permission judgments (ADR-0007): LOCAL/OCI selection, per-session native main/subagent HOST fallback, canonical targets and independent human approval. DEFAULT is dormant; HOST/external coverage and validation limits: see `sandbox/AGENTS.md`. |
+| `pipeline/` | — | `AgentPipeline` orchestration, `InputAdapter` ABC, approval renderer, snapshot handling (see `pipeline/AGENTS.md`) |
+| `runtime/` | — | `AgentRuntime`, runtime state/codecs, `TurnStateStore`, and per-session Todo models/store contracts in `todo.py` (see `runtime/AGENTS.md`). |
+| `commands/` | — | Slash command parsing and dispatch, including the consumer-owned `SkillResolver` command seam (see `commands/AGENTS.md`) |
+| `control/` | — | Control transport — `InMemoryControlChannel` (the live `/stop` + pause mechanism), `ControlCommand`, `AgentControlError` exceptions (see `control/AGENTS.md`) |
+| `hook/` | `builtin/` | Lifecycle hooks — `HookRunner`, `HookPoint`, builtin hooks (see `hook/AGENTS.md`) |
+| `interceptor/` | `builtin/` | AOP interceptor chain — `InterceptorChain` and builtin interceptors (see `interceptor/AGENTS.md`) |
+| `ioc/` | `configs/`, `factories/` | `AppConfig` and typed construction helpers (see `ioc/AGENTS.md`) |
+| `approval/` | — | Tiered tool approval, typed classification facts, per-tool path/command rules and response parsing; guard verdicts reuse the existing transaction/GraphInterrupt channel (see `approval/AGENTS.md`) |
+| `messaging/` | — | `MessageBroker`, `BrokerBridgeService` (see `messaging/AGENTS.md`) |
+| `plugins/` | `assembly/`, `defaults/capabilities/` | Plugin-unified agent assembly; the `CAPABILITY` slot hosts bundled capabilities, including the complete Experience and Skills vertical slices (see `plugins/AGENTS.md` and `docs/design/capability-bundles/AUTHOR-GUIDE.md`) |
+| `scope/` | — | Scope declarations, validation, compilation, effective toolsets, provenance, and the capability compile protocol (see `scope/AGENTS.md`) |
+| `providers/` | `http/` | Direct-HTTP event-stream LLM providers and protocol engines (ADR-0046; see `providers/AGENTS.md`) |
+| `workspace/` | — | Workspace identity, paths, resource lookup, and routing (see `workspace/AGENTS.md`) |
+| `input_pipeline/` | — | Extensible user-input stage pipeline — `UserInputEnvelope`, `InputStage`, `Continue`/`Terminate`, `UserInputPipeline` (see `input_pipeline/AGENTS.md`) |
+| `trace/` | — | Tracing and observability — `TraceStore`, `TraceHooks`, `TraceType` |
+| `utils/` | — | Shared tokenizer, frontmatter, XML, file, process, and time helpers |
+| `adapters/` | — | Platform I/O contracts, output adapters, content filters, and the emitter bridge (see `adapters/AGENTS.md`) |
+| `media/` | — | Concrete media storage, MIME classification, and security gates; contracts live in `core/media.py` (see `media/AGENTS.md`) |
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
-| `__init__.py` | Public API — exports `ReActAgent`, `ReActEvent`, `Agent`, `AgentContext`, `ContentEmitter`, `LLMProvider`, `Tool`, `ToolManager`, `AgentPipeline`, etc. |
+| `__init__.py` | Exact convenience facade over the final core, messaging, memory, adapters, ReAct, and pipeline owners. |
 
 ## For AI Agents
 
@@ -66,7 +65,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 - Frozen Pydantic BaseModels for config/value objects (rule 12); runtime objects hold state/connections
 
 ### Type Safety (from rules/type-safety.md)
-1. Enums/constants over raw strings — `MessageRole`, `MessageType`, `FinishReason`, `DefaultValues`
+1. Enums/constants over raw strings — `MessageRole`, `MessageType`, `FinishReason`, `StopReason`
 2. Typed structures over loose dicts — `ChatMessage`, `ToolCall`, `LLMResponse`, `InputMessage`, `OutputMessage`
 3. Typed signatures — no bare `Any`, `list`, `dict`, `object` in framework-facing APIs
 4. ABCs before implementations (rule 7 — no Protocols) — no concrete dependency where pluggable contract exists
@@ -86,14 +85,14 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 - `TurnCustomKey` enum for per-turn custom state keys in `TurnStateBase.custom`
 
 ### Module Responsibilities
-- `core/` — ABCs and foundational types. All other modules depend on it.
-- `agents/` — Agent strategies (ReAct, external coding CLI harness, summarizer, experience review). External provider resources converge through `StreamingProviderBackend.close()`; adapter-specific lifetime remains local to each backend.
-- `memory/` — Three-layer persistent memory with scope isolation. Split store ABCs + `MemoryStoreBundle` are the storage contract.
-- `persistence/` — Hybrid persistence (ADR-0023). SQLite `ConnectionManager`/`MigrationRunner` + adapters for the split store and runtime-state ABCs. `PersistenceBackend` (`FILE`/`SQLITE`) drives IOC selection.
+- `core/` — Foundational contracts and values, including `MessageHistory` and system-prompt seams; no session persistence or concrete memory adapters.
+- `agents/` — General agent strategies (ReAct, external harness, summarizers). Capability-specific agents stay in their capability packages. External provider resources converge through `StreamingProviderBackend.close()`.
+- `memory/` — Context, memory scope/governance, concrete histories, and three-layer persistent memory. Split store ABCs + `MemoryStoreBundle` are the storage contract.
+- `persistence/` — Session persistence plus hybrid file/SQLite adapters (ADR-0023). `PersistenceBackend` (`FILE`/`SQLITE`) drives IOC selection.
 - `multi_agent/` — Star-topology subagent orchestration.
-- `tools/` — Tool registry, executor, MCP, terminal backends.
+- `tools/` — Concrete tool manager (InMemoryToolManager), MCP, terminal backends.
 - `pipeline/` — End-to-end orchestration pipeline.
-- `runtime/` — Runtime state and services assembly.
+- `runtime/` — Runtime state/services plus Todo values and persistence contracts.
 - `hook/` + `interceptor/` — Extension layers for lifecycle observation and AOP.
 - `control/` — Control transport: live `/stop` + pause queues `CANCEL_TURN` and actively cancels the registered turn task so long-running tools wake immediately; ToolNode converges worker cleanup and tool-result synthesis. A separate busy-INTERRUPT path uses the same task-cancel wakeup without a channel command.
 - `ioc/` — Dependency injection configuration and factories.
@@ -103,21 +102,25 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 The graph engine (`modex_graph`) uses a unified scheduling path for normal execution, pause recovery, and crash recovery — no separate recovery engine. See `src/modex_graph/AGENTS.md` for the full design (`bootstrap` entry point, version chain, deliver admission, persistence tradeoff).
 
 From `modex_agent`'s perspective:
-- **`GraphOrchestrator`** (`orchestration/graph_orchestrator.py`) owns the lifecycle: `create_instance` (PENDING) → `start_run` / `run_instance` → `bootstrap` → normal scheduling. `pause` / `resume` / `stop` only change status; the scheduler handles the rest. It also tracks live `GraphContext` instances in `_active_contexts` during execution and exposes `get_graph_context(gid) -> GraphContext | None` so the turn-runner resolver can fetch the active context (with per-node artifacts in `ctx.user_data`) for graph-scope turn configuration.
-- **`GraphRecoveryService`** (`control/graph_recovery.py`) calls `_run_existing_instance` (eviction + spec compile + node_id restore + node register) → `run_instance` → `bootstrap` → normal scheduling. No independent execution engine.
-- **`_run_existing_instance`** is the recovery core path — preserved, not deleted. It does what `start_run` cannot: re-register a crashed instance (evicted from `_active_instances`) before running.
+- **Execution owner:** `GraphOrchestrator` (`orchestration/graph_orchestrator.py`) reserves one execution/control per instance synchronously and eagerly enters the task's `try/finally` before returning it. Fresh membership and scoped I/O are saved before fallible assembly or suspension; the engine waits for RUNNING output. `start_run`, `start_invoke`, `start_resume`, and awaited execution share admission/assembly. Duplicate starts, resume while draining, and eviction of an owned execution are rejected. `get_graph_context(gid)` exposes the live context through finalization.
+- **Drain:** `pause` / `stop` persist and emit `PAUSING` / `STOPPING`, signal the same graph instance, and shield the wait for its actual exit. The owner drains node cleanup and output before publishing `PAUSED` / `STOPPED`, retaining admission until final output settles; stop can upgrade a pending pause. Scheduler drain and owner finalization share `GraphRunControl.wait_for_settlement`, preserving cleanup through repeated cancellation. `cleanup()` drains owners before releasing coordinators. `GraphControlService` delegates lifecycle, with no independent status writer or engine registry.
+- **Recovery:** manual resume accepts only idle `PAUSED`; automatic recovery selects explicit `CRASHED` only. Process-liveness classification belongs to the business layer, not the absence of a local owner. `_run_existing_instance` delegates to `run_instance(mode=RECOVERY)` without eviction or status prewrites. Shared assembly retains a paused coordinator or reconstructs it from stores, restores node IDs, and creates a new control handle. Cooperative cancellation records node `CANCELED`; recovery re-executes it with consumable inputs rather than restoring an in-flight stack or business-state snapshot.
+- **Run membership:** FRESH saves its original graph invocation version in `attrs[GRAPH_RUN_VERSION_KEY]` (`graph_run_version`); recovery increments attempt version but carries that attr forward into context, node records, and I/O. Membership is exact nullable equality, including `None == None` for legacy/unscoped records, never a Snowflake anchor. Missing/mismatched START for a non-null run restarts entry despite older completed history. END-result reuse requires matching-run completed END and latest I/O; recovery placeholders preserve that run's prior output. FRESH re-invoke does not inherit old-run input/output.
+- **Limits:** resumed unfinished agent work is at-least-once and may repeat provider/tool effects. Cooperative cancellation cannot preempt synchronous blocking code or roll back external side effects; node/business persistence owns idempotency. Live-provider and hard-kill validation are not implied by the unit/integration contract.
+
+For admission, pause/stop completion, restart resume, or external-deliver changes, read `docs/design/graph-orchestration/external-control.md` for the implemented contract and verification scope.
 
 ## Dependencies
 
 ### Internal
 - All modules depend on `core/` for ABCs and types.
 - `agents/` depends on `core/` (agent ABC, graph engine, tool manager).
-- `memory/` depends on `core/` (types, context, events, scope).
-- `persistence/` depends on `core/` (scope, cleanup) and `memory/` (split store ABCs); implements the SQLite adapters.
+- `memory/` depends on `core/` for canonical messages, `MessageHistory`, prompt seams, session identity, and `RecordScope`.
+- `persistence/` depends on `core/` identity/scope values and `memory/` split-store ABCs; it owns session persistence and backend adapters.
 - `multi_agent/` depends on `core/` (agent ABC), `memory/` (isolated memory), `messaging/` (bus), `persistence/` (InboxMQ, routing stores).
 - `pipeline/` depends on `core/`, `agents/`, `runtime/`, `commands/`.
-- `tools/` depends on `core/` (Tool ABC, ToolManager).
-- `sandbox/` depends on `core/` (types) only; NOT wired into `tools/` — opt-in capability per ADR-0007.
+- `tools/` depends on `core/` (Tool ABC, ToolManager ABC); owns the concrete InMemoryToolManager (C2).
+- `sandbox/` integrates with tools/workspace, approval/core/interceptor and runtime contracts. Substrate opt-in uses agent `interceptors` plus `interceptor_configs.sandbox_guard.sandbox`, not a scope-root sandbox field. DEFAULT creates no sandbox interceptor or probe; independent approval, WebReader safety and native delegation checks remain separate.
 
 ### External
 - `httpx` — direct-HTTP LLM provider transport (ADR-0046)
@@ -129,8 +132,7 @@ From `modex_agent`'s perspective:
 
 ## Approval & Security Architecture
 
-See root `AGENTS.md` for a detailed breakdown of the approval architecture, coverage gaps (command content, subagents, pool mode, SSRF, workspace boundary, environment isolation), and what NOT to do.
+See [sandbox guidance](sandbox/AGENTS.md) and the [permission contract](../../docs/design/unified-security/PRD.md) for native-main switch combinations, fixed native delegation and external limits. Sandbox and human approval are independently switchable; guard-only checks still reuse `ApprovalRuntime`. Enabled main approval escalates BOUNDARY even with an empty tools map; native subagents return direct errors without human escalation. HOST command guards are best-effort, external provider tools bypass framework ToolNode, and fallback never grants permission or replays a possibly-submitted command. [Ticket evidence](../../docs/design/sandbox-integration/tickets.md#validation-evidence) records Windows/WSL validation and live-platform gaps.
 
 <!-- MANUAL -->
 <!-- Additional manual entries can be added below this line. -->
-

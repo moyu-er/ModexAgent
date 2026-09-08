@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
 
-from modex_agent.sandbox.guard import CommandSeverity, GuardMatch, GuardResult
+from modex_agent.sandbox.guard import CommandSeverity, GuardMatch
 from modex_agent.sandbox.guard_path import PathBoundaryConfig, PathBoundaryGuard
 
 
@@ -52,7 +51,7 @@ class TestPathBoundaryGuardWindows:
     """Windows absolute path boundary checks."""
 
     def test_windows_absolute_outside_blocked(self, tmp_path: Path) -> None:
-        """type C:\Windows\System32 with workspace elsewhere -> blocked."""
+        r"""type C:\Windows\System32 with workspace elsewhere -> blocked."""
         guard = PathBoundaryGuard(
             PathBoundaryConfig(workspace_root=str(tmp_path))
         )

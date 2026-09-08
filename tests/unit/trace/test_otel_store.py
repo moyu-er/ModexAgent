@@ -632,7 +632,7 @@ class TestOtlpExport:
 
 class TestFormatSendAckSinglePath:
     def test_ack_omits_trace_paths(self, tmp_path: Path) -> None:
-        from modex_agent.multi_agent.comm_kind import AgentCommKind
+        from modex_agent.core import AgentCommKind
         from modex_agent.multi_agent.communication.result import (
             AgentSendResult,
             format_send_ack,
@@ -653,7 +653,7 @@ class TestFormatSendAckSinglePath:
         assert "OTel" not in ack
 
     def test_ack_no_trace_dir_omits_paths(self) -> None:
-        from modex_agent.multi_agent.comm_kind import AgentCommKind
+        from modex_agent.core import AgentCommKind
         from modex_agent.multi_agent.communication.result import (
             AgentSendResult,
             format_send_ack,

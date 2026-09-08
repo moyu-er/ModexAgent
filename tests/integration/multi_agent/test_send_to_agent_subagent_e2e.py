@@ -39,18 +39,16 @@ from typing import Any
 
 import pytest
 
+from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.context import InMemoryContextManager
-from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.llm_struct import LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.session_registry import InMemorySessionRegistry
-from modex_agent.core.types import LLMResponse
+from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
@@ -59,6 +57,7 @@ from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.persistence.session_registry import InMemorySessionRegistry
 
 pytestmark = pytest.mark.integration
 
@@ -351,6 +350,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
     from modex_agent.plugins.capability import PoolSupplyAgentEntry, PoolSupplyView
+    from modex_agent.plugins.defaults.capabilities.skills.capability import SkillsCapability
     from modex_agent.plugins.defaults.capabilities.subagents import SubagentsCapability
 
     pool_assembly_ctx = PoolAssemblyContext(
@@ -377,6 +377,16 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
             project_dir=project,
         )
     )
+    skills_supply = SkillsCapability().supply(
+        PoolSupplyView(
+            pool_name="main",
+            entries=tuple(
+                PoolSupplyAgentEntry(agent_name=agent.spec.agent_name, config={})
+                for agent in compilation.agents
+            ),
+            project_dir=project,
+        )
+    )
     deps = AgentMaterializeDeps(
         agent_factory=factory,
         pool=pool,
@@ -393,7 +403,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         workspace_manager=workspace_manager,
         component_registry=component_registry,
         pool_assembly_ctx=pool_assembly_ctx,
-        capability_supply={"subagents": subagents_supply},
+        capability_supply={"skills": skills_supply, "subagents": subagents_supply},
     )
     pool.materialize_deps = deps
     pool.template_registry = template_registry

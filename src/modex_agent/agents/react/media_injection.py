@@ -32,7 +32,7 @@ from typing import Any
 
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.capabilities import ModelCapabilities
-from modex_agent.core.constants import _MAX_INJECTED_MEDIA_BYTES, _MAX_INJECTED_MEDIA_COUNT
+from modex_agent.core.media import MediaStore
 from modex_agent.core.message import (
     ChatMessage,
     ContentPart,
@@ -44,7 +44,6 @@ from modex_agent.core.message import (
 )
 from modex_agent.media.media_utils import compress_image
 from modex_agent.media.mime import sniff_mime
-from modex_agent.media.store import MediaStore
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +57,8 @@ _PLACEHOLDER_OFFLOADED = "[media offloaded: {aid}]"
 # collected and a new store reuses its id(); the cache is cleared wholesale
 # at the size cap to stay bounded.
 _RESOLVED_URL_CACHE: dict[tuple[int, str, str], tuple[weakref.ref, tuple[str, int]]] = {}
+_MAX_INJECTED_MEDIA_COUNT: int = 8
+_MAX_INJECTED_MEDIA_BYTES: int = 6_000_000
 _RESOLVED_URL_CACHE_MAX = 128
 
 

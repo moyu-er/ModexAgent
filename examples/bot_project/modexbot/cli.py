@@ -43,22 +43,15 @@ _REPO_ROOT: Path = _PKG_ROOT.parent.parent
 
 
 def _resolve_venv_python() -> Path:
-    """Find a usable Python for launching bot subprocesses.
+    """Use the installers' root environment for a source checkout.
 
-    Checks ``bot_project/.venv`` and ``repo_root/.venv`` first (the
-    install scripts create the environment at repo root).  Falls back to
-    ``sys.executable`` for bundled installs (no venv, deps pre-installed).
+    An incomplete root environment must be repaired, not bypassed by a
+    nested venv. Installed distributions retain their bundled interpreter.
     """
-    _ = sys.platform
-    bins: tuple[str, ...] = ("Scripts",) if _ == "win32" else ("bin",)
-    exe_name: str = "python.exe" if _ == "win32" else "python"
-
-    roots = (_REPO_ROOT, _PKG_ROOT)
-
-    for root in roots:
-        python = root / ".venv" / bins[0] / exe_name
-        if python.is_file():
-            return python
+    bin_dir = "Scripts" if sys.platform == "win32" else "bin"
+    suffix = ".exe" if sys.platform == "win32" else ""
+    if (_REPO_ROOT / "pyproject.toml").is_file() and (_REPO_ROOT / "src" / "modex_agent").is_dir():
+        return _REPO_ROOT / ".venv" / bin_dir / f"python{suffix}"
 
     return Path(sys.executable)
 
@@ -609,6 +602,15 @@ def _run_bot(config_str: str, port: int, no_webui: bool) -> None:
     """
     from functools import partial
 
+    if (
+        _VENV_PYTHON.parent.parent == _REPO_ROOT / ".venv"
+        and Path(sys.prefix).resolve() != (_REPO_ROOT / ".venv").resolve()
+    ):
+        raise RuntimeError(
+            f"Source checkout requires the root interpreter: {_VENV_PYTHON}. "
+            "Configure your IDE to use it, or launch with 'modexbot start'."
+        )
+
     from modexbot.main import create_webui_service, run_with_supervisor
 
     config = Path(config_str)
@@ -650,6 +652,20 @@ def _launch_subprocess(script: str) -> subprocess.Popen[Any]:
     """
     python_exe = str(_VENV_PYTHON)
     args = [python_exe, "-c", script]
+
+    if _VENV_PYTHON.parent.parent == _REPO_ROOT / ".venv":
+        suffix = ".exe" if sys.platform == "win32" else ""
+        required = (_VENV_PYTHON, *(
+            _VENV_PYTHON.parent / f"{name}{suffix}" for name in ("modexbot", "modexctl")
+        ))
+        missing = [str(path) for path in required if not path.is_file()]
+        if missing:
+            typer.echo(
+                f"ERROR: Root environment is incomplete: {', '.join(missing)}. "
+                f"Run {_PKG_ROOT / 'install.bat'} (Windows) or "
+                f"{_PKG_ROOT / 'install.sh'} (Linux/macOS) to repair it."
+            )
+            raise typer.Exit(1)
 
     # Redirect child stdout/stderr to a SEPARATE file from bot.log so the
     # RotatingFileHandler can rename bot.log during rollover without a

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from modex_agent.core.message import ChatMessage
-    from modex_agent.core.scope import MemoryContext
+    from modex_agent.memory.scope import MemoryContext
 
 
 class MemoryProvider(ABC):

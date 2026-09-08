@@ -6,16 +6,18 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.core import AgentCommKind
+from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.core.capabilities import ModelInfo
-from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind, ReasoningEffort
-from modex_agent.core.context import ContextManager
+from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.memory.context import ContextManager
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
     from modex_agent.pipeline.pipeline import AgentPipeline
+    from modex_agent.sandbox.delegation import DelegationSnapshot
 
 
 class AgentLLMConfig(BaseModel):
@@ -81,7 +83,6 @@ class AgentDescriptor(BaseModel):
     system_prompt_template: str | None = None
     allowed_tools: list[str] | None = None
     denied_tools: list[str] | None = None
-    allowed_skills: list[str] | None = None
     max_iterations: int = 15
     execution_strategy: ExecutionStrategyKind = (
         ExecutionStrategyKind.REACT
@@ -108,10 +109,17 @@ class AgentDescriptor(BaseModel):
     default in factory.create_agent."""
     roles: list[str] = Field(default_factory=list)
     """Agent role tags (T1 data layer). Plain strings — preset values are
-    :class:`modex_agent.core.constants.AgentRole` members, custom strings
+    :class:`modex_agent.core.agent.AgentRole` members, custom strings
     are allowed. ``compare=False`` excludes this field from the auto-generated
     ``__eq__`` / ``__hash__`` because roles are metadata, not identity —
     pool registration dedup is unaffected by role changes."""
+    depth: int = 0
+    """Delegation depth (unified-security ticket 05b): root = 0, spawn +1.
+
+    Computed from the declared tree at materialization and carried for
+    identity/audit; the runtime budget check reads the live
+    ``AgentRuntimeServices.delegation`` snapshot (the task dispatch
+    tool), not this static field."""
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, AgentDescriptor):
@@ -132,6 +140,8 @@ class AgentInstance:
     descriptor: AgentDescriptor
     context_manager: ContextManager
     pipeline: AgentPipeline | None = None
+    delegation: DelegationSnapshot | None = None
+    """Spawn-time permissions and effective capability limits, including external runners."""
 
     async def stop(self) -> None:
         """优雅停止该实例并释放资源。"""

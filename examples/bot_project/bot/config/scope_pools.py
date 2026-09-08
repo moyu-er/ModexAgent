@@ -14,7 +14,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.scope.spec import PoolSpec, ScopeKind
+from modex_agent.core import ExecutionStrategyKind
+from modex_agent.scope import AgentSpec, PoolSpec, ScopeKind
 
 _POOL_LISTING_ERROR = (
     "pool listing requires a readable scope declaration at %s — the legacy "
@@ -64,6 +65,34 @@ def list_pool_summaries(declaration_path: Path) -> list[PoolSummary]:
 def declared_pool_names(declaration_path: Path) -> set[str]:
     """The set of declared pool names (the input-pipeline pool guard)."""
     return {pool.name for pool in _declared_pools(declaration_path)}
+
+
+def skill_assignment_eligible(agent: AgentSpec) -> bool:
+    """Whether a declared agent has the bundled Skills runtime."""
+    if agent.execution_strategy is ExecutionStrategyKind.EXTERNAL:
+        return False
+    return (agent.capabilities or {}).get("skills") is not False
+
+
+def validate_skill_assignment_target(
+    pool_name: str,
+    agent_name: str,
+    declaration_path: Path,
+) -> None:
+    """Reject unknown, external, or explicitly Skills-vetoed targets."""
+    for pool in _declared_pools(declaration_path):
+        if pool.name != pool_name:
+            continue
+        for agent in pool.agents:
+            if agent.name != agent_name:
+                continue
+            if skill_assignment_eligible(agent):
+                return
+            raise ValueError(
+                f"agent {agent_name!r} in pool {pool_name!r} does not have Skills enabled"
+            )
+        break
+    raise ValueError(f"unknown skill assignment target {pool_name!r}/{agent_name!r}")
 
 
 def prompt_usages_of(prompt_name: str, declaration_path: Path) -> list[tuple[str, str, str]]:

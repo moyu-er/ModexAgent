@@ -21,7 +21,8 @@ from bot.webui.server import (
     _safe_send_json,
 )
 
-from modex_agent.core.emitter import AgentResult, EmitterConfig
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.events import EmitterConfig
 from modex_agent.multi_agent.pool_router import PoolSessionStore
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
@@ -270,7 +271,7 @@ async def test_ws_send_message_echo_carries_resolved_attachments() -> None:
     rendering), not only after a transcript reload. Mirrors
     persist_user_message.py:43. Regression for the G8 echo fix.
     """
-    from modex_agent.media.models import Attachment, AttachmentLocator, Kind
+    from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 
     record = Attachment(
         id="att-1",
@@ -753,7 +754,8 @@ async def test_pool_mapping_persistence_across_restart() -> None:
     """Pool mapping survives server restart via physical transcript layout."""
     from bot.service.session_store import WorkspacePoolSessionStore
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -858,7 +860,8 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1120,7 +1123,8 @@ async def test_api_messages_loads_subagent_transcript() -> None:
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1516,7 +1520,8 @@ async def test_api_sessions_falls_back_preserves_index_entries() -> None:
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
-    from modex_agent.core.session_id import SessionIdFactory, SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionIdFactory, SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1587,7 +1592,8 @@ async def test_workspace_cd_switches_current_workspace() -> None:
     """
     from bot.service.session_store import WorkspacePoolSessionStore
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     home = Path(tempfile.mkdtemp())
     ws_a = home / "ws-a"
@@ -1680,7 +1686,8 @@ async def test_api_sessions_includes_subagent_sessions() -> None:
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1755,7 +1762,8 @@ async def test_api_sessions_includes_dynamic_subagent_instance() -> None:
     """
     from bot.service.session_store import WorkspacePoolSessionStore
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()

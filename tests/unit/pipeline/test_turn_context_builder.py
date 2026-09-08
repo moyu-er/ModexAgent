@@ -16,30 +16,35 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.approval.types import ApprovalAction
+from modex_agent.adapters.output import OutputAdapter
+from modex_agent.approval.config import AgentApprovalConfig
+from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.commands.constants import CommandAction, CommandDispatchPolicy, CommandParseStatus
 from modex_agent.commands.models import (
     CommandHandlingResult,
     CommandParseResult,
     SlashCommandInvocation,
 )
-from modex_agent.core.agent import AgentCommKind, AgentContext
-from modex_agent.core.constants import ExecutionStrategyKind
-from modex_agent.core.context import ContextState, InMemoryContextManager
+from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
-from modex_agent.core.types import InputMessage
 from modex_agent.media.store import LocalFileMediaStore
-from modex_agent.pipeline.adapters import OutputAdapter
+from modex_agent.memory.context import ContextState, InMemoryContextManager
+from modex_agent.memory.context_governance import CompositeGovernance
+from modex_agent.messaging.models import ApprovalAction, InputMessage
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder, TurnRequest
 from modex_agent.pipeline.turn_context_config import (
+    GraphApprovalConfigurator,
     TurnContextConfigPipeline,
     TurnContextDescriptor,
 )
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+from modex_agent.runtime.approval_decision import ApprovalAuditStore
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
+from modex_agent.sandbox.delegation import DelegationSnapshot
+from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _agent_mock(name: str = "agent") -> Any:
@@ -62,7 +67,7 @@ def _make_builder(**overrides: Any) -> TurnContextBuilder:
         "tool_manager": InMemoryToolManager(),
         "sanitizer": None,
         "command_processor": None,
-        "skill_manager": None,
+        "skill_resolver": None,
         "context_builder": None,
         "agent_descriptor": None,
         "max_iterations": 5,
@@ -212,13 +217,15 @@ async def test_build_turn_request_approval_decision_carries_action() -> None:
 @pytest.mark.asyncio
 async def test_build_turn_request_short_circuits_on_approval_decision() -> None:
     """A webui approval_decision bypasses command processing -> resume branch."""
-    from modex_agent.approval.views import ApprovalDecisionInput
+    from modex_agent.messaging.models import ApprovalDecisionInput
 
     builder = _make_builder()  # command_processor=None; short-circuit fires first anyway
     msg = InputMessage(
         content="",
         session=SessionInfo.from_str("s.main"),
-        approval_decision=ApprovalDecisionInput("call_1", ApprovalAction.DENY),
+        approval_decision=ApprovalDecisionInput(
+            tool_call_id="call_1", action=ApprovalAction.DENY
+        ),
     )
 
     tr = await builder.build_turn_request(msg, "s.main", {}, None)
@@ -654,3 +661,43 @@ async def test_assemble_delegates_to_context_assembler() -> None:
     history = await state.history.to_list()
     # The user message was appended (append_user_message defaults True, not approval cmd).
     assert any(m.get("role") == "user" for m in history)
+@pytest.mark.parametrize("persisted", [False, True])
+@pytest.mark.parametrize("graph", [False, True])
+@pytest.mark.parametrize("governed", [False, True])
+def test_builder_retains_approval_audit_and_policy_services(persisted: bool, graph: bool, governed: bool) -> None:
+    audit = MagicMock(spec=ApprovalAuditStore)
+    approval = ApprovalRuntime(TieredToolApprovalClassifier(AgentApprovalConfig(enabled=True)))
+    guard_only = ApprovalRuntime(TieredToolApprovalClassifier(AgentApprovalConfig(enabled=False)))
+    delegation = DelegationSnapshot(
+        workspace_root=Path.cwd(),
+        settings=SandboxSettings(backend=SandboxBackend.HOST),
+    )
+    base = AgentRuntimeServices(
+        approval=approval,
+        guard_only_approval=guard_only,
+        approval_audit=audit,
+        delegation=delegation,
+        governance=CompositeGovernance([]) if governed else None,
+    )
+    builder = _make_builder(
+        runtime_services=base,
+        turn_store=InMemoryTurnStateStore() if persisted else None,
+    )
+    builder.config_pipeline = TurnContextConfigPipeline([GraphApprovalConfigurator()])
+    ctx, _ = builder.build_runtime_and_context(
+        SessionInfo.from_str("s.main"),
+        ContextState(),
+        InMemoryContextManager(),
+        turn_descriptor=TurnContextDescriptor(
+            agent_kind=AgentCommKind.NORMAL,
+            execution_strategy=ExecutionStrategyKind.REACT,
+            graph_instance_id=1 if graph else None,
+        ),
+    )
+    assert ctx.runtime is not None
+    assert ctx.runtime.services.approval_audit is audit
+    assert ctx.runtime.services.delegation is delegation
+    assert ctx.runtime.services.guard_only_approval is guard_only
+    assert ctx.runtime.services.approval is (guard_only if graph else approval)
+    assert ctx.runtime.services is not base
+    assert base.approval is approval

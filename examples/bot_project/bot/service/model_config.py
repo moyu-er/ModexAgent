@@ -10,8 +10,13 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from bot.config.domain import Secret
-from modex_agent.core.constants import InterfaceFormat, ReasoningEffort
-from modex_agent.ioc.configs.llm import LLMConfig, Modality, ModelCapabilities
+from modex_agent.core.llm_request import ReasoningEffort
+from modex_agent.ioc.configs.llm import (
+    InterfaceFormat,
+    LLMConfig,
+    Modality,
+    ModelCapabilities,
+)
 
 
 class ModelCfg(BaseModel):

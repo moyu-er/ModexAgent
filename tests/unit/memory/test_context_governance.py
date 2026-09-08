@@ -6,15 +6,15 @@ from unittest.mock import MagicMock
 import pytest
 
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.governance import ContextGovernance
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import MessageRole
 from modex_agent.memory.context_governance import (
+    _CLEARED_PLACEHOLDER,
     META_CONTEXT_LOSSY,
     META_CONTEXT_REDUCTION,
     META_ORIGINAL_CHARS,
-    _CLEARED_PLACEHOLDER,
     CompositeGovernance,
     ContextBudgetGovernance,
+    ContextGovernance,
     ToolChainRepairGovernance,
 )
 from modex_agent.memory.token_estimator import TokenEstimator

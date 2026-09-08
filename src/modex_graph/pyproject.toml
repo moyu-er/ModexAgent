@@ -29,8 +29,13 @@ dev = [
   "mypy>=1.0.0",
 ]
 
+[tool.hatch.build]
+# The project root is the package directory itself. Editable installs need its
+# parent on sys.path, while wheel builds rewrite the root under `modex_graph/`.
+dev-mode-dirs = [".."]
+
 [tool.hatch.build.targets.wheel]
-packages = ["modex_graph"]
+packages = ["."]
 
 [tool.hatch.build.targets.wheel.sources]
 "." = "modex_graph"

@@ -1,7 +1,7 @@
 """Path primitives layer for the workspace manager.
 
-Converges the two prior sanitizers — ``framework/core/session_store.py::
-safe_filename`` and ``framework/runtime/store.py::
+Converges the two prior sanitizers — ``persistence/session_store.py::
+safe_filename`` and ``runtime/store.py::
 JsonFileTurnStateStore._safe_segment`` — into a single ``safe_segment`` plus a
 frozen :class:`WorkspacePaths` value object that guarantees no accessor can
 escape its root.

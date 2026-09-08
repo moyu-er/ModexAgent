@@ -16,32 +16,32 @@ const WORKSPACE_SHAPE: ScopeTopology = {
       name: "default",
       peers: ["opencode", "review"],
       agents: [
-        { name: "default", parent: null, root: true },
-        { name: "office-expert", parent: "default", root: false },
+        { name: "default", parent: null, root: true, skills_eligible: true },
+        { name: "office-expert", parent: "default", root: false, skills_eligible: true },
       ],
     },
     {
       name: "coder",
       peers: [],
       agents: [
-        { name: "orchestrator", parent: null, root: true },
-        { name: "explore", parent: "orchestrator", root: false },
-        { name: "general", parent: "orchestrator", root: false },
+        { name: "orchestrator", parent: null, root: true, skills_eligible: true },
+        { name: "explore", parent: "orchestrator", root: false, skills_eligible: true },
+        { name: "general", parent: "orchestrator", root: false, skills_eligible: true },
       ],
     },
     {
       name: "review",
       peers: ["default"],
       agents: [
-        { name: "reviewer", parent: null, root: true },
-        { name: "explore", parent: "reviewer", root: false },
-        { name: "general", parent: "reviewer", root: false },
+        { name: "reviewer", parent: null, root: true, skills_eligible: true },
+        { name: "explore", parent: "reviewer", root: false, skills_eligible: true },
+        { name: "general", parent: "reviewer", root: false, skills_eligible: true },
       ],
     },
     {
       name: "opencode",
       peers: ["default"],
-      agents: [{ name: "opencode", parent: null, root: true }],
+      agents: [{ name: "opencode", parent: null, root: true, skills_eligible: false }],
     },
   ],
 };
@@ -53,7 +53,7 @@ const POOL_ROOT_SHAPE: ScopeTopology = {
     {
       name: "solo",
       peers: [],
-      agents: [{ name: "solo", parent: null, root: true }],
+      agents: [{ name: "solo", parent: null, root: true, skills_eligible: true }],
     },
   ],
 };
@@ -66,9 +66,9 @@ const NESTED_SHAPE: ScopeTopology = {
       name: "deep",
       peers: [],
       agents: [
-        { name: "a", parent: null, root: true },
-        { name: "b", parent: "a", root: false },
-        { name: "c", parent: "b", root: false },
+        { name: "a", parent: null, root: true, skills_eligible: true },
+        { name: "b", parent: "a", root: false, skills_eligible: true },
+        { name: "c", parent: "b", root: false, skills_eligible: true },
       ],
     },
   ],

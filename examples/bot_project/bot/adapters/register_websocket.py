@@ -15,7 +15,7 @@ from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapte
 from bot.webui.emitter import WebBotEmitter
 from bot.webui.events import SessionMeta
 from bot.webui.transcript_store import TranscriptStore
-from modex_agent.core.emitter import EmitterConfig
+from modex_agent.core.events import EmitterConfig
 from modex_agent.core.session_id import SessionIdFactory
 
 # Module-level references so WebUIServer can access the WebSocket adapter

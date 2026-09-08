@@ -12,7 +12,6 @@ from modex_agent.agents.summarizer.abc import ArchiveGenerator
 from modex_agent.agents.summarizer.outcomes import CompactionOutcome
 from modex_agent.agents.summarizer.session_compactor import SessionCompactorAgent
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.archive_models import ArchiveDocuments, ArchiveGenerationResult
 from modex_agent.memory.cleanup import (
     CleanupResult,
@@ -32,6 +31,7 @@ from modex_agent.memory.hooks import (
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.layers.session import ScopedSessionMemoryManager
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry, MemoryStoreRegistry
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 from modex_agent.memory.token_estimator import TokenEstimator
 from modex_agent.persistence.managers.workspace import WorkspacePersistenceManager
@@ -629,7 +629,8 @@ class TestCleanupHookLateRegistration:
         runner after history creation means the next cleanup_session dispatch
         sees it.
         """
-        from modex_agent.memory.default_system import DefaultMemorySystem, ScopedMessageHistory
+        from modex_agent.memory.default_system import DefaultMemorySystem
+        from modex_agent.memory.history import ScopedMessageHistory
 
         layer_set = _make_layer_set(registry)
         system = DefaultMemorySystem(

@@ -18,7 +18,6 @@ from unittest.mock import MagicMock
 import pytest
 from bot.service.pool.declaration import workspace_layer_present
 
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.spec import ScopeKind
 from modex_agent.workspace.control import WorkspaceController
@@ -47,13 +46,11 @@ async def test_checked_in_declaration_selects_multi_live_stack() -> None:
         "bot.yml must carry the workspace layer; without it the WebUI "
         "workspace switcher shows 'workspace switching disabled'"
     )
-    # Ticket 14: the shipped declaration carries the full resource-selection
-    # face with values matching the service defaults (data landing
-    # unchanged).
-    assert spec.workspace.persistence is not None
-    assert spec.workspace.persistence.backend is PersistenceBackend.SQLITE
-    assert spec.workspace.paths is not None
-    assert spec.workspace.paths.data_dir_name == ".modex"
+    # Deviations-only declaration: resource-selection fields restating the
+    # service defaults are omitted — absence means inherit (sqlite backend,
+    # .modex data dir).
+    assert spec.workspace.persistence is None
+    assert spec.workspace.paths is None
 
 
 @pytest.mark.asyncio

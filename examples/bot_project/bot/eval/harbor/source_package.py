@@ -23,8 +23,8 @@ _POOL_SOURCE_ROOTS: Final = (
     "examples/bot_project/bot/utils",
     "examples/bot_project/bot/workspace",
     "examples/bot_project/plugins",
-    # Runtime data, not code: SkillManager reads skills/<pool>/<agent>/ directly
-    # from disk at agent construction — every file, any extension.
+    # Runtime data, not code: the SkillsSupply catalogs read each agent's
+    # skills/<pool>/<agent>/ assignment tree directly from disk.
     # The skills/coder tree is deleted — the coder pool ships no skills.
     "examples/bot_project/skills/default",
 )

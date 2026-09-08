@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.tool_manager import ExecutionMode, Tool
+from modex_agent.workspace.boundary import canonicalize_path
 
 if TYPE_CHECKING:
     from modex_agent.core.capabilities import ModelCapabilities
@@ -42,12 +43,6 @@ class WorkspaceRootProvider(ABC):
     def current(self) -> Path:
         """Return the absolute path of the active workspace working dir."""
         ...
-
-
-def _is_absolute_or_home(path: str) -> bool:
-    """True if ``path`` is absolute or a ``~`` expansion that the inner tool
-    should resolve on its own (we must not prefix these with the base)."""
-    return path.startswith("~") or Path(path).is_absolute()
 
 
 class WorkspaceScopedTool(Tool):
@@ -134,26 +129,20 @@ class WorkspaceScopedFileTool(WorkspaceScopedTool):
     Rewrite rule for ``path``:
       - missing / ``None`` / empty / ``"."`` → the workspace root
       - relative (not absolute, not ``~``) → ``<root>/<path>``
-      - absolute or ``~`` → untouched (inner tool resolves it)
+      - all paths use the same canonical resolver as permission checks
     """
 
     _PATH_ARG = "path"
 
     def _scoped_args(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        if self._PATH_ARG not in arguments:
-            arguments[self._PATH_ARG] = str(self._root_provider.current())
-            return arguments
-        raw = arguments[self._PATH_ARG]
-        if raw is None:
-            arguments[self._PATH_ARG] = str(self._root_provider.current())
-            return arguments
-        raw_str = str(raw).strip()
-        if raw_str == "" or raw_str == ".":
-            arguments[self._PATH_ARG] = str(self._root_provider.current())
-            return arguments
-        if _is_absolute_or_home(raw_str):
-            return arguments
-        arguments[self._PATH_ARG] = str(self._root_provider.current() / raw_str)
+        # Never strip a nonempty path: doing so changes the target AFTER its
+        # permission check (e.g. " ../outside" is not "../outside").
+        raw = arguments.get(self._PATH_ARG)
+        path = str(raw) if raw is not None else ""
+        arguments[self._PATH_ARG] = str(canonicalize_path(
+            path if path.strip() else ".",
+            base=self._root_provider.current(),
+        ))
         return arguments
 
 
@@ -161,24 +150,17 @@ class WorkspaceScopedShellTool(WorkspaceScopedTool):
     """Wraps ``SubprocessTool`` (``bash``), whose cwd argument is
     ``working_dir``.
 
-    Rewrite rule: if ``working_dir`` is missing/``None``, default it to the
-    workspace root. Explicit values (absolute or relative) are left for the
-    inner tool to resolve — matching its existing ``working_dir or
-    os.getcwd()`` contract, but with the workspace root as the default.
+    Missing cwd defaults to the live workspace. Explicit relative cwd uses
+    that same root rather than the inner executor's assembly-time default.
     """
 
     _CWD_ARG = "working_dir"
 
     def _scoped_args(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        if arguments.get(self._CWD_ARG) is None:
-            arguments[self._CWD_ARG] = str(self._root_provider.current())
+        arguments[self._CWD_ARG] = str(canonicalize_path(
+            arguments.get(self._CWD_ARG) or ".", base=self._root_provider.current(),
+        ))
         return arguments
-
-
-# Names whose ``path`` argument should be scoped as a file/search root.
-# (``SearchFilesTool`` exposes itself as ``grep`` and ``GlobTool`` as
-# ``glob`` — both take a ``path`` that defaults to ``.``.)
-_FILE_TOOL_NAMES = frozenset({"read", "write", "edit", "ls", "glob", "grep"})
 
 
 def _declares_working_dir(tool: Tool) -> bool:
@@ -209,12 +191,15 @@ def wrap_standard_tools(
 
     Wrapping is idempotent: an already-scoped tool is not re-wrapped.
     """
+    from modex_agent.sandbox.tool_matrix import ToolEffect, describe_tool_security
+
     scoped: list[Tool] = []
     for tool in tools:
         if isinstance(tool, WorkspaceScopedTool):
             scoped.append(tool)
             continue
-        if tool.name in _FILE_TOOL_NAMES:
+        descriptor = describe_tool_security(tool.name)
+        if descriptor.effect in (ToolEffect.READ, ToolEffect.WRITE) and descriptor.target_argument == "path":
             scoped.append(WorkspaceScopedFileTool(tool, root_provider))
         elif _declares_working_dir(tool):
             scoped.append(WorkspaceScopedShellTool(tool, root_provider))

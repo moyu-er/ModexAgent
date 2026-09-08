@@ -132,12 +132,14 @@ class TestExperienceReviewHookName:
 
     def test_experience_review_hook_name_is_the_registration_name(self) -> None:
         """EXPERIENCE_REVIEW_HOOK_NAME is importable and equals the name
-        register_default_hooks registers the review hook under (the
-        ``experience`` capability contributes it into hook rosters)."""
+        the experience feature's registration entry registers the review
+        hook under (the capability contributes it into hook rosters)."""
         from modex_agent.plugins.abc import ComponentSlot
-        from modex_agent.plugins.defaults.hooks import (
+        from modex_agent.plugins.defaults.capabilities.experience.hook_factory import (
             ExperienceReviewHookFactory,
-            register_default_hooks,
+        )
+        from modex_agent.plugins.defaults.capabilities.experience.registration import (
+            register_experience_feature,
         )
         from modex_agent.plugins.loader import PluginRegistrationContext
         from modex_agent.plugins.registry import ComponentRegistry
@@ -145,6 +147,6 @@ class TestExperienceReviewHookName:
         assert EXPERIENCE_REVIEW_HOOK_NAME == "experience_review"
         registry = ComponentRegistry()
         with PluginRegistrationContext(registry) as ctx:
-            register_default_hooks(ctx)
+            register_experience_feature(ctx)
         factory = registry.resolve(ComponentSlot.HOOK, EXPERIENCE_REVIEW_HOOK_NAME)
         assert isinstance(factory, ExperienceReviewHookFactory)

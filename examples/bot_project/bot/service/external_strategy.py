@@ -19,11 +19,9 @@ Ticket 6: the ``_external_wiring.py`` file is deleted; its content
 ``provider_executable_for``, ``build_external_backend``,
 ``build_external_parser``, ``build_external_env_spec``,
 ``ExternalAwareFactory``) lives here as private methods/classes. The
-strategy also inherits
-:class:`_PoolAssemblyMixin` so it can build the placeholder
-provider/terminal/tools/skill_manager that ``ExternalAwareFactory``
-still requires as constructor args (behavior preservation per ticket 6; a
-future ticket will eliminate this unnecessary building).
+strategy also inherits :class:`_PoolAssemblyMixin`, but external assembly
+builds none of the React-only provider, terminal, tool, or skill-resolver
+collaborators.
 
 ``agent`` and ``turn_runner`` are ``None`` - the ``ExternalAgent``
 instance + ``ExternalTurnRunner`` are created downstream by the factory +
@@ -49,7 +47,6 @@ from modex_agent.agents.external.child_discovery import (
 from modex_agent.agents.external.cli_resolver import resolve_modexctl_bin_dir
 from modex_agent.agents.external.contracts import ProviderEventParser
 from modex_agent.agents.external.events import ExternalEvent
-from modex_agent.agents.external.paths import ProviderKind
 from modex_agent.agents.external.providers.opencode.server_backend import (
     OpenCodeServerBackend,
 )
@@ -60,15 +57,14 @@ from modex_agent.agents.external.session_store import ExternalSessionMapStore
 from modex_agent.agents.external.types import (
     ExternalEnvSpec,
 )
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core import AgentCommKind
+from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication.peer_resolution import (
     PeerLink,
     build_agent_pool_map,
@@ -85,6 +81,7 @@ from modex_agent.multi_agent.execution_strategy import (
 )
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
+from modex_agent.persistence.session_registry import SessionRegistry
 from modex_agent.plugins.assembly.context import AgentContext
 from modex_agent.scope.spec import PoolSpec
 
@@ -164,7 +161,7 @@ class ExternalAwareFactory(DefaultAgentFactory):
     """``DefaultAgentFactory`` subclass that builds ``ExternalAgent`` instances.
 
     Fully overrides :meth:`create_agent` to skip ALL react-only construction:
-    no ``BotModelProvider``, no ``FilteredToolManager``, no ``SkillManager``,
+    no ``BotModelProvider``, no ``FilteredToolManager``, no ``SkillResolver``,
     no ``TurnContextBuilder``, no ``ApprovalResumer``/``ApprovalRenderer``,
     no hooks, no ``RuntimeContextManager``. ``ExternalTurnRunner`` does not
     use any of those — it builds a minimal ``AgentContext`` (empty history +
@@ -197,7 +194,6 @@ class ExternalAwareFactory(DefaultAgentFactory):
         # entries; external agents take no native hook surface).
         self._default_llm_provider = kwargs.get("default_llm_provider")
         self._default_tool_manager = kwargs.get("default_tool_manager")
-        self._skill_manager = kwargs.get("skill_manager")
         self._sanitizer = kwargs.get("sanitizer")
         self._command_interceptor = kwargs.get("command_interceptor")
         self._subagent_service = kwargs.get("subagent_service")
@@ -218,7 +214,7 @@ class ExternalAwareFactory(DefaultAgentFactory):
         context_manager: Any | None = None,
         broker: Any | None = None,
         tool_manager: Any | None = None,  # ignored — external uses empty InMemoryToolManager
-        skill_manager: Any | None = None,  # ignored
+        skill_resolver: Any | None = None,  # ignored
         sanitizer: Any | None = None,  # ignored
         command_interceptor: Any | None = None,  # ignored
         subagent_service: Any | None = None,  # ignored
@@ -236,9 +232,9 @@ class ExternalAwareFactory(DefaultAgentFactory):
         The external agent communicates via ``modexctl send`` CLI, not
         the ``task`` tool.
         """
+        from modex_agent.adapters.output import OutputAdapter
         from modex_agent.core.llm_struct import RuntimeSafetyPolicy
         from modex_agent.core.session_id import SessionIdFactory
-        from modex_agent.pipeline.adapters import OutputAdapter
 
         # 1. Agent — provider=None (ExternalAgentBuilder ignores it;
         #    the external CLI owns its own model configuration). ADR-0027:
@@ -507,7 +503,7 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         :meth:`ExternalAwareFactory.create_agent` reads to construct an
         ``ExternalAgent`` + ``ExternalTurnRunner`` + minimal pipeline.
 
-        Does NOT build provider/terminal_manager/tools/skill_manager/
+        Does NOT build provider/terminal_manager/tools/skill_resolver/
         context_manager/cassette_recorder/root_provider or any other
         react-only collaborator — ``ExternalTurnRunner`` doesn't use any of
         those. ``ExternalAwareFactory.create_agent`` constructs the

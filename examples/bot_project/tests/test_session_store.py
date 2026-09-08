@@ -9,7 +9,7 @@ import pytest
 from bot.service.session_store import WorkspacePoolSessionStore
 
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
-from modex_agent.core.session_store import LocalFileSessionStore
+from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
 
 
 @pytest.fixture
@@ -193,5 +193,4 @@ async def test_delete_sessions_by_prefix_unknown_is_noop(
 
     remaining = {s.session_id for s in await store.list_sessions()}
     assert session.session_id in remaining
-
 

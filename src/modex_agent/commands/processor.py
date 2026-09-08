@@ -91,7 +91,4 @@ class SlashCommandProcessor(CommandProcessor):
             logger.info("Handling builtin slash command: /%s", invocation.command)
             return await handler.handle(invocation, context)
 
-        if await self._skill_handler.can_handle(invocation, context):
-            return await self._skill_handler.handle(invocation, context)
-
-        return await self._unknown_handler.handle(invocation, context)
+        return await self._skill_handler.handle(invocation, context)

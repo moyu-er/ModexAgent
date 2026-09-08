@@ -232,7 +232,7 @@ export function wsTimelineEvent(
   event?: GraphOutputEvent,
 ): GraphTimelineEvent {
   return {
-    key: `ws:${kind}:${nodeId ?? ""}:${timestamp}`,
+    key: `ws:${kind}:${nodeId ?? ""}:${timestamp}${event?.status ? `:${event.status}` : ""}`,
     kind,
     timestamp,
     derived: false,

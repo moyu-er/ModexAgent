@@ -16,7 +16,7 @@ from typing import Any, Final
 from plugins.im_input_stages import InputStageName
 from pydantic import BaseModel
 
-from bot.input_pipeline.stages.skill_parse import SkillRegistry
+from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
 from bot.service.model_config import BotModelConfig
 from modex_agent.input_pipeline.pipeline import UserInputPipeline
 from modex_agent.input_pipeline.stage import InputStage
@@ -101,7 +101,7 @@ async def build_im_pipeline(
     *,
     registry: ComponentRegistry,
     ctx: AssemblyContext,
-    skill_registry: SkillRegistry,
+    skill_registry: PoolSkillResolverRegistry,
     known_pools: set[str],
     workspace_controller: WorkspaceController | None = None,
 ) -> UserInputPipeline:
@@ -129,7 +129,7 @@ async def build_webui_pipeline(
     *,
     registry: ComponentRegistry,
     ctx: AssemblyContext,
-    skill_registry: SkillRegistry,
+    skill_registry: PoolSkillResolverRegistry,
     bot_model_config: BotModelConfig | None,
 ) -> UserInputPipeline:
     """WebUI pipeline: S4→S5→ModelChoice→CommandDispatch→Ingest→Approval→Skill→Unsupported→Persist→Enqueue.

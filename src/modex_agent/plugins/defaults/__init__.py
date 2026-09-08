@@ -32,18 +32,6 @@ from typing import ClassVar
 
 from pydantic import BaseModel
 
-from modex_agent.plugins.defaults.capabilities import register_default_capabilities
-from modex_agent.plugins.defaults.commands import register_default_commands
-from modex_agent.plugins.defaults.communication import (
-    register_default_communication_tools,
-)
-from modex_agent.plugins.defaults.hooks import register_default_hooks
-from modex_agent.plugins.defaults.interceptors import (
-    register_default_interceptors,
-)
-from modex_agent.plugins.defaults.llm import register_default_llm
-from modex_agent.plugins.defaults.prompt import register_default_prompts
-from modex_agent.plugins.defaults.tools import register_default_tools
 from modex_agent.plugins.loader import Plugin, PluginRegistrationContext
 
 __all__ = ["DefaultPlugin", "DefaultPluginConfig"]
@@ -97,6 +85,17 @@ class DefaultPlugin(Plugin):
         guaranteed by the ``PluginRegistrationContext`` context manager
         wrapping this call in ``ComponentRegistryLoader._register_one``.
         """
+        from modex_agent.plugins.defaults.capabilities import register_default_capabilities
+        from modex_agent.plugins.defaults.commands import register_default_commands
+        from modex_agent.plugins.defaults.communication import (
+            register_default_communication_tools,
+        )
+        from modex_agent.plugins.defaults.hooks import register_default_hooks
+        from modex_agent.plugins.defaults.interceptors import register_default_interceptors
+        from modex_agent.plugins.defaults.llm import register_default_llm
+        from modex_agent.plugins.defaults.prompt import register_default_prompts
+        from modex_agent.plugins.defaults.tools import register_default_tools
+
         register_default_tools(ctx)
         register_default_communication_tools(ctx)
         register_default_hooks(ctx)

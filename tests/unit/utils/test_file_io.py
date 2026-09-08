@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
 from modex_agent.utils.file_io import read_json_robust, read_jsonl_robust
-
 
 # ── read_json_robust ──────────────────────────────────────────────────────
 

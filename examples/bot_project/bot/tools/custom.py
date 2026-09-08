@@ -11,15 +11,15 @@ from collections.abc import Callable
 from pathlib import Path
 
 from bot.webui.transcript_store import TranscriptStore
+from modex_agent.adapters.output import OutputAdapter
+from modex_agent.core.media import Attachment, AttachmentLocator
 from modex_agent.core.session_id import agent_of
 from modex_agent.core.tool_manager import (
     ExclusiveTool,
     ToolConfig,
 )
 from modex_agent.media.mime import classify_kind, sniff_mime
-from modex_agent.media.models import Attachment, AttachmentLocator
 from modex_agent.multi_agent.pool_config.media import MediaConfig
-from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.workspace.runtime import resolve_workspace_root
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ class SendFileToUserTool(ExclusiveTool):
             return f"Error: Not a regular file: {file_path}"
 
         from modex_agent.core.agent import current_agent_context
-        from modex_agent.core.types import OutputMessage
+        from modex_agent.messaging.models import OutputMessage
 
         agent_ctx = current_agent_context.get(None)
         if agent_ctx is None:

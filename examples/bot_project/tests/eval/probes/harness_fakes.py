@@ -18,9 +18,9 @@ from bot.eval.probes.renderer import RendererConfig
 from bot.eval.probes.sampler import LibraryScale, config_for_scale, sample_world
 from bot.eval.probes.schema import ProbeType, WorldSpec
 
+from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.types import LLMResponse
 from modex_agent.trace.pricing import PriceBook, PriceEntry
 from modex_agent.trace.score_injector import L2ScoreInjector, ScoreSpec
 

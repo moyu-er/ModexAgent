@@ -26,8 +26,8 @@ from bot.webui.events import (
 )
 from bot.webui.transcript_store import JSONLTranscriptStore
 
+from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
-from modex_agent.media.models import Attachment, AttachmentLocator, Kind
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
 

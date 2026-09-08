@@ -17,7 +17,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict
 
 from bot.service.model_config import BotModelConfig
-from modex_agent.core.constants import InterfaceFormat, ReasoningEffort
+from modex_agent.core.llm_request import ReasoningEffort
+from modex_agent.ioc.configs.llm import InterfaceFormat
 
 ModelSource = Literal["cli", "env", "model-default"]
 

@@ -277,7 +277,6 @@ def _hermetic_config(tmp_path: Path) -> Path:
     declaration_path = config_dir / "scopes" / "bot.yml"
     raw = yaml.safe_load(declaration_path.read_text(encoding="utf-8"))
     workspace = raw.get("workspace", {})
-    workspace.pop("mcp", None)
 
     _hermetic_tool_names = {"experience", "send_file_to_user"}
     _hermetic_capability_names = {"experience", "todo"}

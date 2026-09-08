@@ -19,8 +19,8 @@ from modex_agent.trace.store import SpanStatus
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
-    from modex_agent.core.message import ChatMessage
-    from modex_agent.core.types import LLMResponse, ToolCall
+    from modex_agent.core.llm_struct import LLMResponse
+    from modex_agent.core.message import ChatMessage, ToolCall
     from modex_agent.trace.otel_store import OtelSpanTraceStore
     from modex_agent.trace.prompt_capture import PromptCaptureStrategy
     from modex_agent.trace.score_injector import L2ScoreInjector

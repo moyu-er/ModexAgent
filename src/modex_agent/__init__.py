@@ -10,43 +10,33 @@ Agent Framework Core - 多Agent服务框架核心
 - Adapter直接接入（无需Gateway）
 """
 
-from ._version import __version__
-from .agents import ReActAgent, ReActEvent
-from .core.agent import Agent, AgentContext
-from .core.context import ContextManager, ContextState
-from .core.emitter import (
+from ._version import __version__  # noqa: I001 - messaging must load before adapters
+from .messaging import InputMessage, MessageType, OutputMessage
+from .adapters import OutputAdapter, StreamingAwareEmitter
+from .agents.react import ReActAgent, ReActEvent
+from .core import (
+    Agent,
+    AgentContext,
+    AgentEvent,
     AgentResult,
+    CallbackStreamProvider,
     ContentEmitter,
-    StreamingAwareEmitter,
-)
-from .core.events import AgentEvent, EmitterConfig
-from .core.provider import CallbackStreamProvider, LLMProvider
-from .core.tool_manager import (
-    InMemoryToolManager,
+    EmitterConfig,
+    LLMProvider,
     Tool,
+    ToolCall,
     ToolConfig,
     ToolManager,
-    ToolManagerConfig,
     ToolResult,
-)
-from .core.turn_events import (
     TurnEvent,
     TurnReasoningEvent,
     TurnTextEvent,
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
-from .core.types import (
-    MessageType,
-    ToolCall,
-)
-from .pipeline import (
-    AgentPipeline,
-    InputAdapter,
-    InputMessage,
-    OutputAdapter,
-    OutputMessage,
-)
+from .memory import ContextManager, ContextState
+from .pipeline import AgentPipeline, InputAdapter
+from .tools import InMemoryToolManager
 
 __all__ = [
     "__version__",
@@ -74,7 +64,6 @@ __all__ = [
     "ToolManager",
     "InMemoryToolManager",
     "ToolConfig",
-    "ToolManagerConfig",
     # Agent
     "Agent",
     "AgentContext",

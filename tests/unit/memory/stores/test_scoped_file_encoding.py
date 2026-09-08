@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.scope import MemoryLayerName
+from modex_agent.memory.scope import MemoryLayerName
 from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
 
 

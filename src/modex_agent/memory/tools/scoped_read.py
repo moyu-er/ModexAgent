@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from modex_agent.core.capabilities import Modality, ModelCapabilities
+from modex_agent.core.media import Kind
 from modex_agent.core.tool_manager import ParallelTool, ToolResult
 from modex_agent.media.mime import classify_kind, sniff_mime
-from modex_agent.media.models import Kind
 from modex_agent.memory.tools._utils import validate_scoped_path
 from modex_agent.tools.standard.file_tool import (
     _DEFAULT_LIMIT,

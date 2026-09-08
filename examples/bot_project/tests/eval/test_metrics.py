@@ -8,7 +8,7 @@ from bot.eval.cli import app
 from bot.eval.metrics import aggregate
 from typer.testing import CliRunner
 
-from modex_agent.core.constants import StopReason
+from modex_agent.core.emitter import StopReason
 from modex_agent.trace.langfuse_query import (
     LangfuseClient,
     LangfuseQueryError,

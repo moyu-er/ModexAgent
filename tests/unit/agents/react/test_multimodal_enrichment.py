@@ -18,7 +18,7 @@ from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
-from modex_agent.core.governance import ContextGovernance
+from modex_agent.core.media import StoredMediaKind
 from modex_agent.core.message import (
     ChatMessage,
     ImageUrl,
@@ -27,11 +27,12 @@ from modex_agent.core.message import (
     build_media_ref,
 )
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.media.store import LocalFileMediaStore, StoredMediaKind
-from modex_agent.memory.default_system import ScopedMessageHistory
+from modex_agent.media.store import LocalFileMediaStore
+from modex_agent.memory.context_governance import ContextGovernance
+from modex_agent.memory.history import ScopedMessageHistory
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
-from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
@@ -243,7 +244,7 @@ class TestLLMBoundaryResolution:
     ) -> None:
         """A TOOL message carrying a media:// part (the read tool's output)
         resolves on the LLM-bound copy; the persisted history keeps the ref."""
-        from modex_agent.core.types import ToolCall
+        from modex_agent.core.message import ToolCall
 
         store = LocalFileMediaStore(tmp_path / "media")
         store.save(_SESSION_ID, "aid-9", _PNG_BYTES, kind=StoredMediaKind.READS)

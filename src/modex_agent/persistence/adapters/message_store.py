@@ -29,7 +29,7 @@ from enum import StrEnum
 from sqlite3 import Row
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import MessageRole
 from modex_agent.memory.core.models import StorageRevision
 from modex_agent.memory.core.split_stores import MessageStore, message_signature
 from modex_agent.persistence.column_projection import (

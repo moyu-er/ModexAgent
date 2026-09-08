@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel
 
-from modex_agent.core.constants import DefaultValues
+from modex_agent.core.llm_struct import DEFAULT_TOOL_TIMEOUT_SECONDS
 
 
 class LLMSafetyConfig(BaseModel):
@@ -24,7 +24,7 @@ class TurnSafetyConfig(BaseModel):
     ``tool_timeout``: per-invocation tool execution deadline
     (ToolTimeoutInterceptor), also declared into the dispatch deadline at
     tool entry (own budget + margin) so the watchdog never races the inner
-    deadline. Defaults to ``DefaultValues.TOOL_TIMEOUT_SECONDS`` — the
+    deadline. Defaults to ``DEFAULT_TOOL_TIMEOUT_SECONDS`` — the
     single source of truth; it must stay strictly ABOVE
     ``PersistentShellSession``'s own 480s deadline so the session's
     graceful timeout path (partial output + reset notice) is reachable
@@ -32,7 +32,7 @@ class TurnSafetyConfig(BaseModel):
     """
 
     hook_timeout: float = 10.0
-    tool_timeout: float = DefaultValues.TOOL_TIMEOUT_SECONDS
+    tool_timeout: float = DEFAULT_TOOL_TIMEOUT_SECONDS
 
 
 class DeadlineSafetyConfig(BaseModel):

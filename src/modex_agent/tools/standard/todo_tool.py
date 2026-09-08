@@ -17,8 +17,7 @@ from typing import Any
 
 from modex_agent.core.agent import current_agent_context
 from modex_agent.core.tool_manager import ExclusiveTool, ParallelTool
-from modex_agent.core.types import TodoStatus
-from modex_agent.runtime.store import TodoItem, TodoStore
+from modex_agent.runtime.todo import TodoItem, TodoStatus, TodoStore
 
 #: The statuses that count as "active" (still to be done). Shared single source
 #: of truth — used by ``todo_tool`` and ``TodoReorientationHook``.
@@ -146,6 +145,9 @@ class TodoWriteTool(ExclusiveTool):
             "- The work is non-trivial and benefits from planning.\n"
             "- You are mid-task and more work remains than expected — "
             "start tracking now (done steps as `completed`).\n"
+            "- The work enters a new phase (new experiment batch, build, "
+            "or file) — re-write the list to match the current plan; a "
+            "stale list is as bad as none.\n"
             "- The user provides multiple tasks or explicitly asks for a "
             "todo list.\n"
             "\n"

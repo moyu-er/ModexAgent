@@ -17,11 +17,11 @@ from pathlib import Path
 
 from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
 from modex_agent.core.tool_manager import (
-    InMemoryToolManager,
     Tool,
     ToolExecutionContext,
     ToolResult,
 )
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.standard.file_tool import ReadFileTool
 from modex_agent.tools.workspace_scoped import (
     WorkspaceRootProvider,

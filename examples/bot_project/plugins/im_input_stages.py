@@ -17,7 +17,7 @@ from bot.input_pipeline.stages.resolve_pool import ResolvePoolStage
 from bot.input_pipeline.stages.resolve_workspace import ResolveWorkspaceStage
 from bot.input_pipeline.stages.session_control import SessionControlStage
 from bot.input_pipeline.stages.set_channel import SetChannelStage
-from bot.input_pipeline.stages.skill_parse import SkillParseStage, SkillRegistry
+from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry, SkillParseStage
 from bot.input_pipeline.stages.unsupported_command import UnsupportedCommandStage
 from bot.service.model_config import BotModelConfig
 from pydantic import BaseModel, ConfigDict
@@ -69,7 +69,7 @@ class _EmptyStageConfig(BaseModel):
 class SkillParseStageConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
 
-    skill_registry: SkillRegistry
+    skill_registry: PoolSkillResolverRegistry
 
 
 class ModelChoiceStageConfig(BaseModel):

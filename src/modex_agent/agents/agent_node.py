@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any, assert_never
 
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
-from modex_agent.core.session_registry import SessionRegistry
+from modex_agent.persistence.session_registry import SessionRegistry
 from modex_graph.compiled_graph import CompiledGraph
 from modex_graph.constants import DeliverConsumptionStatus
 from modex_graph.context import GraphContext

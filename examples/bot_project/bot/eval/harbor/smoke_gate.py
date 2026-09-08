@@ -36,7 +36,7 @@ from bot.eval.harbor.smoke_runtime import (
     SmokeRunRequest,
     run_smoke,
 )
-from modex_agent.core.constants import ReasoningEffort
+from modex_agent.core.llm_request import ReasoningEffort
 
 app = typer.Typer(add_completion=False, pretty_exceptions_enable=False)
 

@@ -3,23 +3,22 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult
+from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.hook.builtin import SubagentAutoSendHook
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _mock_tree(bus: object) -> SessionTreeManager:
@@ -53,7 +52,7 @@ def _make_context(
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
-        tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
+        tool_manager=InMemoryToolManager(),
         session=session,
         comm_kind=AgentCommKind.SUBAGENT,
     )
@@ -141,7 +140,7 @@ async def test_loop_detected_without_parent_logs_warning(tmp_path: Path, caplog)
     ctx = AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
-        tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
+        tool_manager=InMemoryToolManager(),
         session=session,
         comm_kind=AgentCommKind.SUBAGENT,
     )

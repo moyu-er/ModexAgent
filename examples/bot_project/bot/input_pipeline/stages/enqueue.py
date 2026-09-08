@@ -11,9 +11,9 @@ from pathlib import Path
 
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
-from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
+from modex_agent.messaging.models import InputMessage
 
 
 class EnqueueStage(InputStage):
@@ -51,6 +51,10 @@ class EnqueueStage(InputStage):
             chat_id=envelope.metadata.get("chat_id", ""),  # broker header; never drop to default
             metadata=envelope.metadata,
             attachments=attachments,
+            content_format=envelope.metadata.get(RoutingMeta.SKILL_CONTENT_FORMAT),
+            truncatable_paths=envelope.metadata.get(
+                RoutingMeta.SKILL_TRUNCATABLE_PATHS
+            ),
             workspace=Path(envelope.metadata[RoutingMeta.WORKSPACE])
             if RoutingMeta.WORKSPACE in envelope.metadata
             else None,

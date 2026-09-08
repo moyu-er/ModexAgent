@@ -14,30 +14,31 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from modex_agent.commands.skill import SkillResolver
     from modex_agent.control.channel import InMemoryControlChannel
-    from modex_agent.core.context import ContextManager
-    from modex_agent.core.runtime_context import RuntimeContextManager
-    from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.hook.runner import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
+    from modex_agent.memory.context import ContextManager
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
+    from modex_agent.runtime.context import RuntimeContextManager
     from modex_agent.runtime.store import TurnStateStore
 
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.commands.models import (
     CommandContext,
     CommandProcessor,
 )
 from modex_agent.control.exceptions import AgentControlError
 from modex_agent.core.agent import Agent
-from modex_agent.core.agent_runtime_config import BusyInputMode
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.core.types import InputMessage, OutputMessageType
 from modex_agent.memory.consolidation import DreamEngine
+from modex_agent.messaging.models import InputMessage, OutputMessage, OutputMessageType
 from modex_agent.multi_agent.router import AgentMessageRouter
-from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
+from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.pipeline.busy_input import BusyInputMode
 from modex_agent.pipeline.dream_scanner import DreamScanner
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_runner_abc import TurnRunner
@@ -59,7 +60,7 @@ class AgentPipeline:
     ``TurnRunner`` (constructed by the factory, not the pipeline).
 
     Backward-compat: read-only delegation properties (``hook_runner``,
-    ``hooks``, ``skill_manager``, ``context_manager``, ``tool_manager``,
+    ``hooks``, ``skill_resolver``, ``context_manager``, ``tool_manager``,
     ``sanitizer``, ``agent_descriptor``, ``turn_store``, ``interceptor_chain``,
     ``runtime_context_manager``, ``_turn_context_builder``) expose the
     turn_runner's internals for code that reads them. The 5 mirror SETTER
@@ -113,8 +114,8 @@ class AgentPipeline:
         return self._turn_runner.hooks
 
     @property
-    def skill_manager(self) -> SkillManager | None:
-        return self._turn_runner.skill_manager
+    def skill_resolver(self) -> SkillResolver | None:
+        return self._turn_runner.skill_resolver
 
     @property
     def context_manager(self) -> ContextManager | None:
@@ -263,7 +264,7 @@ class AgentPipeline:
                         session_id=session_id,
                         input_msg=input_msg,
                         agent_name=self.agent.name,
-                        skill_manager=self._turn_runner.skill_manager,
+                        skill_resolver=self._turn_runner.skill_resolver,
                         turn_store=self._turn_runner.turn_store,
                         pending_approval=prelock_pending,
                         runtime_info={"input_metadata": input_msg.metadata or {}},

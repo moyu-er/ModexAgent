@@ -1,7 +1,8 @@
 """System prompt pipeline — versioned, cacheable prompt section assembly.
 
 Moved from framework.memory.pipeline to core to break the core <-> memory
-import cycle (core.context and core.agent depend on SystemPromptPipeline).
+import cycle. ``core.agent`` depends on this foundational prompt seam, while
+the concrete context manager lives in ``memory.context``.
 """
 
 from __future__ import annotations

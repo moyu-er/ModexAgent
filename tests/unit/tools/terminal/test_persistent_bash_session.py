@@ -14,6 +14,7 @@ the whole file runs in seconds. Skipped off POSIX.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib.util
 import shutil
 import sys
@@ -360,16 +361,20 @@ async def test_transient_raw_juggle_completes_without_takeover():
 
 async def test_takeover_still_fires_for_stdin_reading_raw_child():
     """The suppression must not swallow REAL takeovers: a child that sets
-    raw mode and blocks reading stdin (ssh/REPL/pager shape) still returns
-    the shell-kind WAITING hint promptly."""
+    raw mode and blocks reading stdin after producing command-owned output
+    (ssh/REPL/pager shape) still returns the shell-kind WAITING hint promptly."""
     tool = PersistentBashTool(timeout_seconds=8)
     bash_input = BashInputTool(tool.manager)
     try:
         started = monotonic()
         out = await tool.execute(
-            command='python3 -c "import sys, tty; tty.setraw(0); sys.stdin.read(1)"'
+            command=(
+                "python3 -c 'import sys, tty; print(\"ready\", flush=True); "
+                "tty.setraw(0); sys.stdin.read(1)'"
+            )
         )
         elapsed = monotonic() - started
+        assert "ready" in out
         assert "[hint:" in out
         assert elapsed < 5.0
         resumed = await bash_input.execute(line="q")
@@ -508,6 +513,69 @@ async def test_foreign_markers_stripped_from_result():
 # ── cancellation hygiene ──
 
 
+@pytest.mark.parametrize("cancel_twice", [False, True])
+async def test_cancelled_read_joins_worker_before_on_cancel(tmp_path, monkeypatch, cancel_twice):
+    """Cancellation cannot release the session while its PTY reader still runs."""
+    import threading
+
+    tool = PersistentBashTool(initial_cwd=str(tmp_path), timeout_seconds=10)
+    release = threading.Event()
+    entered = asyncio.Event()
+    exited = threading.Event()
+    loop = asyncio.get_running_loop()
+    task = None
+    try:
+        await tool.execute(command="export KEEP_CANCEL_STATE=retained")
+        proc = tool.session._proc
+        original_read = proc.read_nonblocking
+        seen = ""
+        gated = False
+
+        def gated_read(size, timeout):
+            nonlocal seen, gated
+            chunk = original_read(size, timeout)
+            seen += chunk
+            if not gated and "CANCEL_READY" in seen:
+                gated = True
+                loop.call_soon_threadsafe(entered.set)
+                try:
+                    release.wait()
+                finally:
+                    exited.set()
+            return chunk
+
+        monkeypatch.setattr(proc, "read_nonblocking", gated_read)
+        task = asyncio.create_task(tool.execute(
+            command="printf once >> effect; printf CANCEL_READY; read -r answer"
+        ))
+        await entered.wait()
+        for _ in range(2 if cancel_twice else 1):
+            task.cancel()
+            # Queue behind cancellation delivery, without a timing-based sleep.
+            delivered = loop.create_future()
+            loop.call_soon(delivered.set_result, None)
+            await delivered
+            assert not task.done(), "cancelled task abandoned its in-flight PTY reader"
+            assert not exited.is_set()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert exited.is_set()
+        await tool.on_cancel()
+        assert tool.session._proc is proc
+        assert proc.isalive()
+        assert tool.session._phase is session_mod._Phase.IDLE
+        assert await tool.execute(command='printf "$KEEP_CANCEL_STATE"') == "retained"
+        assert await tool.execute(command="pwd") == str(tmp_path)
+        assert (tmp_path / "effect").read_text() == "once"
+    finally:
+        release.set()
+        if task is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        await tool.close()
+
+
 async def test_cancelled_command_recovers_session_via_on_cancel():
     """ADR-0048 D6: cancelling a run_command preserves the session; the
     tool's on_cancel hook interrupts the foreground command and drains it.
@@ -538,12 +606,12 @@ async def test_cancelled_command_recovers_session_via_on_cancel():
 def test_session_deadline_strictly_below_executor_default():
     """Layered-timeout ordering: the session's own graceful timeout path
     (partial output + reset notice) must be reachable BEFORE the executor's
-    blind cancel — 480 < DefaultValues.TOOL_TIMEOUT_SECONDS (540). The
+    blind cancel — 480 < DEFAULT_TOOL_TIMEOUT_SECONDS (540). The
     bot's old hardcoded 400 inverted this and made every interactive hang
     a silent `<tool_timeout>` with all partial output destroyed."""
-    from modex_agent.core.constants import DefaultValues
+    from modex_agent.core.llm_struct import DEFAULT_TOOL_TIMEOUT_SECONDS
 
-    assert session_mod._DEFAULT_TIMEOUT_SECONDS < DefaultValues.TOOL_TIMEOUT_SECONDS
+    assert session_mod._DEFAULT_TIMEOUT_SECONDS < DEFAULT_TOOL_TIMEOUT_SECONDS
 
 
 async def test_raw_takeover_returns_promptly_zsh_prompt():
@@ -731,6 +799,12 @@ async def test_probe_unavailable_keeps_legacy_ps1_behavior(
 async def test_probe_hit_classifies_kind_by_kernel_state(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    # The always-true probe must not fire before the fake ssh shell has
+    # printed its password prompt (python3 startup on a slow filesystem
+    # can exceed the fast 0.3s cadence) — the zero-output probe path
+    # would then settle the wait with no prompt in the output. Same
+    # back-off as test_raw_nonshell_takeover_hint_probe_path.
+    monkeypatch.setattr(session_mod, "_STDIN_PROBE_INTERVAL_S", 3.0)
     monkeypatch.setattr(session_mod, "stdin_probe_available", lambda: True)
 
     async def _probe(self: PersistentShellSession) -> bool:

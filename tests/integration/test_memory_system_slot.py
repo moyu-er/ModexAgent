@@ -19,10 +19,10 @@ from bot.service.pool import create_pool
 from plugins.bot_strategies import BotStrategiesPlugin
 
 from modex_agent.commands.processor import SlashCommandProcessor
-from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
+from modex_agent.memory.context import ContextManager, ContextState
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.descriptor import AgentInstance
@@ -44,8 +44,8 @@ if TYPE_CHECKING:
 
     from modex_agent.core.emitter import AgentResult
     from modex_agent.core.message import ChatMessage
-    from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
+    from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
 
 def _modexctl_resolvable() -> bool:
     """Mirror the production resolution (env override > venv sibling > PATH).
@@ -84,7 +84,7 @@ class _ProbeContextManager(ContextManager):
         runtime_info: dict[str, object] | None = None,
         metadata: dict[str, object] | None = None,
         tool_manager: ToolManager | None = None,
-        skill_manager: SkillManager | None = None,
+        skill_resolver: SkillCatalog | None = None,
     ) -> ContextState:
         return ContextState(system_prompt=_PROBE_SYSTEM_PROMPT)
 
@@ -184,8 +184,6 @@ def _strip_hermetic_fields(raw: dict) -> None:
     pool memory resources (and would collide with the probe memory system
     replacing the framework one)."""
     workspace = raw.get("workspace")
-    if isinstance(workspace, dict):
-        workspace.pop("mcp", None)
 
     _hermetic_tool_names = {"experience", "send_file_to_user"}
     _hermetic_capability_names = {"experience", "todo"}

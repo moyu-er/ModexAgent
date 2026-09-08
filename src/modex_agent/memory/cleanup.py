@@ -23,9 +23,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.message import ChatMessage, ImageUrlPart, TextPart, render_content_part_ref
-from modex_agent.core.scope import MemoryContext
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import (
+    ChatMessage,
+    ImageUrlPart,
+    MessageRole,
+    TextPart,
+    render_content_part_ref,
+)
 from modex_agent.memory.archive_models import ArchiveGenerationResult
 from modex_agent.memory.core.layers import (
     ArchiveMemoryManager,
@@ -43,6 +47,7 @@ from modex_agent.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
     ToolChainSanitizationMode,
 )
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.token_estimator import (
     CharTokenEstimator,
     TokenEstimator,

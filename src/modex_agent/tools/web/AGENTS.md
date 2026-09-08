@@ -10,7 +10,9 @@ Web interaction tools for agents. Provides URL content fetching (HTML-to-markdow
 | File | Description |
 |------|-------------|
 | `__init__.py` | Package init |
-| `reader.py` | `WebReaderTool(Tool)` — fetch URL content and convert to readable text. Uses `markdownify` for HTML-to-markdown. Static HTML only — JavaScript-rendered pages may not return full content. Configurable `_MAX_CONTENT_LENGTH` (50k chars) and custom `_USER_AGENT` |
+| `reader.py` | `WebReaderTool(Tool)` — fetch URL content and convert to readable text. Uses `markdownify` for HTML-to-markdown. Static HTML only — JavaScript-rendered pages may not return full content. Configurable `_MAX_CONTENT_LENGTH` (50k chars) and custom `_USER_AGENT`. Fetches ride the guarded transport (`guarded_http`/`guarded_transport`) |
+| `guarded_http.py` | Guarded fetch orchestration — `guarded_async_client` (proxy-free client factory, `trust_env=False`), `follow_guarded` (manual redirects, per-hop policy check), `guarded_fetch` (one-shot guarded GET), `GuardedHttpError`/`PolicyBlockedError` |
+| `guarded_transport.py` | Guarded transport adaptation — `ValidatingNetworkBackend` (resolve → validate every DNS answer → dial validated IP literal; fail-closed SSRF at connect time), `GuardedAsyncTransport` (httpx↔httpcore adapter), httpcore→httpx error mapping, `AsyncResolver` seam |
 | `search.py` | `WebSearchTool(Tool)` — search the web via DuckDuckGo. Returns titles, URLs, and snippets. Requires the `ddgs` (duckduckgo-search) package |
 
 ## For AI Agents

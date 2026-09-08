@@ -41,15 +41,15 @@ from bot.service.model_provider import BotModelProvider
 from bot.service.pool.declaration import (
     apply_workspace_resource_selection,
     load_scope_declaration_opt,
-    validate_workspace_mcp_set,
+    validate_agent_mcp_sets,
     workspace_layer_present,
-    workspace_mcp_prewarm_names,
 )
 from bot.utils.config_loader import ConfigLoader
 from bot.workspace.wiring import build_workspace_stack
 from modex_agent import (
     LLMProvider,
 )
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.agents.external.providers.opencode.server_manager import (
     OpenCodeServerManager,
 )
@@ -61,13 +61,13 @@ from modex_agent.core.llm_struct import (
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,
 )
-from modex_agent.core.session_registry import SessionRegistry
-from modex_agent.core.session_store import SessionStore
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.pool_router import PoolRoutingStore
 from modex_agent.persistence.config import PersistenceBackend
-from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.persistence.session_registry import SessionRegistry
+from modex_agent.persistence.session_store import SessionStore
+from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.workspace.paths import RESERVED_GLOBAL_DIR, WORKSPACE_STATE_DB
 
 from .builders import (
@@ -348,11 +348,11 @@ class BotService(AgentBuilderMixin):
         mcp_registry_path = self._project_dir / "config" / "mcp" / "registry.json"
         if read_shared_registry_flag(mcp_registry_path):
             raw_servers = read_registry(mcp_registry_path)
-            # Ticket 14: the declared workspace MCP set is validated loudly
-            # against the registry (typo'd names abort the boot) and scopes
-            # the pre-warm; undeclared workspaces pre-warm everything.
-            validate_workspace_mcp_set(self._scope_spec, raw_servers)
-            prewarm_names = workspace_mcp_prewarm_names(self._scope_spec, raw_servers)
+            # The per-agent mcp selections (what actually attaches tools)
+            # are validated loudly against the registry — typo'd names abort
+            # the boot. Pre-warm covers the full registry; the declared-set
+            # scoping face was deleted with the workspace-level mcp field.
+            validate_agent_mcp_sets(self._scope_spec, raw_servers)
             if raw_servers:
                 # ${ENV} interpolation MUST happen before the registry hashes
                 # and connects, else tokens like ${MY_TOKEN} reach the
@@ -362,7 +362,7 @@ class BotService(AgentBuilderMixin):
                     servers=servers,
                     injector=JsonFileMCPTransportInjector(),
                 )
-                self._mcp_registry.start_connecting(prewarm_names)
+                self._mcp_registry.start_connecting(list(raw_servers))
                 logger.info("Shared MCP registry: %d server(s) connecting concurrently", len(servers))
             else:
                 self._mcp_registry = None
@@ -579,8 +579,6 @@ class BotService(AgentBuilderMixin):
                 ),
             )
         else:
-            from modex_agent.core.constants import DefaultValues
-
             policy = RuntimeSafetyPolicy(
                 llm=LLMTimeoutPolicy(
                     request_timeout_seconds=None,
@@ -590,7 +588,6 @@ class BotService(AgentBuilderMixin):
                 ),
                 turn=TurnTimeoutPolicy(
                     hook_timeout_seconds=10.0,
-                    tool_timeout_seconds=DefaultValues.TOOL_TIMEOUT_SECONDS,
                 ),
             )
         self._safety_policy_cache = policy

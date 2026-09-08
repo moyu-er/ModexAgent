@@ -14,10 +14,10 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from modex_agent.adapters.output import OutputAdapter
     from modex_agent.core.llm import LLMProvider
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.session_id import SessionIdFactory
-    from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.hook.notification import AgentNotificationService
     from modex_agent.memory.registry import MemoryStoreRegistry
     from modex_agent.messaging.broker import MessageBroker
@@ -32,9 +32,10 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.inbox.consumer import InboxConsumer
     from modex_agent.multi_agent.pool import AgentPool
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
-    from modex_agent.pipeline.adapters import OutputAdapter
+    from modex_agent.persistence.session_registry import SessionRegistry
     from modex_agent.plugins.capability import CapabilitySupply
     from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.runtime.approval_decision import ApprovalAuditStore
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
     from modex_agent.workspace import WorkspaceManager
@@ -42,8 +43,8 @@ if TYPE_CHECKING:
     from modex_graph.context import GraphContext
 
 from modex_agent.core.capabilities import ModelInfo
-from modex_agent.core.constants import ReasoningEffort
 from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.llm_request import ReasoningEffort
 
 
 class AgentMaterializeDeps:
@@ -89,6 +90,7 @@ class AgentMaterializeDeps:
         default_llm_provider: str = "default",
         graph_context_resolver: Callable[[int], GraphContext[Any] | None] | None = None,
         capability_supply: Mapping[str, CapabilitySupply] = MappingProxyType({}),
+        approval_audit: ApprovalAuditStore | None = None,
     ) -> None:
         self.agent_factory = agent_factory
         self.pool = pool
@@ -128,8 +130,11 @@ class AgentMaterializeDeps:
         self.default_llm_provider = default_llm_provider
         self.graph_context_resolver = graph_context_resolver
         self.capability_supply = capability_supply
+        self.approval_audit = approval_audit
 
     safety: RuntimeSafetyPolicy | None
+    approval_audit: ApprovalAuditStore | None
+    """Borrowed pool/workspace audit sink shared with the main agent."""
     llm_model: str | None
     # TODO(model-config-convergence): 模型调用参数 temperature/max_output_tokens 应只由
     # LLMProvider 持有；此处经 descriptor/context 透传属冗余复制。待 ReactLlmClient

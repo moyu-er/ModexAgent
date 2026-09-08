@@ -102,6 +102,7 @@ async def test_sqlite_restart_recovers_from_crashed_node(tmp_path: Path) -> None
     assert len(running) == 1
     graph_instance_id = running[0].graph_instance_id
 
+    # The run crashes, but cooperative task cancellation finalizes the node as CANCELED.
     execution.cancel()
     with pytest.raises(asyncio.CancelledError):
         await execution
@@ -145,7 +146,7 @@ async def test_sqlite_restart_recovers_from_crashed_node(tmp_path: Path) -> None
         assert [record.status for record in prepare_versions] == [InvocationStatus.COMPLETED]
         assert [record.status for record in work_versions] == [
             InvocationStatus.COMPLETED,
-            InvocationStatus.CRASHED,
+            InvocationStatus.CANCELED,
         ]
         assert recovered_work_initial_steps == [[]]
         assert [record.version for record in work_versions] == [1, 0]

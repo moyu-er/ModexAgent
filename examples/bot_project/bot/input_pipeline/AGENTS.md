@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-19 -->
+<!-- Updated: 2026-09-02 -->
 
 # input_pipeline
 
@@ -67,7 +67,8 @@ relative order is not configurable through YAML, roster, or plugin metadata.
 Additional plugin stage names are sorted deterministically and inserted at the
 single code-defined extension point immediately before
 `UnsupportedCommandStage`; plugins can add behavior there but cannot reorder the
-built-in skeleton. Constructor dependencies such as `skill_registry`,
+built-in skeleton. Constructor dependencies such as the
+`PoolSkillResolverRegistry`,
 `known_pools`, `workspace_controller`, and `bot_model_config` travel through the
 corresponding frozen factory config model, while service/workspace dependencies
 come from the shared `AssemblyContext`.
@@ -139,13 +140,19 @@ Both pipelines. A shared, configurable stage that dispatches cross-channel slash
 
 `stages/skill_parse.py`
 
-Both pipelines. Detects `/skillName` commands and validates against a pluggable `SkillRegistry`.
+Both pipelines. Detects `/skillName` commands and resolves them through the
+consumer-owned `SkillResolver` in `modex_agent.commands.skill`.
 
 - Non-`/` messages pass through unchanged.
-- Registered skills: stores `skill_xml` (LLM-ready XML form) and `skill_name` in `envelope.metadata`. The raw text stays in `envelope.content` for persistence.
-- Unknown skills: terminates with a user-facing "Skill not found" notice. The message is NOT persisted.
+- Resolved skills: stores XML, canonical name, location, content format, and truncatable paths in `envelope.metadata`. The raw text stays in `envelope.content` for persistence.
+- Unresolved commands pass through to `UnsupportedCommandStage`, which owns the single generic rejection notice.
 
-**Extension point:** `SkillRegistry` is an ABC whose single `resolve(pool, name, content) -> ParsedSkill | None` method validates and converts a skill command. The concrete `PoolSkillManagerRegistry` wraps per-pool `SkillManager` instances — it calls `build_skill_command_xml()` (shared with `SkillCommandHandler`) to produce LLM-ready XML. The default is an empty registry (no skills recognized).
+`PoolSkillResolverRegistry` indexes each pool's typed root resolver from
+`PoolInstance.skill_resolver`. Those resolvers are created by
+`SkillsSupply.resolver_for(root_agent_name)`; the registry performs no catalog
+construction. The stage strips canonical arguments and calls
+`SkillResolver.resolve_command()`, the same contract used by framework
+`SkillCommandHandler`.
 
 ### S7 — PersistUserMessageStage
 
@@ -220,6 +227,6 @@ This pipeline reuses the framework's `InputAdapter._try_intercept_control` for `
 | `stages/resolve_pool.py` | S5 — pool/agent resolution + persistence |
 | `stages/command.py` | `CommandDispatchStage` — shared cross-channel command dispatch (handler map) |
 | `stages/commands.py` | `BuiltinCommand` enum + `handle_continue` handler + `SHARED_COMMANDS` map |
-| `stages/skill_parse.py` | S6 — skill validation + XML conversion |
+| `stages/skill_parse.py` | S6 — per-pool `SkillResolver` lookup + canonical command resolution |
 | `stages/persist_user_message.py` | S7 — transcript store persistence |
 | `stages/enqueue.py` | S8 — InputMessage construction + enqueue |

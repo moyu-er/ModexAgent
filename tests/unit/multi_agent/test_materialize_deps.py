@@ -4,7 +4,7 @@ import dataclasses
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from modex_agent.core.constants import ReasoningEffort
+from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps

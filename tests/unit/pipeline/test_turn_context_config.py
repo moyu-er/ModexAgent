@@ -9,10 +9,9 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.core.agent import AgentCommKind, AgentContext
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool
+from modex_agent.core.tool_manager import Tool
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.pipeline.turn_context_config import (
     GraphApprovalConfigurator,
@@ -29,6 +28,7 @@ from modex_agent.pipeline.turn_context_config import (
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity, TurnStateBase
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_graph.context import GraphContext
 
 
@@ -263,18 +263,34 @@ def test_approval_does_not_apply_when_graph_instance_id_none() -> None:
     assert configurator.applies(desc) is False
 
 
-def test_approval_clears_runtime_approval_when_runtime_present() -> None:
-    # Given
+def test_approval_swaps_to_guard_only_composite_when_present() -> None:
+    """unified-security 05b: graph turns must NOT kill the guard verdicts —
+    approval swaps to the escalate-off guard-only composite when one was
+    assembled, instead of None."""
+    configurator = GraphApprovalConfigurator()
+    desc = make_graph_descriptor(graph_instance_id=1)
+    ctx = make_runtime_context()
+    guard_only = object()
+    ctx.runtime.services.guard_only_approval = guard_only  # type: ignore[assignment]
+    sentinel_approval = object()
+    ctx.runtime.services.approval = sentinel_approval  # type: ignore[assignment]
+
+    configurator.configure(ctx, desc)
+
+    assert ctx.runtime.services.approval is guard_only
+
+
+def test_approval_clears_runtime_approval_when_no_guard_layer() -> None:
+    """Deployments without a guard layer (plain approval / no approval)
+    keep the historical behavior: the human channel goes off → None."""
     configurator = GraphApprovalConfigurator()
     desc = make_graph_descriptor(graph_instance_id=1)
     ctx = make_runtime_context()
     sentinel_approval = object()
     ctx.runtime.services.approval = sentinel_approval  # type: ignore[assignment]
 
-    # When
     configurator.configure(ctx, desc)
 
-    # Then
     assert ctx.runtime.services.approval is None
 
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.commands.constants import (
     BuiltinCommand,
     CommandAction,
@@ -16,7 +15,7 @@ from modex_agent.commands.handlers import (
 )
 from modex_agent.commands.models import CommandContext, SlashCommandInvocation
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
+from modex_agent.messaging.models import ApprovalAction, InputMessage
 
 
 def _context(content: str = "/continue", *, pending: object | None = None) -> CommandContext:

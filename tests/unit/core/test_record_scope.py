@@ -16,13 +16,15 @@ import pytest
 from pydantic import ValidationError
 
 from modex_agent.core.scope import (
+    RecordScope,
+)
+from modex_agent.memory.scope import (
     AgentScope,
     ChannelScope,
     ChatScope,
     CompositeScope,
     GlobalScope,
     MemoryContext,
-    RecordScope,
     Scope,
     SessionScope,
     TenantScope,

@@ -9,8 +9,8 @@ from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.web_ui_service import WebUIService
 from bot.webui.transcript_store import TranscriptStore
 
-from modex_agent.core.session_store import LocalFileSessionStore
 from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
 from modex_agent.persistence.config import PersistenceBackend
 
 

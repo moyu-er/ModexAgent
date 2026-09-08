@@ -4,15 +4,12 @@ Tests all 4 register_default_* functions.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.plugins.abc import ComponentFactory, ComponentSlot, SimpleFactory
+from modex_agent.plugins.abc import ComponentFactory, ComponentSlot
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
-
 
 # ---- helpers ---------------------------------------------------------------
 
@@ -98,7 +95,6 @@ class TestRegisterDefaultInterceptors:
         from modex_agent.interceptor.builtin.tool_timeout import (
             ToolTimeoutInterceptor,
         )
-
         from modex_agent.plugins.defaults.interceptors import (
             ToolTimeoutInterceptorFactory,
         )
@@ -126,7 +122,6 @@ class TestRegisterDefaultCommands:
 
     async def test_approve_factory_creates_approval_handler(self):
         from modex_agent.commands.handlers import ApprovalCommandHandler
-
         from modex_agent.plugins.defaults.commands import (
             ApproveCommandHandlerFactory,
         )
@@ -139,7 +134,6 @@ class TestRegisterDefaultCommands:
 
     async def test_deny_factory_creates_approval_handler(self):
         from modex_agent.commands.handlers import ApprovalCommandHandler
-
         from modex_agent.plugins.defaults.commands import (
             DenyCommandHandlerFactory,
         )
@@ -152,7 +146,6 @@ class TestRegisterDefaultCommands:
 
     async def test_continue_factory_creates_continue_handler(self):
         from modex_agent.commands.handlers import ContinueCommandHandler
-
         from modex_agent.plugins.defaults.commands import (
             ContinueCommandHandlerFactory,
         )
@@ -164,7 +157,6 @@ class TestRegisterDefaultCommands:
 
     async def test_stop_factory_creates_control_handler(self):
         from modex_agent.commands.handlers import ControlCommandHandler
-
         from modex_agent.plugins.defaults.commands import (
             StopCommandHandlerFactory,
         )
@@ -177,7 +169,6 @@ class TestRegisterDefaultCommands:
 
     async def test_cd_factory_creates_handler(self):
         from modex_agent.commands.handlers import CommandHandler
-
         from modex_agent.plugins.defaults.commands import (
             CdCommandHandlerFactory,
         )
@@ -190,7 +181,6 @@ class TestRegisterDefaultCommands:
 
     async def test_pool_factory_creates_handler(self):
         from modex_agent.commands.handlers import CommandHandler
-
         from modex_agent.plugins.defaults.commands import (
             PoolCommandHandlerFactory,
         )

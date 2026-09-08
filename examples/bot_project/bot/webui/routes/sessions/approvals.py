@@ -96,9 +96,8 @@ async def handle_post_approval(request: web.Request) -> web.Response:
     converging on the agent pipeline's approval branch.
     """
     from bot.input_pipeline.stages.resolve_pool import RoutingMeta
-    from modex_agent.approval.types import ApprovalAction
-    from modex_agent.approval.views import ApprovalDecisionInput
     from modex_agent.input_pipeline.envelope import UserInputEnvelope
+    from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
 
     server: WebUIServer = request.app["server"]
     session_id: str = request.match_info["session_id"]

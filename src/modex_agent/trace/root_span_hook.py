@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal, overload
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.constants import StopReason
+from modex_agent.core.emitter import StopReason
 from modex_agent.hook.abc import (
     ClosableHook,
     FinallyGraphHook,

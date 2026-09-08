@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 from bot.service.builders import build_workspace_registry_store
 from bot.workspace.wiring import build_workspace_stack
 
-from modex_agent.core.types import InputMessage
 from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.messaging.models import InputMessage
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import RegistryPersistenceManager
 from modex_agent.workspace.registry import ScopeRegistryStore

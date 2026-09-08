@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.message import MessageRole
 from modex_agent.core.message_utils import wrap_system_reminder
-from modex_agent.core.types import MessageRole
 from modex_agent.hook.abc import StartNodeTurnHook
 from modex_agent.utils.timezone import get_user_timezone
 

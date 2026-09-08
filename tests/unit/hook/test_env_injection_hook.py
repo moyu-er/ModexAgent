@@ -18,10 +18,10 @@ import pytest
 from modex_agent.agents.external.types import ExternalEnvSpec
 from modex_agent.core.agent import AgentCommKind, AgentContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.hook.builtin.env_injection import NativeEnvInjectionHook
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.env_context import _current_session_id, _modex_env
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _make_template(
@@ -58,7 +58,7 @@ def _make_context(
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
-        tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
+        tool_manager=InMemoryToolManager(),
         session=SessionInfo(
             session_id=session_id,
             agent_name=agent_name,

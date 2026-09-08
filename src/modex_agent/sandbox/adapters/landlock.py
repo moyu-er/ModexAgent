@@ -1,3 +1,7 @@
+# TODO(unvalidated): the landlock API usage below (create_ruleset(accesses={...}),
+# add_path_allowed, Accesses.ALL, restrict_self) is suspected to NOT match the
+# real PyPI `landlock` package signatures — this adapter has likely never run.
+# Do not depend on it; rewrite against the real API before any use.
 import contextlib
 import os
 import shutil

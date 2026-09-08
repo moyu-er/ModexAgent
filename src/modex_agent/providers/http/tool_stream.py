@@ -33,7 +33,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from modex_agent.core.types import ToolCall
+from modex_agent.core.message import ToolCall
 
 logger = logging.getLogger(__name__)
 

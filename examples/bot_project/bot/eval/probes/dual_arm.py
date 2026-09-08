@@ -14,9 +14,8 @@ from bot.eval.probes.budget import (
     BudgetedProvider,
     CostCapExceededError,
 )
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.provider import LLMProvider
-from modex_agent.core.types import MessageRole
 from modex_agent.trace.pricing import PriceBook
 
 

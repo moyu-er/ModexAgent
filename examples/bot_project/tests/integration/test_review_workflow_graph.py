@@ -18,7 +18,6 @@ from typing import Any
 import pytest
 
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.session_registry import InMemorySessionRegistry
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.descriptor import AgentInstance
@@ -35,6 +34,7 @@ from modex_agent.multi_agent.session_tree.session_binding import (
 from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStore
 from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrackStore
 from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
+from modex_agent.persistence.session_registry import InMemorySessionRegistry
 from modex_agent.pipeline.turn_context_config import (
     GraphApprovalConfigurator,
     GraphContextBindingConfigurator,
@@ -366,15 +366,12 @@ class TestRejectApproveLoop:
 
 
 class TestPoolConfig:
-    """Verify the review pool config files exist and are valid."""
+    """Verify the review workflow fixture files exist.
 
-    def test_pool_yml_exists(self) -> None:
-        assert (_FIXTURES / "pools" / "review" / "pool.yml").exists()
-
-    def test_templates_exist(self) -> None:
-        templates_dir = _FIXTURES / "pools" / "review" / "templates"
-        assert (templates_dir / "implementer.yml").exists()
-        assert (templates_dir / "reviewer.yml").exists()
+    The legacy ``fixtures/pools/review`` pool.yml + templates were removed
+    with the deviations-only declaration cleanup — the live review pool
+    lives in ``config/scopes/bot.yml`` under the compile gate.
+    """
 
     def test_agent_prompts_exist(self) -> None:
         agents_dir = _FIXTURES / "agents"
@@ -399,19 +396,19 @@ class TestE2EStepFun:
     ) -> None:
         from bot.graph.agent_node import BotAgentNode, SessionStrategy
 
+        from modex_agent.core import AgentCommKind
+        from modex_agent.core.agent import ExecutionStrategyKind
         from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
-        from modex_agent.core.constants import ExecutionStrategyKind
         from modex_agent.core.llm_struct import (
             LLMTimeoutPolicy,
             RuntimeSafetyPolicy,
             TurnTimeoutPolicy,
         )
-        from modex_agent.core.scope import MemoryAgentRole
         from modex_agent.ioc.configs.llm import LLMConfig
         from modex_agent.ioc.factories.descriptors import build_session_only_memory
         from modex_agent.ioc.factories.llm import create_llm_provider
+        from modex_agent.memory.scope import MemoryAgentRole
         from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.descriptor import (
             AgentDescriptor,
             AgentLLMConfig,
@@ -482,7 +479,7 @@ class TestE2EStepFun:
                 descriptor,
                 broker=broker,
                 tool_manager=None,
-                skill_manager=None,
+                skill_resolver=None,
                 context_manager=memory_ctx,
                 hooks=[],
             )
@@ -666,19 +663,19 @@ class TestE2EReviewLoopWithMemory:
     ) -> None:
         from bot.graph.agent_node import SessionStrategy
 
+        from modex_agent.core import AgentCommKind
+        from modex_agent.core.agent import ExecutionStrategyKind
         from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
-        from modex_agent.core.constants import ExecutionStrategyKind
         from modex_agent.core.llm_struct import (
             LLMTimeoutPolicy,
             RuntimeSafetyPolicy,
             TurnTimeoutPolicy,
         )
-        from modex_agent.core.scope import MemoryAgentRole
         from modex_agent.ioc.configs.llm import LLMConfig
         from modex_agent.ioc.factories.descriptors import build_session_only_memory
         from modex_agent.ioc.factories.llm import create_llm_provider
+        from modex_agent.memory.scope import MemoryAgentRole
         from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.descriptor import (
             AgentDescriptor,
             AgentLLMConfig,
@@ -750,7 +747,7 @@ class TestE2EReviewLoopWithMemory:
             descriptor,
             broker=broker,
             tool_manager=None,
-            skill_manager=None,
+            skill_resolver=None,
             context_manager=tracking_ctx,  # type: ignore[arg-type]
             hooks=[],
         )

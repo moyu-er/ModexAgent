@@ -20,16 +20,8 @@ from typing import Any
 
 import pytest
 
+from modex_agent.agents import GraphDeliverTool
 from modex_agent.core.tool_manager import ExecutionMode, Tool
-from modex_agent.memory.tools.experience import (
-    ExperienceDeleteTool,
-    ExperienceEditTool,
-    ExperienceListTool,
-    ExperienceReadTool,
-    ExperienceRenameDirTool,
-    ExperienceTool,
-    ExperienceWriteTool,
-)
 from modex_agent.memory.tools.scoped_edit import ScopedEditFileTool
 from modex_agent.memory.tools.scoped_list import ScopedListTool
 from modex_agent.memory.tools.scoped_read import ScopedReadFileTool
@@ -39,10 +31,18 @@ from modex_agent.multi_agent.tools import (
     SendToPeerTool,
     TaskDispatchTool,
 )
+from modex_agent.plugins.defaults.capabilities.experience.catalog import (
+    ExperienceDeleteTool,
+    ExperienceEditTool,
+    ExperienceListTool,
+    ExperienceReadTool,
+    ExperienceRenameDirTool,
+    ExperienceRouterTool,
+    ExperienceWriteTool,
+)
 from modex_agent.tools.aci.edit_tool import AciEditTool
 from modex_agent.tools.ast.ast_replace import AstGrepReplaceTool
 from modex_agent.tools.ast.ast_search import AstGrepSearchTool
-from modex_agent.tools.graph_deliver import GraphDeliverTool
 from modex_agent.tools.graph_knowledge_tool import GraphKnowledgeBaseTool
 from modex_agent.tools.lsp.lsp_diagnostics import LspDiagnosticsTool
 from modex_agent.tools.lsp.lsp_navigation import LspNavigationTool
@@ -145,7 +145,7 @@ _EXCLUSIVE_TOOLS: list[type[Tool]] = [
     ExperienceEditTool,
     ExperienceRenameDirTool,
     ExperienceDeleteTool,
-    ExperienceTool,
+    ExperienceRouterTool,
     KbTool,
     SendFileToUserTool,
 ]

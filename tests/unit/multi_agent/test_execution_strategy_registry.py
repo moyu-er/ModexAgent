@@ -202,7 +202,7 @@ def test_strategy_assembly_optional_defaults() -> None:
     )
     # React-only (None for external)
     assert assembly.tool_manager is None
-    assert assembly.skill_manager is None
+    assert "skill_resolver" not in {field.name for field in dataclasses.fields(assembly)}
     assert assembly.mcp_manager is None
     assert assembly.terminal_manager is None
     assert assembly.context_manager is None

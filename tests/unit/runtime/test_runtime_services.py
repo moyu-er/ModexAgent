@@ -1,12 +1,12 @@
 """Tests for AgentRuntime and AgentRuntimeServices."""
 from __future__ import annotations
 
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.ioc.configs.llm import Modality, ModelCapabilities, ModelInfo
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity, TurnStateBase
-from modex_agent.core.session_id import SessionInfo
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices, require_runtime_state
 from modex_agent.runtime.store import NoOpTurnStateStore
-from modex_agent.ioc.configs.llm import Modality, ModelCapabilities, ModelInfo
 
 
 def _make_state() -> TurnStateBase:

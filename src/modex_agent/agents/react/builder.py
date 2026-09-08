@@ -33,7 +33,7 @@ class ReActAgentBuilder:
         Args:
             emitter_output_adapter: 已解析好的 output adapter（BrokerOutputAdapter 或原生 OutputAdapter）
         """
-        from ...core.emitter import StreamingAwareEmitter
+        from ...adapters.emitter import StreamingAwareEmitter
         from .agent import ReActEvent
 
         def _factory(session_id: str) -> ContentEmitter:

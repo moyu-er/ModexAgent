@@ -19,9 +19,9 @@ from collections.abc import Awaitable, Callable
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.core.scope import MemoryContext, Scope, SessionScope, UserScope
 from modex_agent.memory.archive_models import DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS
 from modex_agent.memory.core.split_stores import MemoryStoreBundle
+from modex_agent.memory.scope import MemoryContext, Scope, SessionScope, UserScope
 
 StorageFactory = Callable[[MemoryContext], Awaitable[MemoryStoreBundle]]
 

@@ -9,8 +9,8 @@ from bot.service._model_config_loader import _apply_bot_model_config, _load_app_
 from bot.service.core import BotService
 from bot.service.model_config import BotModelConfig
 
-from modex_agent.core.constants import InterfaceFormat
 from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.ioc.configs.llm import InterfaceFormat
 
 
 def _write_config(tmp_path: Path) -> Path:

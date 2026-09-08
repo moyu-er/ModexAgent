@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
-from modex_agent.core.constants import InterfaceFormat, ReasoningEffort
+from modex_agent.core.llm_request import ReasoningEffort
 
-__all__ = ["Modality", "ModelCapabilities", "ModelInfo", "LLMConfig"]
+__all__ = ["InterfaceFormat", "LLMConfig", "Modality", "ModelCapabilities", "ModelInfo"]
+
+
+class InterfaceFormat(StrEnum):
+    """Wire protocol used by an LLM provider configuration."""
+
+    OPENAI_COMPATIBLE = "openai_compatible"
+    OPENAI_RESPONSE = "openai_response"
+    ANTHROPIC = "anthropic"
 
 
 class LLMConfig(BaseModel):

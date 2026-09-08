@@ -43,20 +43,18 @@ import pytest
 from bot.graph.agent_node import BotAgentNode
 from bot.workspace.handle import PoolWorkspaceResources, WorkspaceResolverCell
 
-from modex_agent.core.constants import ExecutionStrategyKind, FinishReason
-from modex_agent.core.context import InMemoryContextManager
-from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.core.message import ChatMessage
+from modex_agent.core import AgentCommKind
+from modex_agent.core.agent import ExecutionStrategyKind
+from modex_agent.core.llm_struct import FinishReason, LLMResponse, RuntimeSafetyPolicy
+from modex_agent.core.message import ChatMessage, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.session_registry import InMemorySessionRegistry
-from modex_agent.core.session_store import LocalFileSessionStore
-from modex_agent.core.types import InputMessage, LLMResponse, ToolCall
+from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
 from modex_agent.multi_agent.descriptor import (
     AgentDescriptor,
@@ -79,6 +77,8 @@ from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrac
 from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
+from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
+from modex_agent.persistence.session_registry import InMemorySessionRegistry
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_config import (
     GraphApprovalConfigurator,
@@ -380,7 +380,7 @@ class _PoolBuild:
             descriptor,
             broker=self.broker,
             tool_manager=None,
-            skill_manager=None,
+            skill_resolver=None,
             context_manager=InMemoryContextManager(
                 base_system_prompt="You are the reviewer."
             ),

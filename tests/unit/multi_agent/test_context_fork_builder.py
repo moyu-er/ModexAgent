@@ -12,9 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.scope import MemoryContext
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import ChatMessage, MessageRole
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
 
 

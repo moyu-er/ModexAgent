@@ -31,9 +31,8 @@ from modex_agent.approval.constants import (
     ApprovalStatus,
     ApprovalTier,
 )
-from modex_agent.approval.types import ApprovalAction
-from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
 from modex_agent.runtime.codec import RuntimeStateCodecRegistry
 from modex_agent.runtime.enums import (
     AgentKind,
@@ -368,7 +367,9 @@ async def test_post_approval_runs_input_pipeline_with_decision() -> None:
         assert len(pipeline.received) == 1
         envelope = pipeline.received[0]
         decision = envelope.metadata[RoutingMeta.APPROVAL_DECISION]
-        assert decision == ApprovalDecisionInput("c1", ApprovalAction.ALLOW)
+        assert decision == ApprovalDecisionInput(
+            tool_call_id="c1", action=ApprovalAction.ALLOW
+        )
 
 
 @pytest.mark.asyncio

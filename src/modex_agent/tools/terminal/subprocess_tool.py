@@ -27,6 +27,7 @@ import os
 import platform
 import sys
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 if sys.platform == "win32":
@@ -45,6 +46,18 @@ from modex_agent.tools.terminal.types import (
     detect_platform_shell,
 )
 from modex_agent.utils.process_tree import terminate_process_group
+
+
+class ShellLaunchOwner(ABC):
+    """Own launch selection; fallback is legal only before target submission."""
+
+    @abstractmethod
+    def shell_argv(self, session_id: str | None) -> tuple[str, ...] | None:
+        """Current launcher, or None for ordinary host shell detection."""
+
+    @abstractmethod
+    async def fallback(self, session_id: str | None, reason: str) -> bool:
+        """Record confirmed startup unavailability; True authorizes host startup."""
 
 
 class ShellExecutor(ABC):
@@ -238,6 +251,7 @@ class SubprocessTool(ExclusiveTool):
         self,
         executor: ShellExecutor | None = None,
         timeout: int | None = None,
+        working_dir: str | None = None,
     ) -> None:
         """Initialize SubprocessTool.
 
@@ -250,6 +264,7 @@ class SubprocessTool(ExclusiveTool):
         super().__init__()
         self._executor = executor or create_subprocess_executor()
         self.timeout = timeout
+        self._working_dir = working_dir
 
     @property
     def name(self) -> str:
@@ -316,4 +331,9 @@ class SubprocessTool(ExclusiveTool):
     async def execute(
         self, command: str = "", working_dir: str | None = None, **kwargs: object
     ) -> str:
-        return await self._executor.execute(command, working_dir, timeout=self.timeout)
+        if working_dir is not None and self._working_dir is not None:
+            working_dir = str((Path(self._working_dir) / Path(working_dir).expanduser()).resolve())
+        return await self._executor.execute(
+            command, working_dir if working_dir is not None else self._working_dir,
+            timeout=self.timeout,
+        )

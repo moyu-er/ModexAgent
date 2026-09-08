@@ -11,7 +11,6 @@ from modex_agent.memory.prompt_pipeline.providers import (
     ProviderPrefetchProvider,
     PrunedProvider,
     RuntimeProvider,
-    SkillProvider,
 )
 
 __all__ = [
@@ -25,5 +24,4 @@ __all__ = [
     "ProviderPrefetchProvider",
     "PrunedProvider",
     "RuntimeProvider",
-    "SkillProvider",
 ]

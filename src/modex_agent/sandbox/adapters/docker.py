@@ -33,10 +33,7 @@ def _check_docker_available() -> bool:
 
 
 class DockerSandbox(SandboxAdapter):
-    LANGUAGE_IMAGES = {
-        "python": "python:3.11-slim",
-        "javascript": "node:18-slim",
-    }
+    IMAGE = "python:3.11-slim"
 
     @property
     def name(self) -> str:
@@ -59,7 +56,7 @@ class DockerSandbox(SandboxAdapter):
         return self._client
 
     def _get_image(self, language: str) -> str:
-        return self.LANGUAGE_IMAGES.get(language, "python:3.11-slim")
+        return self.IMAGE
 
     def _get_command_guard(self) -> CommandPatternGuard:
         if self._command_guard is None:
@@ -207,7 +204,7 @@ class DockerSandbox(SandboxAdapter):
             artifacts_dir = self._ensure_artifacts_dir(cfg)
 
             client = self._get_client()
-            image = self.LANGUAGE_IMAGES["python"]
+            image = self.IMAGE
 
             env_builder = EnvironmentBuilder(EnvBuilderConfig(policy=cfg.env_policy))
             env = env_builder.build(overrides={"SANDBOX_ARTIFACTS_DIR": "/app/artifacts"})
@@ -220,7 +217,8 @@ class DockerSandbox(SandboxAdapter):
 
             run_kwargs = {
                 "image": image,
-                "command": f"sh -c '{command}'",
+                # argv array — never f"sh -c '{command}'" (quote injection)
+                "command": ["sh", "-c", command],
                 "volumes": volumes,
                 "working_dir": work_dir,
                 "network_mode": "none" if not cfg.enable_network else "bridge",

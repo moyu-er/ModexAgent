@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid as _uuid_mod
 
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import ReminderKind
+from modex_agent.messaging.models import ReminderKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.communication.strategies.base import SendRequest, SendStrategy
@@ -75,7 +75,7 @@ class SubagentDispatchStrategy(SendStrategy):
         self, req: SendRequest, session: SessionInfo, invocation_id: str
     ) -> AgentSendResult:
         """Add trace_dir for subagent ack (output_path is owned by the hook)."""
-        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.core.agent import ExecutionStrategyKind
 
         if req.target.execution_strategy == ExecutionStrategyKind.EXTERNAL:
             return self._build_external_result(req, session, invocation_id)

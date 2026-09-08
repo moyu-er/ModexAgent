@@ -1,20 +1,16 @@
-"""Media subsystem — attachment domain model, MIME classification, storage.
+"""Media subsystem — concrete attachment storage, MIME classification, gating.
 
-This package is the framework foundation for the attachment system (ADR-0013).
-Group 1 ships the pure value-object layer (``models``) plus ``mime`` magic-byte
-sniffing and classification. Group 2 adds the storage layer: the
-``MediaStore`` ABC, ``LocalFileMediaStore`` backend, and the ``StoredFile``
-value object. Gating and ingest land in later groups.
+This package owns the concrete media implementation (ADR-0013):
+``LocalFileMediaStore`` (filesystem byte storage), ``mime`` magic-byte
+sniffing and classification, the ``gate`` perception authority, and the
+``security`` dangerous-executable policy. The shared contracts
+(``Attachment``, ``MediaStore``, ``StoredFile``, ``StoredMediaKind``,
+``MediaRefCollisionError``) live in :mod:`modex_agent.core.media` (plan
+§14.1, C1).
 """
 
-from modex_agent.media.models import Attachment, AttachmentLocator, Kind
-from modex_agent.media.store import LocalFileMediaStore, MediaStore, StoredFile
+from modex_agent.media.store import LocalFileMediaStore
 
 __all__ = [
-    "Attachment",
-    "AttachmentLocator",
-    "Kind",
     "LocalFileMediaStore",
-    "MediaStore",
-    "StoredFile",
 ]

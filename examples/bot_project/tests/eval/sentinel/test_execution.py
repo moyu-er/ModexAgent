@@ -8,9 +8,9 @@ from bot.eval.sentinel.execution import HostSentinelExecutionPlane, evaluate_obs
 from bot.eval.sentinel.results import SentinelTaskStatus
 from evals.sentinel.tasks import MEMORY_CHAIN_V1_CHAIN, SentinelArm
 
+from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.types import LLMResponse
 from modex_agent.ioc.configs.observability import TraceBackend
 from modex_agent.runtime.models import JsonValue
 from modex_agent.trace.experiment_attrs import ExperimentAttribute, ExperimentLinkage

@@ -10,12 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.core.models import ArchiveEntry
 from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.injection.archive import ArchiveInjectionConfig
 from modex_agent.memory.prompt_pipeline.providers import ArchiveProvider, PrunedProvider
 from modex_agent.memory.pruned.manager import PrunedManager
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.system import create_memory_system
 
 

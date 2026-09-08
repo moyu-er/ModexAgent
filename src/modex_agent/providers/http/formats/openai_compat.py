@@ -53,14 +53,14 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.core.constants import FinishReason, ReasoningEffort
-from modex_agent.core.llm_request import LLMRequest
-from modex_agent.core.llm_struct import LLMErrorInfo, LLMErrorKind
+from modex_agent.core.llm_request import LLMRequest, ReasoningEffort
+from modex_agent.core.llm_struct import FinishReason, LLMErrorInfo, LLMErrorKind, TokenUsage
 from modex_agent.core.message import (
     MEDIA_URL_SCHEME,
     ChatMessage,
     ContentPart,
     ImageUrlPart,
+    MessageRole,
     TextPart,
     parse_media_ref,
 )
@@ -73,7 +73,6 @@ from modex_agent.core.stream_events import (
     ToolCallComplete,
     UsageSnapshot,
 )
-from modex_agent.core.types import MessageRole, TokenUsage
 from modex_agent.providers.http.protocol import LLMProtocol, ProtocolConfig
 from modex_agent.providers.http.sse import DONE_SENTINEL, SseFrame
 from modex_agent.providers.http.tool_stream import (

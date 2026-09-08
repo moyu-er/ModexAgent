@@ -35,19 +35,21 @@ from bot.webui.workspace_providers import (
     workspace_persistence_for_data_root,
     workspace_transcript_store_for_sessions,
 )
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.emitter import ContentEmitter
-from modex_agent.core.session_store import SessionStore
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.persistence.config import PersistenceBackend
-from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.persistence.session_store import SessionStore
+from modex_agent.pipeline.adapters import InputAdapter
 
 if TYPE_CHECKING:
     from bot.input_pipeline.context import BotInputContext
     from bot.scope import BotRecordScope
     from bot.webui.transcript_store import TranscriptStore
     from bot.workspace.handle import PoolWorkspaceResources
+    from modex_agent.commands import SkillResolver
     from modex_agent.memory.core.split_stores import MessageStore
 
 logger = logging.getLogger(__name__)
@@ -192,7 +194,7 @@ class WebUIService(BotService):
 
         # ── 2.5 Session store + registry ───────────────────────────────
         from bot.service.session_store import WorkspacePoolSessionStore
-        from modex_agent.core.session_registry import InMemorySessionRegistry
+        from modex_agent.persistence.session_registry import InMemorySessionRegistry
 
         session_store: WorkspacePoolSessionStore = WorkspacePoolSessionStore(
             home_session_index,
@@ -627,14 +629,30 @@ class WebUIService(BotService):
 
         # ── Input pipeline convergence ─────────────────────────────
         from bot.input_pipeline.assembly import build_im_pipeline, build_webui_pipeline
-        from bot.input_pipeline.stages.skill_parse import PoolSkillManagerRegistry
+        from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
         from modex_agent.core.session_id import SessionIdFactory
 
-        # Per-pool skill registry backed by each pool's real SkillManager.
-        # Skills live under skills/{pool}/{agent}/.  One shared registry serves
-        # both pipelines; the XML form is produced by the framework helper.
+        # Resolve against the message's workspace at runtime. A static home
+        # snapshot would leak Skills capability vetoes/assignments across the
+        # multi-live workspace seam.
+        def _resolve_skill_resolver(
+            workspace: Path, pool_name: str
+        ) -> SkillResolver | None:
+            resolved = workspace.resolve()
+            resources_by_workspace = (
+                self.workspace_stack.registry.iter_materialized_resources()
+                if self.workspace_stack is not None
+                else (self._home_resources,)
+            )
+            for resources in resources_by_workspace:
+                if Path(resources.target).resolve() != resolved:
+                    continue
+                pool = resources.pools.get(pool_name)
+                return pool.skill_resolver if pool is not None else None
+            return None
+
         known_pools = set(self._pools.keys())
-        skill_registry = PoolSkillManagerRegistry(self._pools)
+        skill_registry = PoolSkillResolverRegistry(_resolve_skill_resolver)
         assert self._component_registry is not None
         assert self._service_assembly_ctx is not None
 
@@ -702,7 +720,7 @@ class WebUIService(BotService):
         # None and the control routes return 503.
         from bot.control.facade import BotControlFacade, ControlFacadeError
         from bot.control.models import ControlError
-        from modex_agent.core.scope import MemoryContext, MemoryLayerName, SessionScope
+        from modex_agent.memory.scope import MemoryContext, MemoryLayerName, SessionScope
 
         async def _resolve_workspace_for_control(
             root: Path,

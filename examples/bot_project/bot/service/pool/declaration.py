@@ -400,55 +400,44 @@ def apply_workspace_resource_selection(
     return app_config.model_copy(update=updates)
 
 
-def validate_workspace_mcp_set(
+def validate_agent_mcp_sets(
     scope_spec: ScopeSpec | None, registry_servers: Iterable[str]
 ) -> None:
-    """Loud boot check: declared workspace MCP names must exist in the registry.
+    """Loud boot check: declared agent MCP names must exist in the registry.
 
-    Skipped (with a warning) when the registry is empty — a deployment with
-    no MCP servers configured is degenerate, not a typo; agents' selections
-    already fail soft there (the FW loader warns and continues).
+    The per-agent ``mcp:`` selections are what actually attach tools, so
+    the typo check lives at that level. Skipped (with a warning) when the
+    registry is empty — a deployment with no MCP servers configured is
+    degenerate, not a typo; agents' selections already fail soft there
+    (the FW loader warns and continues).
     """
-    if scope_spec is None or scope_spec.workspace is None:
+    if scope_spec is None:
         return
-    declared = scope_spec.workspace.mcp
-    if declared is None:
+    if scope_spec.workspace is not None:
+        pools: list[PoolSpec] = scope_spec.workspace.pools
+    elif scope_spec.pool is not None:
+        pools = [scope_spec.pool]
+    else:
+        return
+    declared = {name for pool in pools for agent in pool.agents for name in agent.mcp}
+    if not declared:
         return
     known = set(registry_servers)
     if not known:
         logger.warning(
-            "[scope-boot] workspace %r declares MCP servers %s but the MCP "
-            "registry is empty — the set is dormant until servers are "
+            "[scope-boot] agents declare MCP servers %s but the MCP registry "
+            "is empty — the selections stay dormant until servers are "
             "configured",
-            scope_spec.workspace.name,
-            list(declared),
+            sorted(declared),
         )
         return
-    missing = [name for name in declared if name not in known]
+    missing = sorted(declared - known)
     if missing:
         from bot.config.mcp_registry import UnknownMcpServer
 
         raise UnknownMcpServer(
-            f"workspace declaration {scope_spec.workspace.name!r} references "
-            f"MCP servers not in the registry: {missing}"
+            f"scope declaration references MCP servers not in the registry: {missing}"
         )
-
-
-def workspace_mcp_prewarm_names(
-    scope_spec: ScopeSpec | None, registry_names: Sequence[str]
-) -> list[str]:
-    """The shared-registry pre-warm set (ticket 14).
-
-    A declared workspace MCP set scopes the pre-warm to exactly those
-    servers (the workspace's shared infrastructure selection); undeclared
-    workspaces pre-warm the full registry (ADR-0017 behavior). Servers
-    outside the declared set still connect lazily via ``acquire``.
-    """
-    if scope_spec is not None and scope_spec.workspace is not None:
-        declared = scope_spec.workspace.mcp
-        if declared is not None:
-            return list(declared)
-    return list(registry_names)
 
 
 # ─── Internal helpers ──────────────────────────────────────────────────────

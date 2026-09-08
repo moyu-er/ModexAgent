@@ -594,7 +594,10 @@ def _compile_agent(
         execution_strategy=strategy_name_of(agent.execution_strategy),
         provider_kind=(agent.provider_kind.value if agent.provider_kind is not None else None),
         mcp_servers=list(agent.mcp),
-        interceptors=list(agent.interceptors or []) if is_root else [],
+        # The `+` prefix is declaration sugar (incremental-merge face); the
+        # factory resolution and interceptor_configs lookup key on the bare
+        # name — strip through the single strip authority like hooks/tools.
+        interceptors=[strip_add_prefix(entry) for entry in (agent.interceptors or [])] if is_root else [],
         interceptor_configs=dict(agent.interceptor_configs or {}) if is_root else {},
         commands=list(agent.commands) if is_root and agent.commands is not None else None,
         capabilities=capabilities_block,
@@ -630,6 +633,11 @@ def _compile_agent(
                     field="memory",
                     layer=memory_layer,
                     profile=_profile_name(bound, memory_layer),
+                ),
+                *(
+                    [FieldProvenance(field="sandbox", layer=ProvenanceLayer.LOCAL)]
+                    if agent.sandbox is not None
+                    else []
                 ),
             ],
             tools=tool_provenance,

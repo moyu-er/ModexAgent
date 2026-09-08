@@ -9,12 +9,11 @@ from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
-from modex_agent.core.scope import MemoryAgentRole, MemoryContext, ScopeRecord
 from modex_agent.memory.core.lock import AioRWLock, StorageLock
 from modex_agent.memory.core.models import StorageRevision
+from modex_agent.memory.scope import MemoryAgentRole, MemoryContext, ScopeRecord
 from modex_agent.memory.stores.utils import ensure_scope_dir
-from modex_agent.memory.utils import safe_atomic_replace
-from modex_agent.utils.file_io import read_json_robust, read_jsonl_robust
+from modex_agent.utils.file_io import read_json_robust, read_jsonl_robust, safe_atomic_replace
 from modex_agent.utils.time import now_ms
 
 logger = logging.getLogger(__name__)

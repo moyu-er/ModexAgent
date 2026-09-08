@@ -13,8 +13,8 @@ if TYPE_CHECKING:
     from bot.service.model_choice import ModelChoiceRegistry
 from bot.webui.transcript_store import TranscriptStore
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.context import InputContext
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.pipeline.adapters import InputAdapter
 

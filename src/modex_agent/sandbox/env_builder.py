@@ -1,16 +1,26 @@
 """Sanitized environment builder for subprocess execution.
 
-Builds minimal environment dicts that exclude secrets and irrelevant
-variables while preserving OS-critical entries needed for correct
-subprocess behaviour.
+Builds caller-selected environment dictionaries, preserving OS-critical
+entries. This utility is not a default filter on every shell path; native
+HOST/LOCAL execution can inherit credentials. PASSTHROUGH and explicit
+inheritance/overrides may include secrets.
+
+The Windows PATH enrichment (registry merge) is injected as a callable
+so this module has no reverse dependency on ``tools.terminal.env``.
 """
 
 from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
+
+# Builds a complete env dict (os.environ superset with PATH enrichment).
+# Windows STANDARD policy consumes it to pick up registry PATH entries
+# missing from os.environ.
+FullEnvProvider = Callable[[], dict[str, str]]
 
 
 class EnvPolicy(StrEnum):
@@ -76,16 +86,25 @@ class EnvironmentBuilder:
         }
     )
 
-    def __init__(self, config: EnvBuilderConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: EnvBuilderConfig | None = None,
+        *,
+        full_env_provider: FullEnvProvider | None = None,
+    ) -> None:
         self._config = config or EnvBuilderConfig()
         self._is_windows = sys.platform == "win32"
+        self._full_env_provider = full_env_provider
 
     def build(self, overrides: dict[str, str] | None = None) -> dict[str, str]:
         """Build sanitized environment dict.
 
-        On Windows, the STANDARD policy uses ``build_full_env()`` from the
-        terminal module so that the ``PATH`` includes registry entries that
-        may be missing from ``os.environ``.
+        On Windows, the STANDARD policy reads from the injected full-env
+        provider when present (e.g. the assembly layer injects
+        :func:`modex_agent.tools.terminal.env.build_full_env` to pick up
+        registry PATH entries missing from ``os.environ``). Without a
+        provider, ``os.environ`` is the source; this module has no
+        dependency on ``tools.terminal``.
 
         Args:
             overrides: Highest-priority key-value pairs that override
@@ -100,13 +119,10 @@ class EnvironmentBuilder:
         else:
             base_keys = self._select_base_keys()
             if self._is_windows and self._config.policy == EnvPolicy.STANDARD:
-                # On Windows, build_full_env() merges registry PATH entries
-                # that may be missing from os.environ (e.g. when launched
-                # from an IDE).
-                from modex_agent.tools.terminal.env import build_full_env
-
-                full_env = build_full_env()
-                env = {key: value for key in base_keys if (value := full_env.get(key)) is not None}
+                source_env = (
+                    self._full_env_provider() if self._full_env_provider is not None else os.environ
+                )
+                env = {key: value for key in base_keys if (value := source_env.get(key)) is not None}
             else:
                 env = {
                     key: value for key in base_keys if (value := os.environ.get(key)) is not None

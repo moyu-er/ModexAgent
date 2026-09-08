@@ -3,10 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from modex_agent.ioc.configs.memory import MemoryConfig, SessionConfig
-from modex_agent.ioc.factories.memory import create_memory, _build_memory_layer_config
+from modex_agent.ioc.factories.memory import _build_memory_layer_config, create_memory
 
 
 def _make_provider():
@@ -15,7 +13,7 @@ def _make_provider():
 
     class MockProvider(CallbackStreamProvider):
         async def chat_stream(self, messages, *, on_content_delta=None, on_reasoning_delta=None, **kwargs):
-            from modex_agent.core.types import LLMResponse
+            from modex_agent.core.llm_struct import LLMResponse
             return LLMResponse(content="ok")
 
         def get_default_model(self):
@@ -92,10 +90,10 @@ class TestBuildMemoryLayerConfigNewSchema:
     def test_build_memory_layer_config_uses_new_config(self) -> None:
         """Should use new config fields (session, archive, knowledge)."""
         from modex_agent.ioc.configs.memory import (
-            MemoryConfig,
-            SessionConfig,
             ArchiveConfig,
             CoreMemoryConfig,
+            MemoryConfig,
+            SessionConfig,
         )
 
         cfg = MemoryConfig(
@@ -115,7 +113,7 @@ class TestBuildMemoryLayerConfigNewSchema:
 
     def test_build_memory_layer_config_handles_disabled_archive(self) -> None:
         """archive.enabled=False should result in no archive layer."""
-        from modex_agent.ioc.configs.memory import MemoryConfig, ArchiveConfig
+        from modex_agent.ioc.configs.memory import ArchiveConfig, MemoryConfig
 
         cfg = MemoryConfig(
             archive=ArchiveConfig(enabled=False),
@@ -127,7 +125,7 @@ class TestBuildMemoryLayerConfigNewSchema:
 
     def test_build_memory_layer_config_handles_disabled_knowledge(self) -> None:
         """knowledge.enabled=False should result in no knowledge layer."""
-        from modex_agent.ioc.configs.memory import MemoryConfig, CoreMemoryConfig
+        from modex_agent.ioc.configs.memory import CoreMemoryConfig, MemoryConfig
 
         cfg = MemoryConfig(
             core=CoreMemoryConfig(enabled=False),

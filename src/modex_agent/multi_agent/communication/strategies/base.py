@@ -8,8 +8,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core import AgentCommKind
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.runtime.enums import TurnCustomKey
@@ -18,9 +18,9 @@ from modex_agent.workspace.scope_path import resolve_scope_path
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.session_id import SessionIdFactory, SessionInfo
-    from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.multi_agent.tools import CommunicationTarget
+    from modex_agent.persistence.session_registry import SessionRegistry
     from modex_agent.workspace.resources import WorkspaceManager
     from modex_agent.workspace.scope_path import ScopePath
 

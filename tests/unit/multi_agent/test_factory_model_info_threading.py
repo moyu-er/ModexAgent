@@ -12,8 +12,10 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from modex_agent.core.capabilities import ModelCapabilities, ModelInfo, Modality
-from modex_agent.core.constants import ExecutionStrategyKind
+
+from modex_agent.core import AgentCommKind
+from modex_agent.core.agent import ExecutionStrategyKind
+from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import (
     AgentDescriptor,
@@ -21,7 +23,6 @@ from modex_agent.multi_agent import (
     DefaultAgentFactory,
 )
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 
 

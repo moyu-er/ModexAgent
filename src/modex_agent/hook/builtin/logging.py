@@ -10,12 +10,12 @@ import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.types import LLMResponse
+from modex_agent.core.llm_struct import LLMResponse
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
+    from modex_agent.core.message import ToolCall
     from modex_agent.core.tool_manager import ToolResult
-    from modex_agent.core.types import ToolCall
 
 from modex_agent.hook.abc import (
     AfterLLMResponseHook,

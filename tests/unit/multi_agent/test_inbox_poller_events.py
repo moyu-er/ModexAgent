@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.types import InputMessage
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import AgentPool, DefaultAgentFactory
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
@@ -62,7 +62,7 @@ class _MockAgentFactory(DefaultAgentFactory):
         pipeline.workspace_manager = None
         pipeline.interceptor_chain = None
         pipeline.governance = None
-        pipeline.skill_manager = None
+        pipeline.skill_resolver = None
         pipeline.command_processor = None
         pipeline.runtime_services = None
         return AgentInstance(

@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from modex_agent.core.scope import MemoryContext, MemoryLayerName
 from modex_agent.memory.core.split_stores import MemoryStoreBundle
+from modex_agent.memory.scope import MemoryContext, MemoryLayerName
 from modex_agent.memory.stores.markdown_core import MarkdownCoreMemoryStorage
 
 

@@ -8,7 +8,7 @@ with sensible defaults.  No giant if-else chains.
 
 The strategy-specific ``_build_*`` helpers
 (``_build_tools``,
-``_build_skill_manager``, ``_resolve_cassette_config``,
+``_resolve_cassette_config``,
 ``_fallback_context_manager``, ``_cell_sessions_dir``) live on the shared
 :class:`bot.service.builders._PoolAssemblyMixin`, inherited by both
 :class:`ReactExecutionStrategy` and :class:`ExternalExecutionStrategy`.
@@ -33,15 +33,14 @@ from bot.scope import BotRecordScope
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.session_pool_index import SessionPoolIndex
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.control.channel import InMemoryControlChannel
+from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.capabilities import ModelInfo
-from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.session_registry import InMemorySessionRegistry, SessionRegistry
-from modex_agent.core.session_store import SessionStore
 from modex_agent.hook import Hook, HookRunner
 from modex_agent.hook.notification import AgentNotificationService
 from modex_agent.ioc.factories.session_tree import build_session_tree_stores
@@ -58,7 +57,8 @@ from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTargetStore
-from modex_agent.pipeline.adapters import OutputAdapter
+from modex_agent.persistence.session_registry import InMemorySessionRegistry, SessionRegistry
+from modex_agent.persistence.session_store import SessionStore
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.context import (
@@ -79,6 +79,10 @@ from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
 from modex_agent.plugins.assembly.stages.workspace_materialize import (
     WorkspaceMaterializeStage,
 )
+from modex_agent.plugins.defaults.capabilities.skills import (
+    SKILLS_CAPABILITY_NAME,
+    require_skills_supply,
+)
 from modex_agent.plugins.defaults.capabilities.subagents import (
     SubagentsSupply,
     build_pool_communication_service,
@@ -90,7 +94,11 @@ from modex_agent.plugins.registry import (
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
-from ..builders import build_inbox, resolve_declared_root_prompt
+from ..builders import (
+    build_approval_audit_store,
+    build_inbox,
+    resolve_declared_root_prompt,
+)
 from ..external_strategy import ProviderUnavailableError
 from ..model_config import _resolved_or_placeholder
 from .agent_factory import (
@@ -122,8 +130,9 @@ if TYPE_CHECKING:
         WorkspaceHandle,
         WorkspaceResolverCell,
     )
+    from modex_agent.commands.skill import SkillResolver
+    from modex_agent.core.media import MediaStore
     from modex_agent.core.provider import LLMProvider
-    from modex_agent.media.store import MediaStore
     from modex_agent.multi_agent.execution_strategy import (
         ExecutionStrategyRegistry,
         PoolAssemblyContext,
@@ -481,6 +490,12 @@ async def create_pool(
     # recording); exported for PoolInstance.
     main_provider: LLMProvider | None = None
 
+    # The root agent's bound skill resolver (plan §11.3.1): looked up from
+    # the pool's aggregated capability supply — Stage 3 builds the supply,
+    # Stage 4 threads the resolver into the factory + inputs. None when the
+    # skills capability is vetoed or absent for this pool.
+    skill_resolver: SkillResolver | None = None
+
     factory = None
 
     _workspace_emitter_factory = _pool_bound_emitter
@@ -491,14 +506,35 @@ async def create_pool(
         )
 
     def build_native_inputs(
-        _spec: AssemblySpec,
+        spec: AssemblySpec,
         builder: AssemblyBuilder,
         _assembly_context: AssemblyContext,
     ) -> NativeAssemblyInputs:
-        nonlocal factory, main_provider
+        nonlocal factory, main_provider, skill_resolver
         strategy_result = builder.strategy_result
         if strategy_result is None:
             raise RuntimeError("Native Stage4 requires the Stage3 strategy result")
+        # Stage 3 aggregated the capability supply onto the propagated
+        # context; the root resolver is a LOOKUP, not a construction
+        # (plan §11.3.1). Only an explicit capability veto leaves the
+        # resolver None; active Skills wiring requires a valid supply.
+        propagated = builder.propagated_context
+        pool_runtime = (
+            propagated.pool_runtime
+            if propagated is not None
+            else None
+        )
+        if not any(
+            capability.name == SKILLS_CAPABILITY_NAME
+            for capability in spec.capabilities
+        ):
+            skill_resolver = None
+        else:
+            if pool_runtime is None:
+                raise RuntimeError("Native Stage4 requires pool runtime dependencies")
+            skill_resolver = require_skills_supply(
+                pool_runtime.capability_supply
+            ).resolver_for(root_agent_name)
         provider = main_llm_provider
         if strategy_result.cassette_recorder is not None:
             provider = strategy_result.cassette_recorder.wrap_provider(provider)
@@ -506,7 +542,6 @@ async def create_pool(
         factory = _build_agent_factory(
             provider,
             strategy_result.tool_manager,
-            strategy_result.skill_manager,
             inbox_server,
             inbox_consumer,
             shared_hooks,
@@ -542,7 +577,7 @@ async def create_pool(
             memory_config=assembly_deps.memory,
             llm_provider=provider,
             tool_manager=strategy_result.tool_manager,
-            skill_manager=strategy_result.skill_manager,
+            skill_resolver=skill_resolver,
             output_adapter=output_adapter,
             root_provider=strategy_result.root_provider,
             safety=safety,
@@ -608,7 +643,6 @@ async def create_pool(
     if assembly is not None:
         terminal_manager = assembly.terminal_manager
         tool_manager = assembly.tool_manager
-        skill_manager = assembly.skill_manager
         context_manager = assembly.context_manager
         cassette_recorder = assembly.cassette_recorder
         root_provider = assembly.root_provider
@@ -618,7 +652,6 @@ async def create_pool(
     else:
         terminal_manager = None
         tool_manager = None
-        skill_manager = None
         context_manager = None
         cassette_recorder = None
         root_provider = None
@@ -636,7 +669,6 @@ async def create_pool(
         factory = _build_agent_factory(
             None,
             tool_manager,
-            skill_manager,
             inbox_server,
             inbox_consumer,
             shared_hooks,
@@ -657,9 +689,9 @@ async def create_pool(
         context_manager = _fallback_context_manager(main_spec, system_prompt)
 
     if tool_manager is None:
-        from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+        from modex_agent.tools.manager import InMemoryToolManager
 
-        tool_manager = InMemoryToolManager(config=ToolManagerConfig())
+        tool_manager = InMemoryToolManager()
 
     subagent_store_registry = None
     if pool_data is not None:
@@ -683,6 +715,9 @@ async def create_pool(
         propagated.pool_runtime.capability_supply
         if propagated is not None and propagated.pool_runtime is not None
         else {}
+    )
+    approval_audit_store = build_approval_audit_store(
+        app_config, persistence, BotRecordScope(pool=pool_name),
     )
     deps = AgentMaterializeDeps(
         agent_factory=factory,
@@ -726,6 +761,7 @@ async def create_pool(
         pool_assembly_ctx=ctx,
         graph_context_resolver=graph_context_resolver,
         capability_supply=capability_supply,
+        approval_audit=approval_audit_store,
     )
     pool.materialize_deps = deps
     pool.pool_name = pool_name
@@ -854,6 +890,7 @@ async def create_pool(
             graph_context_resolver=graph_context_resolver,
             session_binding_store=session_binding_store,
             component_hook_specs=component_hook_specs,
+            approval_audit_store=approval_audit_store,
         )
     else:
         # external path: the external agent has no tool surface (it
@@ -886,7 +923,7 @@ async def create_pool(
         pool=pool,
         broker_bridge=bridge,
         tool_manager=tool_manager,
-        skill_manager=skill_manager,
+        skill_resolver=skill_resolver,
         mcp_manager=mcp_manager,
         terminal_manager=terminal_manager,
         root_agent_name=root_agent_name,

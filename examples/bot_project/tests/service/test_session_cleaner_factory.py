@@ -5,9 +5,9 @@ from bot.scope import BotRecordScope
 from bot.service.session_cleaner_factory import SessionCleanerFactory
 
 from modex_agent.core.scope import RecordScope
-from modex_agent.core.session_cleanup import SessionScopeMismatchError
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import WorkspacePersistenceManager
+from modex_agent.persistence.session_artifacts import SessionScopeMismatchError
 from modex_agent.workspace.paths import WorkspacePaths
 
 

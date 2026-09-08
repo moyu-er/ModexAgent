@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from modex_agent.core.context import ContextManager, InMemoryContextManager
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.tool_manager import Tool
 from modex_agent.hook.runner import HookRunner
+from modex_agent.memory.context import ContextManager, InMemoryContextManager
 from modex_agent.multi_agent.descriptor import AgentInstance
 from modex_agent.multi_agent.factory import AgentFactory
 from modex_agent.plugins.abc import (
@@ -30,8 +30,7 @@ from modex_agent.plugins.assembly.native_core import (
 )
 from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
 from modex_agent.plugins.assembly.stages.agent_assemble import AgentAssembleStage
-from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.plugins.registry import ComponentNotFoundError
+from modex_agent.plugins.registry import ComponentNotFoundError, ComponentRegistry
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -157,7 +156,7 @@ def _harness(
         pool=pool,
         context_manager=context_manager,
         memory_system=memory_system or MagicMock(),
-        skill_manager=MagicMock(),
+        skill_resolver=MagicMock(),
         project_dir=_workspace().target,
     )
     ctx = AssemblyContext(
@@ -203,7 +202,7 @@ async def test_native_core_uses_configured_memory_system_context_manager() -> No
         pool=inputs.pool,
         context_manager=fallback_context_manager,
         memory_system=inputs.memory_system,
-        skill_manager=inputs.skill_manager,
+        skill_resolver=inputs.skill_resolver,
         project_dir=inputs.project_dir,
     )
     spec = _spec().model_copy(update={"memory_system": "probe"})
@@ -416,7 +415,7 @@ async def test_memory_hook_without_any_memory_system_raises() -> None:
         pool=inputs.pool,
         context_manager=inputs.context_manager,
         memory_system=None,
-        skill_manager=inputs.skill_manager,
+        skill_resolver=inputs.skill_resolver,
         project_dir=inputs.project_dir,
     )
 

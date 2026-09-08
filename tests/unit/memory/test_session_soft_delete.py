@@ -17,9 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.scope import MemoryContext, RecordScope
+from modex_agent.core.scope import RecordScope
 from modex_agent.memory.core.split_stores import MemoryStoreBundle
 from modex_agent.memory.layers.session import ScopedSessionMemoryManager
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.cursor_store import SqliteCursorStore
 from modex_agent.persistence.adapters.kv_store import SqliteKVStore

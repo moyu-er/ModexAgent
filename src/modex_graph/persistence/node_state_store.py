@@ -27,6 +27,7 @@ SQL schema (``node_states`` table):
     graph_instance_id BIGINT NOT NULL,
     node_id           TEXT NOT NULL,
     version           INTEGER NOT NULL,
+    graph_run_version INTEGER,
     parent_version    INTEGER,
     invocation_id     BIGINT NOT NULL,
     status            TEXT NOT NULL DEFAULT 'running'
@@ -63,6 +64,7 @@ _COL_NODE_STATE_ID = "node_state_id"
 _COL_GRAPH_INSTANCE_ID = "graph_instance_id"
 _COL_NODE_ID = "node_id"
 _COL_VERSION = "version"
+_COL_GRAPH_RUN_VERSION = "graph_run_version"
 _COL_PARENT_VERSION = "parent_version"
 _COL_STATUS = "status"
 _COL_INVOCATION_ID = "invocation_id"
@@ -74,7 +76,7 @@ _SELECT_COLUMNS = (
     f"{_COL_NODE_STATE_ID}, {_COL_GRAPH_INSTANCE_ID}, "
     f"{_COL_NODE_ID}, {_COL_VERSION}, {_COL_PARENT_VERSION}, "
     f"{_COL_STATUS}, {_COL_INVOCATION_ID}, "
-    f"{_COL_CREATED_AT}, {_COL_UPDATED_AT}"
+    f"{_COL_CREATED_AT}, {_COL_UPDATED_AT}, {_COL_GRAPH_RUN_VERSION}"
 )
 
 
@@ -103,11 +105,15 @@ class NodeStateStore(ABC):
     # ── Lifecycle ───────────────────────────────────────────────────────
 
     @abstractmethod
-    def begin_invocation(self, node_id: str) -> InvocationContext:
+    def begin_invocation(
+        self, node_id: str, *, graph_run_version: int | None = None,
+    ) -> InvocationContext:
         """Begin a new invocation. INSERT a new RUNNING record.
 
         If a prior RUNNING record exists, mark it CRASHED (orphan cleanup).
         Records begin directly as RUNNING.
+        graph_run_version is explicit logical-run membership, not ID ordering.
+        None preserves the unscoped contract of existing callers and stored rows.
 
         Returns the ``InvocationContext`` with invocation_id, version,
         and parent_version.
@@ -195,13 +201,16 @@ class NullNodeStateStore(NodeStateStore):
     ``create_null_coordinator``.
     """
 
-    def begin_invocation(self, node_id: str) -> InvocationContext:
+    def begin_invocation(
+        self, node_id: str, *, graph_run_version: int | None = None,
+    ) -> InvocationContext:
         invocation_id = default_id_generator().generate()
         return InvocationContext(
             invocation_id=invocation_id,
             node_id=node_id,
             version=0,
             parent_version=None,
+            graph_run_version=graph_run_version,
         )
 
     def complete_invocation(self, invocation: InvocationContext) -> None:
@@ -259,7 +268,9 @@ class InMemoryNodeStateStore(NodeStateStore):
         super().__init__(graph_instance_id)
         self._records: dict[str, list[NodeInvocationRecord]] = {}
 
-    def begin_invocation(self, node_id: str) -> InvocationContext:
+    def begin_invocation(
+        self, node_id: str, *, graph_run_version: int | None = None,
+    ) -> InvocationContext:
         gid = self._graph_instance_id
         records = self._records.get(node_id, [])
 
@@ -291,6 +302,7 @@ class InMemoryNodeStateStore(NodeStateStore):
             status=InvocationStatus.RUNNING,
             created_at=ts,
             updated_at=ts,
+            graph_run_version=graph_run_version,
         )
         records.append(record)
         self._records[node_id] = records
@@ -300,6 +312,7 @@ class InMemoryNodeStateStore(NodeStateStore):
             node_id=node_id,
             version=version,
             parent_version=parent_version,
+            graph_run_version=graph_run_version,
         )
 
     def _find_current(self, invocation: InvocationContext) -> NodeInvocationRecord | None:
@@ -506,6 +519,7 @@ class SqliteNodeStateStore(NodeStateStore):
             f"{_COL_GRAPH_INSTANCE_ID} INTEGER NOT NULL, "
             f"{_COL_NODE_ID} TEXT NOT NULL, "
             f"{_COL_VERSION} INTEGER NOT NULL DEFAULT 0, "
+            f"{_COL_GRAPH_RUN_VERSION} INTEGER, "
             f"{_COL_PARENT_VERSION} INTEGER, "
             f"{_COL_STATUS} TEXT NOT NULL DEFAULT '{InvocationStatus.RUNNING.value}' "
             f"CHECK ({_COL_STATUS} IN ("
@@ -520,6 +534,9 @@ class SqliteNodeStateStore(NodeStateStore):
             f"UNIQUE ({_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_ID}, {_COL_VERSION})"
             f")"
         )
+        current_columns = {row[1] for row in conn.execute(f"PRAGMA table_info({_NODE_STATE_TABLE})")}
+        if _COL_GRAPH_RUN_VERSION not in current_columns:
+            conn.execute(f"ALTER TABLE {_NODE_STATE_TABLE} ADD COLUMN {_COL_GRAPH_RUN_VERSION} INTEGER")
         if legacy_table is not None:
             columns = ", ".join(
                 (
@@ -532,6 +549,7 @@ class SqliteNodeStateStore(NodeStateStore):
                     _COL_INVOCATION_ID,
                     _COL_CREATED_AT,
                     _COL_UPDATED_AT,
+                    *([_COL_GRAPH_RUN_VERSION] if _COL_GRAPH_RUN_VERSION in existing else []),
                 )
             )
             conn.execute(
@@ -556,7 +574,9 @@ class SqliteNodeStateStore(NodeStateStore):
 
     # ── Lifecycle ───────────────────────────────────────────────────────
 
-    def begin_invocation(self, node_id: str) -> InvocationContext:
+    def begin_invocation(
+        self, node_id: str, *, graph_run_version: int | None = None,
+    ) -> InvocationContext:
         gid = self._graph_instance_id
         conn = self._conn
 
@@ -596,8 +616,8 @@ class SqliteNodeStateStore(NodeStateStore):
             f"INSERT INTO {_NODE_STATE_TABLE} "
             f"({_COL_NODE_STATE_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_ID}, "
             f"{_COL_VERSION}, {_COL_PARENT_VERSION}, {_COL_STATUS}, "
-            f"{_COL_INVOCATION_ID}, {_COL_CREATED_AT}, {_COL_UPDATED_AT}) "
-            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            f"{_COL_INVOCATION_ID}, {_COL_CREATED_AT}, {_COL_UPDATED_AT}, {_COL_GRAPH_RUN_VERSION}) "
+            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 node_state_id,
                 gid,
@@ -608,6 +628,7 @@ class SqliteNodeStateStore(NodeStateStore):
                 invocation_id,
                 ts,
                 ts,
+                graph_run_version,
             ),
         )
         conn.commit()
@@ -617,6 +638,7 @@ class SqliteNodeStateStore(NodeStateStore):
             node_id=node_id,
             version=version,
             parent_version=parent_version,
+            graph_run_version=graph_run_version,
         )
 
     def complete_invocation(self, invocation: InvocationContext) -> None:
@@ -808,6 +830,7 @@ class SqliteNodeStateStore(NodeStateStore):
             invocation_id,
             created_at,
             updated_at,
+            graph_run_version,
         ) = row
         return NodeInvocationRecord(
             invocation_id=invocation_id,
@@ -818,6 +841,7 @@ class SqliteNodeStateStore(NodeStateStore):
             status=InvocationStatus(status),
             created_at=created_at,
             updated_at=updated_at,
+            graph_run_version=graph_run_version,
         )
 
 

@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.llm_struct import LLMResponse
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.types import LLMResponse, MessageRole
 from modex_agent.trace.cassette import CassetteRecorder, CassetteReplayEngine
 
 

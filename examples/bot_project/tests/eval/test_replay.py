@@ -21,10 +21,10 @@ from bot.eval.replay import (
 from bot.eval.task_output import EvalTaskOutput, TurnRecord
 from bot.eval.task_spec import EvalItemSpec
 
-from modex_agent.core.constants import StopReason
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.emitter import StopReason
+from modex_agent.core.llm_struct import LLMResponse
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.types import LLMResponse, MessageRole
 from modex_agent.trace.cassette import (
     CassetteCategory,
     CassetteEntry,

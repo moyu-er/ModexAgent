@@ -7,11 +7,11 @@ import time
 import pytest
 
 from modex_agent.core.session_id import (
-    SessionInfo,
     SessionIdFactory,
+    SessionInfo,
     encode_snowflake,
-    now_ms,
 )
+from modex_agent.utils.time import now_ms
 
 
 def test_now_ms_is_int_milliseconds():

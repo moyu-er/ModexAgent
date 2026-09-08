@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modex_agent.core.session_store import SessionStore
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.persistence.session_store import SessionStore
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
@@ -48,6 +48,22 @@ class WorkspaceHandleRootProvider(WorkspaceRootProvider):
 
     def current(self) -> Path:
         return self._handle.current
+
+
+class StaticRootProvider(WorkspaceRootProvider):
+    """WorkspaceRootProvider anchored to one fixed path — the workspace-less
+    pool fallback.
+
+    ``create_pool`` is callable without a workspace (hermetic harnesses,
+    non-workspace wiring); the sandbox guard factory requires a root on
+    every pool boot, so workspace-less pools anchor to the project dir.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self._root: Path = Path(root).resolve()
+
+    def current(self) -> Path:
+        return self._root
 
 
 class WorkspaceResolverCell(WorkspaceManager):

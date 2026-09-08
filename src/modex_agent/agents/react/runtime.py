@@ -61,9 +61,9 @@ if TYPE_CHECKING:
     from modex_agent.agents.react.agent import ReActEvent
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.emitter import ContentEmitter
-    from modex_agent.core.governance import ContextGovernance
     from modex_agent.hook import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
+    from modex_agent.memory.context_governance import ContextGovernance
     from modex_agent.runtime.models import TurnStateBase
     from modex_agent.runtime.policy import SnapshotPolicy
     from modex_agent.runtime.store import TurnStateStore

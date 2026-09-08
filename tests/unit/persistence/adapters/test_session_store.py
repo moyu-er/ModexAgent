@@ -10,9 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.session_id import SessionInfo, now_ms
+from modex_agent.core.session_id import SessionInfo
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters import SqliteSessionStore
+from modex_agent.utils.time import now_ms
 
 
 async def _open_store(tmp_path: Path) -> tuple[ConnectionManager, SqliteSessionStore]:

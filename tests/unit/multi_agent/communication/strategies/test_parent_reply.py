@@ -9,7 +9,6 @@ import pytest
 
 from modex_agent.core.agent import AgentCommKind, AgentContext
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.messaging.broker import Address, BrokerMessage, MessageBroker
 from modex_agent.multi_agent.address import AgentAddress
@@ -18,6 +17,7 @@ from modex_agent.multi_agent.communication.strategies.parent_reply import Parent
 from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _FakeBroker(MessageBroker):
@@ -217,7 +217,7 @@ class TestParentReplyStrategy:
         auto-delivered, and the contract would cause a double reply. The
         session-answer block (--- + "To answer this subagent") IS expected:
         it tells the parent how to continue the consultation."""
-        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.core.agent import ExecutionStrategyKind
 
         strategy = ParentReplyStrategy(_make_deps())
         req = SendRequest(
@@ -245,7 +245,7 @@ class TestParentReplyStrategy:
         assert "To answer this subagent" in xml
 
     def test_build_envelope_native_target_uses_minimal_format(self) -> None:
-        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.core.agent import ExecutionStrategyKind
 
         strategy = ParentReplyStrategy(_make_deps())
         req = SendRequest(

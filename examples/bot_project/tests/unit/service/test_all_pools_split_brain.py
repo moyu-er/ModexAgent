@@ -22,9 +22,11 @@ from bot.service.pool.declaration import (
     declared_pool_build,
 )
 from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
+from bot.workspace.handle import WorkspaceHandle
 from bot.workspace.pool_data import build_pool_data
 from bot.workspace.wiring.stack import declared_assembly_deps
 
+from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
 from modex_agent.hook import HookRunner
@@ -35,7 +37,6 @@ from modex_agent.multi_agent.communication.peer_resolution import (
     peer_links_from_declaration,
     resolve_peer_targets,
 )
-from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import (
     ComponentRegistryLoader,
@@ -132,6 +133,9 @@ async def _create_declared_pool(pool_name: str, tmp_path: Path):
                 declared=declared,
                 assembly_deps=deps,
                 project_dir=BOT_BASE,
+                workspace_handle=WorkspaceHandle(
+                    target=tmp_path / '.modex', data_root=tmp_path / '.modex',
+                ),
                 workspace_registry=object(),
                 workspace_resources=object(),
                 data_dir=tmp_path / ".modex",

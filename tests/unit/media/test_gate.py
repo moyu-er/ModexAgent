@@ -8,8 +8,8 @@ rejected as dangerous regardless of the allowlisted extension.
 
 from __future__ import annotations
 
+from modex_agent.core.media import Kind
 from modex_agent.media.gate import GateDecision, RejectReason, perception_gate
-from modex_agent.media.models import Kind
 from modex_agent.multi_agent.pool_config.media import MediaConfig
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"

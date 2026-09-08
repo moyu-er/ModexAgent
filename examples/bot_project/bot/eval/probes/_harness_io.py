@@ -16,7 +16,7 @@ from bot.eval.probes._harness_models import (
     ProbeCheckpoint,
 )
 from bot.eval.probes.schema import WorldSpec
-from modex_agent.core.scope import MemoryAgentRole, MemoryContext
+from modex_agent.memory.scope import MemoryAgentRole, MemoryContext
 
 _CORE_FILES: Final = ("SOUL.md", "USER.md", "MEMORY.md")
 

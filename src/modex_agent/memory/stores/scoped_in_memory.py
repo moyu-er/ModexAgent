@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import MessageRole
 from modex_agent.memory.core.lock import AioRWLock, StorageLock
 from modex_agent.memory.core.models import StorageRevision
 from modex_agent.memory.core.split_stores import (

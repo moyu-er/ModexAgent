@@ -6,8 +6,8 @@ import time
 
 import pytest
 
+from modex_agent.core.message import MessageRole
 from modex_agent.core.scope import RecordScope
-from modex_agent.core.types import MessageRole
 from modex_agent.persistence import ConnectionManager
 from modex_agent.persistence.adapters.message_store import SqliteMessageStore
 

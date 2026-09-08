@@ -1,5 +1,4 @@
 """LoopDetectedError and AgentControlError attribute tests."""
-import pytest
 
 from modex_agent.control.exceptions import (
     AgentCancelledError,
@@ -8,7 +7,7 @@ from modex_agent.control.exceptions import (
     LoopDetectedError,
     PolicyViolationError,
 )
-from modex_agent.core.constants import StopReason
+from modex_agent.core.emitter import StopReason
 
 
 def test_base_defaults():

@@ -546,7 +546,10 @@ class TestAutoApplyZeroConfig:
     def test_lone_root_pool_stays_capability_free(self) -> None:
         spec = ScopeSpec(
             kind=ScopeKind.POOL,
-            pool=PoolSpec(name="p", agents=[AgentSpec(name="solo")]),
+            pool=PoolSpec(
+                name="p",
+                agents=[AgentSpec(name="solo", capabilities={"skills": False})],
+            ),
         )
         compiled = _compile(spec).agents[0]
         assert compiled.spec.capabilities == ()

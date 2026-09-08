@@ -15,11 +15,12 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.agents.external.paths import ExternalPaths, ProviderKind
+from modex_agent.agents.external.paths import ExternalPaths
 from modex_agent.agents.external.session_store import (
     ExternalSessionMapStore,
     LocalFileExternalSessionMapStore,
 )
+from modex_agent.core.agent import ProviderKind
 from modex_agent.core.scope import RecordScope
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.external_session_map_store import (

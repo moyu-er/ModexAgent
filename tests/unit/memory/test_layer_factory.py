@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.scope import MemoryContext, SessionScope, UserScope, scope_path_key
 from modex_agent.memory.core.consolidation import MemoryUpdate
 from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.memory.core.models import ArchiveEntry
@@ -14,6 +13,7 @@ from modex_agent.memory.layers import (
     SessionMemoryConfig,
 )
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+from modex_agent.memory.scope import MemoryContext, SessionScope, UserScope, scope_path_key
 
 
 @pytest.mark.asyncio

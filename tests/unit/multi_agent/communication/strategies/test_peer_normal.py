@@ -9,7 +9,6 @@ import pytest
 
 from modex_agent.core.agent import AgentCommKind, AgentContext
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.messaging.broker import Address, BrokerMessage, MessageBroker
 from modex_agent.multi_agent.address import AgentAddress
@@ -18,6 +17,7 @@ from modex_agent.multi_agent.communication.strategies.peer_normal import PeerNor
 from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _FakeBroker(MessageBroker):

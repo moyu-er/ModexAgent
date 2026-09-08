@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from modex_agent.core.agent import AgentImplementation
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.agent import AgentImplementation, ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import ReminderKind
+from modex_agent.messaging.models import ReminderKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.communication.strategies.base import SendRequest, SendStrategy

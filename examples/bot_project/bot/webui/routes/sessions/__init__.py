@@ -50,7 +50,7 @@ from modex_agent.core.session_id import (
     agent_of,
     session_id_prefix_of,
 )
-from modex_agent.core.session_store import SessionStore
+from modex_agent.persistence.session_store import SessionStore
 
 if TYPE_CHECKING:
     from bot.webui.server import WebUIServer

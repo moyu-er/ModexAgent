@@ -21,8 +21,7 @@ from modex_agent.hook import HookPayload, HookPoint
 from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
 
 from ...core.agent import Agent, AgentContext, current_agent_context
-from ...core.constants import StopReason
-from ...core.emitter import AgentResult, ContentEmitter
+from ...core.emitter import AgentResult, ContentEmitter, StopReason
 from ...core.events import AgentEvent
 from ...core.provider import LLMProvider
 from .message_builder import build_interrupted_assistant_message

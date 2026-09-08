@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from modex_agent.media.models import Attachment
+    from modex_agent.core.media import Attachment
 
 
 class CommandStatus(StrEnum):

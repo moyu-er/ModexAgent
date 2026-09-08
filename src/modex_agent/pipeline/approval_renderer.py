@@ -10,9 +10,13 @@ from typing import TYPE_CHECKING
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.constants import ApprovalDecision
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import ApprovalRequestView
-from modex_agent.core.types import InputMessage, OutputMessage, OutputMessageType
+from modex_agent.messaging.models import (
+    ApprovalAction,
+    InputMessage,
+    OutputMessage,
+    OutputMessageType,
+)
 from modex_agent.runtime.models import ToolArguments, TurnSnapshot
 
 if TYPE_CHECKING:

@@ -24,7 +24,7 @@ from pathlib import Path
 
 from bot.webui.events import ServerEvent
 from modex_agent.core.session_id import session_id_prefix_of
-from modex_agent.core.session_store import safe_filename
+from modex_agent.persistence.session_store import safe_filename
 
 logger = logging.getLogger(__name__)
 

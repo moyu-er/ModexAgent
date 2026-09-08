@@ -13,8 +13,11 @@ The invariant lives across two layers:
 
 from __future__ import annotations
 
-from modex_agent.core.constants import DefaultValues
-from modex_agent.core.llm_struct import RuntimeSafetyPolicy, TurnTimeoutPolicy
+from modex_agent.core.llm_struct import (
+    DEFAULT_TOOL_TIMEOUT_SECONDS,
+    RuntimeSafetyPolicy,
+    TurnTimeoutPolicy,
+)
 from modex_agent.tools.terminal.subprocess_tool import SubprocessTool, create_subprocess_executor
 
 
@@ -60,6 +63,6 @@ class TestTimeoutInvariant:
 
     def test_default_tool_timeout_matches_constants(self) -> None:
         """``TurnTimeoutPolicy.tool_timeout_seconds`` default equals
-        ``DefaultValues.TOOL_TIMEOUT_SECONDS``."""
+        ``DEFAULT_TOOL_TIMEOUT_SECONDS``."""
         policy = TurnTimeoutPolicy()
-        assert policy.tool_timeout_seconds == DefaultValues.TOOL_TIMEOUT_SECONDS
+        assert policy.tool_timeout_seconds == DEFAULT_TOOL_TIMEOUT_SECONDS

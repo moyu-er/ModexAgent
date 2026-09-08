@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import pytest
 
+from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
     SendToPeerTool,
 )
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 class _RecordingService:
@@ -182,7 +183,6 @@ class TestSendToPeerToolDescription:
 
 class TestSendToPeerToolGraphMode:
     def test_list_targets_empty_in_graph_mode(self) -> None:
-        from modex_agent.core.tool_manager import InMemoryToolManager
         from modex_agent.memory.history import ListMessageHistory
 
         store = CommunicationTargetStore()

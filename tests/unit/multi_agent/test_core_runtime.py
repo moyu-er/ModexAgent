@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.core.emitter import AgentResult
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import (
     AgentDescriptor,
@@ -15,10 +14,9 @@ from modex_agent.multi_agent import (
     DefaultAgentFactory,
     SessionRetentionPolicy,
 )
-from modex_agent.multi_agent.state import AgentState
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.router import DefaultMeshRouter
+from modex_agent.multi_agent.state import AgentState
 
 
 @pytest.fixture
@@ -117,6 +115,7 @@ async def test_agent_pool_session_cap_evicts_lru_after_touching_oldest(any_broke
     )
     mock_tree = MagicMock()
     mock_tree.on_session_evicted = AsyncMock()
+    mock_tree.is_session_paused = AsyncMock(return_value=False)
     pool._tree = mock_tree
     pool._agents["worker"] = fake_instance
     try:

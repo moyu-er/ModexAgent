@@ -5,13 +5,14 @@ from pathlib import Path
 
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig, ToolResult
-from modex_agent.core.types import ToolCall
+from modex_agent.core.tool_manager import ToolResult
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.semconv import GenAiAttr, LangfuseObservationType, SpanName
 from modex_agent.trace.session_state import TraceSessionState
@@ -32,7 +33,7 @@ def _make_context(*, with_trace: bool = True) -> AgentContext:
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
-        tool_manager=InMemoryToolManager(config=ToolManagerConfig()),
+        tool_manager=InMemoryToolManager(),
         session=session,
         runtime=AgentRuntime(services=AgentRuntimeServices(), state=state),
         identity=identity,

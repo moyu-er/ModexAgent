@@ -2,7 +2,6 @@
 """Tests for AgentTemplate."""
 
 from modex_agent.ioc.configs.memory import MemoryConfig
-from modex_agent.ioc.configs.skills import SkillsConfig
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.scope.spec import AgentSpec
 from modex_agent.tools.presets import ContextMode, ToolPreset
@@ -16,7 +15,6 @@ def test_agent_template_defaults():
     assert t.toolset_profile == ToolPreset.READ_WRITE
     assert t.spec.context_mode == ContextMode.FRESH
     assert t.memory is None
-    assert t.skills is None
     assert t.spec.mcp == []
 
 
@@ -29,7 +27,6 @@ def test_agent_template_full():
             toolset=ToolPreset.READ_WRITE,
         ),
         memory=MemoryConfig(),
-        skills=SkillsConfig(roots=["skills/reviewer"]),
     )
     assert t.spec.max_steps == 30
     assert t.toolset_profile == ToolPreset.READ_WRITE
@@ -47,5 +44,6 @@ def test_agent_template_dead_fields_absent():
         "extra_tools",
         "approval",
         "experience",
+        "skills",
     ):
         assert not hasattr(t, field), f"dead field {field!r} still present"

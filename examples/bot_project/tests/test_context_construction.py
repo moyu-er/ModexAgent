@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.context import InMemoryContextManager
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.memory.history import ListMessageHistory
 
 
@@ -51,7 +51,7 @@ class TestAgentContextConstruction:
 
     def test_agent_context_with_runtime_context_manager(self) -> None:
         """AgentContext with runtime passes RuntimeContextManager through services."""
-        from modex_agent.core.runtime_context import RuntimeContextManager
+        from modex_agent.runtime.context import RuntimeContextManager
         from modex_agent.runtime.enums import AgentKind, TurnPhase
         from modex_agent.runtime.models import TurnIdentity, TurnStateBase
         from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices

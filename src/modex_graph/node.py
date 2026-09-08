@@ -18,6 +18,7 @@ implicit instance-attribute fallback).
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -143,7 +144,7 @@ class Node[S: "GraphState"](ABC):
 
         Exception handling:
 
-        - ``GraphBubbleUp`` cooperative-control exceptions: call
+        - ``GraphBubbleUp`` / ``asyncio.CancelledError`` control exceptions: call
           ``cancel_invocation``, re-raise. This includes ``GraphInterrupt``.
         - Other ``Exception``: call ``crash_invocation``, re-raise.
         - ``finally``: ``finalize_invocation`` (safety net for orphan RUNNING).
@@ -152,7 +153,7 @@ class Node[S: "GraphState"](ABC):
         store = ctx.node_state_store
 
         # Begin invocation (parent_version computed internally).
-        invocation = store.begin_invocation(self.node_id)
+        invocation = store.begin_invocation(self.node_id, graph_run_version=ctx.graph_run_version)
 
         exec_ctx = get_execution()
         if exec_ctx is None:
@@ -220,7 +221,7 @@ class Node[S: "GraphState"](ABC):
             )
             return None
 
-        except GraphBubbleUp:
+        except (GraphBubbleUp, asyncio.CancelledError):
             store.cancel_invocation(invocation)
             raise
         except Exception as exc:

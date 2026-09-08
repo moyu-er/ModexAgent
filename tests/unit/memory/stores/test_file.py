@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.stores.file import FileStorage
 
 

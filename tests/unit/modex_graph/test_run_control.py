@@ -91,6 +91,47 @@ class _RecordingNode(Node[CounterState]):
 
 
 class TestGraphRunControl:
+    async def test_drain_waits_for_all_cleanup_then_propagates_fault_despite_recancellation(
+        self,
+    ) -> None:
+        control = GraphRunControl()
+        started = [asyncio.Event(), asyncio.Event()]
+        cleaning = [asyncio.Event(), asyncio.Event()]
+        release = [asyncio.Event(), asyncio.Event()]
+        cleaned: list[int] = []
+
+        async def child(index: int) -> None:
+            started[index].set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cleaning[index].set()
+                await release[index].wait()
+                cleaned.append(index)
+                if index == 0:
+                    raise RuntimeError("cleanup fault") from None
+                raise
+
+        tasks = [asyncio.create_task(child(index)) for index in range(2)]
+        await asyncio.gather(*(event.wait() for event in started))
+        drain = asyncio.create_task(control.cancel_and_drain(tasks))
+        await asyncio.gather(*(event.wait() for event in cleaning))
+        release[0].set()
+        await asyncio.sleep(0)
+        assert not drain.done()
+        drain.cancel()
+        await asyncio.sleep(0)
+        drain.cancel()
+        await asyncio.sleep(0)
+        try:
+            assert not drain.done()
+        finally:
+            release[1].set()
+            await asyncio.gather(drain, return_exceptions=True)
+        assert sorted(cleaned) == [0, 1]
+        with pytest.raises(RuntimeError, match="cleanup fault"):
+            drain.result()
+
     def test_contexts_receive_distinct_default_controls(self) -> None:
         first = GraphContext(
             state=CounterState(),
@@ -205,7 +246,7 @@ class TestParallelSchedulerControl:
         assert queued.inputs == []
         blocking_record = coordinator.node_state_store.load_latest(node_ids["blocking"])
         assert blocking_record is not None
-        assert blocking_record.status == InvocationStatus.CRASHED
+        assert blocking_record.status == InvocationStatus.CANCELED
 
     async def test_notify_deliver_wakes_and_runs_external_target(self) -> None:
         started = asyncio.Event()

@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-27 -->
+<!-- Updated: 2026-09-02 -->
 
 # service
 
@@ -11,19 +11,31 @@ Bot service lifecycle, pool orchestration, and workspace management. This is the
 |------|-------------|
 | `__init__.py` | Package marker |
 | `core.py` | `BotService` — initialization, workspace stack assembly (multi-live), pool creation, pipeline assembly, lifecycle management. Owns the service-level `ComponentRegistry` and home `AssemblyContext` used by input-stage assembly before pool materialization. **Owns the shared MCP connection registry** (ADR-0017 Task 5a): built once in `initialize()` gated by `config/mcp/registry.json` `sharedRegistry` (default on), shut down in `stop()` after workspaces evict. Extracted helpers: `_model_config_loader.py` |
-| `builders.py` | Residual service-level construction helpers (inbox/turn-state/session/routing/todo/memory-registry stores, external session map, slash-command processor, control channel). Tool construction glue is gone — `_build_tools` returns an empty base manager and Stage 4 registers the full compiled roster on top of it; per-agent MCP loading is framework-side (`native_core` → `load_per_agent_mcp`, reading `mcp_registry` off the context chain) |
+| `builders.py` | Residual service-level construction helpers (inbox/turn-state/routing/todo/memory-registry stores, persistence-owned session-store selection, external session map, slash-command processor, control channel). Tool construction glue is gone — `_build_tools` returns an empty base manager and Stage 4 registers the full compiled roster on top of it; per-agent MCP loading is framework-side (`native_core` → `load_per_agent_mcp`, reading `mcp_registry` off the context chain) |
 | `pool/` | `create_pool()` subpackage — assembles an `AgentPool` from the compiled scope declaration (assembly input = `declared_pool_build`, built by `declaration.py` from `compile_scope` output). Split into `factory.py` (orchestrator — supply-mode `AssemblyPipeline` is the single assembly path; threads the service-level `ComponentRegistry` singleton and derives its execution-strategy lookup), `declaration.py` + `declaration_graphs.py` (scope-declaration boot: load, validate, compile, extract graph-agent refs), `assembly_context.py`, `agent_factory.py`, `pool_construction.py` (incl. `ensure_long_term_defaults`), `communication.py`, `pipeline_wiring.py`. Per-workspace tool wrapping via `WorkspaceRootProvider`. Threads `mcp_registry` through to the main-agent MCP tool loader |
 | `pool_router` (framework) | `PoolRouter` lives at `modex_agent/multi_agent/pool_router.py` — session→pool dispatch shell; `PoolRoutingStore` persists session→pool mapping; agent→pool ownership is the compile-time declaration lookup `agent_pool_ownership(spec)`. The service holds the home workspace's instance (`self.pool_router = home_resources.pool_router`) |
 | `session_pool_index.py` | `SessionPoolIndex`: per-workspace, registration-based attribution index answering "which pool owns this session_id" from the session tree (`tree.pool_name`), never from the routing table. Registered by `create_pool` (`pool/factory.py:419-420`); see "Pool Attribution vs Routing" below |
-| `web_ui_service.py` | `WebUIService` — the single IM + WebUI entry point. Assembles and starts the HTTP + WS server; **auto-discovers every `bot/adapters/register_*.py`** (QQ / Telegram / WebSocket) by importing them to fire the `@register` decorators, then builds enabled adapters from `ADAPTERS`; creates `PoolSkillManagerRegistry` and `BotInputContext`; wires pipeline into adapters. Extracted helpers: `bot/webui/workspace_providers.py`, `bot/webui/adapter_discovery.py` |
+| `web_ui_service.py` | `WebUIService` — the single IM + WebUI entry point. Auto-discovers channel adapters, builds `PoolSkillResolverRegistry` from each `PoolInstance.skill_resolver`, and wires IM/WebUI input pipelines. The registry indexes supply-owned root resolvers; it constructs no catalogs. |
 | `qq_service.py` | `QQBotService` — a QQ-only `BotService` variant. The `modexbot` CLI start path runs `WebUIService` (which itself auto-discovers the QQ adapter), so this is a standalone/alternate entry, not the default |
-| `session_store.py` | `WorkspacePoolSessionStore` — SessionInfo index partitioned by pool under a per-workspace `session_index` dir |
+| `session_store.py` | `WorkspacePoolSessionStore` — bot-specific pool/workspace partitioning layered on the persistence-owned `LocalFileSessionStore`; adds prefix-wide conversation index deletion. |
+| `session_gc.py` | `SessionGarbageCollector` — unchanged crash-safe conversation-cascade GC; consumes the persistence-owned `SessionStore` contract and `LocalFileSessionStore` fallback. |
+| `session_cleaner_factory.py` | `SessionCleanerFactory` — selects file/SQLite session-artifact cleaners without changing GC policy or cascade behavior. |
 | `workspace_store.py` | Workspace- and pool-partitioned transcript store (ctxvar-routed writes); cross-cutting business concern |
 | `recent_workspaces.py` | Recent-workspace tracker (JSON, max 20 paths) for the WebUI quick-switch dropdown |
 
 ## Service-level Assembly Context
 
 `BotService._service_assembly_ctx` (`AssemblyContext | None`) — built in `initialize()` after the workspace stack is assembled but before pool materialization (`core.py`, built right after `build_workspace_stack`). Carries the service-level `ComponentRegistry` singleton + home `WorkspaceContext` + `ScopeRegistry`, providing the registry and home workspace references that `build_im_pipeline` / `build_webui_pipeline` need to resolve `INPUT_STAGE` slot factories. Built before any pool is created so input-stage assembly is ready when the first pool materializes.
+
+## Skills Wiring
+
+Stage 3 builds the pool's `SkillsSupply`; native Stage 4 looks up the root
+`SkillResolver` and stores that reference on `PoolInstance`. Subagents look up
+their own resolver in `AgentTemplate.materialize`. `WebUIService` only indexes
+the root references for `SkillParseStage`; direct framework slash commands use
+the same resolver through `CommandContext`. An explicit `skills: false` veto
+produces no resolver for that agent, and external agents never enter this native
+path.
 
 ## Workspace Model (multi-live)
 

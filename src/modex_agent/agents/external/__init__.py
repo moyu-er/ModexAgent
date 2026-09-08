@@ -25,7 +25,7 @@ from .backend_provider import (
 from .contracts import ProviderBackend, ProviderEventParser
 from .env_builder import ExternalEnvBuilder
 from .events import ExternalEvent
-from .paths import ExternalPaths, ProviderKind
+from .paths import ExternalPaths
 from .session_store import ExternalSessionMapStore, LocalFileExternalSessionMapStore
 from .types import (
     BackendResult,
@@ -37,9 +37,8 @@ from .types import (
 )
 
 __all__ = [
-    # Enums / provider discriminator
+    # Enums
     "ExternalEvent",
-    "ProviderKind",
     "BackendStatus",
     # Path accessor
     "ExternalPaths",

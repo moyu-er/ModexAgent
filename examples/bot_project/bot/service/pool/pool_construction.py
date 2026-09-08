@@ -12,22 +12,22 @@ from pathlib import Path
 from typing import Any
 
 from bot.service.model_config import BotModelConfig
+from modex_agent.core import AgentCommKind
+from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.capabilities import ModelInfo
-from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.core.scope import MemoryContext
-from modex_agent.core.session_registry import SessionRegistry
-from modex_agent.core.session_store import SessionStore
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.memory.default_system import DefaultMemorySystem
+from modex_agent.memory.scope import MemoryContext
 from modex_agent.messaging import MessageBroker
 from modex_agent.multi_agent import (
     AgentPool,
     DefaultAgentFactory,
 )
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
+from modex_agent.persistence.session_registry import SessionRegistry
+from modex_agent.persistence.session_store import SessionStore
 from modex_agent.scope.spec import AgentSpec
 
 from ..model_config import _resolved_or_placeholder
@@ -174,7 +174,7 @@ async def _register_external_main_agent(
         descriptor,
         broker=broker,
         tool_manager=None,
-        skill_manager=None,
+        skill_resolver=None,
         context_manager=context_manager,
         hooks=[],
         output_adapter=output_adapter,

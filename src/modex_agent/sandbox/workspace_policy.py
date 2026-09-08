@@ -3,12 +3,23 @@
 Provides a policy object that resolves paths relative to a workspace
 root and verifies they remain within allowed boundaries.  Application-
 level guard only — not a replacement for an OS-level sandbox.
+
+Resolution and containment delegate to the canonical boundary seam
+(:mod:`modex_agent.workspace.boundary`): expanduser → anchor relative to
+root → ``resolve(strict=False)``; segment-aware ``is_relative_to``
+containment, drive/case-aware on Windows, so symlink escapes resolve to
+their real targets and prefix siblings never match.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+
+from modex_agent.workspace.boundary import (
+    PathCanonicalizationError,
+    canonicalize_path,
+)
 
 from .exceptions import WorkspaceBoundaryError
 
@@ -18,9 +29,9 @@ class WorkspacePolicyConfig:
     """Configuration for workspace boundary enforcement."""
 
     root: str  # Workspace root directory
-    allow_paths: tuple[str, ...] = ()  # Extra allowed read-only paths
-    writable_paths: tuple[str, ...] = ()  # Extra allowed write paths
-    enforce: bool = True  # False = all checks pass
+    allow_paths: tuple[str, ...] = ()  # Extra containment roots; no read/write distinction here
+    writable_paths: tuple[str, ...] = ()  # Declared write roots; not checked by this class
+    enforce: bool = True  # False skips containment, not path canonicalization
 
 
 class WorkspacePolicy:
@@ -30,15 +41,19 @@ class WorkspacePolicy:
     verify that the resolved path falls within the root *or* one of the
     explicitly ``allow_paths`` entries.
 
-    When ``config.enforce`` is ``False`` every check passes (useful for
-    development / testing).
+    ``config.enforce=False`` skips containment checks, but ``resolve_path``
+    still canonicalizes and can fail. This class does not enforce write policy;
+    SecurityDecisionService owns file-tool read/write judgments and rebuilds
+    this projection when evaluating the provider's current workspace root.
     """
 
     def __init__(self, config: WorkspacePolicyConfig) -> None:
         self._config = config
-        self._root = Path(config.root).resolve()
+        self._root = canonicalize_path(config.root)
         # Pre-resolve allowed paths for faster checks.
-        self._allowed: tuple[Path, ...] = tuple(Path(p).resolve() for p in config.allow_paths)
+        self._allowed: tuple[Path, ...] = tuple(
+            canonicalize_path(p) for p in config.allow_paths
+        )
 
     @property
     def root(self) -> Path:
@@ -73,14 +88,14 @@ class WorkspacePolicy:
     def is_within(self, path: str | Path) -> bool:
         """Check whether *path* is within the workspace or allowed paths.
 
-        Returns ``False`` (never raises) for any invalid or escaped path.
+        Returns False for PathCanonicalizationError or an escaped path.
         """
         if not self._config.enforce:
             return True
 
         try:
             resolved = self._resolve_unchecked(str(path))
-        except Exception:
+        except PathCanonicalizationError:
             return False
 
         return self._is_allowed(resolved)
@@ -103,26 +118,10 @@ class WorkspacePolicy:
 
     def _resolve_unchecked(self, path: str) -> Path:
         """Expand user directory and resolve relative paths against root."""
-        candidate = Path(path).expanduser()
-        if not candidate.is_absolute():
-            candidate = self._root / candidate
-        return candidate.resolve(strict=False)
+        return canonicalize_path(path, base=self._root)
 
     def _is_allowed(self, resolved: Path) -> bool:
         """Check if *resolved* is within root or any allowed path."""
-        # Check workspace root.
-        try:
-            resolved.relative_to(self._root)
-            return True
-        except ValueError:
-            pass
-
-        # Check explicitly allowed paths.
-        for allowed in self._allowed:
-            try:
-                resolved.relative_to(allowed)
-                return True
-            except ValueError:
-                continue
-
-        return False
+        return resolved.is_relative_to(self._root) or any(
+            resolved.is_relative_to(allowed) for allowed in self._allowed
+        )

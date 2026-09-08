@@ -747,7 +747,8 @@ async def test_conversations_survive_pool_switching() -> None:
     """
     from bot.service.session_store import WorkspacePoolSessionStore
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     server, inp = _make_server(data_dir)
@@ -845,7 +846,8 @@ async def test_conversation_visible_after_first_message() -> None:
     client-side only and do NOT appear in the server session list."""
     from bot.service.session_store import WorkspacePoolSessionStore
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     server, inp = _make_server(data_dir)
@@ -943,7 +945,8 @@ async def test_sessions_includes_external_adapter_conversations() -> None:
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     server, inp = _make_server(data_dir)
@@ -1018,7 +1021,7 @@ async def test_pool_router_forwards_agent_session_id() -> None:
     calls ``submit_input(sid, InputMessage)`` with ``sid = str(msg.session)``.)
     """
     from modex_agent.core.session_id import SessionInfo
-    from modex_agent.core.types import InputMessage
+    from modex_agent.messaging.models import InputMessage
 
     data_dir = Path(tempfile.mkdtemp())
     session_store = PoolSessionStore(data_dir)

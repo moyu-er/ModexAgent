@@ -3,9 +3,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 
+from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.types import LLMResponse
 from modex_agent.memory.hooks import LlmUsage
 
 

@@ -30,9 +30,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from modex_agent.core.agent import ProviderKind
+
 from ...core.session_id import SessionIdFactory
-from ...core.session_registry import SessionRegistry
-from .paths import ProviderKind
+from ...persistence.session_registry import SessionRegistry
 from .session_store import ExternalSessionMapStore
 
 __all__ = ["ChildSessionDiscoverySink", "ExternalChildSessionDiscoverySink"]

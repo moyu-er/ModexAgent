@@ -55,18 +55,17 @@ _BOT_PROJECT = _REPO_ROOT / "examples" / "bot_project"
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult
+from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.provider import LLMProvider
-from modex_agent.core.scope import MemoryAgentRole
 from modex_agent.core.stream_events import LLMStreamEvent
 from modex_agent.core.tool_manager import Tool
 from modex_agent.hook import HookPayload, HookPoint
 from modex_agent.hook.abc import AfterTurnHook
 from modex_agent.ioc.factories.descriptors import build_session_only_memory
+from modex_agent.memory.scope import MemoryAgentRole
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.multi_agent.factory import DefaultAgentFactory
@@ -97,6 +96,10 @@ from modex_agent.plugins.capability import (
     TreePositionView,
 )
 from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.defaults.capabilities.skills import (
+    SKILLS_CAPABILITY_NAME,
+    require_skills_supply,
+)
 from modex_agent.plugins.loader import (
     ComponentRegistryLoader,
     Plugin,
@@ -374,8 +377,11 @@ class TestThirdPartyFourElementCapability:
 
         # Compile product face: the capability is effective with the
         # validated (non-empty) config and its three roster contributions.
-        assert [c.name for c in root.capabilities] == [CAPABILITY_NAME]
-        assert root.capabilities[0].config == {"greeting": _GREETING}
+        binding = next(c for c in root.capabilities if c.name == CAPABILITY_NAME)
+        assert binding.config == {"greeting": _GREETING}
+        assert SKILLS_CAPABILITY_NAME in {
+            capability.name for capability in root.capabilities
+        }
         assert TOOL_NAME in root.tools
         assert HOOK_NAME in root.hooks
 
@@ -399,6 +405,12 @@ class TestThirdPartyFourElementCapability:
             strategy_result = builder.strategy_result
             if strategy_result is None:
                 raise RuntimeError("Stage 4 requires the Stage 3 strategy result")
+            propagated = builder.propagated_context
+            if propagated is None or propagated.pool_runtime is None:
+                raise RuntimeError("Stage 4 requires propagated pool runtime dependencies")
+            skill_resolver = require_skills_supply(
+                propagated.pool_runtime.capability_supply
+            ).resolver_for(_spec.agent_name)
             return NativeAssemblyInputs(
                 agent_factory=agent_factory,
                 broker=broker,
@@ -406,7 +418,7 @@ class TestThirdPartyFourElementCapability:
                 pool=pool,
                 context_manager=context_manager,
                 tool_manager=strategy_result.tool_manager,
-                skill_manager=strategy_result.skill_manager,
+                skill_resolver=skill_resolver,
                 project_dir=tmp_path,
             )
 
@@ -454,6 +466,7 @@ class TestThirdPartyFourElementCapability:
             supply = pool_runtime.capability_supply[CAPABILITY_NAME]
             assert isinstance(supply, DemoSupply)
             assert supply.store.greeting == _GREETING
+            assert SKILLS_CAPABILITY_NAME in pool_runtime.capability_supply
 
             # ── (1) The tool EXECUTES against the supply state ──
             assert assembled.strategy_result is not None
@@ -470,6 +483,7 @@ class TestThirdPartyFourElementCapability:
 
             # ── (2) The hook FIRES through the real runner ──
             assert assembled.agent is not None
+            assert assembled.agent.pipeline.skill_resolver is not None
             hook_runner = assembled.agent.pipeline.hook_runner
             assert hook_runner is not None
             hook_classes = [spec.hook.__class__.__name__ for spec in hook_runner.hook_specs]

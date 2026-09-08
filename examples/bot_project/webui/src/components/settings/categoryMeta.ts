@@ -17,6 +17,7 @@ import {
   Sparkles,
   FileText,
   ListTree,
+  Boxes,
   type LucideProps,
 } from "lucide-react";
 import type { MessageKey } from "../../i18n";
@@ -26,6 +27,7 @@ export type ViewKey =
   | "im"
   | "model"
   | "scope"
+  | "pools"
   | "mcp"
   | "skills"
   | "prompts";
@@ -56,6 +58,12 @@ export const CATEGORY: Record<ViewKey, CategoryMeta> = {
     catVar: "var(--color-cat-scope)",
     titleKey: "settings.scope.title",
     subKey: "settings.scope.sub",
+  },
+  pools: {
+    icon: Boxes,
+    catVar: "var(--color-cat-pools)",
+    titleKey: "settings.poolsPanel.title",
+    subKey: "settings.poolsPanel.sub",
   },
   mcp: {
     icon: Command,

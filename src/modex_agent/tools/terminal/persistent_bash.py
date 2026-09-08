@@ -37,6 +37,7 @@ from modex_agent.core.tool_manager import ExclusiveTool, Tool, ToolManager
 from modex_agent.tools.terminal._persistent_session import (
     PersistentShellManager,
     PersistentShellSession,
+    PersistentShellStartError,
     PersistentShellUnsupportedError,
 )
 
@@ -44,6 +45,7 @@ __all__ = [
     "BashInputTool",
     "PersistentBashTool",
     "PersistentShellManager",
+    "PersistentShellStartError",
     "PersistentShellUnsupportedError",
     "ensure_input_companion",
     "persistent_bash_supported",
@@ -85,13 +87,15 @@ def ensure_input_companion(
     shells that never run. A same-manager companion is left untouched
     (idempotent).
 
-    No-ops: ``bash_tool=None`` (no bash in the roster), and any
-    non-persistent bash — terminal-manager ``CommandTool`` (its stdin
-    path is process write) and the POSIX-less ``SubprocessTool`` fallback.
+    Non-persistent bash removes a stale framework ``BashInputTool`` only.
+    Custom input tools are left alone; terminal-manager ``CommandTool`` uses
+    process write, and ``SubprocessTool`` has no persistent stdin session.
     """
-    if not isinstance(bash_tool, PersistentBashTool):
-        return
     existing = manager.get_tool("bash_input")
+    if not isinstance(bash_tool, PersistentBashTool):
+        if isinstance(existing, BashInputTool):
+            manager.unregister("bash_input")
+        return
     if existing is not None:
         if isinstance(existing, BashInputTool) and existing._manager is bash_tool._manager:
             return

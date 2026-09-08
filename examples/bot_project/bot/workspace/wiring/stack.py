@@ -15,7 +15,7 @@ from bot.workspace.factory import PoolResourceFactory
 from bot.workspace.handle import PoolWorkspaceResources
 from modex_agent.commands.models import CommandContext
 from modex_agent.core.session_id import session_id_prefix_of
-from modex_agent.core.types import InputMessage
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
 from modex_agent.scope.compiler import CompiledAgent
 from modex_agent.scope.defaults import (

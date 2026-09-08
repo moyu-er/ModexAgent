@@ -6,10 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from modex_graph.exceptions import GraphInterrupt
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
-
+from modex_agent.messaging.models import InputMessage
+from modex_graph.exceptions import GraphInterrupt
 from tests.unit.pipeline._helpers import _make_react_pipeline
 
 
@@ -64,9 +63,8 @@ class TestPipelineRunInterrupt:
 
         with patch.object(
             pipeline, "_process_message", side_effect=GraphInterrupt(value=["test"])
-        ):
-            with pytest.raises(GraphInterrupt):
-                await pipeline.run()
+        ), pytest.raises(GraphInterrupt):
+            await pipeline.run()
 
     @pytest.mark.asyncio
     async def test_run_handles_regular_exception(self, pipeline):

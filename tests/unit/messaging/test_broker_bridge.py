@@ -1,9 +1,11 @@
 import asyncio
+
 import pytest
 
+from modex_agent.adapters.output import OutputAdapter
+from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage, OutputMessage
-from modex_agent.messaging.broker import Address, BrokerMessage
+from modex_agent.messaging.broker import Address, AddressKind, BrokerMessage
 from modex_agent.messaging.broker_bridge import (
     BrokerBridgeService,
     BrokerInputAdapter,
@@ -12,7 +14,8 @@ from modex_agent.messaging.broker_bridge import (
     _broker_msg_to_input_message,
 )
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.messaging.models import InputMessage, OutputMessage
+from modex_agent.pipeline.adapters import InputAdapter
 
 
 class MockInputAdapter(InputAdapter):
@@ -39,7 +42,7 @@ class MockInputAdapter(InputAdapter):
                 try:
                     msg = await asyncio.wait_for(self._queue.get(), timeout=0.1)
                     yield msg
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
         return _gen()
@@ -95,7 +98,6 @@ async def test_broker_input_adapter_receives_messages(broker):
 
 async def test_broker_input_adapter_preserves_metadata(broker):
     addr = Address(kind="channel", name="qq")
-    adapter = BrokerInputAdapter(broker, addr)
 
     msg = BrokerMessage(
         payload={"content": "hi"},
@@ -123,6 +125,23 @@ async def test_agent_markdown_is_not_classified_as_xml() -> None:
 
     assert input_message.content_format is None
     assert input_message.truncatable_paths is None
+
+
+async def test_broker_input_adapter_preserves_resolved_skill_metadata() -> None:
+    msg = BrokerMessage(
+        payload={
+            "content": "<user_input>review transport</user_input>",
+            "session_id": "s1.main",
+            "content_format": "xml",
+            "truncatable_paths": ["user_input"],
+        },
+        sender=Address(kind=AddressKind.USER, name="123"),
+    )
+
+    input_message = _broker_msg_to_input_message(msg)
+
+    assert input_message.content_format is ContentFormat.XML
+    assert tuple(input_message.truncatable_paths or ()) == ("user_input",)
 
 
 async def test_broker_output_adapter_sends_via_topic(broker):

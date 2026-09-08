@@ -4,25 +4,16 @@ from .agent import (
     Agent,
     AgentCommKind,
     AgentContext,
+    AgentRole,
+    ExecutionStrategyKind,
+    ProviderKind,
     current_agent_context,
 )
 from .capabilities import Modality, ModelCapabilities, ModelInfo
-from .constants import (
-    DefaultValues,
-    ErrorMessages,
-    FinishReason,
-    RuntimeInfoKey,
-    ToolCallType,
-    ToolChoice,
-    ToolSchemaConstants,
-)
-from .context import (
-    ContextManager,
-    ContextState,
-)
 from .emitter import (
     AgentResult,
     ContentEmitter,
+    StopReason,
 )
 
 # V2 新架构 - 核心抽象层
@@ -30,34 +21,36 @@ from .events import (
     AgentEvent,
     EmitterConfig,
 )
-from .frontmatter import parse_frontmatter
-from .llm_request import LLMRequest
-from .llm_struct import RuntimeSafetyPolicy
+from .history import MessageHistory
+from .llm_request import LLMRequest, ReasoningEffort
+from .llm_struct import FinishReason, LLMResponse, RuntimeSafetyPolicy, TokenUsage
+from .media import (
+    Attachment,
+    AttachmentLocator,
+    Kind,
+    MediaRefCollisionError,
+    MediaStore,
+    StoredFile,
+    StoredMediaKind,
+)
 from .message import (
     ChatMessage,
     ContentFormat,
+    MessageRole,
+    ToolCall,
 )
-from .prompt import SystemPromptPipeline
+from .prompt import SystemPromptPipeline, SystemPromptProvider
 from .provider import CallbackStreamProvider, LLMProvider
-from .runtime_context import RuntimeContextManager
+from .scope import RecordScope
 from .session_id import (
     SessionIdFactory,
     SessionInfo,
     agent_of,
     encode_snowflake,
-    now_ms,
     session_id_prefix_of,
 )
-from .session_registry import (
-    InMemorySessionRegistry,
-    SessionRegistry,
-)
-from .session_store import (
-    LocalFileSessionStore,
-    SessionStore,
-    safe_filename,
-)
 from .stream_events import (
+    EventAssembler,
     Finish,
     LLMStreamEvent,
     ReasoningDelta,
@@ -68,12 +61,13 @@ from .stream_events import (
     UsageSnapshot,
 )
 from .tool_manager import (
-    InMemoryToolManager,
+    ExclusiveTool,
+    ExecutionMode,
+    ParallelTool,
     Tool,
     ToolConfig,
     ToolExecutionContext,
     ToolManager,
-    ToolManagerConfig,
     ToolResult,
     get_tool_execution_context,
 )
@@ -84,31 +78,12 @@ from .turn_events import (
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
-from .types import (
-    InputMessage,
-    LLMResponse,
-    MessageRole,
-    MessageType,
-    OutputMessage,
-    TodoStatus,
-    ToolCall,
-)
-from .utils import safe_atomic_replace
 
 __all__ = [
-    # 常量
     "MessageRole",
-    "ToolCallType",
-    "ToolChoice",
     "FinishReason",
-    "ErrorMessages",
-    "DefaultValues",
-    "ToolSchemaConstants",
-    "RuntimeInfoKey",
+    "StopReason",
     # 类型
-    "MessageType",
-    "InputMessage",
-    "OutputMessage",
     "ToolCall",
     "ToolResult",
     "TurnEvent",
@@ -117,6 +92,7 @@ __all__ = [
     "TurnToolCallEvent",
     "TurnToolResultEvent",
     # LLM 流式事件 (LLMStreamEvent 封闭联合)
+    "EventAssembler",
     "ReplayFields",
     "TextDelta",
     "ReasoningDelta",
@@ -133,12 +109,13 @@ __all__ = [
     "ContentEmitter",
     # V2 新架构 - 工具管理
     "ToolManager",
-    "InMemoryToolManager",
     "Tool",
     "ToolConfig",
     "ToolExecutionContext",
-    "ToolManagerConfig",
     "get_tool_execution_context",
+    "ExecutionMode",
+    "ParallelTool",
+    "ExclusiveTool",
     "Modality",
     "ModelCapabilities",
     "ModelInfo",
@@ -146,10 +123,11 @@ __all__ = [
     "Agent",
     "AgentCommKind",
     "AgentContext",
-    # V2 新架构 - 上下文管理
-    "ContextManager",
-    "ContextState",
+    "AgentRole",
+    "ExecutionStrategyKind",
+    "ProviderKind",
     # 抽象基类
+    "MessageHistory",
     "LLMProvider",
     "CallbackStreamProvider",
     # Agent - 当前上下文
@@ -157,28 +135,28 @@ __all__ = [
     # 会话 ID
     "SessionInfo",
     "SessionIdFactory",
-    "now_ms",
     "agent_of",
     "session_id_prefix_of",
     "encode_snowflake",
-    # 会话存储
-    "SessionStore",
-    "LocalFileSessionStore",
-    "safe_filename",
-    # 会话注册表
-    "SessionRegistry",
-    "InMemorySessionRegistry",
     # 消息
     "ChatMessage",
     "ContentFormat",
     # 类型扩展
     "LLMRequest",
     "LLMResponse",
-    "TodoStatus",
+    "ReasoningEffort",
+    "TokenUsage",
     # 运行时结构
     "RuntimeSafetyPolicy",
-    "RuntimeContextManager",
+    "SystemPromptProvider",
     "SystemPromptPipeline",
-    "parse_frontmatter",
-    "safe_atomic_replace",
+    "RecordScope",
+    # 媒体契约 (C1, ADR-0013)
+    "Attachment",
+    "AttachmentLocator",
+    "Kind",
+    "MediaRefCollisionError",
+    "MediaStore",
+    "StoredFile",
+    "StoredMediaKind",
 ]

@@ -7,7 +7,7 @@ extracts completed node output from the persisted graph I/O record with truncati
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -336,8 +336,7 @@ async def handle_get_topology(request: web.Request) -> web.Response:
 
 async def _control_instance(
     request: web.Request,
-    action: str,
-    fn: Callable[[GraphOrchestrator, int], Any],
+    fn: Callable[[GraphOrchestrator, int], Awaitable[None]],
 ) -> web.Response:
     r = _resolve_resources(request)
     if isinstance(r, web.Response):
@@ -352,11 +351,15 @@ async def _control_instance(
         await fn(orch, gid)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=404)
-    return web.json_response({"graph_instance_id": str(gid), "status": action})
+    return web.json_response(
+        GraphRunResponse(
+            graph_instance_id=str(gid), status=orch.get_state(gid).metadata.status.value,
+        ).model_dump(mode="json")
+    )
 
 
 async def handle_pause_instance(request: web.Request) -> web.Response:
-    return await _control_instance(request, GraphInstanceStatus.PAUSED.value, GraphOrchestrator.pause)
+    return await _control_instance(request, GraphOrchestrator.pause)
 
 
 async def handle_resume_instance(request: web.Request) -> web.Response:
@@ -377,12 +380,15 @@ async def handle_resume_instance(request: web.Request) -> web.Response:
             },
             status=400,
         )
-    orch.start_resume(gid)
+    try:
+        orch.start_resume(gid)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
     return web.json_response({"graph_instance_id": str(gid), "status": GraphInstanceStatus.RUNNING.value})
 
 
 async def handle_stop_instance(request: web.Request) -> web.Response:
-    return await _control_instance(request, GraphInstanceStatus.STOPPED.value, GraphOrchestrator.stop)
+    return await _control_instance(request, GraphOrchestrator.stop)
 
 
 async def handle_deliver_to_node(request: web.Request) -> web.Response:

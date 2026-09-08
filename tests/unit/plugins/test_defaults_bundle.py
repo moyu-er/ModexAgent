@@ -79,8 +79,12 @@ _EXPECTED_LLM_PROVIDER_NAMES: frozenset[str] = frozenset({"default"})
 #: SYSTEM_PROMPT_PROVIDER slot — single ``file_prompt`` factory (task 13).
 _EXPECTED_PROMPT_PROVIDER_NAMES: frozenset[str] = frozenset({"file_prompt"})
 
-#: INTERCEPTOR slot — single ``tool_timeout`` factory (task 13).
-_EXPECTED_INTERCEPTOR_NAMES: frozenset[str] = frozenset({"tool_timeout"})
+#: INTERCEPTOR slot — ``tool_timeout`` (task 13) + the opt-in
+#: ``sandbox_guard`` policy layer (sandbox-integration Ticket 08; refuses
+#: to build under the dormant DEFAULT tier).
+_EXPECTED_INTERCEPTOR_NAMES: frozenset[str] = frozenset(
+    {"tool_timeout", "sandbox_guard"}
+)
 
 #: COMMAND_HANDLER slot — 6 built-in slash command handlers (task 13).
 #: Names are bare (no leading ``/``) — matching register_default_commands.
@@ -245,7 +249,7 @@ class TestPerSlotNameSets:
         ``tracing`` (ADR-0047; grows one package per migration wave)."""
         registry = await _load_default_plugin()
         actual = _slot_names(registry, ComponentSlot.CAPABILITY)
-        assert actual == {"aci", "ast_grep", "experience", "subagents", "todo", "tracing"}, (
+        assert actual == {"aci", "ast_grep", "experience", "skills", "subagents", "todo", "tracing"}, (
             f"CAPABILITY drift: {actual}"
         )
 
@@ -339,7 +343,7 @@ class TestAllSlotsAccounted:
             (ComponentSlot.COMMAND_HANDLER, _EXPECTED_COMMAND_NAMES),
             (
                 ComponentSlot.CAPABILITY,
-                frozenset({"aci", "ast_grep", "experience", "subagents", "todo", "tracing"}),
+                frozenset({"aci", "ast_grep", "experience", "skills", "subagents", "todo", "tracing"}),
             ),
         ]
         for slot, names in checks:

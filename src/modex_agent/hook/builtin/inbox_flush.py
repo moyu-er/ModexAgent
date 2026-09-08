@@ -7,14 +7,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from modex_agent.core.types import ReminderKind
 from modex_agent.hook.abc import BeforeIterationHook, StartNodeTurnHook
+from modex_agent.messaging.models import ReminderKind
 from modex_agent.multi_agent.message_format import build_agent_reminder_record
 from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
-    from modex_agent.core.agent import AgentContext
-    from modex_agent.memory.history import MessageHistory
+    from modex_agent.core import AgentContext, MessageHistory
     from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 
 
@@ -55,25 +54,29 @@ class InboxFlushHook(StartNodeTurnHook, BeforeIterationHook):
         if not messages:
             return False
 
-        for msg in messages:
-            msg_meta = msg.metadata or {}
-            reminder_kind_raw = msg_meta.get("reminder_kind")
-            reminder_kind = ReminderKind(reminder_kind_raw) if reminder_kind_raw else None
-            invocation_id_raw = msg_meta.get("invocation_id")
-            invocation_id = str(invocation_id_raw) if invocation_id_raw else None
-            append_dict = build_agent_reminder_record(
-                msg.content,
-                source_agent=msg.source,
-                reminder_kind=reminder_kind,
-                message_type=AgentMessageType(msg.message_type),
-                invocation_id=invocation_id,
-            )
-            append_dict.update(
-                {
-                    "meta_inbox": True,
-                    "meta_source": msg.source,
-                    "meta_target_agent": self._agent_name,
-                }
-            )
-            await history.append(append_dict)
+        try:
+            for msg in messages:
+                msg_meta = msg.metadata or {}
+                reminder_kind_raw = msg_meta.get("reminder_kind")
+                reminder_kind = ReminderKind(reminder_kind_raw) if reminder_kind_raw else None
+                invocation_id_raw = msg_meta.get("invocation_id")
+                invocation_id = str(invocation_id_raw) if invocation_id_raw else None
+                append_dict = build_agent_reminder_record(
+                    msg.content,
+                    source_agent=msg.source,
+                    reminder_kind=reminder_kind,
+                    message_type=AgentMessageType(msg.message_type),
+                    invocation_id=invocation_id,
+                )
+                append_dict.update(
+                    {
+                        "meta_inbox": True,
+                        "meta_source": msg.source,
+                        "meta_target_agent": self._agent_name,
+                    }
+                )
+                await history.append(append_dict)
+                await self._consumer.acknowledge(session_id, msg.message_id)
+        finally:
+            self._consumer.release(session_id, [msg.message_id for msg in messages])
         return True

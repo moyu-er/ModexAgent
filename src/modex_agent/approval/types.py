@@ -1,13 +1,8 @@
-"""审批相关的枚举类型。"""
+"""Approval outcome and response-policy enums."""
 
 from __future__ import annotations
 
 from enum import StrEnum
-
-
-class ApprovalAction(StrEnum):
-    ALLOW = "allow"
-    DENY = "deny"
 
 
 class ApprovalResolution(StrEnum):

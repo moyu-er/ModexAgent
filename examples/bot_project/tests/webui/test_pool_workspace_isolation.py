@@ -187,7 +187,8 @@ async def test_im_conversation_stored_in_current_workspace() -> None:
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     server, inp = _make_server(data_dir)
@@ -244,7 +245,8 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
-    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.utils.time import now_ms
 
     data_dir_a = Path(tempfile.mkdtemp())
     data_dir_b = Path(tempfile.mkdtemp())

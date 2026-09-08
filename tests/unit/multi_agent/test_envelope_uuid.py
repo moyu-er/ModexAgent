@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 

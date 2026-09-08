@@ -8,7 +8,7 @@ and multi-agent agent-message interleaving.
 
 from __future__ import annotations
 
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message import MessageRole
 from modex_agent.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
     ToolChainSanitizationMode,

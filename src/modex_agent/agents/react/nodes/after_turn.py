@@ -17,10 +17,8 @@ from __future__ import annotations
 from modex_agent.agents.react.constants import ReActHookPoint, ReActNode
 from modex_agent.agents.react.context import get_agent_ctx
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.core.constants import StopReason
-from modex_agent.core.emitter import AgentResult
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.types import MessageRole
+from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput

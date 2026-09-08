@@ -9,9 +9,8 @@ from typing import Final
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from bot.eval.probes.schema import Session, SessionTurn, Speaker, WorldSpec
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.provider import LLMProvider
-from modex_agent.core.types import MessageRole
 
 
 class RenderSide(StrEnum):

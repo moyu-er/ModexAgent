@@ -7,10 +7,9 @@ from datetime import UTC, datetime, timedelta
 from bot.eval.dataset_curator import DatasetCurator
 from bot.eval.judge_pass import ExperimentWindow
 
-from modex_agent.core.constants import FinishReason
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.types import LLMResponse
 from modex_agent.runtime.models import JsonValue
 from modex_agent.trace.langfuse_query import LangfuseClient, ObservationData
 from modex_agent.trace.score_injector import L2ScoreInjector, ScoreSpec

@@ -4,11 +4,10 @@ from unittest.mock import MagicMock
 
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import FinishReason, StopReason
-from modex_agent.core.emitter import AgentResult
+from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
+from modex_agent.core.message import MessageRole, ToolCall
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.tool_manager import InMemoryToolManager
-from modex_agent.core.types import LLMResponse, MessageRole, ToolCall
 from modex_agent.hook.builtin.length_guard import (
     MAX_NUDGES,
     NUDGE_NO_OUTPUT,
@@ -19,6 +18,7 @@ from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.tools.manager import InMemoryToolManager
 
 
 def _make_context() -> tuple[AgentContext, ReActTurnState]:

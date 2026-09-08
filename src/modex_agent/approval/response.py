@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.commands.constants import BuiltinCommand, CommandParseStatus
 from modex_agent.commands.parser import SlashCommandParser
+from modex_agent.messaging.models import ApprovalAction
 
 
 class InputCommandKind(StrEnum):

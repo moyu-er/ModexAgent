@@ -8,10 +8,7 @@ opencode-aligned naming convention where tool identifiers are built as
 
 from __future__ import annotations
 
-import pytest
-
 from modex_agent.tools.mcp.tool import _mcp_tool_name, _sanitize_name
-
 
 # ── _sanitize_name ───────────────────────────────────────────────────────────
 

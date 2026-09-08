@@ -256,9 +256,13 @@ class TestAciCapabilityProtocol:
         )
 
     def test_pure_opt_in(self) -> None:
-        # applies() defaults False — nothing auto-enables aci.
+        # Isolate aci's applies() default from the unrelated native Skills default.
         spec = ScopeSpec(
-            kind=ScopeKind.POOL, pool=PoolSpec(name="p", agents=[AgentSpec(name="root")])
+            kind=ScopeKind.POOL,
+            pool=PoolSpec(
+                name="p",
+                agents=[AgentSpec(name="root", capabilities={"skills": False})],
+            ),
         )
         compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_registry())
         assert compilation.agents[0].spec.capabilities == ()
@@ -307,9 +311,9 @@ class TestDeclaredCompile:
             spec = load_scope_declaration(path)
         compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_registry())
         capabilities = compilation.agents[0].spec.capabilities
-        # The baseline root carries a child, so the subagents capability
-        # auto-applies beside the declared aci (the tree-derivation source).
-        assert [c.name for c in capabilities] == ["aci", "subagents"]
+        # Skills auto-applies to the native root, and its child also triggers
+        # the subagents capability beside the declared aci.
+        assert [c.name for c in capabilities] == ["aci", "skills", "subagents"]
         assert capabilities[0].config == {}
         assert capabilities[0].name == "aci"
         # aci contributes no hooks, no sections: tool-replacement only.

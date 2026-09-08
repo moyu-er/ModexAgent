@@ -6,44 +6,32 @@ External control (pause / stop / resume / deliver) all go through the same
 `ControlCommand` pattern (rule 15: converge — single control path). REST +
 CLI converge to this service.
 
-The service holds:
-
-- `instance_store: GraphInstanceStore` — for status persistence (running →
-  paused / stopped / running transitions).
-- `coordinator_lookup: Callable[[int], GraphPersistenceCoordinator | None]`
-  — fetches the coordinator for an active graph instance from the
-  orchestrator's `_active_instances` registry. Used by `_deliver` to route
-  external delivers through `coordinator.route_deliver` (no shared
-  `deliver_store` — delivers go to the per-node store inside the
-  coordinator).
-- `engines: dict[int, GraphEngineController]` — running engine handles,
-  keyed by `graph_instance_id`. The handle is a lightweight ABC that can
-  pause / stop the engine and deliver content to a node.
+The orchestrator is the only execution owner. This service adapts commands
+to its lifecycle methods, and routes delivers through its coordinator lookup.
+It neither writes lifecycle status nor maintains a parallel engine registry.
 
 `GraphEngineController` is the ABC (rule 7) for the engine handle.
 `LiveGraphEngineController` connects commands to a running graph's
 `GraphRunControl`. `InMemoryGraphEngineController` remains a recording stub
-for tests and fallback scenarios.
+for consumers needing a recording controller. These exported controller
+classes do not own orchestrator lifecycle transitions.
 """
 
 from __future__ import annotations
 
-import logging
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from modex_agent.control.graph_recovery import GraphRecoveryService
 from modex_agent.control.types import ControlCommand, ControlCommandType
 from modex_graph import (
     GraphInstanceStatus,
     GraphInstanceStore,
-    GraphPersistenceCoordinator,
     GraphRunControl,
     RoutingError,
 )
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from modex_agent.orchestration.graph_orchestrator import GraphOrchestrator
 
 
 class GraphEngineController(ABC):
@@ -138,34 +126,18 @@ class GraphControlService:
     same `ControlCommand` pattern (rule 15: converge — single control
     path). REST + CLI converge to this service.
 
-    The service persists status transitions via `GraphInstanceStore`.
-    External delivers are routed through `coordinator.route_deliver`
-    via the `coordinator_lookup` callable — no shared
-    `deliver_store`. Running engines are notified via
-    `GraphEngineController` handles registered by the orchestrator.
+    Lifecycle commands wait on the orchestrator's owning execution. External
+    delivers retain their existing validation, persistence and wakeup contract;
+    the orchestrator supplies the coordinator and per-run control handle.
     """
 
     def __init__(
         self,
         instance_store: GraphInstanceStore,
-        recovery_service: GraphRecoveryService,
-        coordinator_lookup: Callable[[int], GraphPersistenceCoordinator | None],
-        *,
-        finalize_instance: Callable[[int, GraphInstanceStatus], Awaitable[None]] | None = None,
+        orchestrator: GraphOrchestrator,
     ) -> None:
         self._instance_store = instance_store
-        self._recovery_service = recovery_service
-        self._coordinator_lookup = coordinator_lookup
-        self._finalize_instance = finalize_instance
-        self._engines: dict[int, GraphEngineController] = {}
-
-    def register_engine(self, controller: GraphEngineController) -> None:
-        """Register a running engine controller."""
-        self._engines[controller.graph_instance_id] = controller
-
-    def unregister_engine(self, graph_instance_id: int) -> None:
-        """Unregister an engine controller (e.g. after the graph completes)."""
-        self._engines.pop(graph_instance_id, None)
+        self._orchestrator = orchestrator
 
     async def handle(self, command: ControlCommand) -> None:
         """Route a control command to the appropriate graph action.
@@ -197,46 +169,15 @@ class GraphControlService:
 
     async def _pause(self, command: ControlCommand) -> None:
         gid = self._require_graph_instance_id(command)
-        metadata = self._instance_store.load(gid)
-        if metadata is None:
-            raise ValueError(f"Graph instance {gid} not found")
-        if metadata.status != GraphInstanceStatus.RUNNING:
-            raise ValueError(
-                f"Cannot pause instance {gid}: status is "
-                f"{metadata.status.value}, must be RUNNING"
-            )
-        self._instance_store.update_status(gid, GraphInstanceStatus.PAUSED)
-        engine = self._engines.get(gid)
-        if engine is not None:
-            await engine.pause()
+        await self._orchestrator.pause(gid)
 
     async def _stop(self, command: ControlCommand) -> None:
         gid = self._require_graph_instance_id(command)
-        metadata = self._instance_store.load(gid)
-        if metadata is None:
-            raise ValueError(f"Graph instance {gid} not found")
-        if metadata.status not in {
-            GraphInstanceStatus.RUNNING,
-            GraphInstanceStatus.PAUSED,
-        }:
-            raise ValueError(
-                f"Cannot stop instance {gid}: status is "
-                f"{metadata.status.value}, must be RUNNING or PAUSED"
-            )
-        self._instance_store.update_status(gid, GraphInstanceStatus.STOPPED)
-        engine = self._engines.get(gid)
-        if engine is not None:
-            await engine.stop()
-        elif self._finalize_instance is not None:
-            await self._finalize_instance(gid, GraphInstanceStatus.STOPPED)
+        await self._orchestrator.stop(gid)
 
     async def _resume(self, command: ControlCommand) -> None:
-        # Delegate to the recovery service (load checkpoint → rebuild →
-        # re-dispatch via orchestrator._run_existing_instance). The recovery
-        # service owns the full flow: status validation (PAUSED only —
-        # STOPPED is terminal), RUNNING transition, and engine creation.
         gid = self._require_graph_instance_id(command)
-        await self._recovery_service.resume(gid)
+        await self._orchestrator.resume(gid)
 
     async def _deliver(self, command: ControlCommand) -> None:
         gid = self._require_graph_instance_id(command)
@@ -251,7 +192,7 @@ class GraphControlService:
         # deliver_store). The coordinator holds per-node DeliverStores
         # registered via register_node. source_node="__external__" marks
         # this as an externally-originated deliver (no invocation).
-        coordinator = self._coordinator_lookup(gid)
+        coordinator = self._orchestrator._lookup_coordinator(gid)
         if coordinator is None:
             raise ValueError(
                 f"No active graph instance {gid} for DELIVER_TO_NODE; "
@@ -260,7 +201,11 @@ class GraphControlService:
         metadata = self._instance_store.load(gid)
         if metadata is None:
             raise ValueError(f"Graph instance {gid} not found")
-        if metadata.status not in {GraphInstanceStatus.RUNNING, GraphInstanceStatus.PAUSED, GraphInstanceStatus.PENDING}:
+        if metadata.status not in {
+            GraphInstanceStatus.RUNNING,
+            GraphInstanceStatus.PAUSED,
+            GraphInstanceStatus.PENDING,
+        }:
             raise ValueError(
                 f"Cannot deliver to instance {gid}: status is "
                 f"{metadata.status.value}, must be RUNNING, PAUSED, or PENDING"
@@ -275,9 +220,7 @@ class GraphControlService:
             source_invocation_id=0,
             stage=False,
         )
-        engine = self._engines.get(gid)
-        if engine is not None:
-            await engine.deliver_to_node(node_name, content)
+        self._orchestrator._notify_deliver(gid, node_name)
 
 
 __all__ = [
