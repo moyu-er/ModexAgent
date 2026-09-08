@@ -1,180 +1,136 @@
 <p align="center">
-  <img src="assets/logo-wordmark-dark.svg" alt="ModexAgent" width="380">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-wordmark-dark.svg">
+    <img src="assets/logo-wordmark.svg" alt="ModexAgent" width="380">
+  </picture>
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> |
-  <a href="README.zh-CN.md">简体中文</a>
+  <strong>你的 Agent，你的工作方式。</strong><br>
+  可自由组合的 Python Agent 框架，附带开箱可用的浏览器工作台。
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-%E2%89%A53.12-blue" alt="Python">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+  <a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
-  <strong>模块化、可组合、生产级的 Python Agent 框架</strong>
-  <br>
-  图驱动 ReAct · 可中断审批 · 跨平台终端 · 多 Agent（池内星型 + 跨池对等）· WebUI
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.12%2B-3776AB" alt="Python 3.12 及以上"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-2DD4A8" alt="MIT 许可证"></a>
+  <a href="https://github.com/moyu-er/ModexAgent/releases"><img src="https://img.shields.io/badge/Status-Active%20development-64748B" alt="积极开发中"></a>
 </p>
 
 <p align="center">
-  <img src="assets/modexagent-intro.gif" alt="ModexAgent 介绍" width="720">
+  <a href="#开始使用">开始使用</a> ·
+  <a href="#按你的方式定制">自由定制</a> ·
+  <a href="docs/user-guide/workflows.zh-CN.md">工作流</a> ·
+  <a href="#使用文档">使用文档</a>
 </p>
 
-ModexAgent 是一个用于构建 AI Agent 应用的 Python 框架。它将模型推理、工具调用、记忆管理、输入输出适配器和多 Agent 协作拆分为可独立演进的模块。你可以从一个最简单的 ReAct Agent 起步，逐步扩展为具备长期记忆、多 Agent 协作、运行时治理和浏览器 WebUI 的完整应用。
+ModexAgent 将模型、工具、记忆和多 Agent 协作整合为可按需组合的框架。无论是构建编码助手、组织研究团队，还是串联编码与审查流程，都不必从头搭建配套的运行时。
 
-框架核心采用**图驱动的执行引擎**替代传统循环，支持执行中途挂起、审批和恢复；运行时采用 **Pool 模式** — 多 Agent 常驻池，通过 `MessageBroker` + `AgentMessageBus` 路由消息，I/O 适配器与 Agent 逻辑完全解耦。`examples/bot_project/` 包含一个完整的 **React + WebSocket WebUI**，支持实时流式渲染和多会话管理。整体设计借鉴了 OpenClaw 的插件化架构思想，同时针对类型安全、跨平台终端交互和 Agent 间通信做了深度定制。
+想先用起来，再逐步定制？仓库自带的 **ModexBot** 将这些能力带到浏览器中：对话、工作区、Agent 团队、工具执行记录和配置管理，集中在同一个工作台。它既是可直接使用的应用，也是构建你自己应用的起点。
 
-> [!NOTE]
-> 项目处于积极开发阶段，核心接口已趋于稳定，`examples/bot_project/` 提供了覆盖框架绝大多数能力的完整示例，包括 WebUI 前端。
+<p align="center">
+  <img src="assets/modexagent-intro.gif" alt="ModexAgent 项目与能力动态介绍" width="960">
+  <br><sub>快速了解 ModexAgent。</sub>
+</p>
 
-## 亮点展示
+## 从一次对话到一套工作流
 
-| 浏览器 WebUI | 可中断审批 | 多 Agent 协作 |
-|:---:|:---:|:---:|
-| ![WebUI](assets/webui-settings-pools.png) | ![审批](assets/webui-approval.png) | ![多Agent](assets/webui-multiagent.png) |
-| 实时流式聊天，内置 TodoPanel 任务面板、每轮模型切换、浏览器内配置编辑器、附件与 Mermaid 图 | 敏感工具调用自动挂起，四级分级策略、级联取消 | 星型拓扑子 Agent，支持同步唤醒、异步 Inbox 和隔离调用；跨池主 Agent 间对等通信 |
+**让 Agent 真正动手。** 读取与编辑文件、检索项目、执行命令、连接 MCP 服务。为不同角色选择模型与工具集，再通过提示词和 Skills 补充领域知识。
 
-## 核心特性
+**让专业角色协作。** 定义主 Agent 和协作者，分派目标明确的任务，并随时查看子会话。团队可以跨 Pool 通信；需要更明确的步骤时，也可以用图工作流组织编码、审查与修订。
 
-- **图驱动的 ReAct 引擎** — 执行循环以 `Graph[S] + Node[S]` 的泛型图结构建模（由独立的 `modex_graph` 包驱动，ADR-0033），支持 `GraphInterrupt` 挂起与状态持久化恢复，天然适合审批和断点续跑场景。内置循环检测：ReAct 陷入死循环时以受控退出收尾，而不是空烧 token（ADR-0016）。
-- **可中断审批** — Agent 在做出有风险的改动前会先征求你的同意。当它试图写或改项目文件夹之外的文件时，会暂停并请求确认——在 WebUI 点一下「批准」，或在聊天里回复 `/approve`，它就从原地继续。默认关闭，可按 Agent 单独开启。
-- **跨平台交互式终端** — 内置完整终端工具链，支持 Windows（WinPTY/ConPTY）、Linux/macOS（pexpect/tmux）三端统一接口；支持可见终端窗口与后台 PTY 两种模式，248+ 单元测试覆盖。
-- **多 Agent 协作** — 每个 pool 内部是严格星型：主 Agent 作为通信中枢，子 Agent 只能经 `send_to_agent` 与父 Agent 通信（框架按需走 broker、异步 inbox 或隔离 subagent 会话）。跨 pool 时主 Agent 之间是对等的——一个主 Agent 可 `send_to_agent` 另一个 pool 的主 Agent，对方在自己的 bus 上接收并回复。subagent↔subagent、subagent→非父 NORMAL 的发送会被拓扑关卡拒绝。
-- **Pool 运行时** — 多 Agent 常驻池，通过 `MessageBroker` + `AgentMessageBus` 路由消息，I/O 适配器与 Agent 逻辑完全解耦。
-- **多级记忆 + 自学习系统** — Session、Archive、Core Memory、UserRetentionBuffer、Pruned、Experience 六层记忆，支持 SessionScope / UserScope / GlobalScope 可配置隔离范围。Dream Engine 定期将 Archive 整合为 Core Memory；ExperienceReviewAgent 将对话沉淀为可复用的 EXPERIENCE.md 参考知识。（原 "Knowledge" 层依 ADR-0035 重命名为 "Core Memory"，以与即将推出的 KnowledgeBase（RAG 检索）模块区分。）
-- **Hook + Interceptor 扩展体系** — 生命周期 Hook（如 InboxFlush、SubagentAutoSend）与 AOP 拦截器链（ControlDrain、ToolResultLimit）正交组合，框架行为可逐层定制，不侵入核心代码。
-- **类型安全** — 全部使用 ABC 接口（零 Protocol），枚举替代原始字符串，`from __future__ import annotations` 全仓覆盖，mypy strict 级别检查。
-- **MCP 原生集成** — 动态加载 MCP 服务器（SSE/stdio），`MCPToolAdapter` 自动将 MCP 能力映射为框架 Tool 对象，支持工具、资源、Prompt 三类能力。
-- **浏览器 WebUI** — React + Vite 前端，实时流式渲染，内置 **TodoPanel** 任务面板、**每轮模型切换**（多 provider/多模型）、**浏览器内配置编辑器**（Pool/模型/MCP/技能/系统提示，免手改 YAML）、会话树、附件上传下载、Mermaid 图与亮/暗主题（见 `examples/bot_project/`）。
+**让上下文延续。** 持久会话承接连续工作；可选的归档与核心记忆保留长期上下文，Experience 能力则可将经过回顾的交互沉淀为可复用的经验。
 
-## 架构概览
+**看清执行，保留控制。** 跟随流式回复，展开工具参数与结果，管理附件，或暂停正在执行的轮次。需要进一步控制时，可以为原生 Agent 配置人工审批和沙箱策略。
 
-浏览器 WebUI 经 **WebSocket**（流式聊天、实时状态）与 **REST**（配置编辑、会话/Pool/工作区管理）与 Agent 通信；IM 适配器对称地接入同一套 broker。
+**选择适合的入口。** 在浏览器中工作，接入 QQ 或 Telegram，或将 OpenCode 纳入同一套工作区与会话体验。外部 Agent 仍由自身运行时管理模型、上下文、工具与权限行为。
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│              外部平台（QQ / Telegram / CLI / HTTP / WebSocket → WebUI）              │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                    ┌───────────────┴───────────────┐
-                    ▼                               ▼
-           ┌─────────────┐                 ┌─────────────┐
-           │InputAdapter │                 │OutputAdapter│
-           └──────┬──────┘                 └──────▲──────┘
-                  │                                  │
-                  ▼                                  │
-           ┌─────────────────────────────────────────┐
-           │           AgentPipeline                 │
-           │  ┌─────────┐  ┌─────────┐  ┌─────────┐ │
-           │  │Context  │→ │ ReAct   │→ │  Tool   │ │
-           │  │Manager  │  │ Agent   │  │Manager  │ │
-           │  │(记忆系统)│  │(图引擎) │  │(工具执行)│ │
-           │  └─────────┘  └────┬────┘  └─────────┘ │
-           │                    │                   │
-           │  Hooks / Interceptors / Control / Approval│
-           └────────────────────┼─────────────────────┘
-                                │
-                                ▼
-                       ┌─────────────┐
-                       │ MessageBroker│
-                       └──────┬──────┘
-                              │
-              ┌───────────────┼───────────────┐
-              ▼               ▼               ▼
-        ┌─────────┐    ┌─────────┐    ┌─────────┐
-        │AgentPool│    │Subagent │    │ Inbox   │
-        │(常驻Agent)│   │Manager  │    │Server   │
-        └─────────┘    └─────────┘    └─────────┘
-```
+## 按你的方式定制
 
-## 快速开始
+自定义不是 ModexBot 的附加功能。应用本身就通过插件向框架提供行为，你的项目也可以使用这些扩展入口。
 
-### Windows — 安装包（推荐）
+| 从这里开始 | 使用方式 | 适合定制什么 |
+| --- | --- | --- |
+| **配置** | WebUI 设置与 YAML Agent 声明 | 模型、角色、工具集、协作者、记忆与权限 |
+| **提示词与 Skills** | Markdown 指令与 `SKILL.md` 技能包 | 领域知识、可复用流程与任务指导 |
+| **MCP** | 注册服务，按原生 Agent 选择挂载 | 浏览器工具与已有集成 |
+| **Python 插件** | 工具、Hook、Provider、拦截器等 | 新增行为，或替换内置实现 |
+| **Capabilities** | 将工具、Hook、提示词片段与共享资源打包 | 按 Agent 一起启用的完整能力 |
 
-从 [Releases](https://github.com/moyu-er/ModexAgent/releases/latest) 页面下载安装包，双击即可安装。安装包已内置完整的 Python 运行环境和所有依赖，**无需预装任何开发工具，安装过程也不需要联网**。
+在 ModexBot 中，项目插件放在 `examples/bot_project/plugins/`，启动时自动发现。注册工具或 Hook，在 Agent 声明中选用，重启即可生效。基于框架开发时，可以配置自己的插件发现方式；应用通道和图节点也提供各自的扩展接口。
 
-1. **下载** — 打开 [Releases](https://github.com/moyu-er/ModexAgent/releases/latest) 页面，下载 `ModexBot-Setup-x.x.x.exe`
-2. **安装** — 双击运行，按提示完成安装（无需管理员权限）
-3. **启动** — 双击桌面上的「ModexBot」图标，或在开始菜单中找到 ModexBot
-4. **配置模型** — 首次启动后，在 WebUI 的「设置」页面填入模型 API Key（支持 DeepSeek、OpenAI 等）
+**[编写第一个插件 →](docs/user-guide/extensions.zh-CN.md)** · [配置一个 Agent](docs/user-guide/configuration.zh-CN.md)
 
-WebUI 会自动打开，开始对话吧！
+## 开始使用
 
-<details>
-<summary>命令行操作</summary>
+### 运行 ModexBot
 
-安装后可在任意终端使用 `modexbot` 命令：
+**Windows：** 从 [Releases](https://github.com/moyu-er/ModexAgent/releases/latest) 下载 `ModexBot-Setup-*.exe`。安装包包含 Python 与 WebUI。已发布的开发版本是特定时间的快照，可能与当前源码有所不同；前置条件与首次启动说明见[安装指南](docs/user-guide/getting-started.zh-CN.md)。
 
-| 命令 | 作用 |
-|------|------|
-| `modexbot start` | 启动 |
-| `modexbot stop` | 停止 |
-| `modexbot restart` | 重启 |
-| `modexbot logs -f` | 查看实时日志 |
-| `modexbot config` | 配置向导 |
-| `modexbot model` | 模型设置 |
-
-通过「添加或删除程序」卸载。你的配置文件（含 API Key）会保留，方便下次重装。
-
-</details>
-
-### macOS / Linux / 开发者 — 从源码运行
-
-macOS/Linux 暂无安装包，可从源码运行：
+**从源码运行：** 克隆仓库，再执行对应平台的安装脚本。源码安装通过 `uv` 使用 Python 3.12，并用 Node.js/npm 构建 WebUI；脚本可以协助安装缺失工具。
 
 ```bash
 git clone https://github.com/moyu-er/ModexAgent.git
 cd ModexAgent/examples/bot_project
-
-# Windows
-install.bat
-
-# Linux / macOS
-chmod +x install.sh && ./install.sh
 ```
 
-脚本会自动安装缺失的 `uv` + Node.js，配置 Python 环境，编译 WebUI 前端，并将 `modexbot` 注册到系统 PATH。然后：
+macOS / Linux：
 
 ```bash
-modexbot start   # 打开 http://localhost:21800/webui/
+bash install.sh
 ```
 
-详细步骤和故障排除见 **[docs/bot-local-setup.md](docs/bot-local-setup.md)**。
+Windows PowerShell：
 
-## 项目结构
-
-```
-ModexAgent/
-├── src/modex_agent/   # 框架包——ABC、运行时、记忆、多 Agent、工具、WebUI 接入
-├── examples/
-│   └── bot_project/   # 参考应用：WebUI + IM 适配器（QQ、Telegram）—— Pool 模式
-├── tests/             # 单元、架构、一致性、集成测试
-└── docs/              # ADR、设计文档、Agent 文档
+```powershell
+.\install.bat
 ```
 
-`src/modex_agent/` 是可复用框架；`examples/bot_project/` 是基于它构建的端到端应用。各模块的 `AGENTS.md` 文件有详细说明。
+> [!IMPORTANT]
+> 请在可信机器与网络中使用工作台。当前源码默认监听 `0.0.0.0`，且 WebUI 没有身份认证。本地使用时，请在启动前将 `config/bot_config.yml` 中的 `webui.host` 设为 `127.0.0.1`。详见[本地部署与安全设置](docs/user-guide/getting-started.zh-CN.md#只在本机开放-webui)。
 
-## 文档
+如果安装修改了 `PATH`，请打开新终端，再配置模型并启动：
 
-| 文档 | 说明 |
+```bash
+modexbot config
+modexbot start
+```
+
+打开 **[localhost:21800/webui/](http://localhost:21800/webui/)**，选择 Pool，开始对话。也可以在 **Settings → Models** 中配置模型。模型访问需要你自己的服务配置；可选的 MCP 服务和 OpenCode 另有前置条件。
+
+**[完整安装指南 →](docs/user-guide/getting-started.zh-CN.md)** · [尝试一个工作流](docs/user-guide/workflows.zh-CN.md)
+
+### 基于框架开发
+
+ModexBot 是可参考的完整集成，而不是你的应用必须依赖的 UI。你可以复用 Python 运行时与扩展接口，提供自己的工具和适配器，按需装配能力。
+
+[扩展指南](docs/user-guide/extensions.zh-CN.md) 从配置定制讲到完整的 Python 工具插件。若只需要框架，可按[手动安装说明](docs/user-guide/getting-started.zh-CN.md#manual-source-installation)将框架与本地 `modex_graph` 包一起安装，跳过 Bot 安装步骤。
+
+## 使用文档
+
+用户指南面向当前源码，中英文版本覆盖相同主题。
+
+| 指南 | 内容 |
 | --- | --- |
-| [ADR 索引](docs/adr/) | 架构决策记录（ADR-0001 ~ 0036） |
-| [文档总览](docs/AGENTS.md) | `docs/` 目录索引——ADR、设计文档、Agent 文档 |
-| [CONTEXT.md](CONTEXT.md) | 领域术语表——Pool、Workspace、ReAct Agent、Graph、GraphInterrupt、Assembly 等 |
-| [本地环境搭建](docs/bot-local-setup.md) | 从源码搭建 bot 的详细步骤（前置依赖、venv、配置向导、故障排除） |
-| [Bot 示例](examples/bot_project/README.md) | bot_project 详解（多通道 IM + WebUI、多 Agent 配置） |
-| [外部编码 Agent](docs/design/external-agent-integration/spec.md) | 将 OpenCode 等编码 Agent CLI 接入为 pool 主 Agent（ADR-0022） |
-| 各模块 `AGENTS.md` | `src/modex_agent/` 下每个包都附带 `AGENTS.md`，描述其职责与关键文件 |
+| [开始使用](docs/user-guide/getting-started.zh-CN.md) | 安装、模型配置、CLI、本地安全与故障排查 |
+| [配置指南](docs/user-guide/configuration.zh-CN.md) | Agent 声明、工具、记忆、MCP、Skills 与权限 |
+| [工作流](docs/user-guide/workflows.zh-CN.md) | 工作区、Agent 团队、图运行、审批与 OpenCode |
+| [扩展开发](docs/user-guide/extensions.zh-CN.md) | 第一个插件、组件替换、Capabilities、通道与图节点 |
 
-## 开发命令
+## 项目组成
 
-```bash
-pytest tests/unit/ -v
-pytest tests/integration/ -v -m integration
+| 部分 | 职责 |
+| --- | --- |
+| [`modex_agent`](src/modex_agent/) | Agent 运行时、会话管理、工具、记忆、协作与扩展接口 |
+| [`modex_graph`](src/modex_graph/) | 独立图执行引擎，支撑原生 ReAct 与工作流编排 |
+| [`bot_project`](examples/bot_project/) | ModexBot 应用、WebUI、通道适配器、项目插件与示例配置 |
 
-ruff check src/modex_agent tests
-ruff format src/modex_agent
-mypy src/modex_agent
-```
+声明经过验证和编译后再装配组件。原生与外部执行共享面向应用的路由和输出接口，同时保留各自的执行职责。
+
+更深入的工程背景可参阅[架构决策](docs/adr/)、[领域术语](CONTEXT.md)和 [Capability 编写指南](docs/design/capability-bundles/AUTHOR-GUIDE.md)。
+
+> [!NOTE]
+> ModexAgent 正在积极开发中，API 与配置可能演进，请使用与你运行版本对应的文档。
