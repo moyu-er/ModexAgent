@@ -18,10 +18,12 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from bot.config.webui_config import build_control_origin
 from bot.service.pool.declaration import (
     apply_workspace_resource_selection,
     load_scope_declaration_opt,
 )
+from bot.service.roots import BotAssemblyRoots
 from bot.workspace.wiring.resources import _build_resources, _stop_resources
 
 from modex_agent.ioc.configs.app import AppConfig
@@ -68,6 +70,10 @@ def _service(home: Path, app_config: AppConfig) -> MagicMock:
     service = MagicMock()
     service._project_dir = home
     service.project_dir = home
+    # Resource assembly reads the explicit assembly roots (DESIGN §3.2), not
+    # _project_dir — give the mock the real resident identity for `home`.
+    service.roots = BotAssemblyRoots.resident(config_dir=home / "config", resource_root=home)
+    service._enable_dynamic_workspaces = True
     service._app_config = app_config
     service._home_persistence = None
     service._mcp_registry = None
@@ -108,7 +114,7 @@ async def _build_home_resources(
 ) -> Any:
     """Materialize the HOME workspace of ``service`` via the real
     ``_build_resources`` path (create_pool recorded, everything else real)."""
-    home = service._project_dir
+    home = service.roots.workspace_home
     ctx = WorkspaceContext.from_target(home, data_dir_name=".modex", home=home)
     recorded: dict[str, Any] = {}
 
@@ -124,6 +130,43 @@ async def _build_home_resources(
         background_type.return_value.stop = AsyncMock()
         resources = await _build_resources(service, ctx)
     return resources, recorded
+
+
+async def test_workspace_assembly_passes_control_origin_from_actual_config_root(
+    tmp_path: Path,
+) -> None:
+    resource_root = tmp_path / "bot-assets"
+    workspace_root = tmp_path / "ide-workspace"
+    config_dir = tmp_path / "actual-config"
+    (resource_root / "agents").mkdir(parents=True)
+    (resource_root / "agents" / "main.md").write_text("main\n", encoding="utf-8")
+    (config_dir / "scopes").mkdir(parents=True)
+    (config_dir / "scopes" / "bot.yml").write_text(_MINIMAL_DECL, encoding="utf-8")
+    (config_dir / "bot_config.yml").write_text(
+        "webui:\n  host: 0.0.0.0\n  port: 32123\n", encoding="utf-8",
+    )
+    workspace_root.mkdir()
+    service = _service(
+        resource_root,
+        AppConfig.model_validate({
+            "persistence": {"backend": "file"},
+            "paths": {"data_dir_name": ".modex"},
+        }),
+    )
+    service.roots = BotAssemblyRoots(
+        config_dir=config_dir,
+        resource_root=resource_root,
+        workspace_home=workspace_root,
+    )
+    service._enable_dynamic_workspaces = False
+
+    resources, recorded = await _build_home_resources(service)
+    try:
+        assert recorded["project_dir"] == resource_root.resolve()
+        assert recorded["workspace_handle"].current == workspace_root.resolve()
+        assert recorded["control_origin"] == build_control_origin(config_dir)
+    finally:
+        await _stop_resources(resources)
 
 
 def _landing_manifest(resources: Any, home: Path, data_dir_name: str = ".modex") -> dict[str, Any]:

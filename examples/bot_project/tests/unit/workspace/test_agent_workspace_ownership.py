@@ -480,4 +480,7 @@ def test_workspace_scoped_tool_leaves_absolute_path_alone(tmp_path: Path) -> Non
     # logic correctly treats it as relative there — use a platform-absolute path.
     absolute = "C:/Windows/System32" if os.name == "nt" else "/etc/passwd"
     args = scoped._scoped_args({"path": absolute})
-    assert args["path"] == absolute
+    # "Untouched" means anchored at itself (never prefixed with the workspace
+    # root); the wrapper routes through the canonical resolver, whose spelling
+    # is platform-canonical — compare as paths, not raw strings.
+    assert Path(args["path"]) == Path(absolute)

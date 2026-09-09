@@ -9,7 +9,6 @@ from bot.input_pipeline.stages.approval import ApprovalStage
 from bot.input_pipeline.stages.attachment_ingest import AttachmentIngestStage
 from bot.input_pipeline.stages.command import CommandDispatchStage
 from bot.input_pipeline.stages.commands import SHARED_COMMANDS
-from bot.input_pipeline.stages.enqueue import EnqueueStage
 from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
 from bot.input_pipeline.stages.model_choice import ModelChoiceStage
 from bot.input_pipeline.stages.persist_user_message import PersistUserMessageStage
@@ -52,7 +51,6 @@ class InputStageName(StrEnum):
     SKILL_PARSE = "skill_parse"
     UNSUPPORTED_COMMAND = "unsupported_command"
     PERSIST_USER_MESSAGE = "persist_user_message"
-    ENQUEUE = "enqueue"
 
 
 class EnvironmentControlStageConfig(BaseModel):
@@ -163,8 +161,4 @@ class IMInputStagesPlugin(Plugin):
         ctx.register_input_stage(
             InputStageName.PERSIST_USER_MESSAGE,
             SimpleFactory(PersistUserMessageStage(), _EmptyStageConfig),
-        )
-        ctx.register_input_stage(
-            InputStageName.ENQUEUE,
-            SimpleFactory(EnqueueStage(), _EmptyStageConfig),
         )

@@ -9,7 +9,7 @@ Message transport models, broker, and bridge service for agent communication. Ow
 ## Key Files
 | File | Description |
 |------|-------------|
-| `models.py` | Typed transport boundary: `InputMessage`, `OutputMessage`, `MessageType`, `OutputMessageType`, `ReminderKind`, `ApprovalAction`, `ApprovalDecisionInput`, `BrokerInputPayload`, and `BrokerOutputPayload`. |
+| `models.py` | Typed transport boundary: `InputMessage`, `OutputMessage`, `MessageType`, `OutputMessageType`, `ReminderKind`, `ApprovalAction`, `ApprovalDecisionInput` (carries the owner-minted `approval_id` for exact resume matching; the unset identity is hidden by the broker boundary's `exclude_none=True` payload dump), `BrokerInputPayload`, and `BrokerOutputPayload`. |
 | `broker.py` | `MessageBroker` ABC + `InMemoryMessageBroker` — pub/sub backbone. Also defines `Address` (frozen Pydantic `BaseModel` with `kind: AddressKind` + `name: str`, B5B), `AddressKind` StrEnum (`AGENT`, `USER`, `CHANNEL`, `SYSTEM`, `GROUP`), and `BrokerMessage` (BaseModel, mutable runtime envelope, B5B). `AddressKind` compares equal to its string value, so existing `kind="agent"` call sites work but new code should use the enum (type-safety rule 1). |
 | `broker_memory.py` | `InMemoryMessageBroker` — lightweight `asyncio.Queue` implementation |
 | `broker_bridge.py` | `BrokerBridgeService` + `BrokerInputAdapter` / `BrokerOutputAdapter` — adapter-to-broker bridge for pool mode; `OutputRoute` for routing agent output to the right channel |

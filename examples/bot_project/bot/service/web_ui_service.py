@@ -720,7 +720,6 @@ class WebUIService(BotService):
         # None and the control routes return 503.
         from bot.control.facade import BotControlFacade, ControlFacadeError
         from bot.control.models import ControlError
-        from modex_agent.memory.scope import MemoryContext, MemoryLayerName, SessionScope
 
         async def _resolve_workspace_for_control(
             root: Path,
@@ -731,43 +730,16 @@ class WebUIService(BotService):
             scope: BotRecordScope,
             resources: PoolWorkspaceResources,
         ) -> MessageStore:
-            pool_name = scope.pool
-            if pool_name is None:
-                raise ControlFacadeError(
-                    400,
-                    ControlError(
-                        code="invalid_scope",
-                        message="BotRecordScope.pool is None",
-                    ),
+            from bot.control.history import MessageStoreResolutionError, resolve_pool_message_store
+
+            try:
+                return await resolve_pool_message_store(
+                    resources, pool=scope.pool, session_id=scope.session_id,
                 )
-            pool_data = resources.pool_data.get(pool_name)
-            if pool_data is None:
+            except MessageStoreResolutionError as exc:
                 raise ControlFacadeError(
-                    404,
-                    ControlError(
-                        code="pool_not_found",
-                        message=(
-                            f"Pool {pool_name!r} is not materialized in "
-                            f"workspace {resources.target!s}"
-                        ),
-                    ),
-                )
-            memory_system = pool_data.context_manager.memory_system
-            if memory_system is None:
-                raise ControlFacadeError(
-                    500,
-                    ControlError(
-                        code="memory_system_unavailable",
-                        message=(f"Memory system is not configured for pool {pool_name!r}"),
-                    ),
-                )
-            ctx = MemoryContext(session_id=scope.session_id)
-            bundle = await memory_system.store_registry.resolve(
-                layer=MemoryLayerName.SESSION,
-                scope=SessionScope(),
-                context=ctx,
-            )
-            return bundle.messages
+                    exc.status, ControlError(code=exc.code, message=str(exc)),
+                ) from exc
 
         async def _provide_transcript_store(
             resources: PoolWorkspaceResources,

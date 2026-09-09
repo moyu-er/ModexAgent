@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from bot.service.core import BotService
     from modex_agent.persistence.managers import WorkspacePersistenceManager
 
+from bot.config.webui_config import build_control_origin
 from bot.service.builders import (
     _build_hook_runner,
     _build_main_command_processor,
@@ -173,17 +174,28 @@ async def _assemble_resources(
     # Ticket 17 — a runtime-created workspace boots ITS OWN declaration
     # (config/scopes/workspaces/<name>.yml); every other target (home,
     # /cd'd directories) boots the primary declaration as before.
+    # DESIGN §3.2 roots: the declaration is a CONFIG-root file (explicit
+    # roots) at the legacy install location for resident; project_dir
+    # stays the RESOURCE root — declaration-referenced assets (prompts,
+    # skills, memory templates) always resolve against the bot side,
+    # never against a bound IDE workspace. Tool/terminal/sandbox roots
+    # are workspace-target driven via WorkspaceHandle (ctx.target below).
+    roots = service.roots
     workspace_graphs_dir = ctx.target / "config" / "graphs"
-    global_graphs_dir = service._project_dir / "config" / "graphs"
-    declaration_path = service._project_dir / "config" / "scopes" / "bot.yml"
+    global_graphs_dir = roots.graphs_dir
+    declaration_path = roots.scope_declaration_path
     if not declaration_path.exists():
-        raise ScopeBootRequiredError(declaration_path, service._project_dir)
-    dynamic_declaration = dynamic_workspace_declaration_path(service._project_dir, ctx.target)
+        raise ScopeBootRequiredError(declaration_path, roots.resource_root)
+    dynamic_declaration = (
+        dynamic_workspace_declaration_path(roots.resource_root, ctx.target)
+        if service._enable_dynamic_workspaces
+        else None
+    )
     if dynamic_declaration is not None:
         declaration_path = dynamic_declaration
     scope_boot = boot_scope_declaration(
         declaration_path=declaration_path,
-        project_dir=service._project_dir,
+        project_dir=roots.resource_root,
         data_dir=ctx.paths.root,
         graphs_dirs=(workspace_graphs_dir, global_graphs_dir),
         default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
@@ -225,7 +237,10 @@ async def _assemble_resources(
     if app_config is not None and app_config.persistence.backend is PersistenceBackend.SQLITE:
         from modex_agent.persistence.managers import WorkspacePersistenceManager
 
-        if ctx.target == service._project_dir.resolve():
+        # Home workspace reuses the service-opened home DB. The comparison
+        # object is the RUNTIME workspace home (registry home), not the
+        # resource root — the two only coincide for resident deployments.
+        if ctx.target == roots.workspace_home:
             persistence = service._home_persistence
             assert persistence is not None, "Home persistence must open before materialization"
         else:
@@ -386,7 +401,7 @@ async def _assemble_resources(
             assembly_deps[name],
             await resolve_declared_root_prompt(
                 declared_builds[name],
-                service._project_dir,
+                roots.resource_root,
                 service._component_registry,
             ),
             app_config=app_config,
@@ -399,12 +414,13 @@ async def _assemble_resources(
     #    R after assembly so per-turn pool_data resolution lands back here.
     #    Every pool boots from the scope declaration (ticket 11).
     resolver_cell = WorkspaceResolverCell()
+    control_origin = build_control_origin(roots.config_dir)
     for name in pool_names:
         pools[name] = await create_pool(
             pool_name=name,
             declared=declared_builds[name],
             assembly_deps=assembly_deps[name],
-            project_dir=service._project_dir,
+            project_dir=roots.resource_root,
             data_dir=ctx.paths.root,
             broker=broker,
             output_adapter=service.output_adapter,
@@ -414,6 +430,7 @@ async def _assemble_resources(
             shared_hooks=shared_hooks,
             shared_hook_runner=shared_hook_runner,
             shared_interceptor_chain=shared_interceptor_chain,
+            control_origin=control_origin,
             control_channel=service.control_channel,
             command_processor=command_processor,
             pool_data=pool_data[name],

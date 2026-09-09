@@ -62,9 +62,9 @@ The workspace system lives in `bot/workspace/` (business) backed by `modex_agent
 
 All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_pipeline/`) before reaching `PoolRouter`. The pipeline provides:
 
-- **Unified stage processing**: 7 stages (S2–S8) shared across channels with per-channel entry points
-- **IM pipeline** (S4→S2→S3→S5→S6→S7→S8): Full path with control commands
-- **WebUI pipeline** (S4→S5→S6→S7→S8): No S2/S3 (UI handles workspace/pool/session controls)
+- **Unified stage processing**: stages S2–S7 shared across channels (S4→S2→S3→S5→S6→S7 IM, S4→S5→S6→S7 WebUI); delivery follows preparation — `BotInputPreparation.handle` is the single S8 delivery point via the channel's sync enqueue callback, `prepare` yields the typed outcome without delivering
+- **IM pipeline** (S4→S2→S3→S5→CommandDispatch→Ingest→Approval→Skill→Unsupported→Persist): full path with control commands
+- **WebUI pipeline** (S4→S5→ModelChoice→CommandDispatch→Ingest→Approval→Skill→Unsupported→Persist): no S2/S3 (UI handles workspace/pool/session controls)
 - **Single persistence path**: `PersistUserMessageStage` (S7) is the only place user messages are written to transcript store
 - **Skill resolution**: `SkillParseStage` (S6) resolves `/skillName` commands through the shared `SkillResolver` contract
 
@@ -84,20 +84,22 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | File | Description |
 | --- | --- |
 | `bot/input_pipeline/context.py` | `BotInputContext` — concrete context with pool store, transcript store, enqueue callback |
-| `bot/input_pipeline/assembly.py` | `build_im_pipeline()` / `build_webui_pipeline()` — stage ordering per channel |
+| `bot/input_pipeline/assembly.py` | `build_im_pipeline()` / `build_webui_pipeline()` — stage ordering per channel; every builder returns `BotInputPreparation` over the same skeleton constants (the only stage lists; ENQUEUE is no longer a pipeline terminal) |
+| `bot/input_pipeline/prepare.py` | `BotInputPreparation(UserInputPipeline)` — one shared stage orchestration with typed preparation: `prepare()` → `Prepared(InputMessage) | Handled(reason, notice)` (never touches the queue callback), `handle()` = the original adapter contract (sync `enqueue_message` exactly once, original Terminate shapes) |
 | `bot/input_pipeline/stages/resolve_pool.py` | S5 — pool/agent resolution + `RoutingMeta` StrEnum for envelope metadata keys |
 | `bot/input_pipeline/stages/skill_parse.py` | S6 — per-pool root `SkillResolver` lookup + canonical command resolution via `PoolSkillResolverRegistry` |
 | `bot/input_pipeline/stages/persist_user_message.py` | S7 — single persistence path for user messages |
-| `bot/input_pipeline/stages/enqueue.py` | S8 — builds `InputMessage` and enqueues |
+| `bot/input_pipeline/stages/enqueue.py` | `build_input_message()` — the single shared S8 builder (early `/continue` carriage via `RoutingMeta.PREPARED_MESSAGE`, else construction from resolved routing; a HANDLED envelope without a carriage builds nothing); delivery happens once in `BotInputPreparation.handle` |
 | `bot/input_pipeline/stages/environment_control.py` | S2 — IM-only `/cd`, `/pool`, `/exit`, `/pwd` interception |
 | `bot/input_pipeline/stages/session_control.py` | S3 — IM-only `/stop` turn cancellation |
 | `bot/input_pipeline/stages/set_channel.py` | S4 — conversation channel tagging (runs first in IM pipeline) |
-| `bot/service/core.py` | `BotService` — initialization, workspace context, pool creation, pipeline wiring |
+| `bot/service/core.py` | `BotService` — initialization, workspace context, pool creation, pipeline wiring; `roots: BotAssemblyRoots` (None → resident identity) + `enable_dynamic_workspaces` assembly inputs, and `home_resources`/`assembly_context`/`pool_session_store` accessors |
+| `bot/service/roots.py` | `BotAssemblyRoots` — frozen typed roots of one bot assembly: `config_dir` (app/model/scope/MCP config), `resource_root` (bundled plugins/graphs/declaration assets), `workspace_home` (runtime data — DBs, routing store, ScopeRegistry home); derived paths (scope declaration, MCP registry, plugins, graphs, home/registry DBs) computed in one place; `resident()` reproduces the historical paths exactly |
 | `bot/service/builders.py` | Service-level construction helpers (inbox/turn-state/session/routing stores, external session map, slash-command processor) — tool construction glue is gone (scope assembly resolves tools from the compiled declaration) |
 | `bot/service/pool/` | Pool mode assembly — creates `AgentPool` from the compiled scope declaration (`declaration.py` boots: load → validate → compile; `factory.py` assembles). Split into 8 focused modules |
 | `modex_agent/multi_agent/pool_router.py` | `PoolRouter` (framework) — session→pool dispatch shell, `PoolRoutingStore` persistence, declaration-lookup agent→pool ownership |
 | `modex_agent/multi_agent/pool_instance.py` | `PoolInstance` — pool runtime holder (config, pool, root agent name) |
-| `bot/workspace/wiring/` | `build_workspace_stack` — workspace assembly (stack + resources; the workspace layer's resource selection — memory backend/path layout — is declared in `config/scopes/bot.yml`, ticket 14) |
+| `bot/workspace/wiring/` | `build_workspace_stack` — workspace assembly (stack + resources; the workspace layer's resource selection — memory backend/path layout — is declared in `config/scopes/bot.yml`, ticket 14). Resources resolve config/asset paths through `service.roots` (the assembly roots, never `_project_dir`) and `_enable_dynamic_workspaces` gates the dynamic-workspace switch entries |
 | `bot/workspace/handle.py` | `PoolWorkspaceResources` — per-workspace resource bundle |
 | `bot/workspace/dispatch.py` | `WorkspaceMessageDispatcher` — per-message workspace routing |
 | `bot/workspace/pool_data.py` | `PoolData` — frozen per-pool data bundle |

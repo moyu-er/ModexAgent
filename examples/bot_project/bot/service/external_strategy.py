@@ -37,7 +37,6 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from bot.config.webui_config import build_control_origin
 from modex_agent.agents.external.agent import StreamingProviderBackend
 from modex_agent.agents.external.backend_provider import PoolScopedBackendProvider
 from modex_agent.agents.external.builder import ExternalAgentBuilder
@@ -318,10 +317,10 @@ def build_external_env_spec(
     pool_name: str,
     pool_spec: PoolSpec,
     peer_links: Sequence[PeerLink],
-    project_dir: Path,
     inbox_dir: Path,
     workspace_dir: Path,
     root_agent_name: str,
+    control_origin: str,
 ) -> ExternalEnvSpec:
     """Build the ``ExternalEnvSpec`` for an external pool.
 
@@ -355,7 +354,7 @@ def build_external_env_spec(
         agent_pool_map=build_agent_pool_map(pool_name, pool_spec, peer_links),
         targets=build_routable_targets(pool_spec, peer_links),
         modexctl_bin_dir=_modexctl_bin_dir(),
-        control_origin=build_control_origin(project_dir / "config"),
+        control_origin=control_origin,
     )
 
 
@@ -454,10 +453,10 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         pool_name: str,
         pool_spec: PoolSpec,
         peer_links: Sequence[PeerLink],
-        project_dir: Path,
         inbox_dir: Path,
         workspace_dir: Path,
         root_agent_name: str,
+        control_origin: str,
         base_env: dict[str, str] | None = None,
         app_config: Any | None = None,
         persistence: Any | None = None,
@@ -478,10 +477,10 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
             pool_name,
             pool_spec,
             peer_links,
-            project_dir,
             inbox_dir,
             workspace_dir,
             root_agent_name,
+            control_origin,
         )
         return {
             "backend": backend,
@@ -513,7 +512,6 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         pool_name = ctx.pool_name
         pool_spec = ctx.pool_spec
         peer_links = ctx.peer_links
-        project_dir: Path = ctx.project_dir
         data_dir: Path = ctx.data_dir
         workspace_handle = ctx.workspace_handle
 
@@ -528,16 +526,21 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         #    computes (``data_dir / "inbox" / pool_name``) — the
         #    external env spec resolves inbox-relative paths from
         #    ``inbox_dir.parent``.
-        workspace_dir = workspace_handle.current if workspace_handle is not None else project_dir
+        scope_path = ctx.scope_path
+        workspace_dir = ctx.project_dir
+        if workspace_handle is not None:
+            workspace_dir = workspace_handle.current
+        if scope_path is not None:
+            workspace_dir = scope_path.workspace_root
         inbox_dir = data_dir / "inbox" / pool_name
         external_deps = self._build_external_deps(
             pool_name=pool_name,
             pool_spec=pool_spec,
             peer_links=peer_links,
-            project_dir=project_dir,
             inbox_dir=inbox_dir,
             workspace_dir=workspace_dir,
             root_agent_name=pool_spec.root_agent.name,
+            control_origin=ctx.control_origin,
             base_env=dict(os.environ),
             app_config=ctx.app_config,
             persistence=ctx.persistence,
@@ -598,8 +601,10 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         scope_path = deps.scope_path
         pool_name = scope_path.pool_name if scope_path is not None and scope_path.pool_name else "main"
         project_dir = deps.project_dir or Path(".")
-        data_dir = deps.data_dir or project_dir / ".modex"
-        workspace_dir = project_dir
+        workspace_dir = (
+            scope_path.workspace_root if scope_path is not None else project_dir
+        )
+        data_dir = deps.data_dir or workspace_dir / ".modex"
         inbox_root = data_dir / "inbox"
 
         descriptor = AgentDescriptor(
@@ -629,8 +634,7 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
             comm_kind=AgentCommKind.SUBAGENT,
             parent_session_id=parent_session_str or None,
             modexctl_bin_dir=resolve_modexctl_bin_dir(),
-            control_origin=deps.control_origin
-            or build_control_origin(project_dir / "config"),
+            control_origin=deps.control_origin,
         )
 
         session_store = build_external_session_map_store(

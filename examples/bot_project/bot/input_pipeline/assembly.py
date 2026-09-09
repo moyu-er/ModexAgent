@@ -1,4 +1,11 @@
-"""Assemble IM (S2..S8) and WebUI (S4..S8) sub-pipelines.
+"""Assemble IM (S2..S7) and WebUI (S4..S7) input sub-pipelines.
+
+Every builder returns the same :class:`BotInputPreparation` over ONE shared
+stage-selection rule: the skeleton constants below are the only stage lists,
+and prepare/handle both consume the same resolved stage sequence (DESIGN.md §7
+— no channel may copy the list). Delivery is not part of the list: handle
+delivers the prepared message through the channel's sync enqueue callback;
+prepare yields the typed ``Prepared | Handled`` outcome without delivering.
 
 Stage configs are ALWAYS constructed from the registry-resolved factory's
 own ``config_model`` — never from an import of the plugin module. The real
@@ -11,19 +18,21 @@ but distinct class to the factory's, and ``model_validate`` rejects it
 
 from __future__ import annotations
 
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from plugins.im_input_stages import InputStageName
 from pydantic import BaseModel
 
+from bot.input_pipeline.prepare import BotInputPreparation
 from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
 from bot.service.model_config import BotModelConfig
-from modex_agent.input_pipeline.pipeline import UserInputPipeline
-from modex_agent.input_pipeline.stage import InputStage
 from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.context import AssemblyContext
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.workspace.control import WorkspaceController
+
+if TYPE_CHECKING:
+    from modex_agent.input_pipeline.stage import InputStage
 
 _IM_STAGE_SKELETON: Final[tuple[InputStageName, ...]] = (
     InputStageName.SET_CHANNEL,
@@ -37,7 +46,6 @@ _IM_STAGE_SKELETON: Final[tuple[InputStageName, ...]] = (
     InputStageName.SKILL_PARSE,
     InputStageName.UNSUPPORTED_COMMAND,
     InputStageName.PERSIST_USER_MESSAGE,
-    InputStageName.ENQUEUE,
 )
 
 _WEBUI_STAGE_SKELETON: Final[tuple[InputStageName, ...]] = (
@@ -51,7 +59,6 @@ _WEBUI_STAGE_SKELETON: Final[tuple[InputStageName, ...]] = (
     InputStageName.SKILL_PARSE,
     InputStageName.UNSUPPORTED_COMMAND,
     InputStageName.PERSIST_USER_MESSAGE,
-    InputStageName.ENQUEUE,
 )
 
 _BUILTIN_STAGE_NAMES: Final[frozenset[str]] = frozenset(InputStageName)
@@ -79,8 +86,8 @@ async def _build_pipeline(
     ctx: AssemblyContext,
     skeleton: tuple[InputStageName, ...],
     configs: dict[str, dict[str, Any]],
-) -> UserInputPipeline:
-    """Build a pipeline from the skeleton + slot-resolved stage factories.
+) -> BotInputPreparation:
+    """Build a preparation from the skeleton + slot-resolved stage factories.
 
     ``configs`` maps stage names to CONSTRUCTOR KWARGS for that stage's
     config model — an open payload (one stage's config fields differ from
@@ -94,7 +101,7 @@ async def _build_pipeline(
         config: BaseModel = factory.config_model(**configs.get(name, {}))
         stage = await factory.create(config, ctx)
         stages.append(stage)
-    return UserInputPipeline(stages)
+    return BotInputPreparation(stages)
 
 
 async def build_im_pipeline(
@@ -104,8 +111,8 @@ async def build_im_pipeline(
     skill_registry: PoolSkillResolverRegistry,
     known_pools: set[str],
     workspace_controller: WorkspaceController | None = None,
-) -> UserInputPipeline:
-    """IM pipeline: S4→S2→S3→S5→CommandDispatch→Ingest→Approval→Skill→Unsupported→Persist→Enqueue.
+) -> BotInputPreparation:
+    """IM pipeline: S4→S2→S3→S5→CommandDispatch→Ingest→Approval→Skill→Unsupported→Persist.
 
     S2 (EnvironmentControlStage) handles IM-only commands (/cd, /pool, /exit,
     /pwd). S3 (SessionControlStage) handles /stop. CommandDispatchStage handles
@@ -131,15 +138,15 @@ async def build_webui_pipeline(
     ctx: AssemblyContext,
     skill_registry: PoolSkillResolverRegistry,
     bot_model_config: BotModelConfig | None,
-) -> UserInputPipeline:
-    """WebUI pipeline: S4→S5→ModelChoice→CommandDispatch→Ingest→Approval→Skill→Unsupported→Persist→Enqueue.
+) -> BotInputPreparation:
+    """WebUI pipeline: S4→S5→ModelChoice→CommandDispatch→Ingest→Approval→Skill→Unsupported→Persist.
 
     No S2/S3: the WebUI has GUI controls for workspace/pool/session. CommandDispatchStage
     handles cross-channel commands (/continue) shared with IM. Pool-switch
     shortcuts typed into the chat box reach the terminal Unsupported stage.
 
     ModelChoiceStage 仅在此 pipeline 注册：把 WebUI 选中的 provider/model 解析为
-    ResolvedModel 写入 envelope.metadata，由 EnqueueStage 注册到 registry。IM
+    ResolvedModel 写入 envelope.metadata，由 S8 builder 注册到 registry。IM
     pipeline 不注册（始终使用默认模型）。
     """
     return await _build_pipeline(

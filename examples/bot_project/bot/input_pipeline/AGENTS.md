@@ -5,7 +5,7 @@
 
 Converged user-input stage pipeline that processes incoming messages identically across IM (QQ, Telegram) and WebUI channels. All channels persist user messages to the same transcript store via the same mechanism, with control commands excluded from persistence.
 
-A slash command flows through the pipeline with a `command_status` lifecycle (`UNRESOLVED` → `RESOLVED` or `HANDLED`): a claiming stage sets it, the terminal `UnsupportedCommandStage` rejects anything still `UNRESOLVED`, and `PersistUserMessageStage` / `EnqueueStage` skip when `HANDLED`.
+A slash command flows through the pipeline with a `command_status` lifecycle (`UNRESOLVED` → `RESOLVED` or `HANDLED`): a claiming stage sets it, the terminal `UnsupportedCommandStage` rejects anything still `UNRESOLVED`, and `PersistUserMessageStage` skips when `HANDLED`. Final message construction uses a prepared carriage when present; otherwise a `HANDLED` input produces no message.
 
 ## Architecture
 
@@ -33,13 +33,14 @@ A slash command flows through the pipeline with a `command_status` lifecycle (`U
      │ S6  SkillParseStage                      │  validate /skillName, convert to XML
      │    UnsupportedCommandStage               │  reject unclaimed slash commands
      │ S7  PersistUserMessageStage              │  write UserMessageEvent to transcript store
-     │ S8  EnqueueStage                         │  build InputMessage, enqueue via ctx callback
      └─────────────────────────────────────────┘
 ```
 
+After the stages, `BotInputPreparation` uses `build_input_message` once: `handle()` delivers via the channel callback and returns the original `StageResult`; `prepare()` returns `Prepared | Handled` without delivery.
+
 - **S0 (adapter-side normalization)**: NOT a pipeline stage. Each channel adapter (QQ / Telegram `_on_message`, WebSocket `_ws_send_message`) handles dedup, attachment download, content extraction and produces a seed `UserInputEnvelope`. This keeps channel-specific concerns in the adapter layer.
-- **IM pipeline** (12 stages): Full path for IM channels. S4 runs FIRST so ``ChannelRouterOutputAdapter`` can route command responses to the correct channel. S2/S3 intercept IM-only control commands before they reach persistence or the agent queue.
-- **WebUI pipeline** (11 stages): WebUI has UI-level controls for workspace/pool/session operations, so S2/S3 are skipped and `ModelChoiceStage` is included. Unknown `/command` input terminates at `UnsupportedCommandStage`. The pause button sends a WebSocket `pause` action which invokes the same control-channel cancellation as IM `/stop`.
+- **IM pipeline** (11 stages): Full path for IM channels. S4 runs FIRST so ``ChannelRouterOutputAdapter`` can route command responses to the correct channel. S2/S3 intercept IM-only control commands before they reach persistence or the agent queue.
+- **WebUI pipeline** (10 stages): WebUI has UI-level controls for workspace/pool/session operations, so S2/S3 are skipped and `ModelChoiceStage` is included. Unknown `/command` input terminates at `UnsupportedCommandStage`. The pause button sends a WebSocket `pause` action which invokes the same control-channel cancellation as IM `/stop`.
 
 ## Pipeline Semantics
 
@@ -131,8 +132,8 @@ This makes S5 the single owner of pool resolution + persistence. Neither the Web
 Both pipelines. A shared, configurable stage that dispatches cross-channel slash commands via a caller-supplied handler map. Each pipeline passes its own set of handlers (currently both use `SHARED_COMMANDS`). It sits after `ResolvePoolStage` (needs the resolved pool/session) and before attachment ingest.
 
 - Looks up the first token of a `/command` in the handler map; unrecognised input passes through unchanged.
-- A handler runs, then the stage sets `command_status = CommandStatus.HANDLED` and continues — so `PersistUserMessageStage` and `EnqueueStage` skip (the handler already did whatever enqueue/persist was needed).
-- **`/continue`** — the handler enqueues a raw `InputMessage(content="/continue")` for the agent pipeline (no user message appended; triggers the agent), then marks `HANDLED`. Moved here from S2 so IM and WebUI share one home for cross-channel commands.
+- A handler runs, then the stage sets `command_status = CommandStatus.HANDLED` and continues. `PersistUserMessageStage` skips; delivery remains owned by `BotInputPreparation.handle`.
+- **`/continue`** — the handler stores `InputMessage(content="/continue")` in `RoutingMeta.PREPARED_MESSAGE`. The shared builder returns this carriage after the stages; the handler neither enqueues nor persists it.
 - Command names are centralised in a `BuiltinCommand` enum (no raw strings). Adding a new cross-channel command: add a member, write a `handle_<name>` function, register it in `SHARED_COMMANDS`.
 - Channel-specific commands that need pre-`ResolvePool` positional constraints (IM `/cd`, `/pool`, `/exit`, `/pwd`, `/stop`) stay in S2/S3 — they terminate before this stage runs.
 
@@ -163,13 +164,13 @@ Both pipelines. Writes a `UserMessageEvent` to the workspace-scoped transcript s
 - Defense-in-depth: persists only when `command_status == RESOLVED` (a claimed skill/approval whose raw text must survive) or for plain non-command text. A `UNRESOLVED` slash command that leaked past every claiming stage is dropped with a warning (the terminal stage should have caught it); a `HANDLED` command (e.g. `/continue`) is skipped because the claiming stage already fully processed it.
 - This is the **single** persistence path for user messages. No adapter or server writes `UserMessageEvent` directly.
 
-### S8 — EnqueueStage
+### S8 — Message Construction and Delivery
 
 `stages/enqueue.py`
 
-Both pipelines. Builds the final `InputMessage` and delivers it via `ctx.enqueue_message(msg)`.
+`build_input_message` constructs the final `InputMessage`. `BotInputPreparation.handle` is the single delivery owner via `ctx.enqueue_message(msg)`; `prepare` returns the message without delivery. There is no registered delivery stage.
 
-- Skips entirely when `command_status == HANDLED` (the claiming stage, e.g. `CommandDispatchStage` for `/continue`, already enqueued its own message).
+- Returns the prepared carriage first, or no message for `HANDLED` without a carriage.
 - Uses `skill_xml` (from S6) if present, otherwise raw `envelope.content`.
 - Carries `source` (= channel name, for `PoolRouter` agent address), `chat_id` (broker header), and attachment paths.
 - Channel-agnostic: the physical queue (QQ `_message_queue` or WS queue) is injected through the context callback.
@@ -229,4 +230,5 @@ This pipeline reuses the framework's `InputAdapter._try_intercept_control` for `
 | `stages/commands.py` | `BuiltinCommand` enum + `handle_continue` handler + `SHARED_COMMANDS` map |
 | `stages/skill_parse.py` | S6 — per-pool `SkillResolver` lookup + canonical command resolution |
 | `stages/persist_user_message.py` | S7 — transcript store persistence |
-| `stages/enqueue.py` | S8 — InputMessage construction + enqueue |
+| `stages/enqueue.py` | S8 — shared InputMessage construction |
+| `prepare.py` | Shared stage orchestration; typed preparation or channel callback delivery |

@@ -97,21 +97,36 @@ def _make_deps(
     tree: Any | None = None,
     session_registry: Any | None = None,
     subagent_name: str = "coder",
+    workspace_root: Path = Path("/ws"),
+    control_origin: str = "",
 ) -> AgentMaterializeDeps:
     from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 
+    scope_path = ScopePath(workspace_root=workspace_root, pool_name="default")
+    resolved_data_dir = data_dir or workspace_root / ".modex"
     # The declared pool tree the converged auto-send hook factory derives
     # the parent name from (the chain's pool_assembly_ctx read).
-    pool_assembly = MagicMock(spec=PoolAssemblyContext)
-    pool_assembly.pool_name = "default"
-    pool_assembly.pool_spec = PoolSpec(
-        name="default",
-        agents=[
-            AgentSpec(name="main"),
-            AgentSpec(name=subagent_name, parent="main"),
-        ],
+    pool_assembly = PoolAssemblyContext(
+        pool_name="default",
+        pool_spec=PoolSpec(
+            name="default",
+            agents=[
+                AgentSpec(name="main"),
+                AgentSpec(name=subagent_name, parent="main"),
+            ],
+        ),
+        project_dir=project_dir,
+        data_dir=resolved_data_dir,
+        broker=broker,
+        inbox_server=MagicMock(),
+        agent_bus=MagicMock(),
+        output_adapter=MagicMock(),
+        safety=MagicMock(),
+        retention=MagicMock(),
+        registry=MagicMock(),
+        scope_path=scope_path,
+        control_origin=control_origin,
     )
-    pool_assembly.pool_data = None
     return AgentMaterializeDeps(
         agent_factory=MagicMock(),
         pool=MagicMock(),
@@ -119,10 +134,11 @@ def _make_deps(
         broker=broker,
         tree=tree or MagicMock(spec=SessionTreeManager),
         project_dir=project_dir,
-        data_dir=data_dir,
+        data_dir=resolved_data_dir,
         session_registry=session_registry,
-        scope_path=ScopePath(workspace_root=Path("/ws"), pool_name="default"),
+        scope_path=scope_path,
         pool_assembly_ctx=pool_assembly,
+        control_origin=control_origin,
     )
 
 
@@ -259,6 +275,31 @@ async def test_assemble_sub_env_spec_targets_only_parent_star_topology(
     assert spec_template.provider_session_id == ""
     assert spec_template.comm_kind is AgentCommKind.SUBAGENT
     assert spec_template.parent_session_id == "inv123.main"
+
+
+@pytest.mark.asyncio
+async def test_assemble_sub_env_spec_uses_scope_runtime_root_and_control_origin(
+    tmp_path: Path,
+) -> None:
+    resource_root = tmp_path / "bot-assets"
+    workspace_root = tmp_path / "ide-workspace"
+    control_origin = "http://127.0.0.1:32123"
+    strategy = ExternalExecutionStrategy()
+    spec = _make_subagent_spec()
+    deps = _make_deps(
+        broker=MagicMock(),
+        project_dir=resource_root,
+        data_dir=workspace_root / ".modex",
+        workspace_root=workspace_root,
+        control_origin=control_origin,
+    )
+
+    sub = await strategy.assemble_sub(_make_subagent_ctx(spec=spec, deps=deps), deps)
+
+    spec_template = _external_agent(sub)._spec_template
+    assert spec_template.workspace_root == workspace_root
+    assert spec_template.workdir == workspace_root
+    assert spec_template.control_origin == control_origin
 
 
 @pytest.mark.asyncio

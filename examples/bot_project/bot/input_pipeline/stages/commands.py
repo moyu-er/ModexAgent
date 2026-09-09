@@ -33,8 +33,10 @@ class BuiltinCommand(StrEnum):
     CONTINUE = "continue"
 
 
-def handle_continue(c: CommandContext) -> None:
-    msg = InputMessage(
+def build_continue_message(c: CommandContext) -> InputMessage:
+    """Construct the /continue signal message — construction only; delivery
+    happens once at the S8 builder (DESIGN.md §7 prepared-message outcome)."""
+    return InputMessage(
         content=f"/{BuiltinCommand.CONTINUE.value}",
         session=SessionInfo.from_str(c.full_session_id),
         channel=c.envelope.channel,
@@ -43,9 +45,8 @@ def handle_continue(c: CommandContext) -> None:
         metadata={"session_id": c.full_session_id, "channel": c.envelope.channel},
         workspace=Path(c.envelope.metadata.get(RoutingMeta.WORKSPACE, str(c.ctx.current_ws()))),
     )
-    c.ctx.enqueue_message(msg)
 
 
 SHARED_COMMANDS: Mapping[str, CommandHandler] = {
-    BuiltinCommand.CONTINUE.value: handle_continue,
+    BuiltinCommand.CONTINUE.value: build_continue_message,
 }

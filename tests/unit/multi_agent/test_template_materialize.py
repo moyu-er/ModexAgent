@@ -17,6 +17,7 @@ from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.memory.cleanup_hooks import TodoReorientationHook
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
 from modex_agent.multi_agent.descriptor import AgentInstance
+from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.template import AgentTemplate
@@ -46,10 +47,31 @@ class _StaticRootProvider(WorkspaceRootProvider):
         return self._root
 
 
+def _pool_assembly_context(
+    pool_spec: PoolSpec,
+    *,
+    workspace_root: Path = Path("/ws"),
+    control_origin: str = "http://127.0.0.1:21800",
+) -> PoolAssemblyContext:
+    return PoolAssemblyContext(
+        pool_name=pool_spec.name,
+        pool_spec=pool_spec,
+        project_dir=workspace_root,
+        data_dir=workspace_root / ".modex",
+        broker=MagicMock(),
+        inbox_server=MagicMock(),
+        agent_bus=MagicMock(),
+        output_adapter=MagicMock(),
+        safety=RuntimeSafetyPolicy(),
+        retention=MagicMock(),
+        registry=MagicMock(),
+        scope_path=ScopePath(workspace_root=workspace_root, pool_name=pool_spec.name),
+        control_origin=control_origin,
+    )
+
+
 async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
     """Build deps with a mocked agent_factory + pool."""
-    from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
-
     fake_instance = MagicMock()
     fake_instance.pipeline = MagicMock()
     from modex_agent.runtime.services import AgentRuntimeServices
@@ -78,18 +100,14 @@ async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
     # The declared pool tree the subagent_auto_send factory derives the
     # parent name from (the roster-dispatched hook's chain read) — every
     # template materialized through these deps is the "scout" sub. The
-    # env-spec fields (project_dir / peer_links / control_origin) feed the
+    # env-spec fields (scope_path / data_dir / peer_links / control_origin) feed the
     # position-default native_env factory's chain derivation.
-    pool_assembly = MagicMock(spec=PoolAssemblyContext)
-    pool_assembly.pool_name = "main"
-    pool_assembly.pool_spec = PoolSpec(
-        name="main",
-        agents=[AgentSpec(name="main"), AgentSpec(name="scout", parent="main")],
+    pool_assembly = _pool_assembly_context(
+        PoolSpec(
+            name="main",
+            agents=[AgentSpec(name="main"), AgentSpec(name="scout", parent="main")],
+        )
     )
-    pool_assembly.pool_data = None
-    pool_assembly.project_dir = Path("/ws")
-    pool_assembly.peer_links = ()
-    pool_assembly.control_origin = "http://127.0.0.1:21800"
     # The pool's subagents supply — the materialized sub's compiled spec
     # carries the subagents capability (non-root ⇒ derived send_to_agent
     # + the auto-send hook + the consultation section), whose assemble
@@ -109,9 +127,11 @@ async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
         llm_model="gpt-4o",
         llm_provider=MagicMock(),
         project_dir=None,  # skip prompt file read + MCP + skills
+        data_dir=pool_assembly.data_dir,
         root_provider=_StaticRootProvider(Path("/ws")),
         component_registry=registry,
         pool_assembly_ctx=pool_assembly,
+        scope_path=pool_assembly.scope_path,
         capability_supply={
             "subagents": SubagentsSupply(service=MagicMock()),
             "skills": build_skills_supply(
@@ -120,7 +140,6 @@ async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
         },
     )
     deps.context_fork_builder = ContextForkBuilder()
-    deps.scope_path = ScopePath(workspace_root=Path("/ws"), pool_name="main")
     return deps, factory
 
 
@@ -1078,7 +1097,6 @@ async def test_materialize_pool_full_access_inherits_to_subagent():
     full-access pool yields a full-access subagent (equal, never wider
     than the caller). A DECLARED block still narrows: the second half
     pins a workspace declaration under the full caller."""
-    from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
     from modex_agent.sandbox.settings import ExclusiveConfig, SandboxSettings, WriteSurface
 
     deps, factory = await _make_deps()
@@ -1091,16 +1109,13 @@ async def test_materialize_pool_full_access_inherits_to_subagent():
             }
         },
     )
-    pool_assembly = MagicMock(spec=PoolAssemblyContext)
-    pool_assembly.pool_name = "main"
-    pool_assembly.pool_spec = PoolSpec(
-        name="main",
-        agents=[root, AgentSpec(name="scout", parent="main")],
+    pool_assembly = _pool_assembly_context(
+        PoolSpec(
+            name="main",
+            agents=[root, AgentSpec(name="scout", parent="main")],
+        ),
+        control_origin="",
     )
-    pool_assembly.pool_data = None
-    pool_assembly.project_dir = Path("/ws")
-    pool_assembly.peer_links = ()
-    pool_assembly.control_origin = ""
     deps.pool_assembly_ctx = pool_assembly
     template = _compiled_template("scout")
     parent = SessionIdFactory().create(agent_name="main")

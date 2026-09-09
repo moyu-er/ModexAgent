@@ -14,7 +14,13 @@ from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.memory.context import ContextState, InMemoryContextManager
 from modex_agent.messaging.models import InputMessage
-from modex_agent.runtime.enums import AgentKind, ApprovalSubjectType, SnapshotReason, TurnPhase
+from modex_agent.runtime.enums import (
+    AgentKind,
+    ApprovalSubjectType,
+    SnapshotReason,
+    TurnCustomKey,
+    TurnPhase,
+)
 from modex_agent.runtime.models import (
     ApprovalRequestState,
     ApprovalTransaction,
@@ -61,7 +67,12 @@ class _SuspendingAgent:
 
     async def run(self, context, emitter):
         await context.runtime.turn_store.save_turn(self._snapshot)
-        raise GraphInterrupt(value=["approval"])
+        # The interrupt carries the REAL persisted approval request — the
+        # runner serializes these into wire views, so a fake string would be
+        # an invalid suspension payload.
+        approval = ReActSnapshotPolicy.approval_from_snapshot(self._snapshot)
+        assert approval is not None and approval.requests
+        raise GraphInterrupt(value=[approval.requests[0]])
 
 
 class _DangerousClassifier:
@@ -119,6 +130,56 @@ def _pending_snapshot(
             requests=[request],
         ),
     )
+    return identity, ReActSnapshotPolicy().capture(
+        state,
+        SnapshotReason.TOOL_APPROVAL_REQUIRED,
+    )
+
+
+def _pending_snapshot_two(
+    session_id: str = "s1",
+    *,
+    turn_id: str = "t1",
+    first_approval_id: str = "ap1",
+    second_approval_id: str = "ap2",
+    turn_uuid: str | None = None,
+) -> tuple[TurnIdentity, object]:
+    identity = TurnIdentity(agent_id="agent", session=SessionInfo.from_str(session_id), turn_id=turn_id)
+    requests = [
+        ApprovalRequestState(
+            request_id="r1",
+            approval_id=first_approval_id,
+            tool_call_id="c1",
+            tool_name="write_file",
+            arguments=ToolArguments(values={"path": "a.txt"}),
+            tier=ApprovalTier.DANGEROUS,
+            iteration=1,
+        ),
+        ApprovalRequestState(
+            request_id="r2",
+            approval_id=second_approval_id,
+            tool_call_id="c2",
+            tool_name="run_cmd",
+            arguments=ToolArguments(values={"cmd": "ls"}),
+            tier=ApprovalTier.DANGEROUS,
+            iteration=1,
+        ),
+    ]
+    state = ReActTurnState(
+        identity=identity,
+        agent_kind=AgentKind.REACT,
+        phase=TurnPhase.SUSPENDED,
+        current_node=ReActNode.TOOL,
+        approval=ApprovalTransaction(
+            approval_id=first_approval_id,
+            turn_id=identity.turn_id,
+            subject_type=ApprovalSubjectType.TOOL_BATCH,
+            subject_ids=["batch1"],
+            requests=requests,
+        ),
+    )
+    if turn_uuid is not None:
+        state.custom[TurnCustomKey.TURN_UUID] = turn_uuid
     return identity, ReActSnapshotPolicy().capture(
         state,
         SnapshotReason.TOOL_APPROVAL_REQUIRED,
@@ -256,3 +317,114 @@ async def test_sequential_approval_groups_in_same_session_do_not_interfere() -> 
 
     assert await turn_store.load_turn(first_snapshot.identity) is None
     assert await turn_store.load_turn(second_snapshot.identity) is None
+
+
+@pytest.mark.asyncio
+async def test_stale_approval_id_decision_reports_still_pending_suspension() -> None:
+    """A decision naming an unknown approval_id is stale: the REAL pipeline
+    must report the STILL-PENDING batch (SUSPENDED), never HANDLED — HANDLED
+    would settle a request-scope whose approval batch is actually live."""
+    from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
+    from modex_agent.pipeline.turn_outcome import TurnOutcomeKind
+
+    turn_store = InMemoryTurnStateStore()
+    _identity, snapshot = _pending_snapshot(approval_id="ap1")
+    await turn_store.save_turn(snapshot)
+    pipeline = _pipeline(turn_store=turn_store)
+
+    stale = InputMessage(
+        content="",
+        session=SessionInfo.from_str("s1"),
+        approval_decision=ApprovalDecisionInput(
+            tool_call_id="c1", action=ApprovalAction.ALLOW, approval_id="stale",
+        ),
+    )
+    outcome = await pipeline.process_message_outcome(stale)
+
+    assert outcome.kind is TurnOutcomeKind.SUSPENDED
+    assert outcome.suspension is not None
+    assert [req.approval_id for req in outcome.suspension.requests] == ["ap1"]
+    # The snapshot stayed pending for the real decision.
+    assert await turn_store.load_turn(snapshot.identity) is not None
+@pytest.mark.asyncio
+async def test_partial_decision_keeps_request_waiting_as_suspension() -> None:
+    """A decision that consumes only part of the batch: apply_resume returns
+    None with requests STILL pending — the pipeline must report SUSPENDED
+    (never HANDLED, which would settle a live request-scope)."""
+    from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
+    from modex_agent.pipeline.turn_outcome import TurnOutcomeKind
+
+    turn_store = InMemoryTurnStateStore()
+    _identity, snapshot = _pending_snapshot_two()
+    await turn_store.save_turn(snapshot)
+    pipeline = _pipeline(turn_store=turn_store)
+
+    partial = InputMessage(
+        content="",
+        session=SessionInfo.from_str("s1"),
+        approval_decision=ApprovalDecisionInput(
+            tool_call_id="c1", action=ApprovalAction.ALLOW, approval_id="ap1",
+        ),
+    )
+    outcome = await pipeline.process_message_outcome(partial)
+
+    assert outcome.kind is TurnOutcomeKind.SUSPENDED
+    assert outcome.suspension is not None
+    assert [req.approval_id for req in outcome.suspension.requests] == ["ap2"]
+    assert await turn_store.load_turn(snapshot.identity) is not None
+
+
+@pytest.mark.asyncio
+async def test_partial_decision_preserves_snapshot_turn_uuid_in_suspension() -> None:
+    """A partial decision runs after the original turn left the live registry;
+    the still-pending suspension therefore keeps the UUID persisted in its
+    snapshot rather than replacing it with a missing live-registry value."""
+    from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
+
+    expected_turn_uuid = "turn-uuid-from-snapshot"
+    turn_store = InMemoryTurnStateStore()
+    _identity, snapshot = _pending_snapshot_two(turn_uuid=expected_turn_uuid)
+    await turn_store.save_turn(snapshot)
+    pipeline = _pipeline(turn_store=turn_store)
+
+    partial = InputMessage(
+        content="",
+        session=SessionInfo.from_str("s1"),
+        approval_decision=ApprovalDecisionInput(
+            tool_call_id="c1", action=ApprovalAction.ALLOW, approval_id="ap1",
+        ),
+    )
+    outcome = await pipeline.process_message_outcome(partial)
+
+    assert outcome.suspension is not None
+    assert outcome.suspension.turn_uuid == expected_turn_uuid
+    assert [req.turn_uuid for req in outcome.suspension.requests] == [
+        expected_turn_uuid
+    ]
+
+
+@pytest.mark.asyncio
+async def test_legacy_stale_tool_call_id_keeps_request_waiting_as_suspension() -> None:
+    """Legacy decision (approval_id=None) naming an UNKNOWN tool_call_id
+    consumes nothing: still-pending batch must surface as SUSPENDED."""
+    from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
+    from modex_agent.pipeline.turn_outcome import TurnOutcomeKind
+
+    turn_store = InMemoryTurnStateStore()
+    _identity, snapshot = _pending_snapshot()
+    await turn_store.save_turn(snapshot)
+    pipeline = _pipeline(turn_store=turn_store)
+
+    stale = InputMessage(
+        content="",
+        session=SessionInfo.from_str("s1"),
+        approval_decision=ApprovalDecisionInput(
+            tool_call_id="no-such-call", action=ApprovalAction.ALLOW,
+        ),
+    )
+    outcome = await pipeline.process_message_outcome(stale)
+
+    assert outcome.kind is TurnOutcomeKind.SUSPENDED
+    assert outcome.suspension is not None
+    assert [req.approval_id for req in outcome.suspension.requests] == ["ap1"]
+    assert await turn_store.load_turn(snapshot.identity) is not None

@@ -12,6 +12,7 @@ from modex_agent.core import AgentCommKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.multi_agent.session_tree.request_scope import REQUEST_SCOPE_ID_KEY
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.workspace.scope_path import resolve_scope_path
 
@@ -81,6 +82,15 @@ class SendStrategy(ABC):
         if self.should_register_session() and self._deps.session_registry is not None:
             await self._deps.session_registry.register(session)
         envelope = self.build_envelope(req, session, invocation_id)
+        # Source-time request-scope attribution (DESIGN.md §6.2, acp-adapter):
+        # the SENDER's running scope stamps outgoing causal traffic — a
+        # child's task/result carrier keeps its originating request identity
+        # and a late reply can never inherit the receiver's newer scope.
+        sender_scope_id = await self._deps.tree.sender_scope_id(
+            req.context.session.session_id,
+        )
+        if sender_scope_id is not None:
+            envelope.metadata[REQUEST_SCOPE_ID_KEY] = sender_scope_id
         if self.should_propagate_graph_instance_id() and req.context.graph_instance_id is not None:
             envelope.metadata["graph_instance_id"] = req.context.graph_instance_id
         if self.should_propagate_graph_instance_id():

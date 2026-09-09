@@ -36,9 +36,19 @@ from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.inbox_poller import InboxPoller
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.state import AgentState
+from modex_agent.pipeline.turn_outcome import TurnOutcome
 from modex_agent.scope.spec import AgentSpec
 
 # ── Test helpers ──────────────────────────────────────────────────────────
+
+
+def _as_outcome(process):
+    """Wrap a recording fake into the pool's typed outcome interface."""
+    async def _outcome(msg):
+        await process(msg)
+        return TurnOutcome.handled()
+    return _outcome
+
 
 
 class _FakeBroker:
@@ -52,7 +62,7 @@ class _FakeBroker:
 class _MockAgentFactory(DefaultAgentFactory):
     async def create_agent(self, descriptor, **kwargs):
         pipeline = MagicMock()
-        pipeline.process_message = AsyncMock()
+        pipeline.process_message_outcome = AsyncMock(return_value=TurnOutcome.handled())
         pipeline.hook_runner = None
         pipeline.hooks = []
         pipeline.stop = AsyncMock()
@@ -128,7 +138,7 @@ async def test_poller_single_message_runs_one_turn():
         main = pool._agents["main"]
         await bus.send("pfx.main", _envelope("hello"))
         await asyncio.sleep(0.1)
-        assert main.pipeline.process_message.await_count == 1
+        assert main.pipeline.process_message_outcome.await_count == 1
     finally:
         await poller.stop()
 
@@ -143,7 +153,7 @@ async def test_poller_drains_batch_one_turn_per_envelope():
         for i in range(3):
             await bus.send("pfx.main", _envelope(f"m{i}"))
         await asyncio.sleep(0.15)
-        assert main.pipeline.process_message.await_count == 3
+        assert main.pipeline.process_message_outcome.await_count == 3
         assert "pfx.main" not in await bus.sessions_with_pending()
     finally:
         await poller.stop()
@@ -163,8 +173,7 @@ async def test_poller_single_flight_busy_session_skipped():
             started.append(1)
             await asyncio.sleep(0.5)
 
-        main.pipeline.process_message = _slow
-
+        main.pipeline.process_message_outcome = _as_outcome(_slow)
         await bus.send("pfx.main", _envelope("first"))
         await asyncio.sleep(0.15)  # poller starts the slow turn
         # Send more messages while the turn is busy; ticks must skip.
@@ -189,8 +198,8 @@ async def test_poller_external_input_runs_a_turn():
         )
         await pool.submit_input("pfx.main", msg)
         await asyncio.sleep(0.15)
-        assert main.pipeline.process_message.await_count == 1
-        call_args = main.pipeline.process_message.call_args
+        assert main.pipeline.process_message_outcome.await_count == 1
+        call_args = main.pipeline.process_message_outcome.call_args
         assert call_args is not None
         assert call_args[0][0].content == "external hello"
     finally:
@@ -205,7 +214,7 @@ async def test_poller_no_drop_under_concurrent_sends():
         await asyncio.gather(*[bus.send("pfx.main", _envelope(f"c{i}")) for i in range(5)])
         await asyncio.sleep(0.2)
         assert "pfx.main" not in await bus.sessions_with_pending()
-        assert main.pipeline.process_message.await_count >= 1
+        assert main.pipeline.process_message_outcome.await_count >= 1
     finally:
         await poller.stop()
 
@@ -257,7 +266,10 @@ async def test_dispatch_end_failure_releases_inflight_and_propagates() -> None:
 
     assert "pfx.main" not in poller._inflight
     tree_manager.on_dispatch_end.assert_awaited_once_with("pfx.main", cancelled=False)
-    poller.signal_wakeup.assert_called_once_with()
+    # The batch made no progress (nothing dispatched/archived): the dispatch
+    # end does NOT self-wake the poller — held work retries via the interval
+    # tick or the next real signal, never as a busy loop.
+    poller.signal_wakeup.assert_not_called()
 
 
 # ── Lazy materialize on first turn ────────────────────────────────────────
@@ -281,7 +293,7 @@ async def test_poller_lazy_materializes_missing_subagent():
             captured_parent["parent_session"] = parent_session
             inst = MagicMock()
             inst.pipeline = MagicMock()
-            inst.pipeline.process_message = AsyncMock()
+            inst.pipeline.process_message_outcome = AsyncMock(return_value=TurnOutcome.handled())
             pool._agents["scout"] = inst
             return inst
 
@@ -362,7 +374,7 @@ async def test_dispatch_stamps_parent_from_envelope_without_registry():
         async def _capture(msg):
             captured["session"] = msg.session
 
-        inst.pipeline.process_message = _capture
+        inst.pipeline.process_message_outcome = _as_outcome(_capture)
         pool._agents["scout"] = inst
         pool._status["scout"] = AgentState.IDLE
 
@@ -384,3 +396,104 @@ async def test_dispatch_stamps_parent_from_envelope_without_registry():
         assert session.session_id == "inv1.scout"
     finally:
         await poller.stop()
+
+
+@pytest.mark.asyncio
+async def test_lazy_materialized_hold_only_batch_does_not_self_wake():
+    """The lazy-materialize dispatch lifecycle shares the resident contract:
+    a hold-only round (request scope waiting on approval) makes no progress
+    and must NOT self-wake the poller — no consume/hold/release busy loop."""
+    from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+    from modex_agent.multi_agent.session_tree.request_scope import DispatchDecision
+    from modex_agent.multi_agent.template import AgentTemplate
+
+    pool, bus, poller = await _make_poller_pool()
+
+    class _FakeTemplate(AgentTemplate):
+        async def materialize(self, parent_session, invocation_id, deps):
+            inst = MagicMock()
+            inst.pipeline = MagicMock()
+            inst.pipeline.process_message_outcome = AsyncMock(
+                return_value=TurnOutcome.handled()
+            )
+            pool._agents["scout"] = inst
+            return inst
+
+    pool.template_registry = MagicMock()
+    pool.template_registry.get_template = MagicMock(
+        return_value=_FakeTemplate(spec=AgentSpec(name="scout"))
+    )
+    pool.materialize_deps = MagicMock()
+    pool.pool_name = "main"
+
+    tree_manager = MagicMock(spec=SessionTreeManager)
+    tree_manager.can_dispatch = AsyncMock(return_value=True)
+    tree_manager.on_dispatch_start = AsyncMock()
+    tree_manager.on_dispatch_end = AsyncMock()
+    tree_manager.dispatch_consume_types = AsyncMock(return_value=None)
+    tree_manager.admit_scoped_dispatch = AsyncMock(return_value=DispatchDecision.HOLD)
+    poller.attach_tree_manager(tree_manager)
+
+    sf = SessionIdFactory()
+    child_session = sf.create_with_prefix(
+        agent_name="scout",
+        prefix="inv3",
+        parent_session_id=sf.create(agent_name="main"),
+    )
+    from modex_agent.persistence.session_registry import InMemorySessionRegistry
+
+    pool._session_registry = InMemorySessionRegistry()
+    await pool._session_registry.register(child_session)
+    poller.signal_wakeup = MagicMock()
+
+    try:
+        await bus.send("inv3.scout", _envelope("hello", session_id="inv3.scout"))
+        while "scout" not in pool._agents:
+            await asyncio.sleep(0.01)
+        while poller._inflight:
+            await asyncio.sleep(0.01)
+
+        # This fixture wires no bus→poller signal at all, so a hold-only
+        # round has zero legitimate wakeup sources — it must not become its
+        # own signal source.
+        assert poller.signal_wakeup.call_count == 0
+        await asyncio.sleep(0.1)  # any self-wake spin would keep incrementing
+        assert poller.signal_wakeup.call_count == 0
+        # Nothing was dispatched: the envelope was held, never started.
+        pool._agents["scout"].pipeline.process_message_outcome.assert_not_called()
+    finally:
+        await poller.stop()
+
+
+@pytest.mark.asyncio
+async def test_scope_termination_offers_each_pipeline_until_true():
+    """Termination must not depend on which pipeline comes first: each
+    session is offered to every available pipeline until one reports a
+    terminated batch (True) — a no-op first pipeline (external runner) can
+    never mask a real terminator, and exhausting all pipelines idempotently
+    means nothing was pending."""
+    pool, _bus, poller = await _make_poller_pool()
+    await poller.stop()
+
+    first = pool._agents["main"]
+    first.pipeline = MagicMock()
+    first.pipeline.terminate_pending_approval = AsyncMock(return_value=False)
+
+    second = MagicMock()
+    second.pipeline = MagicMock()
+    second.pipeline.terminate_pending_approval = AsyncMock(return_value=True)
+    pool._agents["second"] = second
+
+    await pool._terminate_scope_approvals(["s1", "s2"])
+
+    # s1: first False → second True (stop); s2: first False → second True.
+    assert first.pipeline.terminate_pending_approval.await_count == 2
+    assert second.pipeline.terminate_pending_approval.await_count == 2
+    first.pipeline.terminate_pending_approval.assert_awaited_with("s2")
+    second.pipeline.terminate_pending_approval.assert_awaited_with("s2")
+
+    # Exhausted traversal (every pipeline False) is an idempotent no-op.
+    second.pipeline.terminate_pending_approval = AsyncMock(return_value=False)
+    await pool._terminate_scope_approvals(["s1"])
+    first.pipeline.terminate_pending_approval.assert_awaited_with("s1")
+    second.pipeline.terminate_pending_approval.assert_awaited_with("s1")

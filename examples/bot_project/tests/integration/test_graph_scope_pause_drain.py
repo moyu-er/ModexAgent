@@ -110,6 +110,14 @@ class _PipelineBoundary:
             # Native runners may translate task cancellation to a normal return.
             return
 
+    async def process_message_outcome(self, message: InputMessage):
+        from modex_agent.pipeline.turn_outcome import TurnOutcome
+        await self.process_message(message)
+        return TurnOutcome.handled()
+
+    async def terminate_pending_approval(self, session_id: str) -> bool:
+        return False
+
     async def stop(self) -> None:
         pass
 
@@ -586,7 +594,7 @@ async def test_graph_saved_only_lazy_child_restores_materialization_parent(
     async def create_with_boundary(*args, **kwargs):
         instance = await create_agent(*args, **kwargs)
         assert instance.pipeline is not None
-        instance.pipeline.process_message = boundary.process_message
+        instance.pipeline.process_message_outcome = boundary.process_message_outcome
         return instance
 
     monkeypatch.setattr(build.factory, "create_agent", create_with_boundary)

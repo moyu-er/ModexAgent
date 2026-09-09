@@ -16,6 +16,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from bot.service.roots import BotAssemblyRoots
 from bot.workspace.wiring.resources import (
     ScopeBootRequiredError,
     _build_resources,
@@ -51,6 +52,10 @@ def _service(home: Path, app_config: AppConfig) -> MagicMock:
     service = MagicMock()
     service._project_dir = home
     service.project_dir = home
+    # Resource assembly reads the explicit assembly roots (DESIGN §3.2), not
+    # _project_dir — give the mock the real resident identity for `home`.
+    service.roots = BotAssemblyRoots.resident(config_dir=home / "config", resource_root=home)
+    service._enable_dynamic_workspaces = True
     service._app_config = app_config
     service._home_persistence = None
     service._mcp_registry = None

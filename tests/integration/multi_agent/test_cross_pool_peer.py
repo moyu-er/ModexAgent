@@ -36,9 +36,19 @@ from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeS
 from modex_agent.multi_agent.state import AgentState
 from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
 from modex_agent.persistence.session_registry import InMemorySessionRegistry
+from modex_agent.pipeline.turn_outcome import TurnOutcome
 from modex_agent.tools.manager import InMemoryToolManager
 
 pytestmark = pytest.mark.integration
+
+
+def _as_outcome(process):
+    """Wrap a recording fake into the pool's typed outcome interface."""
+    async def _outcome(msg):
+        await process(msg)
+        return TurnOutcome.handled()
+    return _outcome
+
 
 
 def _make_fake_instance(name: str) -> tuple[Any, list[InputMessage]]:
@@ -49,7 +59,7 @@ def _make_fake_instance(name: str) -> tuple[Any, list[InputMessage]]:
     async def _process(msg: InputMessage) -> None:
         pipeline_calls.append(msg)
 
-    instance.pipeline.process_message = AsyncMock(side_effect=_process)
+    instance.pipeline.process_message_outcome = AsyncMock(side_effect=_as_outcome(_process))
     instance.pipeline.hook_runner = None
     instance.pipeline.hooks = []
     instance.pipeline.interceptor_chain = None

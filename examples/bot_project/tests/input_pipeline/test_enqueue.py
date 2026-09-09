@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.enqueue import EnqueueStage
+from bot.input_pipeline.prepare import BotInputPreparation
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
@@ -29,7 +29,7 @@ async def test_enqueue_uses_raw_content_when_no_skill_xml() -> None:
     env = UserInputEnvelope(external_id="u1", content="hi", channel="qq")
     env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
     env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
-    await EnqueueStage().process(env, _ctx(enqueued))
+    await BotInputPreparation([]).handle(env, _ctx(enqueued))
     assert len(enqueued) == 1
     assert enqueued[0].content == "hi"
     assert enqueued[0].session.agent_name == "main"
@@ -44,7 +44,7 @@ async def test_enqueue_uses_skill_xml_when_present() -> None:
     env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
     env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
     env.metadata["skill_xml"] = "<skill>...</skill>"
-    await EnqueueStage().process(env, _ctx(enqueued))
+    await BotInputPreparation([]).handle(env, _ctx(enqueued))
     assert enqueued[0].content == "<skill>...</skill>"
 
 
@@ -57,7 +57,7 @@ async def test_enqueue_carries_attachments() -> None:
     env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
     env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
     env.attachments = [AttachmentRef(local_path="/tmp/a.png")]
-    await EnqueueStage().process(env, _ctx(enqueued))
+    await BotInputPreparation([]).handle(env, _ctx(enqueued))
     assert enqueued[0].attachments == ["/tmp/a.png"]
 
 
@@ -81,7 +81,7 @@ async def test_enqueue_carries_resolved_attachments() -> None:
     env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
     env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
     env.resolved_attachments = [record]
-    await EnqueueStage().process(env, _ctx(enqueued))
+    await BotInputPreparation([]).handle(env, _ctx(enqueued))
 
     assert enqueued[0].attachments_resolved == [record]
     # The copy is independent of the envelope list (no shared-reference aliasing).
@@ -91,12 +91,12 @@ async def test_enqueue_carries_resolved_attachments() -> None:
 @pytest.mark.asyncio
 async def test_enqueue_passes_source_and_chat_id() -> None:
     # PoolRouter._route_to_pool reads msg.source (AgentAddress name) and
-    # msg.chat_id (broker header). EnqueueStage MUST carry them through.
+    # msg.chat_id (broker header). BotInputPreparation.handle MUST carry them through.
     enqueued: list[InputMessage] = []
     env = UserInputEnvelope(external_id="u1", content="hi", channel="qq")
     env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
     env.metadata[RoutingMeta.FULL_SESSION_ID] = "u1.main"
     env.metadata["chat_id"] = "group123"
-    await EnqueueStage().process(env, _ctx(enqueued))
+    await BotInputPreparation([]).handle(env, _ctx(enqueued))
     assert enqueued[0].source == "qq"          # == envelope.channel (semantically same)
     assert enqueued[0].chat_id == "group123"   # from metadata, not dropped to default

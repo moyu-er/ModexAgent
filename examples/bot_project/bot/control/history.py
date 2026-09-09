@@ -19,7 +19,14 @@ never fabricated — transcript-derived records omit them entirely.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from modex_agent.core.message import ChatMessage
+from modex_agent.memory.core.split_stores import MessageStore
+from modex_agent.memory.scope import MemoryContext, MemoryLayerName, SessionScope
+
+if TYPE_CHECKING:
+    from bot.workspace.handle import PoolWorkspaceResources
 
 from bot.control.models import HistoryMessage
 from bot.webui.transcript_store import MaterializedTurn
@@ -42,6 +49,43 @@ _HISTORY_FIELDS: frozenset[str] = frozenset(
         "message_id",
     }
 )
+
+
+class MessageStoreResolutionError(ValueError):
+    def __init__(self, code: str, message: str, status: int) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status = status
+
+
+async def resolve_pool_message_store(
+    resources: PoolWorkspaceResources, *, pool: str | None, session_id: str,
+) -> MessageStore:
+    if not pool:
+        raise MessageStoreResolutionError("invalid_scope", "BotRecordScope.pool is None", 400)
+    data = resources.pool_data.get(pool)
+    if data is None:
+        raise MessageStoreResolutionError("pool_not_found", f"Pool {pool!r} is not materialized in workspace {resources.target!s}", 404)
+    memory = data.context_manager.memory_system
+    if memory is None:
+        raise MessageStoreResolutionError("memory_system_unavailable", f"Memory system is not configured for pool {pool!r}", 500)
+    bundle = await memory.store_registry.resolve(
+        layer=MemoryLayerName.SESSION, scope=SessionScope(), context=MemoryContext(session_id=session_id),
+    )
+    return bundle.messages
+
+
+async def load_native_history(store: MessageStore) -> list[dict[str, Any]]:
+    return await store.load_all_messages()
+
+
+async def read_native_history(store: MessageStore) -> list[ChatMessage]:
+    return [ChatMessage.coerce(message) for message in await load_native_history(store)]
+
+
+async def read_pool_session_history(resources: PoolWorkspaceResources, *, pool: str, session_id: str) -> list[ChatMessage]:
+    store = await resolve_pool_message_store(resources, pool=pool, session_id=session_id)
+    return await read_native_history(store)
 
 
 def _filter_to_history_fields(raw: dict[str, Any]) -> dict[str, Any]:

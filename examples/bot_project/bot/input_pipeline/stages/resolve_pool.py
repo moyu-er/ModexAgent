@@ -39,6 +39,7 @@ class RoutingMeta(StrEnum):
     MODEL_MODEL = "model_model"
     RESOLVED_MODEL = "resolved_model"
     TREE_RESOLVED_POOL = "tree_resolved_pool"
+    PREPARED_MESSAGE = "prepared_message"
 
 
 def conversation_session_prefix(envelope: UserInputEnvelope, ctx: BotInputContext) -> str:

@@ -1,8 +1,15 @@
 """Shared stage: dispatch built-in slash commands via a configurable handler map.
 
-Both IM and WebUI pipelines use this stage, each passing its own set of
-command handlers. The stage is a pure dispatcher — it looks up the first
-token in the handler map and delegates. Unrecognised input passes through.
+Both IM and WebUI pipelines use this stage, each passing its own set of command
+handlers. The stage is a pure dispatcher — it looks up the first token in the
+handler map and delegates. Unrecognised input passes through.
+
+T07 (DESIGN.md §7): handlers are construction-only — they build the command's
+``InputMessage`` instead of enqueuing it. The stage stores the prepared message
+on the envelope carriage (``RoutingMeta.PREPARED_MESSAGE``, read with ``get``,
+never popped) and marks the command HANDLED; delivery happens once at the S8
+builder (sync callback for handle, typed ``Prepared`` outcome for prepare), so
+the early-delivery path can never be missed.
 
 Handler functions and command enums live in ``commands.py``; this module
 only owns the dispatch mechanism (the ``CommandDispatchStage`` class and the
@@ -21,9 +28,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.resolve_pool import resolve_session_routing
+from bot.input_pipeline.stages.resolve_pool import RoutingMeta, resolve_session_routing
 from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
+from modex_agent.messaging.models import InputMessage
 
 
 @dataclass
@@ -33,7 +41,7 @@ class CommandContext:
     full_session_id: str
 
 
-CommandHandler = Callable[[CommandContext], None]
+CommandHandler = Callable[[CommandContext], InputMessage]
 
 
 class CommandDispatchStage(InputStage):
@@ -60,6 +68,7 @@ class CommandDispatchStage(InputStage):
             return Continue(value=envelope)
 
         _, _, full_sid = resolve_session_routing(envelope, ctx)
-        handler(CommandContext(envelope=envelope, ctx=ctx, full_session_id=full_sid))
+        message = handler(CommandContext(envelope=envelope, ctx=ctx, full_session_id=full_sid))
+        envelope.metadata[RoutingMeta.PREPARED_MESSAGE] = message
         envelope.command_status = CommandStatus.HANDLED
         return Continue(value=envelope)

@@ -11,7 +11,7 @@ Three test cases:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core import AgentCommKind
@@ -36,6 +36,8 @@ from modex_agent.trace.session_state import TraceSessionState
 
 def _mock_tree(bus: object) -> SessionTreeManager:
     tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+    # Ordinary (non-request-scoped) sends: no source scope to stamp.
+    tree.sender_scope_id = AsyncMock(return_value=None)
 
     async def _deliver(sid: str, env: object) -> None:
         await bus.send(sid, env)  # type: ignore[attr-defined]

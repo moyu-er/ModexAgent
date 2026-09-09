@@ -21,6 +21,7 @@ def test_view_from_request_serializes_all_fields():
         tier=str(ApprovalTier.DANGEROUS),
         arguments={"path": "/tmp/x", "content": "hi"},
         status="pending",
+        approval_id="a1",
     )
 
 

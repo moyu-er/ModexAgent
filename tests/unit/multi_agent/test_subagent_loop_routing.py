@@ -23,6 +23,8 @@ from modex_agent.tools.manager import InMemoryToolManager
 
 def _mock_tree(bus: object) -> SessionTreeManager:
     tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+    # Ordinary (non-request-scoped) sends: no source scope to stamp.
+    tree.sender_scope_id = AsyncMock(return_value=None)
 
     async def _deliver(sid: str, env: object) -> None:
         await bus.send(sid, env)  # type: ignore[attr-defined]

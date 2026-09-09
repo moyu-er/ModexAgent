@@ -31,8 +31,34 @@ def test_approval_decision_dto_round_trips() -> None:
     """ApprovalDecisionInput serializes to/from a plain dict (broker-safe)."""
     d = ApprovalDecisionInput(tool_call_id="call_abc", action=ApprovalAction.ALLOW)
     payload = d.model_dump(mode="json")
-    assert payload == {"tool_call_id": "call_abc", "action": "allow"}
+    assert payload == {
+        "tool_call_id": "call_abc",
+        "action": "allow",
+        "approval_id": None,
+    }
     assert ApprovalDecisionInput.model_validate(payload) == d
+
+
+def test_unset_approval_id_hidden_by_the_boundary_exclude_none_dump() -> None:
+    """The REAL wire boundary (build_input_broker_message → payload dump with
+    ``exclude_none=True``) hides the unset approval_id — the total model dump
+    carries ``approval_id: None`` and no per-field ``exclude_if`` is involved
+    (that kwarg needs pydantic>=2.12; the floor is >=2.0)."""
+    from modex_agent.messaging.broker import Address, AddressKind
+
+    def _msg(approval_id: str | None) -> InputMessage:
+        decision = ApprovalDecisionInput(
+            tool_call_id="call_abc", action=ApprovalAction.DENY, approval_id=approval_id,
+        )
+        return InputMessage(content="", session=_session(), approval_decision=decision)
+
+    recipient = Address(kind=AddressKind.AGENT, name="main")
+
+    unset_payload = build_input_broker_message(_msg(None), recipient).payload
+    assert "approval_id" not in unset_payload["approval_decision"]
+
+    set_payload = build_input_broker_message(_msg("ap1"), recipient).payload
+    assert set_payload["approval_decision"]["approval_id"] == "ap1"
 
 
 def test_build_input_broker_message_carries_approval_decision() -> None:

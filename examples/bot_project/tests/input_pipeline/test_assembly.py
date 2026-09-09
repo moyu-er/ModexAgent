@@ -108,8 +108,8 @@ async def test_im_pipeline_order_and_count() -> None:
     assert isinstance(pipe, UserInputPipeline)
     # SetChannel, ResolveWorkspace, EnvironmentControl, SessionControl,
     # ResolvePool, CommandDispatch, AttachmentIngest, Approval, SkillParse,
-    # UnsupportedCommand, Persist, Enqueue.
-    assert len(pipe._stages) == 12
+    # UnsupportedCommand, Persist; delivery follows preparation.
+    assert len(pipe._stages) == 11
     assert isinstance(pipe._stages[1], ResolveWorkspaceStage)
     assert isinstance(pipe._stages[5], CommandDispatchStage)
     assert isinstance(pipe._stages[6], AttachmentIngestStage)
@@ -128,8 +128,8 @@ async def test_webui_pipeline_order_and_count(tmp_path: Path) -> None:
     )
     assert isinstance(pipe, UserInputPipeline)
     # SetChannel, ResolveWorkspace, ResolvePool, ModelChoice, CommandDispatch,
-    # AttachmentIngest, Approval, SkillParse, UnsupportedCommand, Persist, Enqueue.
-    assert len(pipe._stages) == 11
+    # AttachmentIngest, Approval, SkillParse, UnsupportedCommand, Persist.
+    assert len(pipe._stages) == 10
     assert isinstance(pipe._stages[1], ResolveWorkspaceStage)
     assert isinstance(pipe._stages[3], ModelChoiceStage)
     assert isinstance(pipe._stages[4], CommandDispatchStage)

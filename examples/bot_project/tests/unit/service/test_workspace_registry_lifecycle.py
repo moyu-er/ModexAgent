@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from bot.service import BotServiceShutdownIncompleteError
 from bot.service.core import BotService
+from bot.service.roots import BotAssemblyRoots
 from bot.workspace.wiring import WorkspaceStack
 
 from modex_agent.ioc.configs.app import AppConfig
@@ -39,6 +40,11 @@ async def test_initialize_closes_canonical_registry_after_materialization_failur
     service.control_channel = None
     service.command_processor = None
     service._pool_session_store = None
+    # Partial-init instance: initialize() reads the assembly roots directly.
+    service.roots = BotAssemblyRoots.resident(
+        config_dir=tmp_path / "config", resource_root=tmp_path
+    )
+    service._enable_dynamic_workspaces = True
 
     registry = MagicMock()
     registry.initialize = AsyncMock()
@@ -57,11 +63,6 @@ async def test_initialize_closes_canonical_registry_after_materialization_failur
     routing_store = MagicMock(spec=PoolRoutingStore)
 
     with (
-        patch.object(
-            BotService,
-            "_project_dir",
-            new_callable=lambda: property(lambda self: tmp_path),
-        ),
         patch.object(service, "_build_default_provider", return_value=MagicMock()),
         patch("bot.service.core._build_control_channel", return_value=MagicMock()),
         patch("bot.service.core._build_main_command_processor", return_value=MagicMock()),
@@ -208,6 +209,11 @@ async def test_initialize_preserves_shared_dependencies_when_eviction_is_incompl
     service.control_channel = None
     service.command_processor = None
     service._pool_session_store = None
+    # Partial-init instance: initialize() reads the assembly roots directly.
+    service.roots = BotAssemblyRoots.resident(
+        config_dir=tmp_path / "config", resource_root=tmp_path
+    )
+    service._enable_dynamic_workspaces = True
 
     initialization_error = RuntimeError("materialization failed")
     registry = MagicMock()
@@ -228,11 +234,6 @@ async def test_initialize_preserves_shared_dependencies_when_eviction_is_incompl
 
     # When
     with (
-        patch.object(
-            BotService,
-            "_project_dir",
-            new_callable=lambda: property(lambda self: tmp_path),
-        ),
         patch.object(service, "_build_default_provider", return_value=MagicMock()),
         patch("bot.service.core._build_control_channel", return_value=MagicMock()),
         patch("bot.service.core._build_main_command_processor", return_value=MagicMock()),

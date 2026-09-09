@@ -18,6 +18,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from modex_agent.pipeline.turn_outcome import TurnOutcome
+
 pytestmark = pytest.mark.integration
 
 from modex_agent.core.session_id import SessionIdFactory
@@ -35,6 +37,15 @@ from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.state import AgentState
 
 
+def _as_outcome(process):
+    """Wrap a recording fake into the pool's typed outcome interface."""
+    async def _outcome(msg):
+        await process(msg)
+        return TurnOutcome.handled()
+    return _outcome
+
+
+
 def _make_fake_instance(name: str) -> tuple[object, list[InputMessage]]:
     """A fake resident AgentInstance that records every processed InputMessage."""
     instance = MagicMock()
@@ -43,7 +54,7 @@ def _make_fake_instance(name: str) -> tuple[object, list[InputMessage]]:
     async def _process(msg: InputMessage) -> None:
         pipeline_calls.append(msg)
 
-    instance.pipeline.process_message = AsyncMock(side_effect=_process)
+    instance.pipeline.process_message_outcome = AsyncMock(side_effect=_as_outcome(_process))
     instance.pipeline.hook_runner = None
     instance.pipeline.hooks = []
     instance.pipeline.interceptor_chain = None

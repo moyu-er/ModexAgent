@@ -56,12 +56,23 @@ class ApprovalAction(StrEnum):
 
 
 class ApprovalDecisionInput(BaseModel):
-    """Approve or deny decision transported with an input message."""
+    """Approve or deny decision transported with an input message.
+
+    ``approval_id`` carries the owner-minted identity from the
+    ``ApprovalRequestView`` the decider answered. ``None`` keeps the legacy
+    decide-next-PENDING behaviour for IM ``/approve``; request-scoped
+    channels always set it so a stale/late decision can be rejected by
+    exact match instead of position.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     tool_call_id: str | None
     action: ApprovalAction
+    # The unset identity is hidden at the broker boundary by the existing
+    # ``exclude_none=True`` payload dump — never by a per-field ``exclude_if``
+    # kwarg that the pydantic>=2.0 floor does not provide.
+    approval_id: str | None = None
 
 
 class InputMessage(BaseModel):

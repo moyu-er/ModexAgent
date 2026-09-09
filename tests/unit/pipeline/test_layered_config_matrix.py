@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrategyKind
@@ -32,6 +32,7 @@ from modex_agent.memory.prompt_pipeline.providers import (
     GraphWorkflowProvider,
     _is_graph_node_execution,
 )
+from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.pipeline.turn_context_config import (
     GraphApprovalConfigurator,
     GraphContextBindingConfigurator,
@@ -46,6 +47,13 @@ from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_graph.context import GraphContext
+
+
+def _scopeless_tree() -> MagicMock:
+    """SessionTreeManager test double: request-scope queries return None."""
+    tree = MagicMock(spec=SessionTreeManager)
+    tree.sender_scope_id = AsyncMock(return_value=None)
+    return tree
 
 
 def _graph_ctx():
@@ -217,7 +225,6 @@ class TestConfiguratorMatrix:
         desc = _build_descriptor(binding=None)
         self._apply_pipeline(desc, ctx)
         assert ctx.runtime is not None
-        rt = ctx.runtime
 
         assert ctx.graph_instance_id is None
         assert ctx.graph_context is None
@@ -250,7 +257,6 @@ class TestConfiguratorMatrix:
         desc = _build_descriptor(agent_kind=AgentCommKind.SUBAGENT, binding=None)
         self._apply_pipeline(desc, ctx)
         assert ctx.runtime is not None
-        rt = ctx.runtime
 
         assert ctx.graph_instance_id is None
         assert ctx.graph_context is None
@@ -438,10 +444,12 @@ class TestGraphAwareComponentsSubagentExclusion:
 
 
 def _make_send_deps(tree: Any = None) -> SendDeps:
+    if tree is not None:
+        tree.sender_scope_id = AsyncMock(return_value=None)
     return SendDeps(
         source=AgentAddress(name="main"),
         session_factory=MagicMock(),
-        tree=tree or MagicMock(),
+        tree=tree or _scopeless_tree(),
         session_registry=None,
     )
 

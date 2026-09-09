@@ -40,6 +40,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.multi_agent.session_tree.request_scope import DispatchDecision
 
 if TYPE_CHECKING:
     from modex_agent.multi_agent.descriptor import AgentInstance
@@ -201,11 +202,16 @@ class InboxPoller:
         else:
             self._inflight[sid] = asyncio.create_task(self._run_turn(sid, instance))
 
-    async def _dispatch_batch(self, sid: str, instance: AgentInstance) -> None:
+    async def _dispatch_batch(self, sid: str, instance: AgentInstance) -> bool:
         """Consume one batch and dispatch each envelope as its own turn.
 
-        The two inbox consumers divide labour by session state, NOT by message
-        type:
+        Returns whether the batch made progress (≥1 envelope dispatched or
+        archived). An all-held or empty batch reports ``False`` so the caller
+        skips its own wakeup — held work retries on the interval tick or the
+        next real signal, never as a consume/hold/release busy loop.
+
+        The two inbox consumers divide labour by session state, NOT by
+        message type:
 
         - **Poller (this path)** owns an *idle* session's entire pending batch:
           ``consume_inbox`` pulls all types (no ``only_types`` filter) and each
@@ -224,22 +230,42 @@ class InboxPoller:
         """
         if self._tree_manager is not None:
             if not await self._tree_manager.can_dispatch(sid):
-                return
+                return False
             await self._tree_manager.on_dispatch_start(sid)
-        batch = await self._pool.consume_inbox(sid)
+        only_types = None
+        if self._tree_manager is not None:
+            only_types = await self._tree_manager.dispatch_consume_types(sid)
+        batch = await self._pool.consume_inbox(sid, only_types=only_types)
         task = asyncio.current_task()
+        progressed = False
         try:
             for envelope in batch:
                 if task is not None and task.cancelling():
                     raise asyncio.CancelledError
+                if self._tree_manager is not None:
+                    decision = await self._tree_manager.admit_scoped_dispatch(sid, envelope)
+                    if decision is DispatchDecision.ARCHIVE:
+                        # Stale carrier of a closed/superseded request —
+                        # acknowledged and dropped, never started as a turn.
+                        await self._pool.acknowledge_inbox(sid, envelope.message_id)
+                        progressed = True
+                        continue
+                    if decision is DispatchDecision.HOLD:
+                        # Stays pending: released below and retried on a
+                        # later tick (e.g. after the approval continuation).
+                        continue
                 await self._pool.dispatch_envelope(sid, instance, envelope)
+                progressed = True
                 if task is not None and task.cancelling():
                     raise asyncio.CancelledError
                 await self._pool.acknowledge_inbox(sid, envelope.message_id)
         finally:
             self._pool.release_inbox(sid, [env.message_id for env in batch])
+        return progressed
 
-    async def _end_dispatch(self, sid: str, *, cancelled: bool = False) -> None:
+    async def _end_dispatch(
+        self, sid: str, *, cancelled: bool = False, signal_wakeup: bool = True,
+    ) -> None:
         try:
             if self._tree_manager is not None:
                 cleanup = asyncio.create_task(self._tree_manager.on_dispatch_end(sid, cancelled=cancelled))
@@ -259,18 +285,22 @@ class InboxPoller:
             raise
         finally:
             self._inflight.pop(sid, None)
-            self.signal_wakeup()
+            if signal_wakeup:
+                self.signal_wakeup()
 
     async def _run_turn(self, sid: str, instance: AgentInstance) -> None:
         cancelled = False
+        progressed = False
         try:
             await self._ensure_session_registered(sid)
-            await self._dispatch_batch(sid, instance)
+            progressed = await self._dispatch_batch(sid, instance)
         except asyncio.CancelledError:
             cancelled = True
             raise
         finally:
-            await self._end_dispatch(sid, cancelled=cancelled)
+            await self._end_dispatch(
+                sid, cancelled=cancelled, signal_wakeup=progressed,
+            )
 
     async def _ensure_session_registered(
         self, sid: str, *, parent_session_id: str | None = None
@@ -297,6 +327,7 @@ class InboxPoller:
 
     async def _materialize_then_turn(self, sid: str, template: AgentTemplate) -> None:
         cancelled = False
+        progressed = False
         try:
             # Peek (non-destructive) the first pending envelope to read the
             # authoritative parent link BEFORE registering — every envelope in a
@@ -315,11 +346,13 @@ class InboxPoller:
             instance = await self._pool.materialize_agent(
                 sid, template, parent_session_id=parent_sid
             )
-            await self._dispatch_batch(sid, instance)
+            progressed = await self._dispatch_batch(sid, instance)
         except asyncio.CancelledError:
             cancelled = True
             raise
         except Exception:
             logger.exception("Materialize/turn failed for %s; message stays in inbox", sid)
         finally:
-            await self._end_dispatch(sid, cancelled=cancelled)
+            await self._end_dispatch(
+                sid, cancelled=cancelled, signal_wakeup=progressed,
+            )

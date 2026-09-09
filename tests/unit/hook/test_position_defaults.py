@@ -53,6 +53,7 @@ from modex_agent.scope.compiler import (
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.workspace.scope_path import ScopePath
 
 # ─── Compile-level helpers ──────────────────────────────────────────────────
 
@@ -247,12 +248,15 @@ def _pool_assembly(
     *,
     peer_links: tuple[Any, ...] = (),
     control_origin: str = "http://127.0.0.1:21800",
+    project_dir: Path = Path("/tmp/bot"),
+    workspace_root: Path | None = None,
 ) -> PoolAssemblyContext:
+    runtime_root = workspace_root or project_dir
     return PoolAssemblyContext(
         pool_name=pool_spec.name,
         pool_spec=pool_spec,
-        project_dir=Path("/tmp/bot"),
-        data_dir=Path("/tmp/bot/.modex"),
+        project_dir=project_dir,
+        data_dir=runtime_root / ".modex",
         broker=MagicMock(),
         inbox_server=MagicMock(),
         agent_bus=MagicMock(),
@@ -262,6 +266,7 @@ def _pool_assembly(
         registry=MagicMock(),
         peer_links=peer_links,
         control_origin=control_origin,
+        scope_path=ScopePath(workspace_root=runtime_root, pool_name=pool_spec.name),
     )
 
 
@@ -317,7 +322,9 @@ class TestNativeEnvFactory:
     async def test_main_spec_derives_pool_facts(self) -> None:
         from modex_agent.multi_agent.communication.peer_resolution import PeerLink
 
-        pool_spec = _pool_spec(AgentSpec(name="main"), AgentSpec(name="sub", parent="main"))
+        pool_spec = _pool_spec(
+            AgentSpec(name="main"), AgentSpec(name="sub", parent="main")
+        )
         peer = PeerLink(peer_pool="other", peer_agent="other-main", peer_description="peer")
         compilation = _compile(*pool_spec.agents)
         spec = self._spec_of(compilation, "main")
@@ -351,6 +358,32 @@ class TestNativeEnvFactory:
         assert template.comm_kind is AgentCommKind.SUBAGENT
         assert template.agent_pool_map == {"sub": "p", "main": "p"}
         assert template.targets == [("main", "")]
+
+    async def test_pooled_specs_use_scope_path_runtime_root(self) -> None:
+        """The resource root resolves assets; native subprocesses run in the
+        existing ScopePath workspace root for both main and subagent specs."""
+        resource_root = Path("/tmp/bot-assets")
+        workspace_root = Path("/tmp/ide-workspace")
+        pool_spec = _pool_spec(AgentSpec(name="main"), AgentSpec(name="sub", parent="main"))
+        compilation = _compile(*pool_spec.agents)
+        pool_assembly = _pool_assembly(
+            pool_spec,
+            project_dir=resource_root,
+            workspace_root=workspace_root,
+        )
+
+        for agent_name in ("main", "sub"):
+            ctx = _chain(
+                _registry(),
+                spec=self._spec_of(compilation, agent_name),
+                pool_assembly_ctx=pool_assembly,
+            )
+            hook = await NativeEnvInjectionHookFactory().create(
+                NativeEnvInjectionHookConfig(), ctx,
+            )
+            template: ExternalEnvSpec = hook._template
+            assert template.workspace_root == workspace_root
+            assert template.workdir == workspace_root
 
     async def test_poolless_spec_derives_workspace_facts(self) -> None:
         """Poolless single-agent assembly (no ``pool_assembly_ctx`` on the

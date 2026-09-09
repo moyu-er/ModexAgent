@@ -2,8 +2,9 @@
 
 The production webui approval path is (poll-driven):
 
-  POST /approvals -> webui_pipeline (EnqueueStage lifts ``approval_decision``
-  onto ``InputMessage``) -> WS adapter queue -> ``WorkspaceMessageDispatcher``
+  POST /approvals -> webui_pipeline (``BotInputPreparation.handle`` lifts
+  ``approval_decision`` onto ``InputMessage``) -> WS adapter queue ->
+  ``WorkspaceMessageDispatcher``
   -> ``PoolRouter.route_message`` -> ``_route_to_pool`` ->
   ``pool.pool.submit_input(sid, InputMessage)`` ->
   ``AgentPool.submit_input`` serializes via ``BrokerInputPayload`` ->
@@ -22,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.enqueue import EnqueueStage
+from bot.input_pipeline.prepare import BotInputPreparation
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 
 from modex_agent.core.media import Attachment, AttachmentLocator, Kind
@@ -204,7 +205,7 @@ async def test_bot_skill_metadata_survives_public_transport_seam(tmp_path: Path)
         enqueue_message=enqueued.append,
         command_adapter=MagicMock(),
     )
-    await EnqueueStage().process(envelope, context)
+    await BotInputPreparation([]).handle(envelope, context)
     bot_message = enqueued[0]
     assert bot_message.content_format is ContentFormat.XML
     assert tuple(bot_message.truncatable_paths or ()) == ("user_input",)

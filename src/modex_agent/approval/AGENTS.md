@@ -13,11 +13,11 @@ Sandbox and human approval are independently switchable product features. Guard-
 |------|-------------|
 | `config.py` | `ToolApprovalConfig` (`allowed_paths`, validated full-command regex `allow_patterns`), `AgentApprovalConfig` (enabled flag + tools map); frozen Pydantic models |
 | `classification.py` | `ToolClassification` and `GuardAuditFact`: pure tier/source/reason/audit values consumed by ToolNode; no mutable classifier-side denial state |
-| `constants.py` | `ApprovalDecision` (ALLOWED/DENIED/PENDING/PREEMPTED), `ApprovalTier` (NORMAL/SENSITIVE/DANGEROUS/HARDLINE), `ApprovalStatus` (PENDING/APPROVED/DENIED/PARTIAL) |
+| `constants.py` | `ApprovalDecision` (ALLOWED/DENIED/PENDING/PREEMPTED), `ApprovalTier` (NORMAL/SENSITIVE/DANGEROUS/HARDLINE), `ApprovalStatus` (PENDING/APPROVED/DENIED/PARTIAL), `DecisionActor` (USER/SANDBOX_GUARD/REQUEST_CANCEL — a request-scope cancellation terminated the batch, never an LLM run), `ApprovalAuditSource`. |
 | `types.py` | Approval-result policy enums: `ApprovalResolution`, `DenyAction`, `TimeoutAction`, and `ApprovalResultType`. `ApprovalAction` transport lives in `modex_agent.messaging.models`. |
 | `response.py` | `parse_input_command()` — command-first parsing returning `ParsedInputCommand` or None; `parse_approval_action()` convenience wrapper returning messaging-owned `ApprovalAction`. Recognizes `/approve` and `/deny`. |
 | `runtime.py` | `ApprovalRuntime` (classifier + deny policy), `ApprovalClassifier` ABC, `TieredToolApprovalClassifier` (configured path rules and full-command regex exemptions); no react-layer dependency |
-| `views.py` | `ApprovalRequestView` + `view_from_request()` — shared push/pull presentation DTO for approval requests. |
+| `views.py` | `ApprovalRequestView` + `view_from_request()` — shared push/pull presentation DTO for approval requests; `approval_id` (owner-minted identity from `ApprovalRequestState`, exact resume matching) and `turn_uuid` (suspension-site binding) are conditional wire fields. |
 | `ui.py` | `ApprovalUserInterface` ABC + `IMUserInterface` — approval prompt/message rendering through an `OutputAdapter`. |
 | `__init__.py` | Re-exports approval config/constants and UI contracts. Does NOT re-export `ApprovalAction` (messaging-owned) or `runtime.py` (circular import — see file comment). |
 

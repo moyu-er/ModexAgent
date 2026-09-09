@@ -1,4 +1,5 @@
 """InboxPoller event-driven wakeup — concurrency invariants.
+from modex_agent.pipeline.turn_outcome import TurnOutcome
 
 Verifies the four invariants documented on ``InboxPoller`` after the
 polling → event-driven switch:
@@ -36,8 +37,18 @@ from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.inbox_poller import InboxPoller
 from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.state import AgentState
+from modex_agent.pipeline.turn_outcome import TurnOutcome
 
 # ── Test helpers ──────────────────────────────────────────────────────────
+
+
+def _as_outcome(process):
+    """Wrap a recording fake into the pool's typed outcome interface."""
+    async def _outcome(msg):
+        await process(msg)
+        return TurnOutcome.handled()
+    return _outcome
+
 
 
 class _FakeBroker:
@@ -54,7 +65,7 @@ class _MockAgentFactory(DefaultAgentFactory):
     # to avoid an LSP override-compatibility error against the wide base sig.
     async def create_agent(self, descriptor, **kwargs):  # noqa: ANN001, ANN003, ANN202
         pipeline = MagicMock()
-        pipeline.process_message = AsyncMock()
+        pipeline.process_message_outcome = AsyncMock(return_value=TurnOutcome.handled())
         pipeline.hook_runner = None
         pipeline.hooks = []
         pipeline.stop = AsyncMock()
@@ -133,9 +144,9 @@ async def test_wakeup_delivers_near_zero_latency() -> None:
         await bus.send("pfx.main", _envelope("hello"))
         # Wait at most 0.5s — far below the 2.0s interval.
         async with asyncio.timeout(0.5):
-            while not main.pipeline.process_message.called:
+            while not main.pipeline.process_message_outcome.called:
                 await asyncio.sleep(0.02)
-        assert main.pipeline.process_message.called
+        assert main.pipeline.process_message_outcome.called
     finally:
         await poller.stop()
 
@@ -157,9 +168,9 @@ async def test_tick_fallback_when_bus_has_no_poller() -> None:
         await bus.send("pfx.main", _envelope("hello"))
         # No wakeup signal — the tick (every 0.05s) must still deliver.
         async with asyncio.timeout(1.0):
-            while not main.pipeline.process_message.called:
+            while not main.pipeline.process_message_outcome.called:
                 await asyncio.sleep(0.02)
-        assert main.pipeline.process_message.called
+        assert main.pipeline.process_message_outcome.called
     finally:
         await poller.stop()
 
@@ -191,8 +202,7 @@ async def test_busy_session_message_picked_up_after_turn_ends() -> None:
                 # Hold the turn open so the second send lands during busy.
                 await turn_in_progress.wait()
 
-        main.pipeline.process_message = _slow_then_signal
-
+        main.pipeline.process_message_outcome = _as_outcome(_slow_then_signal)
         poller.start()
         # First message: starts a busy turn.
         await bus.send("pfx.main", _envelope("first"))
@@ -233,7 +243,7 @@ async def test_single_flight_no_concurrent_turn_for_same_session() -> None:
             started.append(1)
             await asyncio.sleep(0.3)
 
-        main.pipeline.process_message = _slow
+        main.pipeline.process_message_outcome = _as_outcome(_slow)
         poller.start()
         await bus.send("pfx.main", _envelope("first"))
         await asyncio.sleep(0.1)  # several ticks/wakeups land while busy
@@ -299,8 +309,7 @@ async def test_wakeup_during_tick_for_other_session_not_swallowed() -> None:
             main_turn_started.set()
             await main_can_finish.wait()
 
-        main.pipeline.process_message = _slow_main
-
+        main.pipeline.process_message_outcome = _as_outcome(_slow_main)
         poller.start()
         # First message → starts main's slow turn (tick enters dispatch).
         await bus.send("pfx.main", _envelope("to-main"))
@@ -312,9 +321,9 @@ async def test_wakeup_during_tick_for_other_session_not_swallowed() -> None:
         # it must wake the loop and start helper's turn promptly.
         await bus.send("pfx.helper", _envelope("to-helper", mtype=AgentMessageType.AGENT_MESSAGE))
         async with asyncio.timeout(0.5):
-            while not helper_inst.pipeline.process_message.called:
+            while not helper_inst.pipeline.process_message_outcome.called:
                 await asyncio.sleep(0.02)
-        assert helper_inst.pipeline.process_message.called
+        assert helper_inst.pipeline.process_message_outcome.called
 
         main_can_finish.set()
     finally:
@@ -351,7 +360,7 @@ async def test_fold_eligible_message_mid_turn_consumed_once_not_doubled() -> Non
                 # Hold the first turn open so the second send lands mid-turn.
                 await turn_can_finish.wait()
 
-        main.pipeline.process_message = _slow_then_release
+        main.pipeline.process_message_outcome = _as_outcome(_slow_then_release)
         poller.start()
 
         # First message starts the busy turn.
@@ -456,7 +465,7 @@ async def test_poller_full_consume_batch_then_hook_gets_empty_no_double() -> Non
         async def _record_msg(msg: InputMessage) -> None:
             consumed.append(msg.content)
 
-        main.pipeline.process_message = _record_msg
+        main.pipeline.process_message_outcome = _as_outcome(_record_msg)
         poller.start()
 
         # Send a mix: external + fold-eligible, both to an IDLE session.

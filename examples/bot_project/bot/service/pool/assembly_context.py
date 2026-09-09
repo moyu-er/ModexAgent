@@ -11,7 +11,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from bot.config.webui_config import build_control_origin
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from modex_agent.adapters.output import OutputAdapter
@@ -60,6 +59,7 @@ def _build_assembly_context(
     shared_hooks: list,
     shared_hook_runner: HookRunner,
     shared_interceptor_chain: Any,
+    control_origin: str,
     session_registry: SessionRegistry | None,
     session_store: SessionStore | None,
     bot_model_config: BotModelConfig | None,
@@ -103,7 +103,7 @@ def _build_assembly_context(
         session_store=session_store,
         bot_model_config=bot_model_config,
         model_choice_registry=model_choice_registry,
-        control_origin=build_control_origin(project_dir / "config"),
+        control_origin=control_origin,
         command_processor=command_processor,
         control_channel=control_channel,
         pool_data=pool_data,

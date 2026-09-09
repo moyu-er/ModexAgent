@@ -8,6 +8,16 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.multi_agent.inbox_poller import InboxPoller
+from modex_agent.pipeline.turn_outcome import TurnOutcome
+
+
+def _as_outcome(process):
+    """Wrap a recording fake into the pool's typed outcome interface."""
+    async def _outcome(msg):
+        await process(msg)
+        return TurnOutcome.handled()
+    return _outcome
+
 
 
 class _FakePool:
@@ -62,20 +72,20 @@ class _FakePool:
     async def dispatch_envelope(self, sid, instance, envelope):
         self.dispatched.append((sid, envelope))
         if instance.pipeline is not None:
-            await instance.pipeline.process_message(envelope)
+            await instance.pipeline.process_message_outcome(envelope)
 
 
 @pytest.mark.asyncio
 async def test_poller_starts_turn_for_idle_pending_session():
     inst = MagicMock()
     inst.pipeline = MagicMock()
-    inst.pipeline.process_message = AsyncMock()
+    inst.pipeline.process_message_outcome = AsyncMock(return_value=TurnOutcome.handled())
     pool = _FakePool({"inv1.scout"}, {"scout": inst})
     poller = InboxPoller(pool, interval=0.02)
     poller.start()
     await asyncio.sleep(0.1)
     await poller.stop()
-    assert inst.pipeline.process_message.called
+    assert inst.pipeline.process_message_outcome.called
 
 
 @pytest.mark.asyncio
@@ -88,7 +98,7 @@ async def test_poller_skips_busy_session_no_double_spawn():
         started.append(1)
         await asyncio.sleep(1)
 
-    inst.pipeline.process_message = slow
+    inst.pipeline.process_message_outcome = _as_outcome(slow)
     pool = _FakePool({"inv1.scout"}, {"scout": inst})
     poller = InboxPoller(pool, interval=0.02)
     poller.start()
@@ -106,7 +116,7 @@ async def test_poller_lazy_materializes_missing_instance():
             materialized["called"] = True
             inst = MagicMock()
             inst.pipeline = MagicMock()
-            inst.pipeline.process_message = AsyncMock()
+            inst.pipeline.process_message_outcome = AsyncMock(return_value=TurnOutcome.handled())
             pool._instances["scout"] = inst
             return inst
 
@@ -122,7 +132,7 @@ async def test_poller_lazy_materializes_missing_instance():
 async def test_poller_reconciles_leaked_done_task():
     inst = MagicMock()
     inst.pipeline = MagicMock()
-    inst.pipeline.process_message = AsyncMock()
+    inst.pipeline.process_message_outcome = AsyncMock(return_value=TurnOutcome.handled())
     pool = _FakePool(set(), {"main": inst})
     poller = InboxPoller(pool, interval=0.02)
 
@@ -155,7 +165,7 @@ async def test_materialize_registers_parent_session_id_from_envelope():
         async def materialize(self, parent, inv, deps):
             inst = MagicMock()
             inst.pipeline = MagicMock()
-            inst.pipeline.process_message = AsyncMock()
+            inst.pipeline.process_message_outcome = AsyncMock(return_value=TurnOutcome.handled())
             pool._instances["scout"] = inst
             return inst
 
