@@ -120,6 +120,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/graph/` | Graph scheduling bridge — `BotAgentNode` (agent-backed graph node), `BotAgentNodeFactory` (spec → node), `GraphSpecLoader` (YAML → compiled spec store), `WebUIGraphOutputAdapter` (dual-channel event emission: REST store + WS fan-out) |
 | `bot/webui/routes/graph_routes.py` | Graph REST API — specs CRUD, instance lifecycle (run/pause/resume/stop), events, deliver, topology endpoint |
 | `modexbot/cli.py` | CLI entry point — 3-layer process discovery for start/stop/restart |
+| `bot/acp/` | ACP editor entry (`modexbot acp`) — one stdio process binds one IDE project cwd (`AcpRuntime` backend over `BotAssemblyRoots`, request-scoped pool execution, real-source approval routing); see ADR-0049 and `src/modex_agent/acp/AGENTS.md` |
 | `modexbot/main.py` | CLI→service bootstrap |
 | `config/bot_config.yml` | Runtime safety, memory, tool, observability config. `${ENV_VAR}` interpolation |
 | `config/mcp/*.json` | MCP server registry (stdio/SSE/streamable_http) |

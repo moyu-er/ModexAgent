@@ -176,6 +176,8 @@ def _verify_bash(path: str) -> ShellInfo | None:
     try:
         result = subprocess.run(
             [path, "--version"],
+            stdin=subprocess.DEVNULL,
+            creationflags=_CREATE_NO_WINDOW,
             capture_output=True,
             encoding="utf-8",
             errors="replace",
@@ -197,6 +199,7 @@ def _verify_wsl(wsl_path: str) -> bool:
     try:
         result = subprocess.run(
             [wsl_path, "--list", "--quiet"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=5,

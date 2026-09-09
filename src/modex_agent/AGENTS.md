@@ -47,6 +47,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `trace/` | — | Tracing and observability — `TraceStore`, `TraceHooks`, `TraceType` |
 | `utils/` | — | Shared tokenizer, frontmatter, XML, file, process, and time helpers |
 | `adapters/` | — | Platform I/O contracts, output adapters, content filters, and the emitter bridge (see `adapters/AGENTS.md`) |
+| `acp/` | — | ACP (Agent Client Protocol) agent-server surface over editor-spawned stdio — SDK-free backend/handle/interaction seam, `ModexAcpAgent` wire mapping, once-only permission round-trip, scripted backend; NOT in the `@register` channel registry (ADR-0049, see `acp/AGENTS.md`) |
 | `media/` | — | Concrete media storage, MIME classification, and security gates; contracts live in `core/media.py` (see `media/AGENTS.md`) |
 
 ## Key Files

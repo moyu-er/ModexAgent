@@ -46,6 +46,7 @@ from bot.webui.transcript_store import (
     JSONLTranscriptStore,
     ResilientTranscriptStore,
     TranscriptStore,
+    WorkspaceRoutedTranscriptStore,
 )
 from bot.webui.types import _DEFAULT_AGENT_NAME, WorkspaceIndex
 from modex_agent.workspace.paths import WorkspacePaths
@@ -144,7 +145,7 @@ class _FileWorkspaceTranscriptStore(TranscriptStore):
         return await (await self._owner(session_id)).last_updated(session_id)
 
 
-class WorkspaceScopedTranscriptStore(TranscriptStore, WorkspaceIndex):
+class WorkspaceScopedTranscriptStore(WorkspaceRoutedTranscriptStore, WorkspaceIndex):
     """Route transcript operations to one backend adapter per workspace.
 
     The default resolver creates the file adapter. A persistence assembly may

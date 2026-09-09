@@ -1,14 +1,15 @@
 """WebUI streaming event emitters.
 
-Public surface re-exported from the ``emitter`` subpackage so that
-``from bot.webui.emitter import WebBotEmitter, CompositeEmitter`` keeps
-working after the original ``emitter.py`` module was split into
-``web_bot``, ``_segments`` and ``composite``.
+Public surface re-exported from the ``emitter`` subpackage: the shared
+transcript-recording base (:class:`BotTranscriptEmitter`) plus the WebUI
+WebSocket projection (:class:`WebBotEmitter`) and the fan-out
+:class:`CompositeEmitter`.
 """
 
 from __future__ import annotations
 
+from .bot_transcript import BotTranscriptEmitter
 from .composite import CompositeEmitter
 from .web_bot import WebBotEmitter
 
-__all__ = ["CompositeEmitter", "WebBotEmitter"]
+__all__ = ["BotTranscriptEmitter", "CompositeEmitter", "WebBotEmitter"]

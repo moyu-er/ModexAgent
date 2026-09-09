@@ -63,6 +63,10 @@ _WEBUI_STAGE_SKELETON: Final[tuple[InputStageName, ...]] = (
 
 _BUILTIN_STAGE_NAMES: Final[frozenset[str]] = frozenset(InputStageName)
 
+_ACP_STAGE_SKELETON: Final[tuple[InputStageName, ...]] = tuple(
+    name for name in _WEBUI_STAGE_SKELETON if name is not InputStageName.MODEL_CHOICE
+)
+
 
 def _stage_names(
     registry: ComponentRegistry,
@@ -157,4 +161,17 @@ async def build_webui_pipeline(
             InputStageName.MODEL_CHOICE: {"bot_model_config": bot_model_config},
             InputStageName.SKILL_PARSE: {"skill_registry": skill_registry},
         },
+    )
+
+
+async def build_acp_pipeline(
+    *,
+    registry: ComponentRegistry,
+    ctx: AssemblyContext,
+    skill_registry: PoolSkillResolverRegistry,
+) -> BotInputPreparation:
+    """Fixed-project preparation; delivery remains owned by pool.run_input."""
+    return await _build_pipeline(
+        registry, ctx, _ACP_STAGE_SKELETON,
+        {InputStageName.SKILL_PARSE: {"skill_registry": skill_registry}},
     )
