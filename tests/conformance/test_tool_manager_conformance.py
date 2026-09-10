@@ -32,6 +32,7 @@ from modex_agent.core.tool_manager import (
     ToolConfig,
     ToolExecutionContext,
     ToolManager,
+    ToolOrigin,
     ToolResult,
     get_tool_execution_context,
 )
@@ -94,7 +95,13 @@ class _CountingBase(ToolManager):
         super().__init__()
         self.executed: list[str] = []
 
-    def register(self, tool: Tool, config: ToolConfig | None = None) -> None:
+    def register(
+        self,
+        tool: Tool,
+        config: ToolConfig | None = None,
+        *,
+        origin: ToolOrigin | None = None,
+    ) -> None:
         raise AssertionError("not used in this suite")
 
     def unregister(self, tool_name: str) -> bool:

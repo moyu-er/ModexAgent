@@ -7,6 +7,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from modex_agent.core.tool_manager import ToolOrigin
+
 if TYPE_CHECKING:
     from modex_agent.core.tool_manager import Tool, ToolManager
     from modex_agent.tools.mcp.backend import McpBackend
@@ -66,7 +68,12 @@ async def load_per_agent_mcp(
 
         tools = await acquire_mcp_tools(backend, tool_timeout=60)
         for tool in tools:
-            tool_manager.register(tool_transform(tool) if tool_transform is not None else tool)
+            # EXTERNAL: MCP tools rely on namespace-prefix isolation; an
+            # unexpected same-name collision never displaces an existing slot.
+            tool_manager.register(
+                tool_transform(tool) if tool_transform is not None else tool,
+                origin=ToolOrigin.EXTERNAL,
+            )
 
         logger.info(
             "Agent %s: %d MCP tools loaded from selection %s",
@@ -138,7 +145,11 @@ async def load_per_agent_mcp(
 
     adapter_tools = await acquire_mcp_tools(manager, tool_timeout=60)
     for tool in adapter_tools:
-        tool_manager.register(tool_transform(tool) if tool_transform is not None else tool)
+        # EXTERNAL: same never-displace policy as the shared-registry path.
+        tool_manager.register(
+            tool_transform(tool) if tool_transform is not None else tool,
+            origin=ToolOrigin.EXTERNAL,
+        )
 
     logger.info(
         "Agent %s: %d MCP tools loaded from selection %s",

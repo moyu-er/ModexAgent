@@ -50,15 +50,7 @@ export interface ScopeToolBill {
   origin: string;
   /** Set when capability_derived — the carrying capability's name. */
   capability: string | null;
-  /** O3: the default entry this supplement entry replaced (e.g. "edit"). */
-  replaces: string | null;
   targets: string[];
-}
-
-export interface ScopeReplacementBill {
-  default_tool: string;
-  replacement_tool: string;
-  supplement: string;
 }
 
 export interface ScopeHookBill {
@@ -92,7 +84,6 @@ export interface ScopeAgentBill {
   fields: ScopeFieldBill[];
   tools: ScopeToolBill[];
   hooks: ScopeHookBill[];
-  replacements: ScopeReplacementBill[];
   capabilities: ScopeCapabilityBill[];
 }
 

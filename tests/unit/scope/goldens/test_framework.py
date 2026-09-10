@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.scope.compiler import ToolOrigin
+from modex_agent.core.tool_manager import ToolOrigin
 from tests.unit.scope.goldens.assertor import (
     Exemption,
     FacetField,
@@ -21,7 +21,6 @@ def _facets(*, hooks: tuple[str, ...] = ("after_turn",)) -> Facets:
             ToolFacet(
                 name="read",
                 origin=ToolOrigin.PRESET,
-                replaces=None,
                 targets=(),
             ),
         ),

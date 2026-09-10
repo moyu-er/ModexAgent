@@ -27,8 +27,7 @@ Routes registered:
     GET /api/scope/topology     -- the declared scope tree (workspace/pool/
                                    agent levels + peer links) for the canvas.
     GET /api/scope/bill         -- the per-field provenance bill + per-tool
-                                   implementation origins + O3 replacement
-                                   records (SPEC §3.4 rule 3 / §3.5).
+                                   implementation origins (SPEC §3.4 rule 3).
 
 No boot-time cache (SPEC §3.4 data-path ruling): every read reloads the YAML
 from disk and recompiles via the pure-function ``compile_scope``, so a WebUI
@@ -68,7 +67,6 @@ from bot.webui.routes.scope_models import (
     ScopeOptionsResponse,
     ScopePoolTopology,
     ScopePositionDefaultRow,
-    ScopeReplacementBill,
     ScopeToolBill,
     ScopeTopologyResponse,
 )
@@ -264,7 +262,6 @@ def _agent_bill(spec: ScopeSpec, compiled: CompiledAgent) -> ScopeAgentBill:
                 tool=tp.tool,
                 origin=tp.origin,
                 capability=tp.capability,
-                replaces=tp.replaces,
                 targets=list(tp.targets),
             )
             for tp in prov.tools
@@ -276,16 +273,6 @@ def _agent_bill(spec: ScopeSpec, compiled: CompiledAgent) -> ScopeAgentBill:
                 capability=hp.capability,
             )
             for hp in prov.hooks
-        ],
-        replacements=[
-            ScopeReplacementBill(
-                default_tool=r.default_tool,
-                replacement_tool=r.replacement_tool,
-                # Wire field keeps its name until the W4/W5 webui-face
-                # migration; the value is the capability registration name.
-                supplement=r.capability,
-            )
-            for r in prov.replacements
         ],
         capabilities=[
             ScopeCapabilityBill(

@@ -1,10 +1,10 @@
 // ScopeBillView — 账单渲染(票据16,SPEC §3.4 规则3 / §3.5 审计面)。
 //
 // 每个 agent 一张卡:逐字段(有效值 + 来源层 framework/profile/local)、
-// 逐工具条目(实现来源 origin: bundled preset / supplement / 声明 /
-// 派生)、O3 替换记录(`edit ← aci_edit`)。层级/来源/字段名等枚举与
-// 标识符值按数据原样渲染(GraphNode 渲染 nodeType 的先例),文案标签走
-// i18n。
+// 逐工具条目(实现来源 origin: preset / profile / 声明 / 派生)。同名升级
+// 由装配期 name-slot overwrite 仲裁,账单面不再有替换记录。层级/来源/
+// 字段名等枚举与标识符值按数据原样渲染(GraphNode 渲染 nodeType 的先例),
+// 文案标签走 i18n。
 
 import type {
   ScopeAgentBill,
@@ -78,33 +78,13 @@ function AgentBillCard({ bill }: { bill: ScopeAgentBill }) {
               </span>
               <span className="shrink-0 font-mono text-mute">{tool.origin}</span>
               <span className="min-w-0 flex-1 truncate font-mono text-faint">
-                {tool.replaces !== null
-                  ? `← ${tool.replaces}`
-                  : tool.targets.length > 0
-                    ? `→ ${tool.targets.join(", ")}`
-                    : ""}
+                {tool.targets.length > 0 ? `→ ${tool.targets.join(", ")}` : ""}
               </span>
             </div>
           ))}
         </div>
       </div>
 
-      {bill.replacements.length > 0 ? (
-        <div className="mt-3 border-t border-hairline pt-2">
-          <SectionLabel>{t("settings.scope.replacementsHeader")}</SectionLabel>
-          <div className="mt-1 space-y-1">
-            {bill.replacements.map((r) => (
-              <div
-                key={r.default_tool}
-                data-testid={`scope-bill-replacement-${r.default_tool}`}
-                className="font-mono text-xs text-body"
-              >
-                {`${r.default_tool} ← ${r.replacement_tool} (${r.supplement})`}
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

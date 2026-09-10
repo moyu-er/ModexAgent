@@ -496,7 +496,7 @@ V8（列表字段整字段替换）为语义规则，文档化 + WebUI 提示，
 | 5 | 0042 Decision ¶4 | peer 根对根、v1 同 workspace、声明不带 workspace 硬编码 | 已交付：V5 + `communication/peer_resolution.py`（声明抽取 + 同束实例解析 tree_ref） | ✓ 保持 |
 | 6 | 0042 Decision ¶5 | profile 单层引用 + 整列表替换 + 账单可查 | 已交付：`ProfileStore` 构造期拒绝嵌套；`GET /api/scope/bill` 按请求重算（无 boot 缓存） | ✓ 保持（存储位置见 Errata-6） |
 | 7 | 0042 Decision ¶6 | O2 源优先级 user > project > entry_points > bundled（反转 first-seen-wins） | 已交付（票据 01：flush 覆盖 + info 日志 + `registration_source` 审计） | ✓ 保持 |
-| 8 | 0042 Decision ¶6 | O3 同名产物编译期替换记账（`edit ← aci`） | 已交付：`ToolReplacement`/`AgentProvenance.replacement_of`；账单可见 | ✓ 保持 |
+| 8 | 0042 Decision ¶6 | O3 同名产物编译期替换记账（`edit ← aci`） | **已退役**（origin 贯穿步）：编译期替换记账删除，改为 name-slot overwrite —— 编译器保留双方名册条目与 origin 分类（`edit` PRESET + `aci_edit` CAPABILITY_DERIVED），装配期由 `ToolOrigin.OVERRIDE_PRIORITY` 仲裁同名槽位，覆盖审计在 `ToolManager.override_records` | 修正于 origin 贯穿（T4） |
 | 9 | 0042 Decision ¶7 | 上下文链三层 frozen 载体；类型即能力边界；吸收 `SubagentInvocationContext` | 已交付：`AgentContext(WorkspaceContext, PoolContext, AssemblyContext)` 菱形（`plugins/assembly/context.py`）；特例类型已删（票据 10） | ✓ 保持 |
 | 10 | 0042 Decision ¶8 | "YAML 文件为真源（WebUI 写回——PoolEditor 现有模式）" | **漂移**：写回走 scope 声明编辑器（`PUT /api/scope/declaration`，票据 16）；旧 PoolEditor 的 pool.yml CRUD 面已退役（仅剩只读列举） | 修正于 ADR |
 | 11 | 0042 Decision ¶8 | `AssemblySpec` hash + pool generation 计数器预留缝（零消费者） | 已交付：`scope/seam.py`（`spec_hash` + `ScopeGenerationTracker`）；运行时零消费者已验证 | ✓ 保持 |

@@ -160,7 +160,6 @@ class TestCapabilityDefaults:
         contribution = _MinimalCapability().contribute(_TREE, CapabilityConfig())
         assert contribution == CapabilityContribution()
         assert contribution.tools == ()
-        assert contribution.tool_replacements == ()
         assert contribution.hooks == ()
         assert contribution.sections == ()
 

@@ -132,7 +132,6 @@ def _tool_roster(compiled: CompiledAgent) -> tuple[ToolFacet, ...]:
         ToolFacet(
             name=entry.tool,
             origin=entry.origin,
-            replaces=entry.replaces,
             targets=tuple(entry.targets),
         )
         for entry in compiled.provenance.tools
@@ -143,7 +142,6 @@ def _tool_roster(compiled: CompiledAgent) -> tuple[ToolFacet, ...]:
             key=lambda entry: (
                 entry.name,
                 entry.origin.value,
-                entry.replaces or "",
                 entry.targets,
             ),
         )

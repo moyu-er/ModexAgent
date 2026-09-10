@@ -1,26 +1,30 @@
-"""D2 golden capture — the aci capability migration's pre-change snapshot.
+"""D2 golden capture — the aci capability's roster facets.
 
-Run on the PRE-MIGRATION HEAD (the ``tool_supplements: [aci]`` face):
+Regenerate (from the repository root, with the installed src on path)::
 
     python tests/unit/scope/aci_goldens/capture_aci_goldens.py
 
 Compiles the six declaration shapes below through the CURRENT compiler and
 writes ``facets.json`` next to this script (utf-8, JSON round-trip — the
-T6 golden discipline). ``tests/unit/scope/test_aci_capability.py`` then
-compiles the SAME shapes through the NEW face
-(``capabilities: {aci: {}}``) and asserts facet equality against the
-fixture — the one documented exemption being the replacement record's
-``supplement`` field renaming to ``capability`` (B7).
+T6 golden discipline). ``tests/unit/scope/test_aci_capability.py`` compiles
+the SAME shapes and asserts facet equality against the fixture.
+
+Facet semantics (post O3-removal, the name-slot overwrite era): the roster
+keeps BOTH entries of a same-name upgrade — ``edit`` (PRESET) and
+``aci_edit`` (CAPABILITY_DERIVED) — and the ``edit`` slot is settled at
+assembly by ``ToolOrigin`` rank, never by compile-time roster surgery. The
+capture therefore records the ordered roster (names) and the ordered
+provenance tool entries (tool/origin/targets) per agent.
 
 The shapes (single pool, root with one child so the derived ``task``
 entry rides along, toolset left to the root's ``full`` position default):
 
-- ``baseline``        — aci, no tools declaration (plain swap)
+- ``baseline``        — aci, no tools declaration
 - ``wholesale``       — aci + unprefixed ``tools: [read, write, edit, bash]``
 - ``wholesale_noedit``— aci + unprefixed ``tools: [read, write]`` (no edit)
 - ``plus_addition``   — aci + ``tools: [+web_search]``
 - ``minus_edit``      — aci + ``tools: [-edit]``
-- ``minus_aci_edit``  — aci + ``tools: [-aci_edit]`` (post-merge append wins)
+- ``minus_aci_edit``  — aci + ``tools: [-aci_edit]`` (the upgrade veto)
 """
 
 from __future__ import annotations
@@ -41,7 +45,8 @@ pool:
   name: p
   agents:
     root:
-      tool_supplements: [aci]
+      capabilities:
+        aci: {}
       agents:
         sub:
           description: child
@@ -51,7 +56,9 @@ pool:
   name: p
   agents:
     root:
-      tool_supplements: [aci]
+      capabilities:
+        aci: {}
+        subagents: false
       tools: [read, write, edit, bash]
       agents:
         sub:
@@ -62,7 +69,9 @@ pool:
   name: p
   agents:
     root:
-      tool_supplements: [aci]
+      capabilities:
+        aci: {}
+        subagents: false
       tools: [read, write]
       agents:
         sub:
@@ -73,7 +82,8 @@ pool:
   name: p
   agents:
     root:
-      tool_supplements: [aci]
+      capabilities:
+        aci: {}
       tools: [+web_search]
       agents:
         sub:
@@ -84,7 +94,8 @@ pool:
   name: p
   agents:
     root:
-      tool_supplements: [aci]
+      capabilities:
+        aci: {}
       tools: [-edit]
       agents:
         sub:
@@ -95,7 +106,8 @@ pool:
   name: p
   agents:
     root:
-      tool_supplements: [aci]
+      capabilities:
+        aci: {}
       tools: [-aci_edit]
       agents:
         sub:
@@ -109,12 +121,24 @@ def _workspace_ctx() -> WorkspaceContext:
     return WorkspaceContext(target=target, paths=WorkspacePaths(root=target), is_home=False)
 
 
+def _registry():
+    from modex_agent.plugins.defaults import DefaultPlugin
+    from modex_agent.plugins.loader import PluginRegistrationContext
+    from modex_agent.plugins.registry import ComponentRegistry
+
+    registry = ComponentRegistry()
+    ctx = PluginRegistrationContext(registry)
+    DefaultPlugin().register(ctx)
+    ctx.flush()
+    return registry
+
+
 def _facets(text: str) -> dict[str, object]:
     """Compile one declaration and extract the D2 facets of BOTH agents.
 
-    Facets per agent: the ordered final roster, the ordered provenance
-    tool entries (tool/origin/replaces/targets), and the replacement
-    records. Roster ORDER is part of the facet.
+    Facets per agent: the ordered final roster (names) and the ordered
+    provenance tool entries (tool/origin/targets). Roster ORDER is part
+    of the facet.
     """
     import tempfile
 
@@ -122,28 +146,19 @@ def _facets(text: str) -> dict[str, object]:
         path = Path(tmp) / "declaration.yml"
         path.write_text(text, encoding="utf-8")
         spec = load_scope_declaration(path)
-    compilation = compile_scope(spec, workspace_ctx=_workspace_ctx())
+    compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_registry())
     agents: dict[str, object] = {}
     for compiled in compilation.agents:
         prov = compiled.provenance
         agents[prov.agent] = {
-            "roster": list(compiled.spec.tools),
+            "roster": [entry.name for entry in compiled.spec.tools],
             "provenance_tools": [
                 {
                     "tool": e.tool,
                     "origin": e.origin.value,
-                    "replaces": e.replaces,
                     "targets": list(e.targets),
                 }
                 for e in prov.tools
-            ],
-            "replacements": [
-                {
-                    "default_tool": r.default_tool,
-                    "replacement_tool": r.replacement_tool,
-                    "supplement": r.supplement.value,
-                }
-                for r in prov.replacements
             ],
         }
     return agents
@@ -152,7 +167,7 @@ def _facets(text: str) -> dict[str, object]:
 def main() -> None:
     shapes = {name: _facets(text) for name, text in _DECLARATIONS.items()}
     payload = {
-        "captured_on": "pre-aci-capability HEAD (tool_supplements face)",
+        "captured_on": "name-slot overwrite era (O3 compile-time replacement removed)",
         "shapes": shapes,
     }
     out = _DIR / "facets.json"

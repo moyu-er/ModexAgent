@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.tool_manager import ToolExecutionContext, ToolManager, ToolResult
+from modex_agent.core.tool_manager import (
+    ToolConfig,
+    ToolExecutionContext,
+    ToolManager,
+    ToolOrigin,
+    ToolOverrideRecord,
+    ToolResult,
+)
 
 if TYPE_CHECKING:
     from modex_agent.core.capabilities import ModelCapabilities
@@ -27,8 +34,14 @@ class FilteredToolManager(ToolManager):
             return False
         return self._allowed is None or name in self._allowed
 
-    def register(self, tool: Tool, config: Any | None = None) -> None:
-        self._base.register(tool, config)
+    def register(
+        self,
+        tool: Tool,
+        config: ToolConfig | None = None,
+        *,
+        origin: ToolOrigin | None = None,
+    ) -> None:
+        self._base.register(tool, config, origin=origin)
 
     def unregister(self, tool_name: str) -> bool:
         return self._base.unregister(tool_name)
@@ -41,6 +54,11 @@ class FilteredToolManager(ToolManager):
 
     def is_registered(self, tool_name: str) -> bool:
         return self._base.is_registered(tool_name) and self._is_allowed(tool_name)
+
+    @property
+    def override_records(self) -> tuple[ToolOverrideRecord, ...]:
+        """Delegate the override audit to the wrapped registry."""
+        return self._base.override_records
 
     def get_tool_descriptions(
         self, caps: ModelCapabilities | None = None

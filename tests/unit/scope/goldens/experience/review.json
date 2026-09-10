@@ -5,49 +5,41 @@
       {
         "name": "ast_grep_replace",
         "origin": "supplement",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "ast_grep_search",
         "origin": "supplement",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "bash",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "glob",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "grep",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "ls",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "read",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "send_to_agent",
         "origin": "derived_send_to_agent",
-        "replaces": null,
         "targets": [
           "reviewer"
         ]
@@ -55,13 +47,11 @@
       {
         "name": "todo_read",
         "origin": "supplement",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "todo_write",
         "origin": "supplement",
-        "replaces": null,
         "targets": []
       }
     ],
@@ -87,55 +77,46 @@
       {
         "name": "ast_grep_replace",
         "origin": "supplement",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "ast_grep_search",
         "origin": "supplement",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "bash",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "edit",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "glob",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "grep",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "ls",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "read",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "send_to_agent",
         "origin": "derived_send_to_agent",
-        "replaces": null,
         "targets": [
           "reviewer"
         ]
@@ -143,19 +124,16 @@
       {
         "name": "todo_read",
         "origin": "supplement",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "todo_write",
         "origin": "supplement",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "write",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       }
     ],
@@ -183,61 +161,51 @@
       {
         "name": "ast_grep_replace",
         "origin": "supplement",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "ast_grep_search",
         "origin": "supplement",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "bash",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "edit",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "experience",
         "origin": "supplement",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "glob",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "grep",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "ls",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "read",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "send_to_peer",
         "origin": "derived_send_to_peer",
-        "replaces": null,
         "targets": [
           "default"
         ]
@@ -245,7 +213,6 @@
       {
         "name": "task",
         "origin": "derived_task",
-        "replaces": null,
         "targets": [
           "explore",
           "general"
@@ -254,19 +221,16 @@
       {
         "name": "todo_read",
         "origin": "supplement",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "todo_write",
         "origin": "supplement",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "write",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       }
     ],

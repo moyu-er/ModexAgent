@@ -74,7 +74,7 @@ from modex_agent.plugins.assembly.native_core import (
     NativeAssemblyInputs,
     assemble_native_agent,
 )
-from modex_agent.plugins.assembly.spec import AssemblySpec
+from modex_agent.plugins.assembly.spec import AssemblySpec, ToolEntry
 from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
 from modex_agent.plugins.capability import (
     AgentDeclarationView,
@@ -141,6 +141,11 @@ _BYTE_STABLE_EXCLUDE: Final[dict[str, dict[str, dict[str, dict[str, bool]]]]] = 
 
 
 # ─── The two five-phase dummies + the throwaway ─────────────────────────────
+
+
+def _names(entries: list[ToolEntry]) -> list[str]:
+    """Spec tool roster projected back to names (roster-order face)."""
+    return [entry.name for entry in entries]
 
 
 class DummySupply(CapabilitySupply):
@@ -621,7 +626,7 @@ class TestTCap1EndToEnd:
         assert compiled.name == "dummy_field"
         assert compiled.config == {}
         assert compiled.binding.active_sections == (_FIELD_SECTION,)
-        assert "dummy_tool" in root.spec.tools
+        assert "dummy_tool" in _names(root.spec.tools)
         assert "dummy_hook" in root.spec.hooks
 
     def test_auto_path_applies_field_and_tree_predicates(self) -> None:
@@ -638,12 +643,12 @@ class TestTCap1EndToEnd:
             "dummy_field",
             "dummy_tree",
         ]
-        assert "dummy_tool" in root.spec.tools
-        assert "dummy_tree_tool" in root.spec.tools
+        assert "dummy_tool" in _names(root.spec.tools)
+        assert "dummy_tree_tool" in _names(root.spec.tools)
         assert "dummy_hook" in root.spec.hooks
         sub = compilation.agents[1]
         assert sub.spec.capabilities == ()
-        assert "dummy_tool" not in sub.spec.tools
+        assert "dummy_tool" not in _names(sub.spec.tools)
 
     async def test_pool_aggregation_builds_field_supply_exactly_once(self) -> None:
         """Both pool agents effective on dummy_field → ONE supply() call for
@@ -737,18 +742,18 @@ class TestFieldFlipRedGreen:
 
         on = _compile_root(True).agents[0]
         assert [cap.name for cap in on.spec.capabilities] == ["dummy_field"]
-        assert "dummy_tool" in on.spec.tools
+        assert "dummy_tool" in _names(on.spec.tools)
         assert "dummy_hook" in on.spec.hooks
         assert on.spec.capabilities[0].binding.active_sections == (_FIELD_SECTION,)
 
         off = _compile_root(False).agents[0]
         assert off.spec.capabilities == ()
-        assert "dummy_tool" not in off.spec.tools
+        assert "dummy_tool" not in _names(off.spec.tools)
         assert "dummy_hook" not in off.spec.hooks
 
         back_on = _compile_root(True).agents[0]
         assert [cap.name for cap in back_on.spec.capabilities] == ["dummy_field"]
-        assert "dummy_tool" in back_on.spec.tools
+        assert "dummy_tool" in _names(back_on.spec.tools)
 
 
 # ─── (c) Three boot-fail paths ─────────────────────────────────────────────
@@ -807,7 +812,7 @@ class TestBootFailPaths:
         ]
 
         assert root.spec.capabilities == ()
-        assert "dummy_tool" not in root.spec.tools
+        assert "dummy_tool" not in _names(root.spec.tools)
 
 
 # ─── (d) ZERO-CONFIG byte-equality (SPEC §14.7) ─────────────────────────────
@@ -891,7 +896,7 @@ class TestHashMutationMatrix:
 
         sub_three = _agent_named(_compile(_three_level_tree(), registry), "sub")
         assert [cap.name for cap in sub_three.spec.capabilities] == ["dummy_tree"]
-        assert "dummy_tree_tool" in sub_three.spec.tools
+        assert "dummy_tree_tool" in _names(sub_three.spec.tools)
 
     def test_same_tree_same_registry_identical_hash(self) -> None:
         registry = _dummy_registry(_DummyCapabilityPlugin())

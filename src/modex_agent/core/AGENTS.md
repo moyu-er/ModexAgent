@@ -29,7 +29,7 @@ The `core/` module defines foundational contracts and values used directly acros
 | `scope.py` | Canonical `RecordScope` identity only; configurable memory scopes live in `memory/scope.py`. |
 | `session_id.py` | `SessionInfo`, `SessionIdFactory`, and identity encoding/parsing helpers; persistence lives in `persistence/`. |
 | `stream_events.py` | Closed LLM stream-event union and `EventAssembler`. |
-| `tool_manager.py` | Tool/manager contracts, execution values, and shared execution behavior; `InMemoryToolManager` lives in `tools/manager.py`. |
+| `tool_manager.py` | Tool/manager contracts, execution values, and shared execution behavior; `ToolOrigin` + `ToolOrigin.OVERRIDE_PRIORITY` (name-slot overwrite arbitration — `tool.name` is the runtime identity, moved from `scope/compiler.py`); `InMemoryToolManager` lives in `tools/manager.py`. |
 | `turn_events.py` | Provider-neutral semantic `TurnEvent` variants. |
 
 ## For AI Agents

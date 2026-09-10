@@ -35,6 +35,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from modex_agent.core.tool_manager import ToolOrigin
 from modex_agent.hook import HookPoint, HookRunner
 from modex_agent.hook.abc import AfterTurnHook
 from modex_agent.hook.builtin.todo_continuation import TodoContinuationHook
@@ -50,7 +51,7 @@ from modex_agent.plugins.defaults.capabilities.todo import TodoCapability
 from modex_agent.plugins.defaults.hooks import RunLoggingHookFactory, TodoContinuationHookFactory
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.scope.compiler import ToolOrigin, compile_scope
+from modex_agent.scope.compiler import compile_scope
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.context import WorkspaceContext
@@ -108,7 +109,7 @@ def _compile_hooks(agent: AgentSpec) -> tuple[tuple[str, ...], tuple[str, ...]]:
         registry=_registry(),
     )
     compiled = compilation.agents[0]
-    return tuple(compiled.spec.tools), tuple(compiled.spec.hooks)
+    return tuple(entry.name for entry in compiled.spec.tools), tuple(compiled.spec.hooks)
 
 
 # ─── Protocol shape ─────────────────────────────────────────────────────────
@@ -139,7 +140,6 @@ class TestProtocolShape:
             "todo_planning_nudge",
         )
         assert contribution.sections == (PromptSectionSpec(section_id="todo.discipline", order=30),)
-        assert contribution.tool_replacements == ()
 
     def test_config_rejects_unknown_keys(self) -> None:
         with pytest.raises(ValidationError):
@@ -238,7 +238,7 @@ class TestDualAnchor:
         compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_registry())
         compiled = compilation.agents[0]
 
-        tools, hooks = tuple(compiled.spec.tools), tuple(compiled.spec.hooks)
+        tools, hooks = tuple(entry.name for entry in compiled.spec.tools), tuple(compiled.spec.hooks)
         assert "todo_write" in tools and "todo_read" in tools
         assert "todo_planning_nudge" not in hooks
         assert "todo_continuation" in hooks

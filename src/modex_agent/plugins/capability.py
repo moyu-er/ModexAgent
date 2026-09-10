@@ -74,7 +74,6 @@ __all__ = [
     "PoolSupplyView",
     "PromptSectionSpec",
     "SectionPlacement",
-    "ToolReplacementSpec",
     "TreePositionView",
 ]
 
@@ -143,8 +142,7 @@ class Capability(ABC):
 
         Contributed tool/hook names enter the roster merge BASE (so the
         component-level veto ``tools: [-x]`` / ``hooks: [-y]`` still
-        applies to them), ``tool_replacements`` record O3 same-name
-        replacements, ``sections`` are collected for C2 gating, and
+        applies to them), ``sections`` are collected for C2 gating, and
         ``derived_tools`` carry tree-derived entries through the compiler's
         derived-entry machinery (origin + targets ride the spec — the
         provenance bill vocabulary, not the plain merge base). Default:
@@ -305,31 +303,14 @@ class FinalRosterView(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ToolReplacementSpec(BaseModel):
-    """Contribution-level tool replacement declaration (SPEC §4, the O3
-    same-name replacement pattern).
-
-    Generalizes the compiler's historical ACI special case: when both
-    names survive the merge, ``replaced_tool`` is served by
-    ``replacement_tool``'s implementation. The compiler-side provenance
-    record is the scope layer's separate concern — this module never
-    imports it.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    replaced_tool: str
-    replacement_tool: str
-
-
 class DerivedToolOrigin(StrEnum):
     """Origin vocabulary for tree-derived tool entries (SPEC §8.4 / A3).
 
     The capability-channel face of the compile product's provenance
     vocabulary: the scope compiler maps each member onto the
-    identically-valued ``ToolOrigin`` member (``scope/compiler.py`` owns
-    the full classification enum — capability.py stays import-light, and
-    the dependency direction is scope→plugins). Values are the bill's
+    identically-valued ``ToolOrigin`` member (``core/tool_manager.py``
+    owns the full classification enum — capability.py stays import-light
+    and maps by value, no runtime import needed). Values are the bill's
     wire format; a member with no ``ToolOrigin`` counterpart fails the
     compile loudly.
     """
@@ -399,7 +380,6 @@ class CapabilityContribution(BaseModel):
     tree derivation; a name listed here should not also appear in
     ``tools`` (the derived channel owns its classification)."""
 
-    tool_replacements: tuple[ToolReplacementSpec, ...] = ()
     hooks: tuple[str, ...] = ()
     """Hook names entering merged_hooks."""
 
@@ -439,9 +419,6 @@ class CompiledCapability(BaseModel):
     Carries only frozen data (name + validated config + binding): the
     capability OBJECT never enters the compile product (spec-hash
     byte-stability) — assembly re-resolves by name from the registry.
-    O3 tool-replacement declarations live ONLY in the scope layer's
-    ``ToolReplacement`` provenance records (applied by the compiler at
-    the post-merge application point) — no parallel copy here.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

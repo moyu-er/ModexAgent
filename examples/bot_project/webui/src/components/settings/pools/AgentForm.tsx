@@ -273,23 +273,6 @@ export function AgentForm({
                   ))}
                 </div>
               )}
-              {bill !== null && bill.replacements.length > 0 ? (
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <span className="text-xs text-mute">
-                    {t("settings.poolsPanel.replacements")}
-                  </span>
-                  {bill.replacements.map((r) => (
-                    <Chip
-                      key={`${r.default_tool}-${r.replacement_tool}`}
-                      title={t("settings.poolsPanel.replacementTitle", {
-                        supplement: r.supplement,
-                      })}
-                    >
-                      {r.default_tool} ← {r.replacement_tool}
-                    </Chip>
-                  ))}
-                </div>
-              ) : null}
             </div>
             <div>
               <span className="mb-1 block text-base text-ink">

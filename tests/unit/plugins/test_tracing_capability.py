@@ -158,7 +158,7 @@ def _compile_hooks(agent: AgentSpec) -> tuple[tuple[str, ...], tuple[str, ...]]:
     spec = ScopeSpec(kind=ScopeKind.POOL, pool=PoolSpec(name="p", agents=[agent]))
     compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(), registry=_registry())
     compiled = compilation.agents[0]
-    return tuple(compiled.spec.tools), tuple(compiled.spec.hooks)
+    return tuple(entry.name for entry in compiled.spec.tools), tuple(compiled.spec.hooks)
 
 
 def _final(hooks: tuple[str, ...] = _ALL_HOOK_NAMES) -> FinalRosterView:
@@ -198,7 +198,6 @@ class TestProtocolShape:
                 assert contribution.hooks == _ALL_HOOK_NAMES
                 assert contribution.tools == ()
                 assert contribution.sections == ()
-                assert contribution.tool_replacements == ()
 
     def test_config_mirrors_agent_declarable_subset(self) -> None:
         config = _config(

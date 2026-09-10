@@ -39,7 +39,9 @@ from typing import Any
 
 import pytest
 
+from modex_agent.core.tool_manager import ToolOrigin
 from modex_agent.plugins.abc import ComponentSlot
+from modex_agent.plugins.assembly.spec import ToolEntry
 from modex_agent.plugins.capability import (
     AgentDeclarationView,
     AgentDeclaredFields,
@@ -56,7 +58,7 @@ from modex_agent.plugins.defaults.capabilities.subagents import (
 )
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.scope.compiler import ToolOrigin, compile_scope
+from modex_agent.scope.compiler import compile_scope
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.scope.validator import RuleId, validate_effective_configs
@@ -77,6 +79,11 @@ _DECLARATION_PATH = _DIR.parents[2] / "examples" / "bot_project" / "config" / "s
 _EQUIVALENCE_FIXTURE: dict[str, Any] = json.loads(
     (_GOLDEN_DIR / "derived_entries.json").read_text(encoding="utf-8")
 )
+
+
+def _names(entries: list[ToolEntry]) -> list[str]:
+    """Spec tool roster projected back to names (roster-order face)."""
+    return [entry.name for entry in entries]
 
 
 def _registry() -> ComponentRegistry:
@@ -484,7 +491,7 @@ class TestV6DualCheck:
         # Only the ROOT vetoed the capability — the non-root sub still
         # auto-applies (the override map is per-agent).
         assert all(cap.name != "subagents" for cap in root.spec.capabilities)
-        assert "task" not in root.spec.tools
+        assert "task" not in _names(root.spec.tools)
         issues = validate_effective_configs(spec, [agent.effective for agent in compilation.agents])
         assert [issue.rule for issue in issues] == [RuleId.TASK_TOOL_PRESENT]
         assert "V6" in issues[0].message
@@ -504,9 +511,9 @@ class TestV6DualCheck:
         )
         compilation = _compile(spec)
         sub = compilation.agents[1]
-        assert "send_to_agent" not in sub.spec.tools
+        assert "send_to_agent" not in _names(sub.spec.tools)
         assert SUBAGENTS_AUTO_SEND_HOOK_NAME in sub.spec.hooks  # hook unanchored
-        assert "task" in compilation.agents[0].spec.tools
+        assert "task" in _names(compilation.agents[0].spec.tools)
 
 
 # ─── Zero-config auto-apply on the shipped tree ──────────────────────────────
@@ -541,7 +548,7 @@ class TestAutoApplyZeroConfig:
             for agent in compilation.agents
             if (agent.provenance.pool, agent.provenance.agent) == ("opencode", "opencode")
         )
-        assert "send_to_peer" not in opencode.spec.tools
+        assert "send_to_peer" not in _names(opencode.spec.tools)
 
     def test_lone_root_pool_stays_capability_free(self) -> None:
         spec = ScopeSpec(
@@ -553,9 +560,9 @@ class TestAutoApplyZeroConfig:
         )
         compiled = _compile(spec).agents[0]
         assert compiled.spec.capabilities == ()
-        assert "task" not in compiled.spec.tools
-        assert "send_to_agent" not in compiled.spec.tools
-        assert "send_to_peer" not in compiled.spec.tools
+        assert "task" not in _names(compiled.spec.tools)
+        assert "send_to_agent" not in _names(compiled.spec.tools)
+        assert "send_to_peer" not in _names(compiled.spec.tools)
 
     def test_auto_applied_capability_is_vetoable_by_declaration(self) -> None:
         spec = ScopeSpec(
@@ -570,7 +577,7 @@ class TestAutoApplyZeroConfig:
         )
         compilation = _compile(spec)
         sub = compilation.agents[1]
-        assert "send_to_agent" not in sub.spec.tools
+        assert "send_to_agent" not in _names(sub.spec.tools)
         assert SUBAGENTS_AUTO_SEND_HOOK_NAME not in sub.spec.hooks
         assert all(
             section.section_id.startswith("subagents.") is False
@@ -578,7 +585,7 @@ class TestAutoApplyZeroConfig:
             for section in cap.binding.active_sections
         )
         # The root keeps its own derivation (children still task-anchored).
-        assert "task" in compilation.agents[0].spec.tools
+        assert "task" in _names(compilation.agents[0].spec.tools)
 
 
 # ─── Golden split-brain (machine-captured pre-migration facets) ──────────────

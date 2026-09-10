@@ -1,5 +1,5 @@
 """ScopeCompiler — tree → per-agent AssemblySpecs + effective toolsets +
-O3 accounting (SPEC §3.2/§3.4/§5.2, ticket 06).
+provenance bills (SPEC §3.2/§3.4/§5.2, ticket 06).
 
 A pure-function compiler over a validated
 :class:`~modex_agent.scope.spec.ScopeSpec` tree: same inputs →
@@ -22,9 +22,8 @@ Outputs (three per declared agent, in declaration order):
   including the injected communication entries (SPEC §5.2: the effective
   toolset V6 checks IS the derived spec.tools).
 - **Per-field provenance** — the bill data (ticket 16): every field's
-  winning layer (framework default / profile / local), every tool entry's
-  origin, and the O3 same-name replacement records (a capability's product
-  replacing a default tool entry).
+  winning layer (framework default / profile / local) and every tool
+  entry's origin.
 
 Derived communication entries (SPEC §5.2/§8.4): the tree derivation is
 CAPABILITY-CONTRIBUTED — a capability's ``contribute`` declares
@@ -52,9 +51,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.core.tool_manager import ToolOrigin
 from modex_agent.multi_agent.execution_strategy import strategy_name_of
 from modex_agent.plugins.abc import ComponentSlot, PluginSource
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
+from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides, ToolEntry
 from modex_agent.plugins.capability import (
     AgentDeclarationView,
     AgentDeclaredFields,
@@ -65,7 +65,6 @@ from modex_agent.plugins.capability import (
     CompiledCapability,
     DerivedToolSpec,
     FinalRosterView,
-    ToolReplacementSpec,
     TreePositionView,
 )
 from modex_agent.plugins.registry import ComponentRegistry
@@ -104,24 +103,6 @@ class ProvenanceLayer(StrEnum):
     """The bound named profile."""
     LOCAL = "local"
     """The node's own declaration."""
-
-
-class ToolOrigin(StrEnum):
-    """Where one effective tool entry came from."""
-
-    PRESET = "preset"
-    """Framework toolset preset expansion."""
-    PROFILE_TOOLS = "profile_tools"
-    """Wholesale tools list from the bound profile."""
-    LOCAL_TOOLS = "local_tools"
-    """Wholesale or incremental local ``tools:`` declaration."""
-    SUPPLEMENT = "supplement"
-    """Legacy classification retained for pre-capability migration goldens."""
-    CAPABILITY_DERIVED = "capability_derived"
-    """Non-derived tool contributed by a named capability."""
-    DERIVED_TASK = "derived_task"
-    DERIVED_SEND_TO_AGENT = "derived_send_to_agent"
-    DERIVED_SEND_TO_PEER = "derived_send_to_peer"
 
 
 class HookOrigin(StrEnum):
@@ -167,28 +148,9 @@ class ToolEntryProvenance(BaseModel):
     origin: ToolOrigin
     capability: str | None = None
     """Contributing capability name for CAPABILITY_DERIVED entries."""
-    replaces: str | None = None
-    """O3: the default tool entry this entry replaced."""
     targets: list[str] = Field(default_factory=list)
     """Derived communication entries only: task → direct child agents;
     send_to_agent → ``(parent,)``; send_to_peer → peer pool names."""
-
-
-class ToolReplacement(BaseModel):
-    """One O3 same-name replacement record (SPEC §3.5): a capability's
-    product replaced a default tool entry in the effective toolset
-    (the ``replaced_tool ← replacement_tool`` pattern). Per-agent
-    granularity — the effective capability set decides, unlike O2's
-    global registry priority."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    default_tool: str
-    replacement_tool: str
-    capability: str
-    """The capability registration name whose contribution declared the
-    replacement (B7 — the compile product references capabilities by
-    registration name, never by a retired enum)."""
 
 
 class CapabilityState(StrEnum):
@@ -236,7 +198,7 @@ class CapabilityProvenance(BaseModel):
 
 
 class AgentProvenance(BaseModel):
-    """One agent's field, tool, replacement, and capability bill data."""
+    """One agent's field, tool, and capability bill data."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -244,16 +206,8 @@ class AgentProvenance(BaseModel):
     agent: str
     fields: list[FieldProvenance]
     tools: list[ToolEntryProvenance]
-    replacements: list[ToolReplacement]
     capabilities: list[CapabilityProvenance] = Field(default_factory=list)
     hooks: list[HookEntryProvenance] = Field(default_factory=list)
-
-    def replacement_of(self, default_tool: str) -> ToolReplacement | None:
-        """The O3 replacement record covering a default tool name, if any."""
-        return next(
-            (r for r in self.replacements if r.default_tool == default_tool),
-            None,
-        )
 
 
 class CompiledAgent(BaseModel):
@@ -416,7 +370,7 @@ def _compile_agent(
         agent.model_copy(update={"toolset": toolset, "eager": eager, "memory": merged_memory})
     )
 
-    # ── tools pipeline: preset expansion + derived entries + O3 ──────────
+    # ── tools pipeline: preset expansion + derived entries ─────────────
     preset_names = _expand_preset_tool_names(toolset)
 
     # ── capability protocol: C0 enablement → C1 contribution (SPEC §6) ──
@@ -436,7 +390,6 @@ def _compile_agent(
     # Contributed hook name → first contributing capability (the bill's
     # single-owner face, mirroring capability_tool_owners).
     capability_hook_owners: dict[str, str] = {}
-    capability_replacement_specs: list[tuple[str, ToolReplacementSpec]] = []
     capability_states: list[tuple[str, Capability, BaseModel, CapabilityContribution]] = []
     capability_provenance: list[CapabilityProvenance] = []
     # Tree-derived entries (SPEC §8.4 A3): contributed specs in C1
@@ -462,9 +415,6 @@ def _compile_agent(
             config = capability.config_model.model_validate(override_config)
             contribution = capability.contribute(tree_view, config)
             capability_states.append((name, capability, config, contribution))
-            capability_replacement_specs.extend(
-                (name, spec) for spec in contribution.tool_replacements
-            )
             for tool_name in contribution.tools:
                 capability_tool_owners.setdefault(tool_name, name)
             for hook_name in contribution.hooks:
@@ -503,14 +453,6 @@ def _compile_agent(
         capability_tool_owners=capability_tool_owners,
     )
     final_tools = merged_tools
-    replacements: list[ToolReplacement] = []
-    # O3 capability tool replacements — applied POST-merge at the pipeline
-    # position the historical supplement special case occupied (see
-    # ``_apply_capability_replacements``).
-    if capability_replacement_specs:
-        final_tools, tool_provenance, replacements = _apply_capability_replacements(
-            final_tools, tool_provenance, replacements, capability_replacement_specs
-        )
 
     # Position-default hooks (SPEC §3.2 hook rows) enter the merge base
     # ahead of capability contributions and the node's declaration — the
@@ -580,7 +522,7 @@ def _compile_agent(
         description=agent.description,
         max_iterations=max_steps,
         roles=list(agent.roles),
-        tools=final_tools,
+        tools=_spec_tool_entries(final_tools, tool_provenance),
         tool_configs=dict(agent.tool_configs or {}),
         hooks=merged_hooks,
         hook_configs=dict(agent.hook_configs or {}),
@@ -641,7 +583,6 @@ def _compile_agent(
                 ),
             ],
             tools=tool_provenance,
-            replacements=replacements,
             capabilities=capability_provenance,
             hooks=hook_provenance,
         ),
@@ -649,6 +590,21 @@ def _compile_agent(
 
 
 # ─── Internal helpers ──────────────────────────────────────────────────────
+
+
+def _spec_tool_entries(
+    roster: list[str],
+    provenance: list[ToolEntryProvenance],
+) -> list[ToolEntry]:
+    """Project the final roster onto AssemblySpec ``ToolEntry`` values.
+
+    Origin lookup is name-keyed over the classified provenance, which
+    stays aligned with ``roster`` (``_classify_tools`` emits one entry per
+    merged name). Duplicate roster names (overlay concatenation, row iv)
+    share the name-keyed origin; assembly registers each name slot once.
+    """
+    origin_by_name = {entry.tool: entry.origin for entry in provenance}
+    return [ToolEntry(name=name, origin=origin_by_name[name]) for name in roster]
 
 
 def _layered[T](local: T | None, profile_value: T | None) -> tuple[T | None, ProvenanceLayer]:
@@ -895,64 +851,6 @@ def _gate_contributed_hooks(
     return result
 
 
-def _apply_capability_replacements(
-    tools: list[str],
-    entries: list[ToolEntryProvenance],
-    replacements: list[ToolReplacement],
-    specs: list[tuple[str, ToolReplacementSpec]],
-) -> tuple[list[str], list[ToolEntryProvenance], list[ToolReplacement]]:
-    """Apply capability tool replacements (O3) post-merge — the generic
-    form of the historical supplement special case that ran at this exact
-    pipeline position.
-
-    Per replacement declaration ``(capability_name, spec)``, applied in
-    C1 registry-enumeration order:
-
-    - the replaced default entry dies (all occurrences);
-    - the replacement entry lands at the END of the final roster (moved
-      there if the merge-base contribution already carried it);
-    - a ``ToolReplacement`` provenance record is appended iff the default
-      entry was present in the roster;
-    - the replacement tool's classified provenance entry (merge-base
-      contribution) is REPLACED by a CAPABILITY_DERIVED entry annotated
-      with the capability and replaced default name, at the end of the entry list — the
-      replaced default's own classified entry stays in place (the audit
-      trail keeps both sides of the swap).
-
-    Roster-order note (recorded divergence, plan todo 7): the historical
-    branch interleaved with other supplement append paths by declared
-    order; the generic application always lands the replacement entry at
-    the roster tail. Name set and replacement records are unchanged.
-    """
-    result = list(tools)
-    provenance = list(entries)
-    records = list(replacements)
-    for capability_name, spec in specs:
-        had_default = spec.replaced_tool in result
-        result = [name for name in result if name != spec.replaced_tool]
-        if spec.replacement_tool in result:
-            result = [name for name in result if name != spec.replacement_tool]
-        result.append(spec.replacement_tool)
-        if had_default:
-            records.append(
-                ToolReplacement(
-                    default_tool=spec.replaced_tool,
-                    replacement_tool=spec.replacement_tool,
-                    capability=capability_name,
-                )
-            )
-        provenance = [entry for entry in provenance if entry.tool != spec.replacement_tool]
-        provenance.append(
-            ToolEntryProvenance(
-                tool=spec.replacement_tool,
-                origin=ToolOrigin.CAPABILITY_DERIVED,
-                capability=capability_name,
-                replaces=spec.replaced_tool if had_default else None,
-            )
-        )
-    return result, provenance, records
-
-
 def _classify_tools(
     merged_tools: list[str],
     *,
@@ -962,7 +860,7 @@ def _classify_tools(
     declared_origin: ToolOrigin,
     capability_tool_owners: Mapping[str, str],
 ) -> list[ToolEntryProvenance]:
-    """Classify pre-replacement tool entries by origin.
+    """Classify tool entries by origin.
 
     ``tools_list is None`` → base verbatim (preset + derived entries).
     Incremental (``+/-``) → base entries keep their origins, additions are

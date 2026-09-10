@@ -483,4 +483,4 @@ def test_workspace_scoped_tool_leaves_absolute_path_alone(tmp_path: Path) -> Non
     # "Untouched" means anchored at itself (never prefixed with the workspace
     # root); the wrapper routes through the canonical resolver, whose spelling
     # is platform-canonical — compare as paths, not raw strings.
-    assert Path(args["path"]) == Path(absolute)
+    assert Path(args["path"]) == Path(absolute).resolve()

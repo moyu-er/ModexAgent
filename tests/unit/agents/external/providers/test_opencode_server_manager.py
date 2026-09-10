@@ -921,6 +921,7 @@ class TestWatchdogBusySessionGrace:
         assert handle._manager._consecutive_failures >= 20
         assert "sess-grace-1" in handle._manager._active_sessions
 
+        handle.unregister_session("sess-grace-1")
         await handle._manager._shutdown()
 
 
@@ -1040,6 +1041,7 @@ class TestServerHandleActiveSessionsTracking:
 
         assert "sess-active" in handle._manager._active_sessions
 
+        handle.unregister_session("sess-active")
         await handle._manager._shutdown()
 
     async def test_unregister_session_removes_from_active_sessions(

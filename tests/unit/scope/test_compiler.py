@@ -10,9 +10,10 @@ Covers the ticket checkboxes:
 - (b) the §5.2 derivation table end to end on a three-level tree
   (task lists DIRECT children only; send_to_agent per non-root; leaf has
   no task entry at all; send_to_peer for roots with links).
-- (c)/(g) capability same-name replacement accounting (``edit ← aci_edit``,
-  declared via ``capabilities: {aci: {}}`` in the shipped declaration) in
-  the provenance data, queryable in the pure-function boundary.
+- (c)/(g) capability same-name upgrade face (``edit`` + ``aci_edit``, the
+  latter declared via ``capabilities: {aci: {}}`` in the shipped
+  declaration): the compiler keeps BOTH roster entries with their origin
+  classifications — the slot is settled at assembly by ToolOrigin rank.
 - per-field provenance layers (framework default ← profile ← local).
 - (d) byte stability: same input tree → byte-identical output.
 - (e) phase-2 validation (V6/V9) driven by real compiler output.
@@ -23,6 +24,8 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from modex_agent.core.tool_manager import ToolOrigin
+from modex_agent.plugins.assembly.spec import ToolEntry
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
@@ -33,8 +36,6 @@ from modex_agent.scope.compiler import (
     ProvenanceLayer,
     ScopeCompilation,
     ToolEntryProvenance,
-    ToolOrigin,
-    ToolReplacement,
     compile_scope,
 )
 from modex_agent.scope.defaults import RegistrationTiming
@@ -87,6 +88,11 @@ def _preset_names(preset: ToolPreset) -> list[str]:
     if preset in (ToolPreset.FULL, ToolPreset.READ_ONLY, ToolPreset.READ_WRITE):
         names.append("bash")
     return names
+
+
+def _names(entries: list[ToolEntry]) -> list[str]:
+    """Spec tool roster projected back to names (roster-order face)."""
+    return [entry.name for entry in entries]
 
 
 def _pools(spec: ScopeSpec) -> list[PoolSpec]:
@@ -175,7 +181,7 @@ class TestDerivationTable:
         assert task.origin is ToolOrigin.DERIVED_TASK
         # Direct children only — the grandchild (leaf) belongs to mid's task.
         assert task.targets == ["mid", "helper"]
-        assert root.spec.tools == _preset_names(ToolPreset.FULL) + [TASK]
+        assert _names(root.spec.tools) == _preset_names(ToolPreset.FULL) + [TASK]
 
     def test_mid_level_gets_task_and_send_to_agent(self) -> None:
         mid = self._compiled()[("t", "mid")]
@@ -186,7 +192,7 @@ class TestDerivationTable:
         assert send is not None
         assert send.origin is ToolOrigin.DERIVED_SEND_TO_AGENT
         assert send.targets == ["root"]
-        assert mid.spec.tools == _preset_names(ToolPreset.READ_WRITE) + [TASK, SEND_TO_AGENT]
+        assert _names(mid.spec.tools) == _preset_names(ToolPreset.READ_WRITE) + [TASK, SEND_TO_AGENT]
 
     def test_leaves_have_no_task_entry_at_all(self) -> None:
         # SPEC §3.2: a leaf's assembly output has NO task tool — not an
@@ -194,19 +200,19 @@ class TestDerivationTable:
         for name in ("helper", "leaf"):
             agent = self._compiled()[("t", name)]
             assert _entry(agent.provenance, TASK) is None
-            assert TASK not in agent.spec.tools
+            assert TASK not in _names(agent.spec.tools)
 
     def test_leaf_send_to_agent_targets_own_parent(self) -> None:
         leaf = self._compiled()[("t", "leaf")]
         send = _entry(leaf.provenance, SEND_TO_AGENT)
         assert send is not None
         assert send.targets == ["mid"]
-        assert leaf.spec.tools == _preset_names(ToolPreset.READ_WRITE) + [SEND_TO_AGENT]
+        assert _names(leaf.spec.tools) == _preset_names(ToolPreset.READ_WRITE) + [SEND_TO_AGENT]
 
     def test_root_without_links_has_no_send_to_peer(self) -> None:
         root = self._compiled()[("t", "root")]
         assert _entry(root.provenance, SEND_TO_PEER) is None
-        assert SEND_TO_PEER not in root.spec.tools
+        assert SEND_TO_PEER not in _names(root.spec.tools)
 
     def test_roots_with_links_get_send_to_peer(self) -> None:
         spec = ScopeSpec(
@@ -228,7 +234,7 @@ class TestDerivationTable:
             assert entry is not None
             assert entry.origin is ToolOrigin.DERIVED_SEND_TO_PEER
             assert entry.targets == peer
-            assert SEND_TO_PEER in agent.spec.tools
+            assert SEND_TO_PEER in _names(agent.spec.tools)
             # No declared children → no task even though the agent is a root.
             assert _entry(agent.provenance, TASK) is None
 
@@ -240,17 +246,19 @@ class TestDerivationTable:
             registry=_shipped_registry(),
         )
         for agent in compilation.agents:
-            assert agent.effective.tools == agent.spec.tools
+            assert agent.effective.tools == _names(agent.spec.tools)
             assert agent.effective.pool == agent.provenance.pool
             assert agent.effective.agent == agent.provenance.agent
 
 
-# ─── (c)/(g) Capability same-name replacement accounting (O3) ───────────────
+# ─── (c)/(g) Capability same-name upgrade: name-slot overwrite face ─────────
 
 
-class TestCapabilityReplacementAccounting:
-    """The shipped declaration's ``capabilities: {aci: {}}`` blocks ride
-    the generic O3 replacement machinery: ``edit ← aci_edit``."""
+class TestCapabilityNameSlotOverwriteFace:
+    """The shipped declaration's ``capabilities: {aci: {}}`` blocks: the
+    compiler keeps BOTH roster entries (``edit`` PRESET +
+    ``aci_edit`` CAPABILITY_DERIVED); the ``edit`` slot is settled at
+    assembly by ToolOrigin rank, never by compile-time roster surgery."""
 
     def _compiled(self) -> dict[tuple[str, str], CompiledAgent]:
         return _by_key(
@@ -261,36 +269,23 @@ class TestCapabilityReplacementAccounting:
             )
         )
 
-    def test_aci_replacement_recorded_and_queryable(self) -> None:
+    def test_aci_roster_carries_both_entries_with_origins(self) -> None:
         root = self._compiled()[("default", "default")]
-        expected = ToolReplacement(
-            default_tool="edit",
-            replacement_tool="aci_edit",
-            capability="aci",
-        )
-        assert root.provenance.replacements == [expected]
-        # Queryable in the pure-function boundary (AC g): the O3 record for
-        # a default tool name is retrievable, None when not replaced.
-        assert root.provenance.replacement_of("edit") == expected
-        assert root.provenance.replacement_of("write") is None
-
-    def test_replaced_default_entry_absent_and_replacement_annotated(self) -> None:
-        root = self._compiled()[("default", "default")]
-        assert "edit" not in root.spec.tools
-        entry = _entry(root.provenance, "aci_edit")
-        assert entry is not None
-        assert entry.origin is ToolOrigin.CAPABILITY_DERIVED
-        assert entry.capability == "aci"
-        assert entry.replaces == "edit"
+        assert "edit" in _names(root.spec.tools)
+        assert "aci_edit" in _names(root.spec.tools)
+        assert _entry(root.provenance, "edit").origin is ToolOrigin.PRESET
+        upgrade = _entry(root.provenance, "aci_edit")
+        assert upgrade is not None
+        assert upgrade.origin is ToolOrigin.CAPABILITY_DERIVED
+        assert upgrade.capability == "aci"
 
     def test_pools_without_aci_keep_plain_edit(self) -> None:
         # review's root and general declare the ast_grep capability (no
-        # aci): the default edit survives, no replacement records.
+        # aci): the default edit survives alone.
         for key in (("review", "reviewer"), ("review", "general")):
             agent = self._compiled()[key]
-            assert agent.provenance.replacements == []
-            assert agent.provenance.replacement_of("edit") is None
-            assert "edit" in agent.spec.tools
+            assert "edit" in _names(agent.spec.tools)
+            assert "aci_edit" not in _names(agent.spec.tools)
             assert _entry(agent.provenance, "edit") is not None
 
     def test_office_expert_full_origin_map(self) -> None:
@@ -422,7 +417,7 @@ class TestProvenanceLayers:
             profiles=ProfileStore(profiles=profiles),
         )
         sub = _by_key(compilation)[("p", "sub")]
-        assert sub.spec.tools == ["read", "write"]
+        assert _names(sub.spec.tools) == ["read", "write"]
         origins = {e.tool: e.origin for e in sub.provenance.tools}
         assert origins == {
             "read": ToolOrigin.PROFILE_TOOLS,
@@ -472,7 +467,7 @@ class TestValidatorPhase2Integration:
         )
         compilation = compile_scope(spec, workspace_ctx=_workspace_ctx())
         root = _by_key(compilation)[("p", "root")]
-        assert root.spec.tools == ["bash", "edit"]
+        assert _names(root.spec.tools) == ["bash", "edit"]
         issues = validate_effective_configs(spec, [a.effective for a in compilation.agents])
         task_issues = [i for i in issues if i.rule is RuleId.TASK_TOOL_PRESENT]
         assert len(task_issues) == 1

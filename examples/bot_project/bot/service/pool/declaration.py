@@ -204,7 +204,6 @@ def boot_scope_spec(
     issues = validate_effective_configs(spec, [agent.effective for agent in compilation.agents])
     if issues:
         raise ScopeBootError(issues, phase="phase-2 (effective values)")
-    _log_replacements(compilation)
     return ScopeBoot(spec=spec, compilation=compilation)
 
 
@@ -463,21 +462,3 @@ def _pool_of(spec: ScopeSpec, pool_name: str) -> PoolSpec:
 def _declared_parents(pool: PoolSpec) -> dict[str, str | None]:
     """Declared parent name per agent in the pool (``None`` for the root)."""
     return {agent.name: agent.parent for agent in pool.agents}
-
-
-def _log_replacements(compilation: ScopeCompilation) -> None:
-    """Log the O3 same-name replacement records (ACI boot accounting).
-
-    Ticket 06's runtime half: the compiler is a pure function, so the
-    ``edit ← aci`` replacement records surface here, at boot.
-    """
-    for agent in compilation.agents:
-        for replacement in agent.provenance.replacements:
-            logger.info(
-                "scope: pool '%s' agent '%s': tool '%s' replaced by '%s' (capability %s)",
-                agent.provenance.pool,
-                agent.provenance.agent,
-                replacement.default_tool,
-                replacement.replacement_tool,
-                replacement.capability,
-            )

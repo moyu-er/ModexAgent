@@ -9,7 +9,7 @@ from typing import Final, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
-from modex_agent.scope.compiler import ToolOrigin
+from modex_agent.core.tool_manager import ToolOrigin
 
 
 class FacetField(StrEnum):
@@ -29,7 +29,6 @@ class ToolFacet(BaseModel):
 
     name: str
     origin: ToolOrigin
-    replaces: str | None
     targets: tuple[str, ...]
 
 

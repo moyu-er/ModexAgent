@@ -34,6 +34,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.plugins.abc import ComponentSlot
+from modex_agent.plugins.assembly.spec import ToolEntry
 from modex_agent.plugins.capability import (
     AgentDeclarationView,
     Capability,
@@ -61,6 +62,11 @@ from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
 # ---- Test doubles ----------------------------------------------------------
+
+
+def _names(entries: list[ToolEntry]) -> list[str]:
+    """Spec tool roster projected back to names (roster-order face)."""
+    return [entry.name for entry in entries]
 
 
 class _BundleCapability(Capability):
@@ -230,7 +236,7 @@ class TestC0EnablementMatrix:
         capability = _BundleCapability(applies_to=True, tools=("cap_tool",))
         compilation = _compile(_tree(), _registry(capability))
         root = compilation.agents[0]
-        assert "cap_tool" in root.spec.tools
+        assert "cap_tool" in _names(root.spec.tools)
         assert [cap.name for cap in root.spec.capabilities] == ["bundle"]
 
     def test_declared_only_enable(self) -> None:
@@ -238,7 +244,7 @@ class TestC0EnablementMatrix:
         spec = _tree(root=AgentSpec(name="root", capabilities={"bundle": {}}))
         compilation = _compile(spec, _registry(capability))
         root = compilation.agents[0]
-        assert "cap_tool" in root.spec.tools
+        assert "cap_tool" in _names(root.spec.tools)
         assert [cap.name for cap in root.spec.capabilities] == ["bundle"]
 
     def test_override_false_disables_auto(self) -> None:
@@ -246,7 +252,7 @@ class TestC0EnablementMatrix:
         spec = _tree(root=AgentSpec(name="root", capabilities={"bundle": False}))
         compilation = _compile(spec, _registry(capability))
         root = compilation.agents[0]
-        assert "cap_tool" not in root.spec.tools
+        assert "cap_tool" not in _names(root.spec.tools)
         assert root.spec.capabilities == ()
         # the override disabled the ROOT only — the sub agent (no
         # override) still auto-applies, so its calls are not the root's
@@ -320,13 +326,13 @@ class TestC1Contribution:
         capability = _BundleCapability(applies_to=False, tools=("cap_tool",))
         spec = _tree(root=AgentSpec(name="root", capabilities={"bundle": {}}, tools=["-cap_tool"]))
         compilation = _compile(spec, _registry(capability))
-        assert "cap_tool" not in compilation.agents[0].spec.tools
+        assert "cap_tool" not in _names(compilation.agents[0].spec.tools)
 
     def test_contributed_tool_present_without_veto(self) -> None:
         capability = _BundleCapability(applies_to=False, tools=("cap_tool",))
         spec = _tree(root=AgentSpec(name="root", capabilities={"bundle": {}}))
         compilation = _compile(spec, _registry(capability))
-        assert "cap_tool" in compilation.agents[0].spec.tools
+        assert "cap_tool" in _names(compilation.agents[0].spec.tools)
 
     def test_contributed_hook_enters_merge_base_and_is_vetoable(self) -> None:
         capability = _BundleCapability(applies_to=False, hooks=("cap_hook",))
@@ -359,7 +365,7 @@ class TestC2Binding:
         compilation = _compile(spec, _registry(capability))
         root = compilation.agents[0]
         _tree_view, _config, final = capability.bind_calls[0]
-        assert final.tools == tuple(root.spec.tools)
+        assert final.tools == tuple(_names(root.spec.tools))
         assert final.hooks == tuple(root.spec.hooks)
         assert "cap_tool" in final.tools
         assert "cap_hook" in final.hooks
@@ -509,7 +515,7 @@ class TestDeterminismAndOrdering:
         root = first.agents[0]
         assert [cap.name for cap in root.spec.capabilities] == ["aaa_early", "zzz_late"]
         # contribution order follows the same enumeration: early_tool first
-        assert root.spec.tools.index("early_tool") < root.spec.tools.index("late_tool")
+        assert _names(root.spec.tools).index("early_tool") < _names(root.spec.tools).index("late_tool")
         second = _compile(spec, registry)
         assert spec_hash(first) == spec_hash(second)
 

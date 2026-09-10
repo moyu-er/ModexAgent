@@ -12,7 +12,7 @@ from modex_agent.memory.history import ListMessageHistory
 
 
 class FakeToolManager(ToolManager):
-    def register(self, tool, config=None):
+    def register(self, tool, config=None, *, origin=None):
         pass
 
     def unregister(self, tool_name):

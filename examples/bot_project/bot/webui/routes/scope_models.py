@@ -3,7 +3,7 @@
 Pydantic request/response models for :mod:`bot.webui.routes.scope_routes`,
 mirroring the graph routes' ``graph_models.py`` split. The bill models carry
 the compiler's provenance data (``modex_agent.scope.compiler``) verbatim —
-per-field source layers, per-tool origins, O3 replacements, and capability
+per-field source layers, per-tool origins, and capability
 enablement/contribution records — plus the effective values pulled from the
 compiled artifacts. Serialization is always ``model_dump(mode="json")`` at
 the handler boundary.
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from modex_agent.core.tool_manager import ToolOrigin
 from modex_agent.plugins.abc import PluginSource
 from modex_agent.scope import (
     CapabilityContributionKind,
@@ -21,7 +22,6 @@ from modex_agent.scope import (
     HookOrigin,
     ProvenanceLayer,
     ScopeKind,
-    ToolOrigin,
 )
 
 # Effective-value union for one bill field: scalar (toolset / registration /
@@ -83,7 +83,6 @@ class ScopeToolBill(BaseModel):
     tool: str
     origin: ToolOrigin
     capability: str | None = None
-    replaces: str | None = None
     targets: list[str] = Field(default_factory=list)
 
 
@@ -118,16 +117,6 @@ class ScopeCapabilityBill(BaseModel):
     contributions: list[ScopeCapabilityContributionBill] = Field(default_factory=list)
 
 
-class ScopeReplacementBill(BaseModel):
-    """One O3 same-name replacement record (``edit ← aci_edit``)."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    default_tool: str
-    replacement_tool: str
-    supplement: str
-
-
 class ScopeAgentBill(BaseModel):
     """One agent's provenance bill."""
 
@@ -139,7 +128,6 @@ class ScopeAgentBill(BaseModel):
     fields: list[ScopeFieldBill]
     tools: list[ScopeToolBill]
     hooks: list[ScopeHookBill] = Field(default_factory=list)
-    replacements: list[ScopeReplacementBill]
     capabilities: list[ScopeCapabilityBill] = Field(default_factory=list)
 
 
@@ -259,7 +247,6 @@ __all__ = [
     "ScopeOptionsResponse",
     "ScopePoolTopology",
     "ScopePositionDefaultRow",
-    "ScopeReplacementBill",
     "ScopeToolBill",
     "ScopeTopologyResponse",
 ]

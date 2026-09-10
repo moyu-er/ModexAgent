@@ -22,7 +22,7 @@ from modex_agent.core.message import (
     ToolCall,
 )
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.core.tool_manager import Tool, ToolConfig, ToolManager, ToolResult
+from modex_agent.core.tool_manager import Tool, ToolConfig, ToolManager, ToolOrigin, ToolResult
 from modex_agent.ioc.configs.observability import CassetteScope
 from modex_agent.trace.cassette import (
     CassetteCategory,
@@ -93,7 +93,13 @@ class _ScriptedToolManager(ToolManager):
         self._result = result
         self.call_count = 0
 
-    def register(self, tool: Tool, config: ToolConfig | None = None) -> None:
+    def register(
+        self,
+        tool: Tool,
+        config: ToolConfig | None = None,
+        *,
+        origin: ToolOrigin | None = None,
+    ) -> None:
         pass
 
     def unregister(self, tool_name: str) -> bool:
@@ -121,7 +127,13 @@ class _ScriptedToolManager(ToolManager):
 class _RaisingToolManager(ToolManager):
     """Tool manager that raises if execute() is ever called."""
 
-    def register(self, tool: Tool, config: ToolConfig | None = None) -> None:
+    def register(
+        self,
+        tool: Tool,
+        config: ToolConfig | None = None,
+        *,
+        origin: ToolOrigin | None = None,
+    ) -> None:
         pass
 
     def unregister(self, tool_name: str) -> bool:

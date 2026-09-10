@@ -16,7 +16,7 @@ from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.prompt import SystemPromptProvider
-from modex_agent.core.tool_manager import Tool
+from modex_agent.core.tool_manager import Tool, ToolOverrideRecord
 from modex_agent.hook import Hook, HookSpec
 from modex_agent.hook.runner import HookRunner
 from modex_agent.ioc.configs.memory import ArchiveConfig, CoreMemoryConfig, MemoryConfig
@@ -139,6 +139,7 @@ class NativeAssemblyResult:
         hook_runner: HookRunner,
         mcp_backend: Any | None = None,
         capability_wirings: Mapping[str, CapabilityWiring] | None = None,
+        tool_overrides: tuple[ToolOverrideRecord, ...] = (),
     ) -> None:
         self.descriptor = descriptor
         self.instance = instance
@@ -152,6 +153,9 @@ class NativeAssemblyResult:
         # Per-capability wiring products keyed by registration name; None
         # when constructed outside the capability dispatch (direct tests).
         self.capability_wirings = capability_wirings
+        # Same-name override audit for this assembly's registrations (the
+        # compiler-classified roster origins doing their arbitration work).
+        self.tool_overrides = tool_overrides
 
 
 async def _resolve_multi(
@@ -294,7 +298,11 @@ async def assemble_native_agent(
     if capability_wirings:
         chain = dataclasses.replace(chain, capability_wirings=MappingProxyType(capability_wirings))
     tools: list[Tool] = await _resolve_multi(
-        registry, ComponentSlot.TOOL, spec.tools, spec.tool_configs, chain
+        registry,
+        ComponentSlot.TOOL,
+        [entry.name for entry in spec.tools],
+        spec.tool_configs,
+        chain,
     )
     # GENERIC fallback for direct callers: the production main path (create_pool
     # resolves the slot via _resolve_llm_slot) and the production sub path (the
@@ -342,9 +350,22 @@ async def assemble_native_agent(
 
         tools = wrap_standard_tools(tools, inputs.root_provider)
     bash_tool = next((tool for tool in tools if tool.name == "bash"), None)
-    for tool in tools:
+    # One registration per roster NAME, carrying the compiler-classified
+    # origin — this is what activates the name-slot override arbitration
+    # (e.g. an ``aci_edit`` roster entry resolves to a tool NAMED ``edit``,
+    # whose CAPABILITY_DERIVED registration displaces the earlier PRESET
+    # ``edit''). The compiled roster may carry duplicate names (overlay
+    # concatenation, SPEC overlay row iv); duplicates share the name-keyed
+    # origin, so registering the slot once (first entry) is the legacy
+    # last-overwrite behavior without tripping the equal-rank guard.
+    registered_names: set[str] = set()
+    for tool, entry in zip(tools, spec.tools, strict=True):
+        if entry.name in registered_names:
+            continue
+        registered_names.add(entry.name)
         tool_manager.register(
-            inputs.tool_transform(tool) if inputs.tool_transform is not None else tool
+            inputs.tool_transform(tool) if inputs.tool_transform is not None else tool,
+            origin=entry.origin,
         )
     # Structural bash+bash_input pairing: when the roster-resolved ``bash``
     # is a persistent shell, its stdin-answer companion shares the session —
@@ -508,4 +529,5 @@ async def assemble_native_agent(
         hook_runner=hook_runner,
         mcp_backend=mcp_backend,
         capability_wirings=capability_wirings,
+        tool_overrides=tool_manager.override_records,
     )

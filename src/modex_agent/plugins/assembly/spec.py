@@ -23,6 +23,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.core.tool_manager import ToolOrigin
 from modex_agent.plugins.abc import AgentType
 from modex_agent.plugins.capability import CompiledCapability
 from modex_agent.workspace.context import WorkspaceContext
@@ -51,6 +52,23 @@ class MemoryOverrides(BaseModel):
 
     core_enabled: bool | None = None
     """Core memory layer toggle. None = inherit default."""
+
+
+class ToolEntry(BaseModel):
+    """名册工具条目:注册名 + 同名覆盖仲裁用的来源。
+
+    The compiler has already classified every roster entry
+    (:class:`~modex_agent.scope.compiler.ToolEntryProvenance`); the spec
+    carries the classification forward so assembly registration can pass
+    ``origin`` to :meth:`ToolManager.register` — that is what makes the
+    name-slot override arbitration effective. Roster ORDER is preserved,
+    duplicates included (overlay concatenation, SPEC overlay row iv).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    origin: ToolOrigin
 
 
 class AssemblySpec(BaseModel):
@@ -88,7 +106,10 @@ class AssemblySpec(BaseModel):
     roles: list[str] = Field(default_factory=list)
 
     # ── per-agent slots: component names + per-component config ──
-    tools: list[str]
+    tools: list[ToolEntry]
+    """Tool roster as ``(name, origin)`` entries — origin feeds the
+    same-name override arbitration at registration (the compiler's
+    classification, carried forward; roster order preserved)."""
     tool_configs: dict[str, dict[str, Any]] = Field(default_factory=dict)
     hooks: list[str]
     hook_configs: dict[str, dict[str, Any]] = Field(default_factory=dict)

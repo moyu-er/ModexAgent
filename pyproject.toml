@@ -66,6 +66,7 @@ dev = [
   "pytest>=7.0.0",
   "pytest-asyncio>=0.21.0",
   "pytest-cov>=4.0.0",
+  "pytest-timeout>=2.3.1,<3",
   # Pinned exact: CI installs this unpinned-from-lockfile (fresh resolve per
   # run), and a floating ruff made Code Quality flip red on unchanged code
   # when a new ruff release added rules. Bump deliberately, then fix what
@@ -114,6 +115,11 @@ python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
+required_plugins = ["pytest-timeout>=2.3.1"]
+# Includes fixture setup/teardown. A watchdog thread also interrupts blocked
+# event loops and platforms without SIGALRM; expiry aborts the test process.
+timeout = 30
+timeout_method = "thread"
 # importlib mode derives each test module's name from its full path, so
 # same-basename files in different dirs (e.g. several test_models.py) no longer
 # collide, and test dirs without __init__.py coexist with packaged ones.

@@ -9,6 +9,7 @@ from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
 from plugins.bot_hooks import SEND_FILE_TO_USER_TOOL_NAME
 
 from modex_agent.ioc.configs.approval import ApprovalConfig
+from modex_agent.plugins.assembly.spec import ToolEntry
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.capabilities.experience import EXPERIENCE_TOOL_NAME
 from modex_agent.plugins.loader import PluginRegistrationContext
@@ -39,6 +40,11 @@ from modex_agent.workspace.paths import WorkspacePaths
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 BOT_BASE = PROJECT_ROOT / "examples" / "bot_project"
+
+
+def _names(entries: list[ToolEntry]) -> list[str]:
+    """Spec tool roster projected back to names (roster-order face)."""
+    return [entry.name for entry in entries]
 
 
 @lru_cache(maxsize=1)
@@ -380,8 +386,8 @@ class TestOverlayToolsCompileConvergence:
                 ]
             ),
         )
-        assert SEND_FILE_TO_USER_TOOL_NAME not in compiled.spec.tools
-        assert EXPERIENCE_TOOL_NAME not in compiled.spec.tools
+        assert SEND_FILE_TO_USER_TOOL_NAME not in _names(compiled.spec.tools)
+        assert EXPERIENCE_TOOL_NAME not in _names(compiled.spec.tools)
         assert EXPERIENCE_REVIEW_HOOK_NAME not in compiled.spec.hooks
 
     def test_none_declared_roster_passes_minus_entries_to_compiler(self) -> None:
@@ -396,8 +402,8 @@ class TestOverlayToolsCompileConvergence:
         assert adjusted.pool is not None
         assert adjusted.pool.agents[0].tools == ["-process", "-terminal"]
         _bare_spec, bare = _overlay_and_compile(AgentSpec(name="root"), AgentOverlay())
-        assert compiled.spec.tools == bare.spec.tools
-        assert not {"process", "terminal"} & set(compiled.spec.tools)
+        assert _names(compiled.spec.tools) == _names(bare.spec.tools)
+        assert not {"process", "terminal"} & set(_names(compiled.spec.tools))
 
     def test_overlay_minus_removes_declared_plus_entry(self) -> None:
         # Row (iii): the prefixed-drop bug fixed — declared ["+x"] + overlay
@@ -406,7 +412,7 @@ class TestOverlayToolsCompileConvergence:
         _adjusted, compiled = _overlay_and_compile(
             AgentSpec(name="root", tools=["+x"]), AgentOverlay(tools=["-x"])
         )
-        assert "x" not in compiled.spec.tools
+        assert "x" not in _names(compiled.spec.tools)
 
     def test_unprefixed_overlay_on_unprefixed_declared_concatenates(self) -> None:
         # Row (iv): unprefixed overlay entries appended to an unprefixed
@@ -418,7 +424,7 @@ class TestOverlayToolsCompileConvergence:
             AgentSpec(name="root", tools=["read", "write"]),
             AgentOverlay(tools=["read", "search"]),
         )
-        assert compiled.spec.tools == ["read", "write", "read", "search"]
+        assert _names(compiled.spec.tools) == ["read", "write", "read", "search"]
 
     def test_wholesale_declared_roster_rejects_minus_overlay_entries(self) -> None:
         # F2 finding 1: wholesale (all-unprefixed) declared roster + prefixed

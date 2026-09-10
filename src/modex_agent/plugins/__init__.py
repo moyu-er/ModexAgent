@@ -71,7 +71,6 @@ __all__ = [
     "PrototypeFactory",
     "ReactHookFactory",
     "SimpleFactory",
-    "ToolReplacementSpec",
     "TreePositionView",
     "TypedBundle",
     "WorkspaceContext",
@@ -85,7 +84,7 @@ _SYMBOL_MODULE = {
     "LlmDefaults": "modex_agent.plugins.assembly.native_core",
     **dict.fromkeys(("AssemblyPipeline", "AssemblyStage"), "modex_agent.plugins.assembly.pipeline"),
     **dict.fromkeys(("AssemblySpec", "MemoryOverrides"), "modex_agent.plugins.assembly.spec"),
-    **dict.fromkeys(("AgentDeclarationView", "AgentDeclaredFields", "Capability", "CapabilityBinding", "CapabilityConfig", "CapabilityContribution", "CapabilitySupply", "CapabilityWiring", "ChildSummary", "FinalRosterView", "PoolSupplyAgentEntry", "PoolSupplyView", "PromptSectionSpec", "SectionPlacement", "ToolReplacementSpec", "TreePositionView"), "modex_agent.plugins.capability"),
+    **dict.fromkeys(("AgentDeclarationView", "AgentDeclaredFields", "Capability", "CapabilityBinding", "CapabilityConfig", "CapabilityContribution", "CapabilitySupply", "CapabilityWiring", "ChildSummary", "FinalRosterView", "PoolSupplyAgentEntry", "PoolSupplyView", "PromptSectionSpec", "SectionPlacement", "TreePositionView"), "modex_agent.plugins.capability"),
     **dict.fromkeys(("ComponentRegistryLoader", "Plugin", "PluginDiscoveryConfig", "PluginRegistrationContext"), "modex_agent.plugins.loader"),
     **dict.fromkeys(("ComponentNotFoundError", "ComponentRegistry", "TypedBundle"), "modex_agent.plugins.registry"),
 }

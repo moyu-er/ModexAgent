@@ -44,6 +44,10 @@ class _SilentBackend(TerminalBackend):
         del shell, cwd, env
         self._alive = True
 
+    async def drain_startup(self) -> None:
+        # This backend has no shell or startup prompt to wait for.
+        return
+
     def _shell_family(self) -> ShellFamily:
         return ShellFamily.BASH
 
@@ -222,9 +226,17 @@ async def test_process_write_timeout_closes_tab() -> None:
     )
     running.deadline_at = time.monotonic() - 1
 
-    with patch(
-        "modex_agent.tools.terminal.process_tool.check_process_writable",
-        new=AsyncMock(return_value=None),
+    with (
+        patch(
+            "modex_agent.tools.terminal.process_tool.check_process_writable",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "modex_agent.tools.terminal.poll_loop.poll_until_settled",
+            new=AsyncMock(return_value=PollResult(
+                outcome=PollOutcome.TIMED_OUT, output_parts=[], elapsed_ms=1
+            )),
+        ),
     ):
         result = await ProcessTool(registry, manager, config).execute(data="still there?")
 

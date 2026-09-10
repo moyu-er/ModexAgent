@@ -33,7 +33,7 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
-from modex_agent.core.tool_manager import ExclusiveTool, Tool, ToolManager
+from modex_agent.core.tool_manager import ExclusiveTool, Tool, ToolManager, ToolOrigin
 from modex_agent.tools.terminal._persistent_session import (
     PersistentShellManager,
     PersistentShellSession,
@@ -101,7 +101,13 @@ def ensure_input_companion(
             return
         manager.unregister("bash_input")
     companion: Tool = BashInputTool(manager=bash_tool._manager)
-    manager.register(tool_transform(companion) if tool_transform is not None else companion)
+    # INTERNAL: the companion is structural (never roster/preset-resolved),
+    # and its name slot is protected — a roster entry named ``bash_input``
+    # cannot displace the pairing that keeps the persistent shell answerable.
+    manager.register(
+        tool_transform(companion) if tool_transform is not None else companion,
+        origin=ToolOrigin.INTERNAL,
+    )
 
 
 class PersistentBashTool(ExclusiveTool):

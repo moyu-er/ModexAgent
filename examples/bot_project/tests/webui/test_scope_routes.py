@@ -413,10 +413,10 @@ async def test_bill_field_layers_and_values(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_bill_component_implementation_sources(tmp_path: Path) -> None:
-    """The O2/O3 audit surface: per-tool origins + replacement records
-    (SPEC §3.5). The ``todo`` capability's contributed tools carry the
-    capability-derived wire face; the dedicated aci test below covers
-    capability-contributed replacements."""
+    """The O2 audit surface: per-tool origins (SPEC §3.4). The ``todo``
+    capability's contributed tools carry the capability-derived wire
+    face; the dedicated aci test below covers the same-name upgrade
+    face."""
     _write_declaration(tmp_path, _WORKSPACE_DECLARATION)
     client = _make_client(tmp_path)
     await client.start_server()
@@ -425,7 +425,6 @@ async def test_bill_component_implementation_sources(tmp_path: Path) -> None:
         assert resp.status == 200, await resp.text()
         main = _agent(await resp.json(), "main", "main")
 
-        assert main["replacements"] == []
         tools = _tools(main)
         assert tools["todo_read"]["origin"] == "capability_derived"
         assert tools["todo_read"]["capability"] == "todo"
@@ -441,7 +440,6 @@ async def test_bill_component_implementation_sources(tmp_path: Path) -> None:
 
         worker = _agent(await (await client.get("/api/scope/bill")).json(), "main", "worker")
         worker_tools = _tools(worker)
-        assert worker["replacements"] == []
         assert worker_tools["send_to_agent"]["origin"] == "derived_send_to_agent"
         assert worker_tools["send_to_agent"]["targets"] == ["main"]
         assert "task" not in worker_tools  # leaf: no task tool
@@ -460,14 +458,11 @@ async def test_bill_compiles_capability_declaration_with_registry(tmp_path: Path
         assert response.status == 200, await response.text()
         root = _agent(await response.json(), "capability", "root")
         tools = _tools(root)
-        assert tools["aci_edit"]["replaces"] == "edit"
-        assert root["replacements"] == [
-            {
-                "default_tool": "edit",
-                "replacement_tool": "aci_edit",
-                "supplement": "aci",
-            }
-        ]
+        # Name-slot overwrite face: BOTH entries in the bill — the ``edit``
+        # slot is settled at assembly by ToolOrigin rank.
+        assert tools["edit"]["origin"] == "preset"
+        assert tools["aci_edit"]["origin"] == "capability_derived"
+        assert tools["aci_edit"]["capability"] == "aci"
     finally:
         await client.close()
 

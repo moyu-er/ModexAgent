@@ -385,7 +385,6 @@ export const en = {
       editor: "Declaration (YAML)",
       rootBadge: "root",
       toolsHeader: "tools",
-      replacementsHeader: "replacements",
       saveFailed: "Failed to save declaration: {detail}",
     },
     poolsPanel: {
@@ -466,8 +465,6 @@ export const en = {
       effectiveLoading: "Effective state loads with the preview…",
       originTitle: "Origin: {origin}",
       capabilityBadge: "Capability: {name}",
-      replacements: "Replacements",
-      replacementTitle: "Contributed by capability: {supplement}",
       hookBadgeDefault: "Default",
       hookBadgeDeclared: "Declared",
       vetoHook: "Veto {name}",

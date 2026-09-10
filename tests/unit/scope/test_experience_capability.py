@@ -32,7 +32,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from modex_agent.core.tool_manager import ToolOrigin
 from modex_agent.plugins.abc import ComponentSlot
+from modex_agent.plugins.assembly.spec import ToolEntry
 from modex_agent.plugins.capability import (
     AgentDeclarationView,
     AgentDeclaredFields,
@@ -51,7 +53,7 @@ from modex_agent.plugins.defaults.capabilities.experience.config import (
 )
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.scope.compiler import CompiledAgent, ToolOrigin, compile_scope
+from modex_agent.scope.compiler import CompiledAgent, compile_scope
 from modex_agent.scope.defaults import POSITION_DEFAULT_HOOKS
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.tools.presets import EXPERIENCE_REVIEW_HOOK_NAME
@@ -160,7 +162,14 @@ _CAPABILITY_ORIGIN_RECLASSIFICATION_REASON = (
 )
 
 
-def _capability_origin_exemptions_for(golden: Mapping[str, Facets]) -> tuple[Exemption, ...]:
+def _names(entries: list[ToolEntry]) -> list[str]:
+    """Spec tool roster projected back to names (roster-order face)."""
+    return [entry.name for entry in entries]
+
+
+def _capability_origin_exemptions_for(
+    golden: Mapping[str, Facets],
+) -> tuple[Exemption, ...]:
     affected_agents = sorted(
         agent
         for agent, facets in golden.items()
@@ -300,7 +309,6 @@ class TestProtocolShape:
         assert contribution.sections == (
             PromptSectionSpec(section_id="experience.injection", order=50),
         )
-        assert contribution.tool_replacements == ()
 
     def test_config_rejects_unknown_keys(self) -> None:
         with pytest.raises(ValidationError):
@@ -378,7 +386,7 @@ class TestDeclarationMatrix:
     def test_declared_capability_binds_tool_and_review_hook(self) -> None:
         # Row 1: capabilities: {experience: {}} → tool AND hook.
         compiled = _compile_root(AgentSpec(name="root", capabilities={"experience": {}}))
-        assert EXPERIENCE_TOOL_NAME in compiled.spec.tools
+        assert EXPERIENCE_TOOL_NAME in _names(compiled.spec.tools)
         assert EXPERIENCE_REVIEW_HOOK_NAME in compiled.spec.hooks
 
     def test_minus_tool_entry_kills_tool_and_hook(self) -> None:
@@ -392,7 +400,7 @@ class TestDeclarationMatrix:
                 tools=[f"-{EXPERIENCE_TOOL_NAME}"],
             )
         )
-        assert EXPERIENCE_TOOL_NAME not in compiled.spec.tools
+        assert EXPERIENCE_TOOL_NAME not in _names(compiled.spec.tools)
         assert EXPERIENCE_REVIEW_HOOK_NAME not in compiled.spec.hooks
         binding = _experience_binding(compiled)
         assert binding.hooks == ()
@@ -411,7 +419,7 @@ class TestDeclarationMatrix:
                 tools=[f"+{EXPERIENCE_TOOL_NAME}"],
             )
         )
-        assert EXPERIENCE_TOOL_NAME in compiled.spec.tools
+        assert EXPERIENCE_TOOL_NAME in _names(compiled.spec.tools)
         assert EXPERIENCE_REVIEW_HOOK_NAME not in compiled.spec.hooks
         assert compiled.spec.capabilities == ()
 
@@ -425,7 +433,7 @@ class TestDeclarationMatrix:
                 hooks=[f"-{EXPERIENCE_REVIEW_HOOK_NAME}"],
             )
         )
-        assert EXPERIENCE_TOOL_NAME in compiled.spec.tools
+        assert EXPERIENCE_TOOL_NAME in _names(compiled.spec.tools)
         assert EXPERIENCE_REVIEW_HOOK_NAME not in compiled.spec.hooks
 
     def test_both_vetoes_kill_tool_and_hook(self) -> None:
@@ -441,7 +449,7 @@ class TestDeclarationMatrix:
                 hooks=[f"-{EXPERIENCE_REVIEW_HOOK_NAME}"],
             )
         )
-        assert EXPERIENCE_TOOL_NAME not in compiled.spec.tools
+        assert EXPERIENCE_TOOL_NAME not in _names(compiled.spec.tools)
         assert EXPERIENCE_REVIEW_HOOK_NAME not in compiled.spec.hooks
 
     def test_handwritten_plus_hook_dedups_to_one_entry(self) -> None:
@@ -460,7 +468,7 @@ class TestDeclarationMatrix:
     def test_nothing_declared_has_neither(self) -> None:
         # Row 6 (new default): nothing declared → neither.
         compiled = _compile_root(AgentSpec(name="root"))
-        assert EXPERIENCE_TOOL_NAME not in compiled.spec.tools
+        assert EXPERIENCE_TOOL_NAME not in _names(compiled.spec.tools)
         assert compiled.spec.hooks == list(POSITION_DEFAULT_HOOKS)
 
     def test_capability_and_plus_entry_dedup_to_one_tool(self) -> None:
@@ -473,7 +481,7 @@ class TestDeclarationMatrix:
                 tools=[f"+{EXPERIENCE_TOOL_NAME}"],
             )
         )
-        assert compiled.spec.tools.count(EXPERIENCE_TOOL_NAME) == 1
+        assert _names(compiled.spec.tools).count(EXPERIENCE_TOOL_NAME) == 1
 
     def test_wholesale_tools_replace_kills_tool_and_hook(self) -> None:
         # Row 8 (O4/V8 wholesale-replace interaction): capability +
@@ -487,7 +495,7 @@ class TestDeclarationMatrix:
                 tools=["read", "write"],
             )
         )
-        assert compiled.spec.tools == ["read", "write"]
+        assert _names(compiled.spec.tools) == ["read", "write"]
         assert EXPERIENCE_REVIEW_HOOK_NAME not in compiled.spec.hooks
 
     def test_handwritten_hook_survives_when_capability_drops_it(self) -> None:
@@ -503,7 +511,7 @@ class TestDeclarationMatrix:
                 hooks=[f"+{EXPERIENCE_REVIEW_HOOK_NAME}"],
             )
         )
-        assert EXPERIENCE_TOOL_NAME not in compiled.spec.tools
+        assert EXPERIENCE_TOOL_NAME not in _names(compiled.spec.tools)
         assert compiled.spec.hooks == [*POSITION_DEFAULT_HOOKS, EXPERIENCE_REVIEW_HOOK_NAME]
 
     def test_handwritten_hook_without_capability_untouched(self) -> None:
@@ -520,7 +528,7 @@ class TestDeclarationMatrix:
                 tools=[f"+{EXPERIENCE_TOOL_NAME}"],
             )
         )
-        assert EXPERIENCE_TOOL_NAME in compiled.spec.tools  # bare tool entry
+        assert EXPERIENCE_TOOL_NAME in _names(compiled.spec.tools)  # bare tool entry
         assert EXPERIENCE_REVIEW_HOOK_NAME not in compiled.spec.hooks
         assert compiled.spec.capabilities == ()
 

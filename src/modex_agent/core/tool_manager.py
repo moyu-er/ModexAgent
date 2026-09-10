@@ -9,8 +9,9 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
-from enum import StrEnum
+from enum import StrEnum, nonmember
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -100,10 +101,77 @@ class ExecutionMode(StrEnum):
     EXCLUSIVE = "exclusive"
 
 
+class ToolOrigin(StrEnum):
+    """Where one effective tool entry came from — 同名覆盖的仲裁依据。
+
+    name-slot overwrite 原则:``tool.name`` 是工具的唯一运行时身份,
+    同名注册即占用同一槽位;同名谁该赢由 :attr:`OVERRIDE_PRIORITY`
+    的 rank 决定。排序理由:**用户显式意志 > 能力包产品 > 位置默认**
+    (与 ``PluginSource`` 的 nearest-to-user 精神一致)。INTERNAL 与
+    EXTERNAL 不进优先级表、走专用语义:INTERNAL 名槽受保护、不可被
+    覆盖;EXTERNAL 依赖命名空间前缀隔离、意外撞名时不覆盖既有名。
+    平级同名竞争是配置错误(register 应 raise,而非静默择一)。
+
+    本枚举原定义于 ``scope/compiler.py``;迁入 core 的原因:
+    ``plugins/assembly/native_core.py``(后续步骤)需要引用它,而
+    ``scope/compiler.py`` 已 import ``plugins.assembly.spec``,反向引用
+    会成环 —— ``core/tool_manager.py`` 是依赖叶子,是正确归宿。
+    """
+
+    PRESET = "preset"
+    """Framework toolset preset expansion."""
+    PROFILE_TOOLS = "profile_tools"
+    """Wholesale tools list from the bound profile."""
+    LOCAL_TOOLS = "local_tools"
+    """Wholesale or incremental local ``tools:`` declaration."""
+    SUPPLEMENT = "supplement"
+    """Legacy classification retained for pre-capability migration goldens."""
+    CAPABILITY_DERIVED = "capability_derived"
+    """Non-derived tool contributed by a named capability."""
+    DERIVED_TASK = "derived_task"
+    DERIVED_SEND_TO_AGENT = "derived_send_to_agent"
+    DERIVED_SEND_TO_PEER = "derived_send_to_peer"
+    INTERNAL = "internal"
+    """框架结构性合成伴生工具(如 bash_input):名槽受保护,不可被覆盖。"""
+    EXTERNAL = "external"
+    """外部直注册来源(如 MCP):依赖命名空间前缀隔离;意外撞名时不覆盖既有名。"""
+
+    #: 同名覆盖优先级表:同名注册占用同一 name 槽位时,rank 高者胜出。
+    #: 排序理由:用户显式意志 > 能力包产品 > 位置默认(nearest-to-user)。
+    #: INTERNAL/EXTERNAL 不进表,走专用语义(INTERNAL 名槽受保护;
+    #: EXTERNAL 永不覆盖既有名)。只读;``nonmember`` 使其不进入枚举成员集。
+    OVERRIDE_PRIORITY = nonmember(
+        MappingProxyType(
+            {
+                LOCAL_TOOLS: 4,  # 用户显式 tools: 声明 — 最高
+                PROFILE_TOOLS: 4,  # profile 宏同为用户显式
+                CAPABILITY_DERIVED: 3,  # capability 产品(替换者)
+                PRESET: 2,  # 位置/预设默认(被替换者)
+                SUPPLEMENT: 2,  # legacy 分类,与 PRESET 同档
+                DERIVED_TASK: 2,  # 通信派生——名字唯一,不实际参战
+                DERIVED_SEND_TO_AGENT: 2,
+                DERIVED_SEND_TO_PEER: 2,
+            }
+        )
+    )
+
+
+class ToolOverrideRecord(BaseModel):
+    """一次同名槽位覆盖的审计记录。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tool_name: str
+    winner_origin: ToolOrigin
+    displaced_origin: ToolOrigin | None = None  # None = 被覆盖的是未分类(legacy 直注)槽位
+
+
 class Tool(ABC):
     """工具基类
 
     所有工具应继承此类并实现 execute 方法。
+
+    ``name`` 是工具的运行时身份,用于同名槽位覆盖(见 :class:`ToolOrigin`)。
 
     支持两种使用方式：
     1. 新方式：直接传入参数到 __init__
@@ -417,12 +485,32 @@ class ToolManager(ABC):
     # ---- 工具注册/注销 ----
 
     @abstractmethod
-    def register(self, tool: Tool, config: ToolConfig | None = None) -> None:
+    def register(
+        self,
+        tool: Tool,
+        config: ToolConfig | None = None,
+        *,
+        origin: ToolOrigin | None = None,
+    ) -> None:
         """注册工具
+
+        ``tool.name`` 是工具的唯一运行时身份:同名注册即占用同一槽位
+        (name-slot overwrite)。``origin`` 声明本次注册的来源,决定同名
+        覆盖的仲裁:
+
+        - ``origin=None``:legacy 直注路径 — 后写覆盖、调用方自管冲突
+          (历史行为,生产路径零变化);
+        - 带 origin 的注册按 :attr:`ToolOrigin.OVERRIDE_PRIORITY` 的
+          rank 仲裁同名胜负(高者胜,顺序无关);
+        - :attr:`ToolOrigin.INTERNAL` 名槽受保护,任何来源(含 legacy)
+          不得覆盖,再注册 raise;
+        - :attr:`ToolOrigin.EXTERNAL` 永不覆盖既有名(撞名时跳过);
+        - 平级同名竞争是配置错误,应 raise。
 
         Args:
             tool: 工具实例
             config: 工具特定配置（可选）
+            origin: 本次注册的来源分类;None = legacy 直注(未分类)
         """
         pass
 
@@ -452,6 +540,18 @@ class ToolManager(ABC):
     def is_registered(self, tool_name: str) -> bool:
         """检查工具是否已注册"""
         pass
+
+    @property
+    def override_records(self) -> tuple[ToolOverrideRecord, ...]:
+        """同名槽位覆盖的审计记录(只读快照,按发生顺序)。
+
+        Base default: empty — a manager that never arbitrates name-slot
+        overwrite has no records. ``InMemoryToolManager`` overrides this
+        with its audit log; wrapper managers (:class:`FilteredToolManager`
+        and the cassette record/replay wrappers) delegate to their wrapped
+        manager so the audit stays visible through the wrapper.
+        """
+        return ()
 
     # ---- 工具执行 ----
 

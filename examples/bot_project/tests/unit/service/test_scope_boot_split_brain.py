@@ -370,14 +370,14 @@ async def test_restart_round_trip(tmp_path: Path) -> None:
             AgentManifest(
                 agent_name=sub.provenance.agent,
                 materialized=False,
-                effective_spec_tools=list(sub.spec.tools),
+                effective_spec_tools=[entry.name for entry in sub.spec.tools],
             )
             for sub in declared.subagents
         ]
         first_manifest = dump_assembly_manifest(
             instance,
             data_dir=data_dir,
-            source_of=roster_source_map(registry, list(declared.root.spec.tools)),
+            source_of=roster_source_map(registry, [e.name for e in declared.root.spec.tools]),
             lazy_agents=lazy_agents,
         )
         # Exercise state past the boot: the poller's first-dispatch half
@@ -404,14 +404,14 @@ async def test_restart_round_trip(tmp_path: Path) -> None:
             AgentManifest(
                 agent_name=sub.provenance.agent,
                 materialized=False,
-                effective_spec_tools=list(sub.spec.tools),
+                effective_spec_tools=[entry.name for entry in sub.spec.tools],
             )
             for sub in declared2.subagents
         ]
         second_manifest = dump_assembly_manifest(
             instance2,
             data_dir=data_dir,
-            source_of=roster_source_map(registry2, list(declared2.root.spec.tools)),
+            source_of=roster_source_map(registry2, [e.name for e in declared2.root.spec.tools]),
             lazy_agents=lazy_agents,
         )
         assert second_manifest == first_manifest

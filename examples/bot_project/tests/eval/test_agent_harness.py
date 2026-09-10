@@ -30,6 +30,7 @@ from modex_agent.core.tool_manager import (
     ToolConfig,
     ToolExecutionContext,
     ToolManager,
+    ToolOrigin,
     ToolResult,
 )
 from modex_agent.ioc.configs.observability import TraceBackend
@@ -57,7 +58,13 @@ class _ScriptedToolManager(ToolManager):
             {"type": "function", "function": {"name": "fixture"}}
         ]
 
-    def register(self, tool: Tool, config: ToolConfig | None = None) -> None:
+    def register(
+        self,
+        tool: Tool,
+        config: ToolConfig | None = None,
+        *,
+        origin: ToolOrigin | None = None,
+    ) -> None:
         raise AssertionError("register should be delegated but is not used by this test")
 
     def unregister(self, tool_name: str) -> bool:

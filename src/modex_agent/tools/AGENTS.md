@@ -11,7 +11,7 @@ Tool subsystem — the concrete tool manager, type definitions, filtering, metad
 
 | File | Description |
 |------|-------------|
-| `manager.py` | `InMemoryToolManager` — the concrete ToolManager registry (moved from `core/tool_manager.py`, C2). Core keeps the `ToolManager` ABC + shared `execute()` behavior (result normalization, ctx propagation); this is the concrete implementation |
+| `manager.py` | `InMemoryToolManager` — the concrete ToolManager registry (moved from `core/tool_manager.py`, C2). Core keeps the `ToolManager` ABC + shared `execute()` behavior (result normalization, ctx propagation); this is the concrete implementation. Registration arbitrates same-name slots by `ToolOrigin.OVERRIDE_PRIORITY` rank (`register(tool, config, *, origin=...)`; INTERNAL slots protected, EXTERNAL never displaces, equal-rank collision raises) — the audit is exposed via `override_records` |
 | `types.py` | Tool-related type definitions (767 lines) — `ToolParameter`, `ToolSpec`, `ToolResult`, `ToolCall` |
 | `filter.py` | `FilteredToolManager` — per-agent tool visibility and access control (allow/deny wrap over any ToolManager) |
 | `metadata_parser.py` | Rich docstring parser (Google/NumPy/Sphinx styles) — extracts parameter schemas for automatic tool definition |

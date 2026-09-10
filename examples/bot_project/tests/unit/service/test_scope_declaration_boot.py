@@ -6,7 +6,6 @@ compiled effective configs) → compile. Covers the boot half of the ACs:
 
 - (f) all four shipped declarations pass V1-V11 with the real graphs;
 - boot failure is fatal and carries ALL issues;
-- (g) the ACI ``edit ← aci`` replacement records are logged at boot;
 - (a) the declaration-path module imports no per-agent component
   construction symbols (import-level architecture guard);
 - AC (b)'s compile-level half: the review root derives ``task`` with
@@ -16,7 +15,6 @@ compiled effective configs) → compile. Covers the boot half of the ACs:
 from __future__ import annotations
 
 import ast
-import logging
 import re
 import sys
 from functools import lru_cache
@@ -240,25 +238,6 @@ def test_boot_v5_pool_as_root_peer_fails_startup(tmp_path: Path) -> None:
     assert "cannot declare peers" in str(excinfo.value)
 
 
-# ── Boot: ACI accounting (AC g) ────────────────────────────────────────
-
-
-def test_aci_replacement_logged_at_boot(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    """The ``edit ← aci`` replacement records (ticket 06's provenance)
-    surface in the boot log for every agent whose roster opts into the
-    aci supplement — the default root and office-expert."""
-    with caplog.at_level(logging.INFO, logger="bot.service.pool.declaration"):
-        _boot(BOT_BASE / "config" / "scopes" / "bot.yml", tmp_path)
-    records = [r.getMessage() for r in caplog.records if "replaced by" in r.getMessage()]
-    assert any(
-        "pool 'default' agent 'default'" in m and "'edit' replaced by 'aci_edit'" in m
-        for m in records
-    )
-    assert any(
-        "pool 'default' agent 'office-expert'" in m and "'edit' replaced by 'aci_edit'" in m
-        for m in records
-    )
-
 
 # ── AC (b) compile-level half: the derivation rule ─────────────────────
 
@@ -440,9 +419,9 @@ def test_declared_pool_build_nested_tree_direct_children(tmp_path: Path) -> None
     assert mid_template is not None and leaf_template is not None
     assert [c.name for c in mid_template.children] == ["leaf"]
     assert leaf_template.children == ()
-    assert "task" in mid_template.compiled_spec.tools
-    assert "task" not in leaf_template.compiled_spec.tools
-    assert "send_to_agent" in leaf_template.compiled_spec.tools
+    assert "task" in [e.name for e in mid_template.compiled_spec.tools]
+    assert "task" not in [e.name for e in leaf_template.compiled_spec.tools]
+    assert "send_to_agent" in [e.name for e in leaf_template.compiled_spec.tools]
 
 
 def test_declared_pool_build_peer_pool_roots(tmp_path: Path) -> None:

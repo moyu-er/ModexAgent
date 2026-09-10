@@ -219,7 +219,7 @@ class TestHookProvenance:
             roster = agent.spec.hooks
             sourced = [row.hook for row in agent.provenance.hooks]
             assert sorted(roster) == sorted(sourced)
-            assert set(agent.spec.tools) <= {entry.tool for entry in agent.provenance.tools}
+            assert {entry.name for entry in agent.spec.tools} <= {entry.tool for entry in agent.provenance.tools}
 
 
 # ─── (4) Factories: registry resolution + chain-derived construction ────────

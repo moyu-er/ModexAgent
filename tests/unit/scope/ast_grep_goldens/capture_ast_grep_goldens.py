@@ -114,23 +114,14 @@ def _facets(text: str) -> dict[str, object]:
     for compiled in compilation.agents:
         prov = compiled.provenance
         agents[prov.agent] = {
-            "roster": list(compiled.spec.tools),
+            "roster": [entry.name for entry in compiled.spec.tools],
             "provenance_tools": [
                 {
                     "tool": e.tool,
                     "origin": e.origin.value,
-                    "replaces": e.replaces,
                     "targets": list(e.targets),
                 }
                 for e in prov.tools
-            ],
-            "replacements": [
-                {
-                    "default_tool": r.default_tool,
-                    "replacement_tool": r.replacement_tool,
-                    "capability": r.capability,
-                }
-                for r in prov.replacements
             ],
         }
     return agents

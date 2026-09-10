@@ -4,6 +4,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from modex_agent.core.tool_manager import ToolOrigin
 from modex_agent.plugins.abc import PluginSource
 from modex_agent.plugins.assembly.context import AgentContext as AssemblyAgentContext
 from modex_agent.plugins.capability import (
@@ -29,7 +30,6 @@ from modex_agent.scope import (
     PoolSpec,
     ScopeKind,
     ScopeSpec,
-    ToolOrigin,
     compile_scope,
 )
 from modex_agent.workspace.context import WorkspaceContext

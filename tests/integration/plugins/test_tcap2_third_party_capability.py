@@ -382,7 +382,7 @@ class TestThirdPartyFourElementCapability:
         assert SKILLS_CAPABILITY_NAME in {
             capability.name for capability in root.capabilities
         }
-        assert TOOL_NAME in root.tools
+        assert TOOL_NAME in [entry.name for entry in root.tools]
         assert HOOK_NAME in root.hooks
 
         broker = InMemoryMessageBroker()
