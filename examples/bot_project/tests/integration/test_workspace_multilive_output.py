@@ -29,6 +29,7 @@ from typing import Any
 import pytest
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.core import BotService
+from bot.service.roots import BotAssemblyRoots
 
 from modex_agent.adapters.emitter import StreamingAwareEmitter
 from modex_agent.adapters.output import OutputAdapter
@@ -250,7 +251,10 @@ async def test_every_materialized_workspace_delivers_output(
         output_adapter=output_adapter,
         emitter_factory=emitter_factory,
         app_config=app_config,
+        roots=BotAssemblyRoots.resident(config_dir=config_dir, resource_root=tmp_path),
     )
+    assert service.roots.workspace_home == tmp_path.resolve()
+    assert service.roots.scope_declaration_path == config_dir / "scopes" / "bot.yml"
     # Base BotService does not set _transcript_store (WebUIService-only), but
     # _build_resources reads it — provide None so materialize works for home too.
     service._transcript_store = None
@@ -265,9 +269,8 @@ async def test_every_materialized_workspace_delivers_output(
     original_default_provider = core_mod.BotService._build_default_provider
     core_mod.BotService._build_default_provider = lambda self: provider  # type: ignore[assignment]
 
-    # _project_dir is hard-coded to the bot project source tree; repoint it at
-    # the temp dir so home / agents / MCP / pool-session-store are all isolated
-    # under tmp (no real MCP subprocesses, no writing into the repo).
+    # Legacy project-relative consumers still use this property. Assembly
+    # paths are fixed by the explicit roots passed to the constructor above.
     original_project_dir = core_mod.BotService._project_dir
     core_mod.BotService._project_dir = property(lambda self: tmp_path)  # type: ignore[assignment]
 

@@ -97,11 +97,12 @@ def _make_deps(
     tree: Any | None = None,
     session_registry: Any | None = None,
     subagent_name: str = "coder",
-    workspace_root: Path = Path("/ws"),
+    workspace_root: Path | None = None,
     control_origin: str = "",
 ) -> AgentMaterializeDeps:
     from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 
+    workspace_root = workspace_root if workspace_root is not None else project_dir
     scope_path = ScopePath(workspace_root=workspace_root, pool_name="default")
     resolved_data_dir = data_dir or workspace_root / ".modex"
     # The declared pool tree the converged auto-send hook factory derives
@@ -225,6 +226,8 @@ async def test_assemble_sub_returns_strategy_assembly_with_agent(tmp_path: Path)
     deps = _make_deps(broker=MagicMock(), project_dir=tmp_path, data_dir=tmp_path / ".modex")
     ctx = _make_subagent_ctx(spec=spec, deps=deps)
 
+    assert deps.scope_path is not None
+    assert deps.scope_path.workspace_root == tmp_path
     sub = await strategy.assemble_sub(ctx, deps)
 
     external_agent = _external_agent(sub)

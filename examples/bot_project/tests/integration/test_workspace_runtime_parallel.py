@@ -46,6 +46,7 @@ import pytest
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.core import BotService
 from bot.service.media_store import WorkspaceScopedMediaStore
+from bot.service.roots import BotAssemblyRoots
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
 from bot.workspace.dynamic_workspaces import (
@@ -394,7 +395,10 @@ async def _boot(
         output_adapter=output_adapter,
         emitter_factory=emitter_factory,
         app_config=app_config,
+        roots=BotAssemblyRoots.resident(config_dir=tmp_path / "config", resource_root=tmp_path),
     )
+    assert service.roots.workspace_home == tmp_path.resolve()
+    assert service.roots.scope_declaration_path == tmp_path / "config" / "scopes" / "bot.yml"
     # Base BotService does not set _transcript_store (WebUIService-only),
     # but _build_resources reads it — None keeps materialize working.
     service._transcript_store = None
