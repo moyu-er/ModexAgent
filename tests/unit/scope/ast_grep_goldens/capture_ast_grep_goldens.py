@@ -130,7 +130,7 @@ def _facets(text: str) -> dict[str, object]:
 def main() -> None:
     shapes = {name: _facets(text) for name, text in _DECLARATIONS.items()}
     payload = {
-        "captured_on": "T11 boundary (both ast_grep and todo ride the capabilities face)",
+        "captured_on": "T11 capability face after shell capability extraction",
         "shapes": shapes,
     }
     out = _DIR / "facets.json"

@@ -2,7 +2,7 @@
 registration group.
 
 One package per bundled capability (``aci``, ``ast_grep``, ``experience/``,
-``skills/``, …); this package's ``register_default_capabilities`` follows
+``shell/``, ``skills/``, …); this package's ``register_default_capabilities`` follows
 the ``register_default_*`` group convention the other defaults modules use.
 The framework knows only the protocol — never any concrete capability
 (SPEC P4). The ``experience`` and ``skills`` vertical slices register
@@ -34,6 +34,10 @@ def register_default_capabilities(ctx: PluginRegistrationContext) -> None:
     from modex_agent.plugins.defaults.capabilities.experience import (
         register_experience_feature,
     )
+    from modex_agent.plugins.defaults.capabilities.shell.capability import (
+        SHELL_CAPABILITY_NAME,
+        ShellCapability,
+    )
     from modex_agent.plugins.defaults.capabilities.skills import register_skills_feature
     from modex_agent.plugins.defaults.capabilities.subagents import SubagentsCapability
     from modex_agent.plugins.defaults.capabilities.todo import TodoCapability
@@ -43,6 +47,7 @@ def register_default_capabilities(ctx: PluginRegistrationContext) -> None:
     ctx.register_capability("ast_grep", AstGrepCapability())
     register_experience_feature(ctx)
     register_skills_feature(ctx)
+    ctx.register_capability(SHELL_CAPABILITY_NAME, ShellCapability())
     ctx.register_capability("subagents", SubagentsCapability())
     ctx.register_capability("todo", TodoCapability())
     ctx.register_capability("tracing", TracingCapability())

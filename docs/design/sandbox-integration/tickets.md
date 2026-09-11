@@ -7,11 +7,11 @@ Parent design: [PRD.md](PRD.md). Implemented scope is mapped below using the exi
 | 01 Guards and types | Typed verdicts, canonical boundaries, built-in deny independent of advisory switches | Hard-deny priority, known file targets, HOST best-effort limits, independent SSRF checks |
 | 02 Configuration and DEFAULT | `SandboxSettings`, scope roster and nested sandbox configuration | DEFAULT has no probe/interceptor; independent approval/delegation remain; bot sandbox stays off |
 | 03 Selection/runtime | Typed engines, canonical runtime roots, `resolve_available`, shared `SandboxBinding` | Main/subagent HOST fallback, per-session telemetry, generic launcher PermissionError propagation |
-| 04 Shell binding | Common persistent/one-shot bash construction and input companion | cwd/env/markers, no-PTY path, companion identity, reader cancellation before reuse |
+| 04 Shell binding | Capability-owned atomic shell group over the shared `SandboxBinding` | cwd/env/markers, no-PTY path, exact variant members, reader cancellation before reuse |
 | 05 bwrap | Policy argv and pre-command no-op; full-access retains LOCAL writable host bind | Real WSL bwrap execution; network setting and initialization/command-failure distinction |
 | 06 Seatbelt | Profile compilation, startup validation and cleanup | Simulated macOS selection/profile behavior only; live execution unverified |
 | 07 OCI/executor | Docker/Podman selection, lifecycle/config hash, mount probe, full bash `-c` argv | Real WSL Docker execution and no-replay coverage; Podman selection simulations only |
-| 08 Guard assembly/feedback | Shared decision implementation, execution backstop, approval anchors and uncertainty | ToolNode/transaction/resume, role-specific permission actions, truthful HOST terminal identity |
+| 08 Guard assembly/feedback | Shared decision implementation, execution backstop, approval anchors, uncertainty and one guard->shell ownership stack | ToolNode/transaction/resume, role-specific permission actions, truthful effective shell identity, reverse cleanup retention |
 | 09 Base image | Existing `scripts/docker/sandbox/` image/build entry points | Real Docker path; no inferred Podman/macOS execution guarantee |
 | 10 Documentation | Existing README, module guides, PRDs, tickets and relevant index lines | Current source/configuration semantics, English-only owned feature docs, no additional document hierarchy |
 
@@ -41,7 +41,7 @@ python -m pytest tests/unit tests/conformance tests/architecture -q -n 6 --tb=sh
 - Native main approval is independent of sandbox. Active BOUNDARY becomes pending when enabled, even with an empty tools map; disabled approval returns denial. Hard findings never escalate.
 - Native subagents keep fixed known-file read/write roots and no human escalation. Parent READ_ONLY is preserved; later config changes do not alter the snapshot.
 - Only confirmed pre-command startup unavailability permits fallback. Possibly-submitted commands are never automatically replayed or retried on HOST.
-- All bash implementations share judging, not execution identity. `process`/`terminal` remain HOST; `bash_input` follows the selected persistent manager.
+- All shell variants share judging, not execution identity. `process`/`terminal` exist only in the effective HOST terminal group; `bash_input` is created only with the selected persistent manager.
 - HOST string checks do not confine arbitrary code or filter inherited credentials. External provider tools remain outside framework enforcement; metadata must not imply it.
 
 ## Outside Delivery

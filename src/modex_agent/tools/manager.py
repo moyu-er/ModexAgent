@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 
+from modex_agent.core.tool_group import ToolGroup
 from modex_agent.core.tool_manager import (
     Tool,
     ToolConfig,
@@ -31,6 +32,8 @@ class InMemoryToolManager(ToolManager):
         self._tools: dict[str, Tool] = {}
         self._origins: dict[str, ToolOrigin] = {}
         self._override_records: list[ToolOverrideRecord] = []
+        self._groups: dict[str, ToolGroup] = {}
+        self._group_by_tool: dict[str, str] = {}
 
     def register(
         self,
@@ -49,6 +52,19 @@ class InMemoryToolManager(ToolManager):
         4/5/6/7. 见下方内联注释。
         """
         name = tool.name
+        group_anchor = self._group_by_tool.get(name)
+        if group_anchor is not None:
+            if origin is ToolOrigin.EXTERNAL:
+                logger.warning(
+                    "Tool %r belongs to group %r; skipping EXTERNAL registration",
+                    name,
+                    group_anchor,
+                )
+                return
+            raise ValueError(
+                f"Tool '{name}' belongs to group '{group_anchor}' and cannot be "
+                "overwritten by single-tool registration"
+            )
         existing_origin: ToolOrigin | None = self._origins.get(name)
 
         if name not in self._tools:
@@ -129,6 +145,52 @@ class InMemoryToolManager(ToolManager):
             f"displaced origin={_origin_label(displaced)}"
         )
 
+    def register_group(
+        self,
+        group: ToolGroup,
+        *,
+        origin: ToolOrigin | None = None,
+    ) -> None:
+        """Register a complete group or leave the manager unchanged."""
+        names = tuple(tool.name for tool in group.tools)
+        if not names or group.anchor not in names:
+            raise ValueError(
+                f"Tool group '{group.anchor}' must contain its anchor and at least one tool"
+            )
+        if len(names) != len(set(names)):
+            raise ValueError(f"Tool group '{group.anchor}' contains duplicate member names")
+        overlap = [name for name in names if name in self._group_by_tool]
+        if overlap:
+            raise ValueError(
+                f"Tool group '{group.anchor}' overlaps registered group members: {overlap}"
+            )
+
+        tools_before = dict(self._tools)
+        origins_before = dict(self._origins)
+        records_before = list(self._override_records)
+        try:
+            for tool in group.tools:
+                self.register(tool, origin=origin)
+                if self._tools.get(tool.name) is not tool:
+                    raise ValueError(
+                        f"Tool group '{group.anchor}' member '{tool.name}' lost "
+                        "registration arbitration"
+                    )
+        except BaseException:
+            self._tools = tools_before
+            self._origins = origins_before
+            self._override_records = records_before
+            raise
+
+        registered = ToolGroup(
+            anchor=group.anchor,
+            variant=group.variant,
+            tools=group.tools,
+            resource=None,
+        )
+        self._groups[group.anchor] = registered
+        self._group_by_tool.update(dict.fromkeys(names, group.anchor))
+
     def _install(self, tool: Tool, config: ToolConfig | None) -> None:
         """写入槽位并应用 config(注册即设 config,现行为不变)。"""
         self._tools[tool.name] = tool
@@ -142,6 +204,15 @@ class InMemoryToolManager(ToolManager):
 
     def unregister(self, tool_name: str) -> bool:
         """注销工具"""
+        group_anchor = self._group_by_tool.get(tool_name)
+        if group_anchor is not None:
+            group = self._groups.pop(group_anchor)
+            for member in group.tools:
+                self._tools.pop(member.name, None)
+                self._origins.pop(member.name, None)
+                self._group_by_tool.pop(member.name, None)
+            logger.debug("Tool group unregistered: %s", group_anchor)
+            return True
         if tool_name in self._tools:
             self._tools.pop(tool_name)
             self._origins.pop(tool_name, None)
@@ -160,6 +231,17 @@ class InMemoryToolManager(ToolManager):
     def is_registered(self, tool_name: str) -> bool:
         """检查工具是否已注册"""
         return tool_name in self._tools
+
+    @property
+    def tool_groups(self) -> tuple[ToolGroup, ...]:
+        return tuple(self._groups.values())
+
+    def get_tool_group(self, tool_name: str) -> ToolGroup | None:
+        anchor = self._group_by_tool.get(tool_name)
+        return self._groups.get(anchor) if anchor is not None else None
+
+    def origin_of(self, tool_name: str) -> ToolOrigin | None:
+        return self._origins.get(tool_name)
 
     @property
     def tools(self) -> dict[str, Tool]:

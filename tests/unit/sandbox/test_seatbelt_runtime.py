@@ -81,6 +81,8 @@ class TestProfileReadOnly:
             ";; write surface none: everything readable, nothing writable\n"
             "(allow file-read*)\n"
             "(deny file-write*)\n"
+            "(allow process-exec)\n"
+            "(allow process-fork)\n"
             "(deny network*)\n"
         )
 
@@ -104,6 +106,8 @@ class TestProfileWorkspaceWrite:
             "(deny file-write*)\n"
             f'(allow file-write* (subpath "{WS.as_posix()}"))\n'
             f'(deny file-write* (subpath "{WS.as_posix()}/.git"))\n'
+            "(allow process-exec)\n"
+            "(allow process-fork)\n"
             "(deny network*)\n"
         )
 
@@ -156,6 +160,8 @@ class TestProfileDangerFullAccess:
             ";; danger-full-access: no file boundary (guard layer still applies)\n"
             "(allow file-read*)\n"
             "(allow file-write*)\n"
+            "(allow process-exec)\n"
+            "(allow process-fork)\n"
             "(deny network*)\n"
         )
 
@@ -176,7 +182,7 @@ class TestProfileBoundaryTruth:
         self, policy: WriteSurface, network: bool
     ) -> None:
         """The legacy isolation.py bug was (allow default) — fake isolation."""
-        settings = SandboxSettings(network=network, exclusive=ExclusiveConfig())
+        settings = SandboxSettings(network=network, exclusive=ExclusiveConfig(write_surface=policy))
         profile = compile_seatbelt_profile(settings, WS)
         assert "(allow default)" not in profile
         assert "(deny file-write*)" in profile

@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Final
 
 import yaml
 from aiohttp import web
-from pydantic import ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
 
 from bot.config.mcp_registry import read_registry
 from bot.config.scope_pools import skill_assignment_eligible
@@ -55,7 +55,9 @@ from bot.webui.routes.scope_models import (
     ScopeBillResponse,
     ScopeCapabilityBill,
     ScopeCapabilityBundle,
+    ScopeCapabilityConfigField,
     ScopeCapabilityContributionBill,
+    ScopeConfigValueType,
     ScopeDeclarationResponse,
     ScopeDeclarationSaveResponse,
     ScopeDeclarationUpdateRequest,
@@ -68,11 +70,15 @@ from bot.webui.routes.scope_models import (
     ScopePoolTopology,
     ScopePositionDefaultRow,
     ScopeToolBill,
+    ScopeToolGroupManifest,
+    ScopeToolGroupVariant,
     ScopeTopologyResponse,
 )
 from modex_agent.core.agent import ProviderKind
+from modex_agent.core.tool_group import ToolGroupSpec, ToolGroupVariant
+from modex_agent.core.tool_manager import ToolOrigin
 from modex_agent.plugins.abc import ComponentSlot
-from modex_agent.plugins.capability import ChildSummary, TreePositionView
+from modex_agent.plugins.capability import Capability, ChildSummary, TreePositionView
 from modex_agent.plugins.registry import ComponentNotFoundError, ComponentRegistry
 from modex_agent.scope import (
     STANDARD_PROFILES,
@@ -244,6 +250,8 @@ def _field_value(
 def _agent_bill(spec: ScopeSpec, compiled: CompiledAgent) -> ScopeAgentBill:
     prov = compiled.provenance
     agent_spec = _find_agent(spec, prov.pool, prov.agent)
+    group_anchors = {group.anchor for group in compiled.spec.tool_groups}
+    tool_provenance = {tool.tool: tool for tool in prov.tools}
     return ScopeAgentBill(
         pool=prov.pool,
         agent=prov.agent,
@@ -265,6 +273,15 @@ def _agent_bill(spec: ScopeSpec, compiled: CompiledAgent) -> ScopeAgentBill:
                 targets=list(tp.targets),
             )
             for tp in prov.tools
+            if tp.tool not in group_anchors
+        ],
+        tool_groups=[
+            _tool_group_manifest(
+                group,
+                origin=tool_provenance[group.anchor].origin,
+                capability=tool_provenance[group.anchor].capability,
+            )
+            for group in compiled.spec.tool_groups
         ],
         hooks=[
             ScopeHookBill(
@@ -470,15 +487,97 @@ async def handle_put_model(request: web.Request) -> web.Response:
         )
 
 
+def _tool_group_manifest(
+    group: ToolGroupSpec,
+    *,
+    origin: ToolOrigin,
+    capability: str | None,
+) -> ScopeToolGroupManifest:
+    return ScopeToolGroupManifest(
+        anchor=group.anchor,
+        origin=origin,
+        capability=capability,
+        variants=[
+            ScopeToolGroupVariant(name=variant.name, tools=list(variant.tools))
+            for variant in group.variants
+        ],
+    )
+
+
+def _schema_node(
+    schema: dict[str, JsonValue], node: dict[str, JsonValue]
+) -> dict[str, JsonValue]:
+    ref = node.get("$ref")
+    definitions = schema.get("$defs")
+    if not isinstance(ref, str) or not ref.startswith("#/$defs/"):
+        return node
+    if not isinstance(definitions, dict):
+        return node
+    target = definitions.get(ref.removeprefix("#/$defs/"))
+    if not isinstance(target, dict):
+        return node
+    return {**target, **node}
+
+
+def _capability_config_fields(
+    capability: Capability, config: BaseModel
+) -> dict[str, ScopeCapabilityConfigField]:
+    schema = capability.config_model.model_json_schema()
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return {}
+    defaults = config.model_dump(mode="json")
+    result: dict[str, ScopeCapabilityConfigField] = {}
+    for name, raw_node in properties.items():
+        if not isinstance(name, str) or not isinstance(raw_node, dict):
+            continue
+        node = _schema_node(schema, raw_node)
+        value_type = node.get("type")
+        if not isinstance(value_type, str):
+            continue
+        try:
+            typed_value = ScopeConfigValueType(value_type)
+        except ValueError:
+            continue
+        raw_choices = node.get("enum")
+        choices = list(raw_choices) if isinstance(raw_choices, list) else []
+        result[name] = ScopeCapabilityConfigField(
+            value_type=typed_value,
+            default=defaults.get(name),
+            choices=choices,
+        )
+    return result
+
+
+def _capability_option_configs(
+    capability: Capability,
+    default: BaseModel,
+    fields: dict[str, ScopeCapabilityConfigField],
+) -> tuple[BaseModel, ...]:
+    """Default config plus each schema-declared choice against that default."""
+    default_values = default.model_dump(mode="json")
+    configs: list[BaseModel] = [default]
+    for field_name, field in fields.items():
+        for choice in field.choices:
+            if choice == default_values.get(field_name):
+                continue
+            configs.append(
+                capability.config_model.model_validate(
+                    {**default_values, field_name: choice}
+                )
+            )
+    return tuple(configs)
+
+
 def _capability_bundles(
     registry: ComponentRegistry,
 ) -> dict[str, ScopeCapabilityBundle]:
-    """Union of each capability's carried tools/hooks across tree positions.
+    """Union of each capability's fixed entries and group candidates.
 
     ``contribute`` is a pure function of tree position + config (SPEC P1),
-    so two probes — a root with children+peers and a non-root child — at
-    default config yield the full carried set. Bundle-carried hooks are not
-    independently declarable in the panel: they follow the capability.
+    so tree-position views crossed with schema-declared config choices yield
+    the package's supported universe. This never constructs runtime tools,
+    terminal backends, or machine probes.
     """
     probes = (
         TreePositionView(
@@ -501,14 +600,39 @@ def _capability_bundles(
     bundles: dict[str, ScopeCapabilityBundle] = {}
     for name in registry.names(ComponentSlot.CAPABILITY):
         capability = registry.resolve_capability(name)
+        config = capability.config_model()
+        config_fields = _capability_config_fields(capability, config)
         tools: set[str] = set()
         hooks: set[str] = set()
-        for view in probes:
-            contribution = capability.contribute(view, capability.config_model())
-            tools.update(contribution.tools)
-            tools.update(spec.tool for spec in contribution.derived_tools)
-            hooks.update(contribution.hooks)
-        bundles[name] = ScopeCapabilityBundle(tools=sorted(tools), hooks=sorted(hooks))
+        group_variants: dict[str, dict[str, ToolGroupVariant]] = {}
+        for option_config in _capability_option_configs(capability, config, config_fields):
+            for view in probes:
+                contribution = capability.contribute(view, option_config)
+                tools.update(contribution.tools)
+                tools.update(spec.tool for spec in contribution.derived_tools)
+                hooks.update(contribution.hooks)
+                for group in contribution.tool_groups:
+                    variants = group_variants.setdefault(group.anchor, {})
+                    for variant in group.variants:
+                        variants.setdefault(variant.name, variant)
+        groups = [
+            ToolGroupSpec(anchor=anchor, variants=tuple(variants.values()))
+            for anchor, variants in group_variants.items()
+        ]
+        tools.difference_update(group_variants)
+        bundles[name] = ScopeCapabilityBundle(
+            tools=sorted(tools),
+            tool_groups=[
+                _tool_group_manifest(
+                    group,
+                    origin=ToolOrigin.CAPABILITY_DERIVED,
+                    capability=name,
+                )
+                for group in groups
+            ],
+            hooks=sorted(hooks),
+            config_fields=config_fields,
+        )
     return bundles
 
 

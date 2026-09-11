@@ -25,6 +25,7 @@ from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, MessageRole, TextPart
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_group import ToolGroup
 from modex_agent.core.tool_manager import (
     Tool,
     ToolConfig,
@@ -70,6 +71,11 @@ class _ScriptedToolManager(ToolManager):
     def unregister(self, tool_name: str) -> bool:
         return False
 
+    def register_group(
+        self, group: ToolGroup, *, origin: ToolOrigin | None = None
+    ) -> None:
+        raise AssertionError("register_group is not used by this test")
+
     def get_tool(self, tool_name: str) -> Tool | None:
         return None
 
@@ -78,6 +84,16 @@ class _ScriptedToolManager(ToolManager):
 
     def is_registered(self, tool_name: str) -> bool:
         return tool_name == "fixture"
+
+    @property
+    def tool_groups(self) -> tuple[ToolGroup, ...]:
+        return ()
+
+    def get_tool_group(self, tool_name: str) -> ToolGroup | None:
+        return None
+
+    def origin_of(self, tool_name: str) -> ToolOrigin | None:
+        return None
 
     def get_tool_descriptions(self, caps: ModelCapabilities | None = None) -> list[dict[str, Any]]:
         return self.descriptions

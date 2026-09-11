@@ -19,6 +19,8 @@ from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+from modex_agent.plugins.abc import AgentType
+from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
 from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.spec import AgentSpec, PoolSpec
@@ -69,6 +71,20 @@ async def test_default_config_resolves_bot_model_provider(tmp_path: Path) -> Non
         ),
     )
     pool_spec = PoolSpec(name="main", agents=[AgentSpec(name="main")])
+    ws_ctx = WorkspaceContext(target=tmp_path, paths=WorkspacePaths(root=tmp_path), is_home=False)
+    assembly_spec = AssemblySpec(
+        agent_type=AgentType.native_main,
+        agent_name="main",
+        pool_name="main",
+        tools=[],
+        hooks=[],
+        llm_provider="bot_default",
+        system_prompt_provider="file_prompt",
+        system_prompt_config={},
+        memory_overrides=MemoryOverrides(),
+        execution_strategy="react",
+        workspace_ctx=ws_ctx,
+    )
     pool_assembly_ctx = PoolAssemblyContext(
         pool_name="main",
         pool_spec=pool_spec,
@@ -83,8 +99,8 @@ async def test_default_config_resolves_bot_model_provider(tmp_path: Path) -> Non
         registry=TurnSessionRegistry(),
         bot_model_config=cfg,
         model_choice_registry=ModelChoiceRegistry(),
+        assembly_spec=assembly_spec,
     )
-    ws_ctx = WorkspaceContext(target=tmp_path, paths=WorkspacePaths(root=tmp_path), is_home=False)
 
     provider = await _resolve_llm_slot(registry, "bot_default", {}, pool_assembly_ctx, ws_ctx)
 

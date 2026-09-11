@@ -63,14 +63,6 @@ class CommTargetEntry(BaseModel):
     target_kind: str
 
 
-class TerminalManagerSummary(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    manager_class: str
-    visibility: str | None
-    shell_family: str | None
-
-
 class TodoStoreSummary(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -101,10 +93,7 @@ class AssemblyManifest(BaseModel):
 
     pool_name: str
     execution_strategy: str
-    terminal_manager: TerminalManagerSummary | None
-    # None when no trio tools are present; True iff every present trio tool
-    # (bash, process, terminal) shares ONE ProcessRegistry identity.
-    trio_registry_shared: bool | None
+    shell_variant: str | None
     todo_store: TodoStoreSummary | None
     interceptors: list[str]
     commands: list[str] | None
@@ -125,15 +114,10 @@ def assert_bash_wave_parity(
     golden_names,
     allowed_extra: frozenset[str] = frozenset({"bash_input"}),
 ) -> None:
-    """Allow the persistent-bash wave's divergence from the frozen goldens.
+    """Allow the persistent shell group's extra companion in old goldens.
 
-    The goldens predate the wave (the bash slot froze as the stateless
-    SubprocessTool). On POSIX hosts the no-terminal-manager pools now
-    resolve the pool's PersistentBashTool and register the bash_input
-    companion post-roster — presence-derived: the divergence applies iff
-    the companion actually registered, so terminal pools (CommandTool)
-    and Windows hosts (SubprocessTool fallback) stay byte-identical to
-    the goldens and their exact comparisons continue to run.
+    Presence is variant-derived: persistent groups contain ``bash_input``;
+    subprocess groups do not.
     *allowed_extra* widens the tolerated extra set for goldens that also
     predate other additions (e.g. the derived communication tools).
     """
@@ -162,11 +146,17 @@ def dump_tool_roster(
 ) -> list[ToolEntry]:
     """Introspect a tool manager's actual contents into ToolEntry list.
 
-    ``source_of`` maps tool name → provenance label; unmapped tools default
-    to "glue" (BIZ-registered). Registration order is preserved — it is an
-    observable product.
+    ``source_of`` maps tool name → provenance label. A registered group's
+    anchor source propagates to every atomic member before unmapped tools
+    default to "glue" (BIZ-registered). Registration order is preserved.
     """
-    source_of = source_of or {}
+    source_of = dict(source_of or {})
+    for group in tool_manager.tool_groups:
+        anchor_source = source_of.get(group.anchor)
+        if anchor_source is None:
+            continue
+        for tool in group.tools:
+            source_of[tool.name] = anchor_source
     entries: list[ToolEntry] = []
     for name in tool_manager.list_tools():
         tool = tool_manager.get_tool(name)
@@ -181,44 +171,7 @@ def dump_tool_roster(
     return entries
 
 
-def trio_registry_shared(tool_manager: Any) -> bool | None:
-    """Whether all present trio tools share one ProcessRegistry identity.
-
-    ``None`` when no trio tools are registered (the use_terminal=false
-    shape). Guards the ProcessRegistry split-brain class of bug
-    (InMemoryToolManager.register silently overwrites — identity must be
-    observed, not assumed).
-    """
-    registries: set[int] = set()
-    present = False
-    for name in ("bash", "process", "terminal"):
-        tool = tool_manager.get_tool(name)
-        if tool is None:
-            continue
-        registry = getattr(tool, "_registry", None)
-        if registry is None:
-            continue
-        present = True
-        registries.add(id(registry))
-    if not present:
-        return None
-    return len(registries) == 1
-
-
 # ── Full-pool introspection ─────────────────────────────────────────────
-
-
-def _terminal_manager_summary(manager: Any) -> TerminalManagerSummary | None:
-    if manager is None:
-        return None
-    visibility = getattr(manager, "visibility", None)
-    shell_info = getattr(manager, "shell_info", None)
-    family = getattr(shell_info, "family", None)
-    return TerminalManagerSummary(
-        manager_class=type(manager).__name__,
-        visibility=visibility.value if visibility is not None else None,
-        shell_family=family.value if family is not None else None,
-    )
 
 
 def _prompt_sha256(instance: Any) -> str | None:
@@ -391,8 +344,11 @@ def dump_assembly_manifest(
     return AssemblyManifest(
         pool_name=pool_instance.name,
         execution_strategy=pool_instance.main_execution_strategy.value,
-        terminal_manager=_terminal_manager_summary(pool_instance.terminal_manager),
-        trio_registry_shared=trio_registry_shared(pool_instance.tool_manager),
+        shell_variant=(
+            group.variant
+            if (group := pool_instance.tool_manager.get_tool_group("bash")) is not None
+            else None
+        ),
         todo_store=todo_summary,
         interceptors=_interceptor_names(pool_instance),
         commands=_command_names(pool_instance),

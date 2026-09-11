@@ -6,7 +6,7 @@ NEVER in DefaultPlugin) prove the whole capability protocol end to end —
 T1 types + T3 compile protocol + T4 supply face + T6 section face:
 
 - ``DummyFieldCapability`` — FIELD-reading predicate
-  (``view.declared.use_terminal is True``, SPEC §14.2): one declared field
+  (a marker in ``view.declared.roles``, SPEC §14.2): one declared field
   flips the effective set. Contributes one tool + one hook + one section,
   binds with an ANCHOR (the tool must survive the merge), supplies a
   ``DummySupply``, assembles a stable-version section provider rendering
@@ -22,7 +22,7 @@ Test matrix (SPEC §14 criteria 1/2/5/6/7 at the Wave 1 level):
   hooks + capabilities block), the AUTO path (no capabilities block),
   pool supply aggregation (exactly once per pool), and native dispatch
   rendering the section at the prompt anchor.
-- (b) FIELD-FLIP red-green — ``use_terminal`` true → false → true flips
+- (b) FIELD-FLIP red-green — a declared role present → absent → present flips
   the effective set (SPEC §14.2).
 - (c) Three boot-fail paths — V12 (external + explicit capabilities,
   phase-1 validator), V13 (unregistered name → ComponentNotFoundError),
@@ -128,7 +128,7 @@ pool:
   name: p
   agents:
     root:
-      use_terminal: true
+      roles: [dummy-field]
       capabilities:
         dummy_field: {}
 """
@@ -176,7 +176,7 @@ class _DummyFieldSectionProvider(SystemPromptProvider):
 class DummyFieldCapability(Capability):
     """FIELD-reading dummy — the reference five-phase template.
 
-    C0 reads ONE declared field (``use_terminal``) — SPEC §14.2's dynamic
+    C0 reads ONE declared field (``roles``) — SPEC §14.2's dynamic
     enablement criterion: flipping that single declaration field flips the
     effective set (the red-green anchor of this suite). The other phases
     exercise every protocol face: contribution (tool + hook + section),
@@ -190,8 +190,8 @@ class DummyFieldCapability(Capability):
         self.assemble_calls = 0
 
     def applies(self, view: AgentDeclarationView) -> bool:
-        """C0: auto-apply exactly when the agent declared a terminal."""
-        return view.declared.use_terminal is True
+        """C0: auto-apply exactly when the agent declared the marker role."""
+        return "dummy-field" in view.declared.roles
 
     def contribute(self, tree: TreePositionView, config: BaseModel) -> CapabilityContribution:
         """C1: one tool + one hook + one section into the merge base."""
@@ -630,13 +630,15 @@ class TestTCap1EndToEnd:
         assert "dummy_hook" in root.spec.hooks
 
     def test_auto_path_applies_field_and_tree_predicates(self) -> None:
-        """``use_terminal: true`` with NO capabilities block — both dummies
+        """The marker role with NO capabilities block makes both dummies
         auto-apply to the parent (field + tree predicates); the childless,
-        terminal-less sub gets neither."""
+        unmarked sub gets neither."""
         plugin = _DummyCapabilityPlugin()
         registry = _dummy_registry(plugin)
 
-        compilation = _compile(_tree(root=AgentSpec(name="root", use_terminal=True)), registry)
+        compilation = _compile(
+            _tree(root=AgentSpec(name="root", roles=["dummy-field"])), registry
+        )
 
         root = compilation.agents[0]
         assert [cap.name for cap in root.spec.capabilities] == [
@@ -658,8 +660,8 @@ class TestTCap1EndToEnd:
         registry = _stage_registry(plugin)
         compilation = _compile(
             _tree(
-                root=AgentSpec(name="root", use_terminal=True),
-                sub=AgentSpec(name="sub", parent="root", use_terminal=True),
+                root=AgentSpec(name="root", roles=["dummy-field"]),
+                sub=AgentSpec(name="sub", parent="root", roles=["dummy-field"]),
             ),
             registry,
         )
@@ -684,7 +686,7 @@ class TestTCap1EndToEnd:
         """The declared dummy's assemble() wiring reaches the context manager
         through the section channel and renders in the assembled prompt at
         the anchor position (after the base prompt, before core memory)."""
-        # use_terminal=True derives the native_env hook, which resolves the
+        # The native_env hook resolves the
         # modexctl bin dir eagerly — point it at a hermetic fake binary.
         (tmp_path / "modexctl").touch()
         monkeypatch.setenv("MODEXBOT_BIN_DIR", str(tmp_path))
@@ -694,7 +696,11 @@ class TestTCap1EndToEnd:
         spec = (
             _compile(
                 _pool_spec(
-                    AgentSpec(name="root", use_terminal=True, capabilities={"dummy_field": {}})
+                    AgentSpec(
+                        name="root",
+                        roles=["dummy-field"],
+                        capabilities={"dummy_field": {}},
+                    )
                 ),
                 registry,
             )
@@ -730,15 +736,15 @@ class TestTCap1EndToEnd:
 
 
 class TestFieldFlipRedGreen:
-    def test_use_terminal_flip_toggles_effective_set(self) -> None:
-        """One declared field changes the effective set: true → the dummy is
-        in (tool + hook + section); false → out (zero contribution); back to
-        true → in again."""
+    def test_roles_flip_toggles_effective_set(self) -> None:
+        """One declared field changes the effective set: marker present puts
+        the dummy in, marker absent takes it out, and restoring it puts it back."""
         plugin = _DummyCapabilityPlugin()
         registry = _dummy_registry(plugin)
 
-        def _compile_root(use_terminal: bool) -> ScopeCompilation:
-            return _compile(_pool_spec(AgentSpec(name="root", use_terminal=use_terminal)), registry)
+        def _compile_root(enabled: bool) -> ScopeCompilation:
+            roles = ["dummy-field"] if enabled else []
+            return _compile(_pool_spec(AgentSpec(name="root", roles=roles)), registry)
 
         on = _compile_root(True).agents[0]
         assert [cap.name for cap in on.spec.capabilities] == ["dummy_field"]
@@ -790,7 +796,9 @@ class TestBootFailPaths:
     def test_c2_anchor_veto_boot_fails_with_full_context(self) -> None:
         plugin = _DummyCapabilityPlugin()
         registry = _dummy_registry(plugin)
-        spec = _pool_spec(AgentSpec(name="root", use_terminal=True, tools=["-dummy_tool"]))
+        spec = _pool_spec(
+            AgentSpec(name="root", roles=["dummy-field"], tools=["-dummy_tool"])
+        )
 
         with pytest.raises(CapabilityError) as exc_info:
             _compile(spec, registry)
@@ -801,7 +809,7 @@ class TestBootFailPaths:
         assert "'p'" in message and "'root'" in message  # pool + agent context
 
     def test_veto_of_absent_capability_contribution_is_silent(self) -> None:
-        """Negative control: without ``use_terminal`` the dummy is NOT
+        """Negative control: without the marker role the dummy is NOT
         effective, so ``tools: [-dummy_tool]`` vetoes nothing and the anchor
         never fires (the boot-fail is tied to the effective set)."""
         plugin = _DummyCapabilityPlugin()
@@ -852,11 +860,11 @@ class TestHashMutationMatrix:
         ),
         (
             "veto_auto_applied_dummy_field",
-            lambda: _tree(root=AgentSpec(name="root", use_terminal=True)),
+            lambda: _tree(root=AgentSpec(name="root", roles=["dummy-field"])),
             lambda: _tree(
                 root=AgentSpec(
                     name="root",
-                    use_terminal=True,
+                    roles=["dummy-field"],
                     capabilities={"dummy_field": False},
                 )
             ),
@@ -867,8 +875,8 @@ class TestHashMutationMatrix:
             lambda: _three_level_tree(),
         ),
         (
-            "remove_use_terminal_from_auto_eligible_root",
-            lambda: _tree(root=AgentSpec(name="root", use_terminal=True)),
+            "remove_marker_role_from_auto_eligible_root",
+            lambda: _tree(root=AgentSpec(name="root", roles=["dummy-field"])),
             lambda: _tree(),
         ),
     ]
@@ -900,7 +908,7 @@ class TestHashMutationMatrix:
 
     def test_same_tree_same_registry_identical_hash(self) -> None:
         registry = _dummy_registry(_DummyCapabilityPlugin())
-        spec = _tree(root=AgentSpec(name="root", use_terminal=True))
+        spec = _tree(root=AgentSpec(name="root", roles=["dummy-field"]))
 
         first = _compile(spec, registry)
         second = _compile(spec, registry)
@@ -912,7 +920,7 @@ class TestHashMutationMatrix:
         registries registering the dummies in REVERSE order compile to the
         same capability key order (registry enumeration, never insertion or
         set order) and the same hash."""
-        spec = _tree(root=AgentSpec(name="root", use_terminal=True))
+        spec = _tree(root=AgentSpec(name="root", roles=["dummy-field"]))
 
         compilations = []
         orders = []
@@ -947,7 +955,9 @@ class TestSupplySemantics:
         DummySupply product built for that pool's agents."""
         plugin = _DummyCapabilityPlugin()
         registry = _stage_registry(plugin)
-        root = _compile(_pool_spec(AgentSpec(name="root", use_terminal=True)), registry).agents[0]
+        root = _compile(
+            _pool_spec(AgentSpec(name="root", roles=["dummy-field"])), registry
+        ).agents[0]
 
         builder = await _run_pool_stage(registry, [root.spec])
 

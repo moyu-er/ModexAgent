@@ -84,10 +84,7 @@ def _shipped_registry() -> ComponentRegistry:
 
 def _preset_names(preset: ToolPreset) -> list[str]:
     """Dynamically compute preset tool names (test_spec_builder pattern)."""
-    names = [t.name for t in get_preset_tools(preset)]
-    if preset in (ToolPreset.FULL, ToolPreset.READ_ONLY, ToolPreset.READ_WRITE):
-        names.append("bash")
-    return names
+    return [t.name for t in get_preset_tools(preset)]
 
 
 def _names(entries: list[ToolEntry]) -> list[str]:

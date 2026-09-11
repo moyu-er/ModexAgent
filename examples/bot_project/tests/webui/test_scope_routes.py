@@ -101,7 +101,24 @@ pool:
   name: capability
   agents:
     root:
-      use_terminal: true
+      description: auto-capability
+"""
+
+_SHELL_DECLARATION = """\
+pool:
+  name: shell
+  agents:
+    root:
+      toolset: none
+      capabilities:
+        shell:
+          mode: terminal
+      agents:
+        child:
+          toolset: none
+          capabilities:
+            shell:
+              mode: terminal
 """
 
 _TWO_ROOTS_DECLARATION = """\
@@ -119,7 +136,7 @@ class _ThirdPartyAutoCapability(Capability):
     name = "third_party_auto"
 
     def applies(self, view: AgentDeclarationView) -> bool:
-        return view.declared.use_terminal is True
+        return view.declared.description == "auto-capability"
 
     def contribute(self, tree: TreePositionView, config: BaseModel) -> CapabilityContribution:
         return CapabilityContribution(
@@ -200,6 +217,18 @@ def _tools(bill_agent: JsonObject) -> dict[str, JsonObject]:
     for entry in entries:
         assert isinstance(entry, dict)
         name = entry.get("tool")
+        assert isinstance(name, str)
+        result[name] = entry
+    return result
+
+
+def _hooks(bill_agent: JsonObject) -> dict[str, JsonObject]:
+    entries = bill_agent["hooks"]
+    assert isinstance(entries, list)
+    result: dict[str, JsonObject] = {}
+    for entry in entries:
+        assert isinstance(entry, dict)
+        name = entry.get("hook")
         assert isinstance(name, str)
         result[name] = entry
     return result
@@ -365,7 +394,7 @@ async def test_bill_field_layers_and_values(tmp_path: Path) -> None:
             "layer": "framework",
             "profile": None,
         }
-        hook_rows = {row["hook"]: row for row in main["hooks"]}
+        hook_rows = _hooks(main)
         assert hook_rows["deliver_retry"] == {
             "hook": "deliver_retry",
             "origin": "position_default",
@@ -709,9 +738,8 @@ async def test_get_model_returns_declaration_tree(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_put_model_writes_canonical_yaml(tmp_path: Path) -> None:
-    """The structured save road strips spec/position defaults and keeps the
-    root terminal face explicit — the panel cannot write default-restating
-    declarations."""
+    """The structured save road strips spec/position defaults without
+    reintroducing removed root terminal fields."""
     path = _write_declaration(tmp_path, _WORKSPACE_DECLARATION)
     client = _make_client(tmp_path)
     await client.start_server()
@@ -743,8 +771,8 @@ async def test_put_model_writes_canonical_yaml(tmp_path: Path) -> None:
         text = path.read_text(encoding="utf-8")
         assert "max_steps" not in text
         assert "context_mode" not in text
-        assert "use_terminal: false" in text
-        assert "terminal_visibility: false" in text
+        assert "use_terminal" not in text
+        assert "terminal_visibility" not in text
 
         got = await client.get("/api/scope/model")
         assert got.status == 200
@@ -812,6 +840,31 @@ async def test_get_options_enumerates_registries(tmp_path: Path) -> None:
         # Position-dependent bundle contents are unioned across probes.
         assert "subagent_auto_send" in bundles["subagents"]["hooks"]
         assert "task" in bundles["subagents"]["tools"]
+        assert bundles["shell"]["tools"] == []
+        assert bundles["shell"]["tool_groups"] == [
+            {
+                "anchor": "bash",
+                "origin": "capability_derived",
+                "capability": "shell",
+                "variants": [
+                    {"name": "subprocess", "tools": ["bash"]},
+                    {"name": "persistent", "tools": ["bash", "bash_input"]},
+                    {"name": "terminal", "tools": ["bash", "process", "terminal"]},
+                ],
+            }
+        ]
+        assert bundles["shell"]["config_fields"] == {
+            "mode": {
+                "value_type": "string",
+                "default": "persistent",
+                "choices": ["subprocess", "persistent", "terminal"],
+            },
+            "terminal_visibility": {
+                "value_type": "boolean",
+                "default": False,
+                "choices": [],
+            },
+        }
         assert data["position_defaults"]["root"] == {
             "toolset": "full",
             "registration": "eager",
@@ -820,6 +873,114 @@ async def test_get_options_enumerates_registries(tmp_path: Path) -> None:
             "toolset": "read_write",
             "registration": "lazy",
         }
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_preview_reports_candidate_tool_group_variants(tmp_path: Path) -> None:
+    _write_declaration(tmp_path, _SHELL_DECLARATION)
+    client = _make_client(tmp_path)
+    await client.start_server()
+    try:
+        model = (await (await client.get("/api/scope/model")).json())["model"]
+        resp = await client.post("/api/scope/preview", json={"model": model})
+        assert resp.status == 200, await resp.text()
+        bill = await resp.json()
+        root = _agent(bill, "shell", "root")
+        assert root["tool_groups"] == [
+            {
+                "anchor": "bash",
+                "origin": "capability_derived",
+                "capability": "shell",
+                "variants": [
+                    {"name": "subprocess", "tools": ["bash"]},
+                    {"name": "persistent", "tools": ["bash", "bash_input"]},
+                    {"name": "terminal", "tools": ["bash", "process", "terminal"]},
+                ],
+            }
+        ]
+        child = _agent(bill, "shell", "child")
+        assert child["tool_groups"] == [
+            {
+                "anchor": "bash",
+                "origin": "capability_derived",
+                "capability": "shell",
+                "variants": [
+                    {"name": "subprocess", "tools": ["bash"]},
+                    {"name": "persistent", "tools": ["bash", "bash_input"]},
+                ],
+            }
+        ]
+    finally:
+        await client.close()
+
+
+@pytest.mark.parametrize(
+    ("mode", "variants"),
+    [
+        ("subprocess", [{"name": "subprocess", "tools": ["bash"]}]),
+        (
+            "persistent",
+            [
+                {"name": "subprocess", "tools": ["bash"]},
+                {"name": "persistent", "tools": ["bash", "bash_input"]},
+            ],
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_preview_group_manifest_follows_requested_shell_mode(
+    tmp_path: Path,
+    mode: str,
+    variants: list[JsonObject],
+) -> None:
+    _write_declaration(tmp_path, _POOL_ROOT_DECLARATION)
+    client = _make_client(tmp_path)
+    await client.start_server()
+    try:
+        model = {
+            "pool": {
+                "name": "shell",
+                "agents": {
+                    "root": {
+                        "toolset": "none",
+                        "capabilities": {"shell": {"mode": mode}},
+                    }
+                },
+            }
+        }
+        resp = await client.post("/api/scope/preview", json={"model": model})
+        assert resp.status == 200, await resp.text()
+        root = _agent(await resp.json(), "shell", "root")
+        assert root["tool_groups"] == [
+            {
+                "anchor": "bash",
+                "origin": "capability_derived",
+                "capability": "shell",
+                "variants": variants,
+            }
+        ]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_put_model_accepts_subagent_terminal_request_without_rewriting(
+    tmp_path: Path,
+) -> None:
+    path = _write_declaration(tmp_path, _SHELL_DECLARATION)
+    client = _make_client(tmp_path)
+    await client.start_server()
+    try:
+        model = (await (await client.get("/api/scope/model")).json())["model"]
+        resp = await client.put("/api/scope/model", json={"model": model})
+        assert resp.status == 200, await resp.text()
+        saved = path.read_text(encoding="utf-8")
+        assert saved.count("mode: terminal") == 2
+        reloaded = (await (await client.get("/api/scope/model")).json())["model"]
+        child = reloaded["pool"]["agents"]["root"]["agents"]["child"]
+        assert child["capabilities"]["shell"]["mode"] == "terminal"
     finally:
         await client.close()
 
@@ -864,7 +1025,7 @@ async def test_preview_returns_draft_bill_without_writing(tmp_path: Path) -> Non
         assert _field(main, "max_steps")["value"] == 88
         # The dropped capability's bundle hooks are gone from the effective
         # roster; declared/default hooks stay.
-        hooks = {h["hook"] for h in main["hooks"]}
+        hooks = set(_hooks(main))
         assert "todo_continuation" not in hooks
         assert "deliver_retry" in hooks
         # Nothing written.

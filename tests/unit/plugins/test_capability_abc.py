@@ -215,7 +215,7 @@ class TestAgentDeclaredFields:
         assert fields.tools is None
         assert fields.hooks is None
         assert fields.mcp == []
-        assert fields.use_terminal is False
+        assert "use_terminal" not in fields.__class__.model_fields
         assert fields.execution_strategy == "react"
         assert fields.provider_kind is None
         assert fields.eager is None
@@ -228,7 +228,6 @@ class TestAgentDeclaredFields:
             tools=["read", "write"],
             hooks=["demo_hook"],
             mcp=["server_a"],
-            use_terminal=True,
             execution_strategy="external",
             provider_kind="opencode",
             eager=True,
@@ -239,7 +238,6 @@ class TestAgentDeclaredFields:
         assert fields.tools == ["read", "write"]
         assert fields.hooks == ["demo_hook"]
         assert fields.mcp == ["server_a"]
-        assert fields.use_terminal is True
         assert fields.execution_strategy == "external"
         assert fields.provider_kind == "opencode"
         assert fields.eager is True

@@ -39,7 +39,7 @@ from modex_agent.plugins.assembly.single_agent import (
     assemble_declared_single_agent,
 )
 from modex_agent.plugins.defaults import DefaultPlugin
-from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import JsonValue, TurnIdentity
@@ -326,8 +326,13 @@ async def execute_entry(config: EntryConfig, dependencies: EntryDependencies) ->
     try:
         instruction = config.instruction_path.read_text(encoding="utf-8")
         component_registry = ComponentRegistry()
-        with PluginRegistrationContext(component_registry) as registration:
-            DefaultPlugin().register(registration)
+        await ComponentRegistryLoader.load(
+            component_registry,
+            PluginDiscoveryConfig(
+                bundled_factories=(DefaultPlugin(),),
+                project_plugin_paths=(_BOT_PROJECT / "plugins",),
+            ),
+        )
         declaration = load_scope_declaration(_REACT_HARNESS_DECLARATION)
         overlay = ScopeOverlay(
             pools={

@@ -1,5 +1,5 @@
 {
-  "captured_on": "name-slot overwrite era (O3 compile-time replacement removed)",
+  "captured_on": "name-slot overwrite era after shell capability extraction",
   "shapes": {
     "baseline": {
       "root": {
@@ -10,7 +10,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "task",
           "aci_edit"
         ],
@@ -46,11 +45,6 @@
             "targets": []
           },
           {
-            "tool": "bash",
-            "origin": "preset",
-            "targets": []
-          },
-          {
             "tool": "task",
             "origin": "derived_task",
             "targets": [
@@ -72,7 +66,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "send_to_agent"
         ],
         "provenance_tools": [
@@ -103,11 +96,6 @@
           },
           {
             "tool": "glob",
-            "origin": "preset",
-            "targets": []
-          },
-          {
-            "tool": "bash",
             "origin": "preset",
             "targets": []
           },
@@ -160,7 +148,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "send_to_agent"
         ],
         "provenance_tools": [
@@ -191,11 +178,6 @@
           },
           {
             "tool": "glob",
-            "origin": "preset",
-            "targets": []
-          },
-          {
-            "tool": "bash",
             "origin": "preset",
             "targets": []
           },
@@ -236,7 +218,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "send_to_agent"
         ],
         "provenance_tools": [
@@ -271,11 +252,6 @@
             "targets": []
           },
           {
-            "tool": "bash",
-            "origin": "preset",
-            "targets": []
-          },
-          {
             "tool": "send_to_agent",
             "origin": "derived_send_to_agent",
             "targets": [
@@ -294,7 +270,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "task",
           "aci_edit",
           "web_search"
@@ -331,11 +306,6 @@
             "targets": []
           },
           {
-            "tool": "bash",
-            "origin": "preset",
-            "targets": []
-          },
-          {
             "tool": "task",
             "origin": "derived_task",
             "targets": [
@@ -362,7 +332,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "send_to_agent"
         ],
         "provenance_tools": [
@@ -397,11 +366,6 @@
             "targets": []
           },
           {
-            "tool": "bash",
-            "origin": "preset",
-            "targets": []
-          },
-          {
             "tool": "send_to_agent",
             "origin": "derived_send_to_agent",
             "targets": [
@@ -419,7 +383,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "task",
           "aci_edit"
         ],
@@ -450,11 +413,6 @@
             "targets": []
           },
           {
-            "tool": "bash",
-            "origin": "preset",
-            "targets": []
-          },
-          {
             "tool": "task",
             "origin": "derived_task",
             "targets": [
@@ -476,7 +434,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "send_to_agent"
         ],
         "provenance_tools": [
@@ -511,11 +468,6 @@
             "targets": []
           },
           {
-            "tool": "bash",
-            "origin": "preset",
-            "targets": []
-          },
-          {
             "tool": "send_to_agent",
             "origin": "derived_send_to_agent",
             "targets": [
@@ -534,7 +486,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "task"
         ],
         "provenance_tools": [
@@ -569,11 +520,6 @@
             "targets": []
           },
           {
-            "tool": "bash",
-            "origin": "preset",
-            "targets": []
-          },
-          {
             "tool": "task",
             "origin": "derived_task",
             "targets": [
@@ -590,7 +536,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "send_to_agent"
         ],
         "provenance_tools": [
@@ -621,11 +566,6 @@
           },
           {
             "tool": "glob",
-            "origin": "preset",
-            "targets": []
-          },
-          {
-            "tool": "bash",
             "origin": "preset",
             "targets": []
           },

@@ -12,7 +12,19 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from modex_agent.core.tool_group import ToolGroup
+from modex_agent.plugins.assembly.context import AgentContext
+from modex_agent.plugins.capability import CapabilityWiring
+from modex_agent.plugins.defaults.capabilities.shell import (
+    SHELL_CAPABILITY_NAME,
+    SHELL_WIRING_KEY,
+    ShellCapabilityConfig,
+    ShellMode,
+    ShellToolGroupFactory,
+    ShellWiring,
+)
 from modex_agent.sandbox.exceptions import SandboxUnavailableError
+from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
 from modex_agent.sandbox.runtime import ResolvedSandbox, SandboxRuntime
 from modex_agent.sandbox.settings import (
     ExclusiveConfig,
@@ -20,12 +32,11 @@ from modex_agent.sandbox.settings import (
     SandboxSettings,
     WriteSurface,
 )
-from modex_agent.sandbox.shell_plan import ShellAssemblyDeps, build_bash_tool
+from modex_agent.sandbox.shell_plan import SandboxBinding
 from modex_agent.sandbox.types import EnforcementLevel
 from modex_agent.tools.terminal.persistent_bash import (
     BashInputTool,
     PersistentBashTool,
-    ensure_input_companion,
 )
 from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
@@ -47,8 +58,54 @@ class FailedRuntime(SandboxRuntime):
         raise self.error
 
 
+async def _shell_group(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    resolved: ResolvedSandbox | None,
+    supported: bool,
+    binding: SandboxBinding | None = None,
+    mode: ShellMode = ShellMode.PERSISTENT,
+) -> ToolGroup:
+    from modex_agent.workspace.context import WorkspaceContext
+    from modex_agent.workspace.paths import WorkspacePaths
+
+    effective_binding = binding or (SandboxBinding(resolved) if resolved is not None else None)
+    wiring = ShellWiring(
+        config=ShellCapabilityConfig(mode=mode),
+        binding=effective_binding,
+        initial_cwd=str(root.resolve()),
+        is_main=True,
+        agent_name="fixture",
+    )
+    ctx = AgentContext(
+        registry=MagicMock(),
+        workspace_ctx=WorkspaceContext(
+            target=root,
+            paths=WorkspacePaths(root=root / ".modex"),
+            is_home=False,
+        ),
+        agent_name="fixture",
+        capability_wirings={
+            SHELL_CAPABILITY_NAME: CapabilityWiring(
+                artifacts={SHELL_WIRING_KEY: wiring}
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "modex_agent.plugins.defaults.capabilities.shell.factory.persistent_bash_supported",
+        lambda: supported,
+    )
+    factory = ShellToolGroupFactory()
+    return await factory.create(factory.config_model(), ctx)
+
+
 @pytest.mark.parametrize("error", [SandboxUnavailableError("engine offline"), FileNotFoundError("engine missing"), OSError(errno.ENOSPC, "probe storage full")])
-async def test_initialization_unavailable_keeps_host_bash(tmp_path: Path, error: Exception) -> None:
+async def test_initialization_unavailable_keeps_host_bash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
     from modex_agent.sandbox.decision import SecurityDecisionService
     from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
 
@@ -58,7 +115,14 @@ async def test_initialization_unavailable_keeps_host_bash(tmp_path: Path, error:
     resolved = await guard.ensure_resolved()
     assert resolved.backend is SandboxBackend.HOST
     assert str(error) in (resolved.degraded_reason or "")
-    assert build_bash_tool(ShellAssemblyDeps(resolved=resolved, pty_supported=False)).name == "bash"
+    group = await _shell_group(
+        tmp_path,
+        monkeypatch,
+        resolved=resolved,
+        supported=False,
+        binding=await guard.execution_binding(),
+    )
+    assert group.tools[0].name == "bash"
 
 
 @pytest.mark.parametrize("error", [PermissionError("denied"), ValueError("bad config"), TypeError("bug"), OSError(errno.EINVAL, "bad argument")])
@@ -79,24 +143,44 @@ def local_substrate() -> ResolvedSandbox:
                            one_shot_command_argv_prefix=["env"])
 
 
-def test_persistent_manager_receives_cwd_and_output_budget(tmp_path: Path) -> None:
-    tool = build_bash_tool(ShellAssemblyDeps(resolved=local_substrate(), root_provider=FixedRoot(tmp_path)))
+async def test_persistent_manager_receives_cwd_and_output_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    group = await _shell_group(
+        tmp_path, monkeypatch, resolved=local_substrate(), supported=True
+    )
+    tool = group.tools[0]
     assert isinstance(tool, PersistentBashTool)
     assert tool.manager._initial_cwd == str(tmp_path)
     assert tool.manager.max_output_chars is None
+    assert group.resource is not None
+    await group.resource.aclose()
 
 
-def test_shell_assembly_uses_the_canonical_mount_cwd(tmp_path: Path) -> None:
+async def test_shell_assembly_uses_the_canonical_mount_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     (tmp_path / "sub").mkdir()
-    tool = build_bash_tool(ShellAssemblyDeps(resolved=local_substrate(), root_provider=FixedRoot(tmp_path / "sub" / "..")))
+    group = await _shell_group(
+        tmp_path / "sub" / "..",
+        monkeypatch,
+        resolved=local_substrate(),
+        supported=True,
+    )
+    tool = group.tools[0]
     assert isinstance(tool, PersistentBashTool)
     assert tool.manager._initial_cwd == str(tmp_path)
+    assert group.resource is not None
+    await group.resource.aclose()
 
 
 @pytest.mark.parametrize("sandboxed", [False, True])
 async def test_one_shot_uses_workspace_default_and_explicit_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandboxed: bool) -> None:
     resolved = local_substrate().model_copy(update={"backend": SandboxBackend.OCI, "one_shot_command_argv_prefix": ["docker", "exec", "fixture"]}) if sandboxed else None
-    tool = build_bash_tool(ShellAssemblyDeps(resolved=resolved, pty_supported=False, root_provider=FixedRoot(tmp_path)))
+    group = await _shell_group(
+        tmp_path, monkeypatch, resolved=resolved, supported=False
+    )
+    tool = group.tools[0]
     assert isinstance(tool, SubprocessTool)
     execute = AsyncMock(return_value="ok")
     monkeypatch.setattr(tool._executor, "execute", execute)
@@ -108,16 +192,6 @@ async def test_one_shot_uses_workspace_default_and_explicit_cwd(tmp_path: Path, 
     assert execute.call_args.args[1] == str(tmp_path / "sub")
 
 
-def test_one_shot_removes_only_stale_persistent_companion() -> None:
-    from modex_agent.tools.manager import InMemoryToolManager
-    manager = InMemoryToolManager()
-    old = PersistentBashTool()
-    manager.register(BashInputTool(old.manager))
-    tool = build_bash_tool(ShellAssemblyDeps(pty_supported=False))
-    ensure_input_companion(manager, tool)
-    assert manager.get_tool("bash_input") is None
-
-
 async def test_local_one_shot_keeps_prefix_and_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio
     process = AsyncMock()
@@ -126,7 +200,10 @@ async def test_local_one_shot_keeps_prefix_and_cwd(tmp_path: Path, monkeypatch: 
     spawn = AsyncMock(return_value=process)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
     monkeypatch.setenv("MODEX_HOST_FIDELITY", "inherited")
-    tool = build_bash_tool(ShellAssemblyDeps(resolved=local_substrate(), pty_supported=False, root_provider=FixedRoot(tmp_path)))
+    group = await _shell_group(
+        tmp_path, monkeypatch, resolved=local_substrate(), supported=False
+    )
+    tool = group.tools[0]
     await tool.execute(command="printf '%s' 'a b' | cat")
     assert spawn.call_args.args == ("env", "/bin/bash", "--noprofile", "--norc", "-c", "printf '%s' 'a b' | cat")
     assert spawn.call_args.kwargs["cwd"] == str(tmp_path)
@@ -191,13 +268,12 @@ async def test_side_effect_then_shell_exit_is_uncertain_and_not_replayed(tmp_pat
 
 @pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX PTY")
 async def test_shell_pair_real_cwd_env_pipeline_and_input(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from modex_agent.tools.manager import InMemoryToolManager
     monkeypatch.setenv("MODEX_HOST_FIDELITY", "inherited")
-    tool = build_bash_tool(ShellAssemblyDeps(resolved=local_substrate(), root_provider=FixedRoot(tmp_path)))
+    group = await _shell_group(
+        tmp_path, monkeypatch, resolved=local_substrate(), supported=True
+    )
+    tool, companion = group.tools
     assert isinstance(tool, PersistentBashTool)
-    manager = InMemoryToolManager()
-    ensure_input_companion(manager, tool)
-    companion = manager.get_tool("bash_input")
     assert isinstance(companion, BashInputTool)
     try:
         assert str(tmp_path) in await tool.execute("pwd")
@@ -207,7 +283,8 @@ async def test_shell_pair_real_cwd_env_pipeline_and_input(tmp_path: Path, monkey
         assert "[hint:" in await tool.execute("read -p 'Name: ' answer; printf 'got:%s' \"$answer\"")
         assert "got:paired" in await companion.execute("paired")
     finally:
-        await tool.close()
+        assert group.resource is not None
+        await group.resource.aclose()
 
 
 async def test_seatbelt_cleanup_only_reclaims_its_own_profiles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -355,10 +432,12 @@ async def test_real_bwrap_writes_permitted_relative_extra_root(tmp_path: Path) -
     assert (shared / "value").read_text() == "permitted"
 
 
-async def assembled_shell(tmp_path: Path, resolved: ResolvedSandbox, pty: bool, monkeypatch: pytest.MonkeyPatch):
-    from modex_agent.interceptor.chain import InterceptorChain
-    from modex_agent.plugins.assembly.context import AgentContext, PoolRuntimeDeps
-    from modex_agent.plugins.defaults.tools import BashToolFactory, ToolConfig
+async def assembled_shell(
+    tmp_path: Path,
+    resolved: ResolvedSandbox,
+    pty: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[SandboxGuardInterceptor, ToolGroup]:
     from modex_agent.sandbox.decision import SecurityDecisionService
     from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
     class FixedRuntime(SandboxRuntime):
@@ -367,11 +446,15 @@ async def assembled_shell(tmp_path: Path, resolved: ResolvedSandbox, pty: bool, 
     root = FixedRoot(tmp_path)
     settings = SandboxSettings(backend=resolved.backend)
     guard = SandboxGuardInterceptor(settings, FixedRuntime(), root, SecurityDecisionService(settings, root))
-    ctx = AgentContext(registry=MagicMock(), workspace_ctx=MagicMock(), agent_name="fixture",
-                       pool_runtime=PoolRuntimeDeps(root_provider=root, interceptor_chain=InterceptorChain([guard])))
-    monkeypatch.setattr("modex_agent.plugins.defaults.tools.persistent_bash_supported", lambda: pty)
-    tool = await BashToolFactory().create(ToolConfig(), ctx)
-    return guard, tool
+    binding = await guard.execution_binding()
+    group = await _shell_group(
+        tmp_path,
+        monkeypatch,
+        resolved=resolved,
+        supported=pty,
+        binding=binding,
+    )
+    return guard, group
 
 
 async def invoke_shell(guard, tool, command, state):
@@ -391,13 +474,10 @@ async def test_bound_start_failure_runs_host_once_and_keeps_companion(
 ) -> None:
     from modex_agent.agents.react.state import ReActTurnState
     from modex_agent.runtime.enums import TurnCustomKey
-    from modex_agent.tools.manager import InMemoryToolManager
     argv = [str(tmp_path / "missing-engine")]
     resolved = local_substrate().model_copy(update={"shell_argv": argv})
-    guard, tool = await assembled_shell(tmp_path, resolved, True, monkeypatch)
-    manager = InMemoryToolManager()
-    ensure_input_companion(manager, tool)
-    companion = manager.get_tool("bash_input")
+    guard, group = await assembled_shell(tmp_path, resolved, True, monkeypatch)
+    tool, companion = group.tools
     assert isinstance(tool, PersistentBashTool)
     assert isinstance(companion, BashInputTool)
     state = ReActTurnState()
@@ -416,7 +496,8 @@ async def test_bound_start_failure_runs_host_once_and_keeps_companion(
         assert "got:paired" in await companion.execute("paired")
         assert (tmp_path / "effect").read_text() == "inherited"
     finally:
-        await tool.close()
+        assert group.resource is not None
+        await group.resource.aclose()
 
 
 @pytest.mark.parametrize("backend", [SandboxBackend.LOCAL, SandboxBackend.OCI])
@@ -428,7 +509,8 @@ async def test_bound_missing_cli_runs_host_once_and_reports_host(tmp_path: Path,
         prefix.extend(["exec", "fixture"])
     resolved = local_substrate().model_copy(update={"backend": backend,
         "one_shot_command_argv_prefix": prefix})
-    guard, tool = await assembled_shell(tmp_path, resolved, False, monkeypatch)
+    guard, group = await assembled_shell(tmp_path, resolved, False, monkeypatch)
+    tool = group.tools[0]
     state = ReActTurnState()
     result = await invoke_shell(guard, tool, "printf once >> effect", state)
     assert result.error is None
@@ -444,7 +526,8 @@ async def test_bound_missing_cli_runs_host_once_and_reports_host(tmp_path: Path,
 async def test_bound_target_failure_never_changes_substrate_or_replays(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tail: str) -> None:
     from modex_agent.agents.react.state import ReActTurnState
     from modex_agent.runtime.enums import TurnCustomKey
-    guard, tool = await assembled_shell(tmp_path, local_substrate(), True, monkeypatch)
+    guard, group = await assembled_shell(tmp_path, local_substrate(), True, monkeypatch)
+    tool = group.tools[0]
     assert isinstance(tool, PersistentBashTool)
     state = ReActTurnState()
     try:
@@ -455,7 +538,8 @@ async def test_bound_target_failure_never_changes_substrate_or_replays(tmp_path:
         await invoke_shell(guard, tool, "printf next", state)
         assert (tmp_path / "effect").read_text() == "once"
     finally:
-        await tool.close()
+        assert group.resource is not None
+        await group.resource.aclose()
 
 
 async def test_bound_nonzero_cli_exit_never_falls_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -466,7 +550,8 @@ async def test_bound_nonzero_cli_exit_never_falls_back(tmp_path: Path, monkeypat
     engine_script.write_text(script)
     resolved = local_substrate().model_copy(update={"backend": SandboxBackend.OCI,
         "one_shot_command_argv_prefix": [sys.executable, str(engine_script), "fixture"]})
-    guard, tool = await assembled_shell(tmp_path, resolved, False, monkeypatch)
+    guard, group = await assembled_shell(tmp_path, resolved, False, monkeypatch)
+    tool = group.tools[0]
     state = ReActTurnState()
     await invoke_shell(guard, tool, "printf replayed >> effect", state)
     assert (tmp_path / "effect").read_text() == "once"
@@ -483,7 +568,13 @@ async def test_fallback_does_not_replace_another_conversations_live_shell(tmp_pa
     launcher.write_text("#!/bin/sh\nexec /bin/bash --noprofile --norc -i\n")
     launcher.chmod(0o700)
     argv = [str(launcher)]
-    guard, tool = await assembled_shell(tmp_path, local_substrate().model_copy(update={"shell_argv": argv}), True, monkeypatch)
+    guard, group = await assembled_shell(
+        tmp_path,
+        local_substrate().model_copy(update={"shell_argv": argv}),
+        True,
+        monkeypatch,
+    )
+    tool = group.tools[0]
     assert isinstance(tool, PersistentBashTool)
     token = _current_session_id.set("live")
     try:
@@ -498,14 +589,16 @@ async def test_fallback_does_not_replace_another_conversations_live_shell(tmp_pa
         assert await tool.execute('printf "$KEEP_SESSION"') == "retained"
         assert (tmp_path / "effect").read_text() == "once"
     finally:
-        await tool.close()
+        assert group.resource is not None
+        await group.resource.aclose()
         _current_session_id.reset(token)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX PTY")
 async def test_invalid_spawn_configuration_is_not_unavailability(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import pexpect
-    guard, tool = await assembled_shell(tmp_path, local_substrate(), True, monkeypatch)
+    guard, group = await assembled_shell(tmp_path, local_substrate(), True, monkeypatch)
+    tool = group.tools[0]
     assert isinstance(tool, PersistentBashTool)
     def invalid(*args, **kwargs):
         raise OSError(errno.EINVAL, "invalid spawn configuration")
@@ -515,13 +608,15 @@ async def test_invalid_spawn_configuration_is_not_unavailability(tmp_path: Path,
             await tool.execute("printf should-not-run")
         assert (await guard.ensure_resolved()).backend is SandboxBackend.LOCAL
     finally:
-        await tool.close()
+        assert group.resource is not None
+        await group.resource.aclose()
 
 
 @pytest.mark.parametrize("code", [errno.EACCES, errno.EPERM])
 async def test_bound_one_shot_permission_error_never_downgrades(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int) -> None:
     import asyncio
-    guard, tool = await assembled_shell(tmp_path, local_substrate(), False, monkeypatch)
+    guard, group = await assembled_shell(tmp_path, local_substrate(), False, monkeypatch)
+    tool = group.tools[0]
     binding = await guard.execution_binding()
     downgrade = AsyncMock(wraps=binding.fallback)
     monkeypatch.setattr(binding, "fallback", downgrade)
@@ -541,7 +636,8 @@ async def test_bound_one_shot_permission_error_never_downgrades(tmp_path: Path, 
 @pytest.mark.parametrize("code", [errno.EACCES, errno.EPERM])
 async def test_bound_persistent_permission_error_never_downgrades(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int) -> None:
     import pexpect
-    guard, tool = await assembled_shell(tmp_path, local_substrate(), True, monkeypatch)
+    guard, group = await assembled_shell(tmp_path, local_substrate(), True, monkeypatch)
+    tool = group.tools[0]
     assert isinstance(tool, PersistentBashTool)
     binding = await guard.execution_binding()
     downgrade = AsyncMock(wraps=binding.fallback)
@@ -558,7 +654,8 @@ async def test_bound_persistent_permission_error_never_downgrades(tmp_path: Path
         downgrade.assert_not_awaited()
         assert not (tmp_path / "effect").exists()
     finally:
-        await tool.close()
+        assert group.resource is not None
+        await group.resource.aclose()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX PTY")
@@ -566,7 +663,13 @@ async def test_bound_persistent_permission_error_never_downgrades(tmp_path: Path
 async def test_bound_early_launcher_exit_never_downgrades(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, message: str) -> None:
     from modex_agent.tools.terminal.persistent_bash import PersistentShellStartError
     argv = ["/bin/sh", "-c", f"printf '%s' '{message}' >&2; exit 1"]
-    guard, tool = await assembled_shell(tmp_path, local_substrate().model_copy(update={"shell_argv": argv}), True, monkeypatch)
+    guard, group = await assembled_shell(
+        tmp_path,
+        local_substrate().model_copy(update={"shell_argv": argv}),
+        True,
+        monkeypatch,
+    )
+    tool = group.tools[0]
     assert isinstance(tool, PersistentBashTool)
     binding = await guard.execution_binding()
     downgrade = AsyncMock(wraps=binding.fallback)
@@ -578,7 +681,8 @@ async def test_bound_early_launcher_exit_never_downgrades(tmp_path: Path, monkey
         downgrade.assert_not_awaited()
         assert not (tmp_path / "effect").exists()
     finally:
-        await tool.close()
+        assert group.resource is not None
+        await group.resource.aclose()
 
 
 @pytest.mark.parametrize("failure_kind", ["error", "interrupt", "cancel"])

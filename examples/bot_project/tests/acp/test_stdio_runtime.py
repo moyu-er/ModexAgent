@@ -264,7 +264,6 @@ def _write_project_config(
         "  name: main\n"
         "  agents:\n"
         "    main:\n"
-        "      use_terminal: false\n"
         "      capabilities:\n"
         "        skills: false\n"
         "      approval:\n"

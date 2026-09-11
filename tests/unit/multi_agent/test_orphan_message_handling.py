@@ -266,7 +266,6 @@ def _pool_instance(name: str, root_agent_name: str) -> PoolInstance:
         tool_manager=MagicMock(),
         skill_resolver=None,
         mcp_manager=None,
-        terminal_manager=None,
         root_agent_name=root_agent_name,
         main_execution_strategy=ExecutionStrategyKind.REACT,
         provider=MagicMock(),

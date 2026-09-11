@@ -1,5 +1,5 @@
 {
-  "captured_on": "T11 boundary (both ast_grep and todo ride the capabilities face)",
+  "captured_on": "T11 capability face after shell capability extraction",
   "shapes": {
     "baseline": {
       "root": {
@@ -10,7 +10,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "task",
           "ast_grep_search",
           "ast_grep_replace"
@@ -47,11 +46,6 @@
             "targets": []
           },
           {
-            "tool": "bash",
-            "origin": "preset",
-            "targets": []
-          },
-          {
             "tool": "task",
             "origin": "derived_task",
             "targets": [
@@ -78,7 +72,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "send_to_agent"
         ],
         "provenance_tools": [
@@ -113,11 +106,6 @@
             "targets": []
           },
           {
-            "tool": "bash",
-            "origin": "preset",
-            "targets": []
-          },
-          {
             "tool": "send_to_agent",
             "origin": "derived_send_to_agent",
             "targets": [
@@ -136,7 +124,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "task",
           "ast_grep_search",
           "ast_grep_replace",
@@ -171,11 +158,6 @@
           },
           {
             "tool": "glob",
-            "origin": "preset",
-            "targets": []
-          },
-          {
-            "tool": "bash",
             "origin": "preset",
             "targets": []
           },
@@ -216,7 +198,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "send_to_agent"
         ],
         "provenance_tools": [
@@ -251,11 +232,6 @@
             "targets": []
           },
           {
-            "tool": "bash",
-            "origin": "preset",
-            "targets": []
-          },
-          {
             "tool": "send_to_agent",
             "origin": "derived_send_to_agent",
             "targets": [
@@ -274,7 +250,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "task"
         ],
         "provenance_tools": [
@@ -309,11 +284,6 @@
             "targets": []
           },
           {
-            "tool": "bash",
-            "origin": "preset",
-            "targets": []
-          },
-          {
             "tool": "task",
             "origin": "derived_task",
             "targets": [
@@ -330,7 +300,6 @@
           "ls",
           "grep",
           "glob",
-          "bash",
           "send_to_agent",
           "ast_grep_search",
           "ast_grep_replace"
@@ -363,11 +332,6 @@
           },
           {
             "tool": "glob",
-            "origin": "preset",
-            "targets": []
-          },
-          {
-            "tool": "bash",
             "origin": "preset",
             "targets": []
           },

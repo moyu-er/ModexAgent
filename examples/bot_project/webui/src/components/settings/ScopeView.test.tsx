@@ -73,6 +73,19 @@ const BILL = {
         },
         { tool: "task", origin: "derived_task", capability: null, targets: ["worker"] },
       ],
+      tool_groups: [
+        {
+          anchor: "bash",
+          origin: "capability_derived",
+          capability: "shell",
+          variants: [
+            { name: "subprocess", tools: ["bash"] },
+            { name: "persistent", tools: ["bash", "bash_input"] },
+          ],
+        },
+      ],
+      hooks: [],
+      capabilities: [],
     },
     {
       pool: "main",
@@ -91,6 +104,9 @@ const BILL = {
           targets: ["main"],
         },
       ],
+      tool_groups: [],
+      hooks: [],
+      capabilities: [],
     },
     {
       pool: "helper",
@@ -107,6 +123,9 @@ const BILL = {
           targets: ["main"],
         },
       ],
+      tool_groups: [],
+      hooks: [],
+      capabilities: [],
     },
   ],
 };
@@ -210,6 +229,13 @@ describe("ScopeView — provenance bill", () => {
     const task = within(card).getByTestId("scope-bill-tool-task");
     expect(task.getAttribute("data-origin")).toBe("derived_task");
     expect(task.textContent).toContain("→ worker");
+    const shellGroup = within(card).getByTestId("scope-bill-tool-group-bash");
+    expect(shellGroup.getAttribute("data-origin")).toBe("capability_derived");
+    expect(shellGroup.getAttribute("data-capability")).toBe("shell");
+    expect(shellGroup.textContent).toContain("capability_derived");
+    expect(shellGroup.textContent).toContain("shell");
+    expect(shellGroup.textContent).toContain("subprocess: bash");
+    expect(shellGroup.textContent).toContain("persistent: bash, bash_input");
   });
 });
 

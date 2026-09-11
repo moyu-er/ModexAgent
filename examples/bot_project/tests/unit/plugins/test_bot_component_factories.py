@@ -30,7 +30,6 @@ from modex_agent.plugins.assembly.context import (  # noqa: E402
 )
 from modex_agent.plugins.loader import PluginRegistrationContext  # noqa: E402
 from modex_agent.plugins.registry import ComponentRegistry  # noqa: E402
-from modex_agent.tools.terminal import TerminalManagerBase  # noqa: E402
 
 
 def _registered(plugin: BotStrategiesPlugin | BotHooksPlugin) -> ComponentRegistry:
@@ -43,22 +42,18 @@ def _registered(plugin: BotStrategiesPlugin | BotHooksPlugin) -> ComponentRegist
 def _ctx(
     *,
     pool_assembly: MagicMock | None = None,
-    terminal_manager: TerminalManagerBase | None = None,
 ) -> AssemblyContext:
     return AssemblyContext(
         registry=MagicMock(),
         workspace_ctx=MagicMock(),
         pool_runtime=PoolRuntimeDeps(
             pool_assembly_ctx=pool_assembly,
-            terminal_manager=terminal_manager,
         ),
     )
 
 
 def _pool_assembly() -> MagicMock:
     assembly = MagicMock()
-    assembly.pool_spec.main.use_terminal = True
-    assembly.pool_spec.main.terminal_visibility = False
     assembly.bot_model_config = _resolved_or_placeholder(None)
     assembly.model_choice_registry = MagicMock(spec=ModelChoiceRegistry)
     return assembly

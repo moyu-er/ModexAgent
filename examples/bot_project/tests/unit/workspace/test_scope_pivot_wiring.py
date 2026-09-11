@@ -108,8 +108,6 @@ def _instance(name: str, *, comm_tools_derived: bool) -> MagicMock:
     instance.broker_bridge.start = AsyncMock()
     instance.broker_bridge.stop = AsyncMock()
     instance.mcp_manager = None
-    instance.terminal_manager = None
-    instance.terminal_manager_close = None
     instance.pool_data = None
     return instance
 

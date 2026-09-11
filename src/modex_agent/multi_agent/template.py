@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.descriptor import AgentInstance
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
     from modex_agent.plugins.assembly.context import AssemblyContext
+    from modex_agent.plugins.assembly.resources import AssemblyResourceOwner
     from modex_agent.plugins.assembly.spec import AssemblySpec
     from modex_agent.runtime.approval_decision import ApprovalAuditStore
     from modex_agent.sandbox.delegation import DelegationSnapshot
@@ -213,9 +214,24 @@ class AgentTemplate:
             instance = await self._materialize_external(parent_session, invocation_id, deps)
         else:
             instance = await self._materialize_native(parent_session, invocation_id, deps, snapshot, settings)
-        await self._wire_delegation_boundary(
-            instance, snapshot, settings, approval_audit=deps.approval_audit,
-        )
+        try:
+            await self._wire_delegation_boundary(
+                instance, snapshot, settings, approval_audit=deps.approval_audit,
+            )
+        except BaseException as failure:
+            try:
+                stopped = await instance.stop()
+                if not stopped:
+                    failure.add_note(
+                        "Agent cleanup retained resources because turns did not drain"
+                    )
+            except BaseException as cleanup_error:
+                if cleanup_error is not failure:
+                    failure.add_note(
+                        f"Agent cleanup after delegation wiring failure also failed: "
+                        f"{cleanup_error!r}"
+                    )
+            raise
         return instance
 
     async def _materialize_native(
@@ -225,6 +241,31 @@ class AgentTemplate:
         deps: AgentMaterializeDeps,
         snapshot: DelegationSnapshot,
         settings: SandboxSettings,
+    ) -> AgentInstance:
+        from modex_agent.plugins.assembly.resources import AssemblyResourceOwner
+
+        resource_owner = AssemblyResourceOwner()
+        try:
+            return await self._assemble_native(
+                parent_session,
+                invocation_id,
+                deps,
+                snapshot,
+                settings,
+                resource_owner,
+            )
+        except BaseException as failure:
+            await resource_owner.rollback(failure)
+            raise
+
+    async def _assemble_native(
+        self,
+        parent_session: SessionInfo | str | None,
+        invocation_id: str | None,
+        deps: AgentMaterializeDeps,
+        snapshot: DelegationSnapshot,
+        settings: SandboxSettings,
+        resource_owner: AssemblyResourceOwner,
     ) -> AgentInstance:
         """Build a subagent AgentInstance from this template (ADR-0015 D3, Design B).
 
@@ -316,24 +357,39 @@ class AgentTemplate:
                 "component_registry in AgentMaterializeDeps"
             )
 
-        # Feed the scoped substrate into the SAME bash factory as main agents.
+        # Feed the scoped substrate into the same shell capability as main agents.
         # DEFAULT remains host execution without a sandbox probe or interceptor.
         from modex_agent.interceptor.chain import InterceptorChain
         from modex_agent.plugins.assembly.context import agent_context_chain
-        from modex_agent.plugins.defaults.interceptors import (
-            SandboxGuardConfig,
-            SandboxGuardInterceptorFactory,
+        from modex_agent.plugins.assembly.interceptors import (
+            SANDBOX_GUARD_INTERCEPTOR,
+            assemble_interceptor_chain,
         )
         from modex_agent.sandbox.settings import SandboxBackend
 
-        guard_chain: InterceptorChain | None = None
+        guard_chain = None
         if settings.backend is not SandboxBackend.DEFAULT:
             assert component_ctx.pool_runtime is not None
-            sandbox_guard = await SandboxGuardInterceptorFactory().create(
-                SandboxGuardConfig(sandbox=settings),
-                agent_context_chain(component_ctx, spec=assembly_spec),
+            guard_spec = assembly_spec.model_copy(
+                update={
+                    "interceptors": [SANDBOX_GUARD_INTERCEPTOR],
+                    "interceptor_configs": {
+                        SANDBOX_GUARD_INTERCEPTOR: {
+                            "sandbox": settings.model_dump()
+                        }
+                    },
+                }
             )
-            guard_chain = InterceptorChain([sandbox_guard])
+            guard_chain = await assemble_interceptor_chain(
+                guard_spec,
+                agent_context_chain(
+                    component_ctx,
+                    spec=guard_spec,
+                    parent_session=parent_session,
+                    invocation_id=invocation_id,
+                ),
+                resource_owner,
+            )
             component_ctx = dataclass_replace(
                 component_ctx,
                 pool_runtime=dataclass_replace(component_ctx.pool_runtime, interceptor_chain=guard_chain),
@@ -476,6 +532,7 @@ class AgentTemplate:
                 extra_hooks=(),
                 execution_strategy=ExecutionStrategyKind(self.spec.execution_strategy),
                 depth=self._declared_depth(deps),
+                resource_owner=resource_owner,
             ),
             ctx=component_ctx,
             parent_session=str(parent_session) if parent_session is not None else None,
@@ -491,9 +548,8 @@ class AgentTemplate:
                     *guard_chain.interceptors,
                 ]) if existing is not None else guard_chain
 
-        # The bash_input companion is ensured inside assemble_native_agent
-        # (right after roster registration) — the single convergence point
-        # shared with the Stage-4 main-agent path.
+        # The bash anchor resolves to one atomic group; companions and their
+        # resource owner are adopted by the same native assembly path as mains.
 
         # Tree-aware continuation hooks — the deliver_retry + length_guard
         # position defaults (SPEC §3.2 hook rows) ride the compiled roster:

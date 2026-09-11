@@ -698,9 +698,9 @@ async def test_default_roster_without_env_is_unchanged(tmp_path: Path) -> None:
 
     manager = instance.tool_manager
     # No MODEX_EVAL_ROSTER: the benchmark swap is NOT applied �� the `task`
-    # delegation tool stays. The bash slot is the production fallback chain
-    # (use_terminal=false), identical to a non-eval pool: the pool's
-    # persistent shell + its bash_input companion on POSIX hosts; the
+    # delegation tool stays. The bash slot is the shell capability's default
+    # fallback chain, identical to a non-eval pool: the pool's persistent
+    # shell + its bash_input companion on POSIX hosts; the
     # stateless SubprocessTool (workspace-scoped, no companion) on hosts
     # without a POSIX pty.
     assert manager.is_registered("task")

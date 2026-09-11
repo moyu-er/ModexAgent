@@ -44,27 +44,11 @@ class TestGetPresetTools:
         assert "edit" not in names
         assert "grep" in names
 
-    def test_read_write_preset_has_bash(self) -> None:
-        """READ_WRITE preset includes bash for code review (git diff, git log)."""
-        from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
-
-        tools = get_preset_tools(
-            ToolPreset.READ_WRITE,
-            subprocess_tool_factory=lambda: SubprocessTool(timeout=60),
-        )
+    def test_read_write_preset_leaves_shell_to_capabilities(self) -> None:
+        """Runtime shell groups are capability contributions, not scalar presets."""
+        tools = get_preset_tools(ToolPreset.READ_WRITE)
         names = [t.name for t in tools]
-        assert "bash" in names
-
-    def test_bash_injected_for_full_preset(self) -> None:
-        """FULL preset includes bash when factory provided."""
-        from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
-
-        def make_bash() -> SubprocessTool:
-            return SubprocessTool(timeout=60)
-
-        tools = get_preset_tools(ToolPreset.FULL, subprocess_tool_factory=make_bash)
-        names = [t.name for t in tools]
-        assert "bash" in names
+        assert "bash" not in names
 
     def test_none_preset_returns_empty(self) -> None:
         """NONE preset returns zero standard tools."""
@@ -72,13 +56,7 @@ class TestGetPresetTools:
         assert len(tools) == 0
 
     def test_none_preset_no_bash(self) -> None:
-        """NONE preset does not get bash even with factory."""
-        from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
-
-        tools = get_preset_tools(
-            ToolPreset.NONE,
-            subprocess_tool_factory=lambda: SubprocessTool(timeout=60),
-        )
+        tools = get_preset_tools(ToolPreset.NONE)
         names = [t.name for t in tools]
         assert "bash" not in names
 

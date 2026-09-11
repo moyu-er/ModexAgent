@@ -35,6 +35,8 @@ class AgentAssembleStage(AssemblyStage):
         ctx: AssemblyContext,
     ) -> None:
         inputs = self._inputs_factory(spec, builder, ctx)
+        if builder.agent_resource_owner is not None:
+            inputs.resource_owner = builder.agent_resource_owner
         result = await assemble_native_agent(
             spec,
             ctx.registry,

@@ -206,7 +206,6 @@ providers:
     (main_pool_dir / "pool.yml").write_text(
         """
 max_steps: 5
-use_terminal: false
 tool_preset: read_only
 """,
         encoding="utf-8",

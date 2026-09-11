@@ -14,7 +14,7 @@ def write_config_and_project(tmp_path: Path) -> tuple[Path, Path]:
     (config / "scopes").mkdir(parents=True)
     (config / "bot_config.yml").write_text("persistence:\n  backend: sqlite\n", encoding="utf-8")
     (config / "scopes" / "bot.yml").write_text(
-        "pool:\n  name: main\n  agents:\n    main:\n      use_terminal: false\n      capabilities:\n        skills: false\n",
+        "pool:\n  name: main\n  agents:\n    main:\n      capabilities:\n        skills: false\n",
         encoding="utf-8",
     )
     project = tmp_path / "editor-project"

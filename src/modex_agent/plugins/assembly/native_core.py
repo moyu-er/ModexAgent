@@ -16,7 +16,8 @@ from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.prompt import SystemPromptProvider
-from modex_agent.core.tool_manager import Tool, ToolOverrideRecord
+from modex_agent.core.tool_group import ToolGroup, ToolGroupSpec
+from modex_agent.core.tool_manager import Tool, ToolManager, ToolOverrideRecord
 from modex_agent.hook import Hook, HookSpec
 from modex_agent.hook.runner import HookRunner
 from modex_agent.ioc.configs.memory import ArchiveConfig, CoreMemoryConfig, MemoryConfig
@@ -36,7 +37,8 @@ from modex_agent.plugins.assembly.context import (
     AssemblyContext,
     agent_context_chain,
 )
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
+from modex_agent.plugins.assembly.resources import AssemblyResourceOwner
+from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides, ToolEntry
 from modex_agent.plugins.capability import CapabilityWiring, SectionPlacement
 from modex_agent.tools.manager import InMemoryToolManager
 
@@ -90,7 +92,7 @@ class NativeAssemblyInputs:
         memory_system: MemorySystem | None = None,
         memory_config: MemoryConfig | None = None,
         llm_provider: LLMProvider | None = None,
-        tool_manager: InMemoryToolManager | None = None,
+        tool_manager: ToolManager | None = None,
         skill_resolver: SkillResolver | None = None,
         output_adapter: OutputAdapter | None = None,
         root_provider: WorkspaceRootProvider | None = None,
@@ -101,6 +103,7 @@ class NativeAssemblyInputs:
         execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
         tool_transform: Callable[[Tool], Tool] | None = None,
         depth: int = 0,
+        resource_owner: AssemblyResourceOwner | None = None,
     ) -> None:
         self.agent_factory = agent_factory
         self.broker = broker
@@ -121,6 +124,7 @@ class NativeAssemblyInputs:
         self.execution_strategy = execution_strategy
         self.tool_transform = tool_transform
         self.depth = depth
+        self.resource_owner = resource_owner
 
 
 class NativeAssemblyResult:
@@ -131,7 +135,7 @@ class NativeAssemblyResult:
         *,
         descriptor: AgentDescriptor,
         instance: AgentInstance,
-        tool_manager: InMemoryToolManager,
+        tool_manager: ToolManager,
         llm_provider: LLMProvider,
         system_prompt_provider: SystemPromptProvider,
         system_prompt: str,
@@ -158,20 +162,78 @@ class NativeAssemblyResult:
         self.tool_overrides = tool_overrides
 
 
-async def _resolve_multi(
+async def _resolve_tools(
     registry: ComponentRegistry,
-    slot: ComponentSlot,
-    names: list[str],
+    entries: list[ToolEntry],
+    manifests: tuple[ToolGroupSpec, ...],
     configs: Mapping[str, Mapping[str, object]],
     ctx: AgentContext,
-) -> list[T]:
-    instances: list[T] = []
-    for name in names:
-        factory = registry.resolve(slot, name)
-        config = factory.config_model.model_validate(configs.get(name, {}))
-        instance: T = await factory.create(config, ctx)
-        instances.append(instance)
-    return instances
+    resource_owner: AssemblyResourceOwner,
+) -> list[tuple[ToolEntry, Tool | ToolGroup]]:
+    manifest_by_anchor: dict[str, ToolGroupSpec] = {}
+    for manifest in manifests:
+        if manifest.anchor in manifest_by_anchor:
+            raise ValueError(f"Tool group anchor {manifest.anchor!r} is declared more than once")
+        manifest_by_anchor[manifest.anchor] = manifest
+    roster_names = {entry.name for entry in entries}
+    missing_anchors = sorted(set(manifest_by_anchor) - roster_names)
+    if missing_anchors:
+        raise ValueError(
+            f"Tool group manifests have no roster anchor: {missing_anchors}"
+        )
+
+    products: list[tuple[ToolEntry, Tool | ToolGroup]] = []
+    resolved_names: set[str] = set()
+    for entry in entries:
+        if entry.name in resolved_names:
+            continue
+        resolved_names.add(entry.name)
+        factory = registry.resolve(ComponentSlot.TOOL, entry.name)
+        config = factory.config_model.model_validate(configs.get(entry.name, {}))
+        product = await factory.create(config, ctx)
+        if isinstance(product, ToolGroup):
+            if product.resource is not None:
+                resource_owner.adopt(product.resource)
+            manifest = manifest_by_anchor.get(entry.name)
+            if manifest is None:
+                raise ValueError(
+                    f"TOOL factory {entry.name!r} returned an undeclared ToolGroup"
+                )
+            if product.anchor != entry.name:
+                raise ValueError(
+                    f"TOOL factory {entry.name!r} returned ToolGroup anchor "
+                    f"{product.anchor!r}"
+                )
+            variant = next(
+                (variant for variant in manifest.variants if variant.name == product.variant),
+                None,
+            )
+            if variant is None:
+                raise ValueError(
+                    f"Tool group {entry.name!r} returned variant {product.variant!r}; "
+                    "the variant is not allowed by its manifest"
+                )
+            member_names = tuple(tool.name for tool in product.tools)
+            if member_names != variant.tools:
+                raise ValueError(
+                    f"Tool group {entry.name!r} variant {product.variant!r} returned "
+                    f"members {member_names!r}, expected exact members {variant.tools!r}"
+                )
+            products.append((entry, product))
+            continue
+        if isinstance(product, Tool):
+            if entry.name in manifest_by_anchor:
+                raise ValueError(
+                    f"TOOL factory {entry.name!r} must return ToolGroup because the "
+                    "compiled spec declares that group anchor"
+                )
+            products.append((entry, product))
+            continue
+        raise TypeError(
+            f"TOOL factory {entry.name!r} returned {type(product).__name__}; "
+            "expected Tool or ToolGroup"
+        )
+    return products
 
 
 async def _resolve_single(
@@ -271,6 +333,33 @@ async def assemble_native_agent(
     parent_session: str | None = None,
     invocation_id: str | None = None,
 ) -> NativeAssemblyResult:
+    """Assemble a native agent through one ordered resource owner."""
+    resource_owner = inputs.resource_owner or AssemblyResourceOwner()
+    try:
+        return await _assemble_native_agent(
+            spec,
+            registry,
+            inputs,
+            ctx=ctx,
+            parent_session=parent_session,
+            invocation_id=invocation_id,
+            resource_owner=resource_owner,
+        )
+    except BaseException as failure:
+        await resource_owner.rollback(failure)
+        raise
+
+
+async def _assemble_native_agent(
+    spec: AssemblySpec,
+    registry: ComponentRegistry,
+    inputs: NativeAssemblyInputs,
+    *,
+    ctx: AssemblyContext,
+    parent_session: str | None,
+    invocation_id: str | None,
+    resource_owner: AssemblyResourceOwner,
+) -> NativeAssemblyResult:
     """Resolve native components once, create the runtime, and register it."""
     # Ticket 04: factories receive the per-agent full-chain context —
     # the legacy AssemblyContext view is lifted into the layered chain
@@ -297,12 +386,13 @@ async def assemble_native_agent(
         capability_wirings[compiled_cap.name] = wiring
     if capability_wirings:
         chain = dataclasses.replace(chain, capability_wirings=MappingProxyType(capability_wirings))
-    tools: list[Tool] = await _resolve_multi(
+    tool_products = await _resolve_tools(
         registry,
-        ComponentSlot.TOOL,
-        [entry.name for entry in spec.tools],
+        spec.tools,
+        spec.tool_groups,
         spec.tool_configs,
         chain,
+        resource_owner,
     )
     # GENERIC fallback for direct callers: the production main path (create_pool
     # resolves the slot via _resolve_llm_slot) and the production sub path (the
@@ -345,11 +435,36 @@ async def assemble_native_agent(
     )
     memory_config = _merge_memory(inputs.memory_config, spec.memory_overrides)
     tool_manager = inputs.tool_manager or InMemoryToolManager()
-    if inputs.root_provider is not None:
-        from modex_agent.tools.workspace_scoped import wrap_standard_tools
+    prepared_products: list[tuple[ToolEntry, Tool | ToolGroup]] = []
+    for entry, product in tool_products:
+        product_tools = list(product.tools) if isinstance(product, ToolGroup) else [product]
+        if inputs.root_provider is not None:
+            from modex_agent.tools.workspace_scoped import wrap_standard_tools
 
-        tools = wrap_standard_tools(tools, inputs.root_provider)
-    bash_tool = next((tool for tool in tools if tool.name == "bash"), None)
+            product_tools = wrap_standard_tools(product_tools, inputs.root_provider)
+        if inputs.tool_transform is not None:
+            product_tools = [inputs.tool_transform(tool) for tool in product_tools]
+        if isinstance(product, ToolGroup):
+            transformed_names = tuple(tool.name for tool in product_tools)
+            original_names = tuple(tool.name for tool in product.tools)
+            if transformed_names != original_names:
+                raise ValueError(
+                    f"Tool transform changed group {product.anchor!r} members from "
+                    f"{original_names!r} to {transformed_names!r}"
+                )
+            prepared_products.append(
+                (
+                    entry,
+                    ToolGroup(
+                        anchor=product.anchor,
+                        variant=product.variant,
+                        tools=tuple(product_tools),
+                        resource=None,
+                    ),
+                )
+            )
+        else:
+            prepared_products.append((entry, product_tools[0]))
     # One registration per roster NAME, carrying the compiler-classified
     # origin — this is what activates the name-slot override arbitration
     # (e.g. an ``aci_edit`` roster entry resolves to a tool NAMED ``edit``,
@@ -358,28 +473,11 @@ async def assemble_native_agent(
     # concatenation, SPEC overlay row iv); duplicates share the name-keyed
     # origin, so registering the slot once (first entry) is the legacy
     # last-overwrite behavior without tripping the equal-rank guard.
-    registered_names: set[str] = set()
-    for tool, entry in zip(tools, spec.tools, strict=True):
-        if entry.name in registered_names:
-            continue
-        registered_names.add(entry.name)
-        tool_manager.register(
-            inputs.tool_transform(tool) if inputs.tool_transform is not None else tool,
-            origin=entry.origin,
-        )
-    # Structural bash+bash_input pairing: when the roster-resolved ``bash``
-    # is a persistent shell, its stdin-answer companion shares the session —
-    # a persistent shell without it deadlocks on interactive prompts
-    # (commands have no default timeout). Single convergence point serving
-    # both callers (Stage 4 mains and AgentTemplate subagents); idempotent,
-    # and a no-op for CommandTool/SubprocessTool bash and bash-less rosters.
-    from modex_agent.tools.terminal.persistent_bash import ensure_input_companion
-
-    ensure_input_companion(
-        tool_manager,
-        bash_tool,
-        tool_transform=inputs.tool_transform,
-    )
+    for entry, product in prepared_products:
+        if isinstance(product, ToolGroup):
+            tool_manager.register_group(product, origin=entry.origin)
+        else:
+            tool_manager.register(product, origin=entry.origin)
     # Per-agent MCP loading (ticket 10): one FW path for mains and subs —
     # the selection rides the spec, the shared-connection handle comes from
     # the workspace layer of the chain (WorkspaceContext.mcp_registry,
@@ -496,6 +594,7 @@ async def assemble_native_agent(
         output_adapter=inputs.output_adapter,
         llm_provider=provider,
     )
+    resource_owner.transfer(instance)
     if instance.pipeline is not None and instance.pipeline.hook_runner is not None:
         instance.pipeline.hook_runner.extend(hook_runner.hook_specs)
     elif hook_runner.hook_specs:
@@ -514,10 +613,14 @@ async def assemble_native_agent(
         and inputs.on_subagent_created is not None
         and inputs.pool is not None
     ):
-        await inputs.on_subagent_created(
-            f"{invocation_id or ''}.{spec.agent_name}",
-            parent_session,
-        )
+        try:
+            await inputs.on_subagent_created(
+                f"{invocation_id or ''}.{spec.agent_name}",
+                parent_session,
+            )
+        except BaseException:
+            inputs.pool.unregister_resident(descriptor, instance)
+            raise
     return NativeAssemblyResult(
         descriptor=descriptor,
         instance=instance,

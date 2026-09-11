@@ -51,6 +51,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.core.tool_group import ToolGroupSpec
 from modex_agent.core.tool_manager import ToolOrigin
 from modex_agent.multi_agent.execution_strategy import strategy_name_of
 from modex_agent.plugins.abc import ComponentSlot, PluginSource
@@ -383,6 +384,7 @@ def _compile_agent(
     # compile_scope) nothing here runs and the compile product is
     # byte-identical to the pre-capability compiler.
     capability_tool_owners: dict[str, str] = {}
+    capability_tool_groups: list[ToolGroupSpec] = []
     capability_hooks: list[str] = []
     # Contributed hook name → the capability names that contributed it
     # (C1 record feeding the post-bind hook gating below).
@@ -415,6 +417,14 @@ def _compile_agent(
             config = capability.config_model.model_validate(override_config)
             contribution = capability.contribute(tree_view, config)
             capability_states.append((name, capability, config, contribution))
+            contributed_tools = set(contribution.tools)
+            for group in contribution.tool_groups:
+                if group.anchor not in contributed_tools:
+                    raise ValueError(
+                        f"capability {name!r} tool group anchor {group.anchor!r} "
+                        "must also be listed in contribution.tools"
+                    )
+                capability_tool_groups.append(group)
             for tool_name in contribution.tools:
                 capability_tool_owners.setdefault(tool_name, name)
             for hook_name in contribution.hooks:
@@ -425,6 +435,14 @@ def _compile_agent(
             for derived_spec in contribution.derived_tools:
                 if derived_spec.tool not in {spec.tool for spec in derived_specs}:
                     derived_specs.append(derived_spec)
+
+    _validate_tool_groups(
+        capability_tool_groups,
+        preset_names=preset_names,
+        contributed_tool_names=set(capability_tool_owners),
+        derived_tool_names={spec.tool for spec in derived_specs},
+        declared_tools=tools_list,
+    )
 
     # The derived-entry provenance face: the compiler maps each capability
     # declared origin onto the identically-valued ToolOrigin member —
@@ -453,6 +471,9 @@ def _compile_agent(
         capability_tool_owners=capability_tool_owners,
     )
     final_tools = merged_tools
+    final_tool_groups = tuple(
+        group for group in capability_tool_groups if group.anchor in final_tools
+    )
 
     # Position-default hooks (SPEC §3.2 hook rows) enter the merge base
     # ahead of capability contributions and the node's declaration — the
@@ -523,6 +544,7 @@ def _compile_agent(
         max_iterations=max_steps,
         roles=list(agent.roles),
         tools=_spec_tool_entries(final_tools, tool_provenance),
+        tool_groups=final_tool_groups,
         tool_configs=dict(agent.tool_configs or {}),
         hooks=merged_hooks,
         hook_configs=dict(agent.hook_configs or {}),
@@ -649,7 +671,6 @@ def _declared_fields_of(agent: AgentSpec) -> AgentDeclaredFields:
         tools=list(agent.tools) if agent.tools is not None else None,
         hooks=list(agent.hooks) if agent.hooks is not None else None,
         mcp=list(agent.mcp),
-        use_terminal=agent.use_terminal,
         execution_strategy=strategy_name_of(agent.execution_strategy),
         provider_kind=(agent.provider_kind.value if agent.provider_kind is not None else None),
         eager=agent.eager,
@@ -750,6 +771,69 @@ def _effective_capabilities(
     ordered = [name for name in registered if name in enabled]
     ordered += sorted(name for name in enabled if name not in registered)
     return [(name, enabled[name]) for name in ordered], provenance
+
+
+def _validate_tool_groups(
+    groups: list[ToolGroupSpec],
+    *,
+    preset_names: list[str],
+    contributed_tool_names: set[str],
+    derived_tool_names: set[str],
+    declared_tools: list[str] | None,
+) -> None:
+    """Validate manifests before group anchors enter the final roster."""
+    members_by_anchor: dict[str, set[str]] = {}
+    member_owner: dict[str, str] = {}
+    for group in groups:
+        if not group.anchor or not group.variants:
+            raise ValueError("tool group requires a non-empty anchor and variants")
+        if group.anchor in members_by_anchor:
+            raise ValueError(f"tool group anchor {group.anchor!r} is declared more than once")
+        variant_names: set[str] = set()
+        members: set[str] = set()
+        for variant in group.variants:
+            if not variant.name or variant.name in variant_names:
+                raise ValueError(
+                    f"tool group {group.anchor!r} has an empty or duplicate variant name"
+                )
+            variant_names.add(variant.name)
+            if not variant.tools or group.anchor not in variant.tools:
+                raise ValueError(
+                    f"tool group {group.anchor!r} variant {variant.name!r} must "
+                    "contain its anchor"
+                )
+            if len(variant.tools) != len(set(variant.tools)):
+                raise ValueError(
+                    f"tool group {group.anchor!r} variant {variant.name!r} "
+                    "contains duplicate members"
+                )
+            members.update(variant.tools)
+        members_by_anchor[group.anchor] = members
+        for member in sorted(members):
+            owner = member_owner.get(member)
+            if owner is not None and owner != group.anchor:
+                raise ValueError(
+                    f"tool group member {member!r} overlaps groups {owner!r} "
+                    f"and {group.anchor!r}"
+                )
+            member_owner[member] = group.anchor
+
+    anchors = set(members_by_anchor)
+    companions = set(member_owner) - anchors
+    scalar_names = set(preset_names) | contributed_tool_names | derived_tool_names
+    scalar_overlap = companions & scalar_names
+    if scalar_overlap:
+        name = sorted(scalar_overlap)[0]
+        raise ValueError(
+            f"tool group companion {name!r} also appears as a scalar tool contribution"
+        )
+    for entry in declared_tools or []:
+        name = entry[1:] if entry.startswith(("+", "-")) else entry
+        if name in companions:
+            raise ValueError(
+                f"tool group companion {name!r} cannot be edited independently; "
+                f"edit anchor {member_owner[name]!r} instead"
+            )
 
 
 def _capability_contribution_provenance(

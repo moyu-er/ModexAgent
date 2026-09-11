@@ -21,6 +21,7 @@ import {
   nodeIdsByName,
   removeDeclaredHook,
   restoreHook,
+  setCapabilityConfigField,
   setCapabilityMode,
   setInterceptor,
   setPeer,
@@ -88,7 +89,7 @@ describe("structure operations", () => {
     const view = viewModel(model);
     const pool = view.pools.find((p) => p.name === "new-pool");
     expect(pool?.agents.map((a) => a.name)).toEqual(["new-pool"]);
-    expect(pool?.agents[0]?.body.use_terminal).toBe(false);
+    expect(pool?.agents[0]?.body).toEqual({ description: "" });
   });
 
   it("addSubagent nests under the parent path", () => {
@@ -217,6 +218,26 @@ describe("capabilities — tri-state (C1)", () => {
     expect(body.capabilities).toEqual({ todo: false });
     setCapabilityMode(body, "todo", "auto");
     expect(body.capabilities).toBeUndefined();
+  });
+
+  it("changes one capability config field without dropping unknown keys", () => {
+    const body: AgentBody = {
+      capabilities: {
+        shell: {
+          mode: "persistent",
+          terminal_visibility: true,
+          future_option: { enabled: true },
+        },
+      },
+    };
+    setCapabilityConfigField(body, "shell", "mode", "subprocess");
+    expect(body.capabilities).toEqual({
+      shell: {
+        mode: "subprocess",
+        terminal_visibility: true,
+        future_option: { enabled: true },
+      },
+    });
   });
 });
 

@@ -82,6 +82,33 @@ function AgentBillCard({ bill }: { bill: ScopeAgentBill }) {
               </span>
             </div>
           ))}
+          {bill.tool_groups.map((group) => (
+            <div
+              key={group.anchor}
+              data-testid={`scope-bill-tool-group-${group.anchor}`}
+              data-origin={group.origin}
+              data-capability={group.capability ?? undefined}
+              className="flex items-start gap-3 text-xs"
+            >
+              <span className="w-40 shrink-0 truncate font-mono text-body">
+                {group.anchor}
+              </span>
+              <span className="shrink-0 font-mono text-mute">
+                {group.origin}
+              </span>
+              <span className="shrink-0 font-mono text-mute">
+                {group.capability !== null
+                  ? t("settings.scope.capabilitySource", { name: group.capability })
+                  : ""}
+              </span>
+              <span className="min-w-0 flex-1 font-mono text-faint">
+                {t("settings.scope.candidateVariants")}: {" "}
+                {group.variants
+                  .map((variant) => `${variant.name}: ${variant.tools.join(", ")}`)
+                  .join(" · ")}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
 

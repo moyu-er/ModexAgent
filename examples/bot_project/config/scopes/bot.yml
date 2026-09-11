@@ -12,8 +12,6 @@ workspace:
             shell, and browser tools. Use as the default for ambiguous or cross-domain
             requests.
           max_steps: 50
-          use_terminal: false
-          terminal_visibility: false
           capabilities:
             aci: {}
             experience: {}
@@ -54,8 +52,6 @@ workspace:
             Use when a task needs investigation, planning, review, or design analysis
             of a codebase.
           max_steps: 200
-          use_terminal: false
-          terminal_visibility: false
           capabilities:
             aci: {}
             todo: {}
@@ -105,8 +101,6 @@ workspace:
             the upstream implementation team. Carries full tools for reading code,
             running tests, and executing verification commands.
           max_steps: 80
-          use_terminal: false
-          terminal_visibility: false
           capabilities:
             ast_grep: {}
             experience: {}

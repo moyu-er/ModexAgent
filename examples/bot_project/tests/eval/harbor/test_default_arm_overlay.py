@@ -23,9 +23,8 @@ from modex_agent.scope import (
 from modex_agent.scope.spec import MemoryDeclaration
 
 _BOT_PROJECT: Final = Path(__file__).resolve().parents[3]
-# process/terminal/experience stay TOOL-slot registered; send_file_to_user
-# left the shipped declaration roster (baf4ad5f) so eval arms no longer
-# remove it — tools_remove must reference registered tools only.
+# process/terminal are shell-group companions, while experience stays a
+# scalar TOOL-slot entry used by the checked-in eval overlays.
 _REGISTERED_TOOL_NAMES: Final = frozenset(
     {"process", "terminal", "experience"}
 )
@@ -76,11 +75,9 @@ def test_checked_in_arms_keep_default_and_benchmark_semantics_separate() -> None
     # subagent topology and keeps only its own deviations.
     assert benchmark_pool.keep_agents is None
     benchmark_root = benchmark_pool.agents["default"]
-    assert benchmark_root.tools == [
-        "-process",
-        "-terminal",
-        "-experience",
-    ]
+    # Shell-group companions are selected by the shell capability. The arm
+    # leaves that capability untouched, so its persistent default applies.
+    assert benchmark_root.tools == ["-experience"]
     assert benchmark_root.memory == MemoryDeclaration(core_enabled=False)
     assert benchmark_root.system_prompt_provider == "file_prompt"
     assert benchmark_root.system_prompt_provider_config == {"path": "agents/benchmark.md"}

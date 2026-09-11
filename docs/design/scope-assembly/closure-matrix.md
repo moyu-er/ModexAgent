@@ -62,7 +62,7 @@ Final ledger vs BASELINE_SHA `4dafb4b` (dual pathspec, `git diff --numstat` cumu
 | convergence | C11 declaration vs session tree | permission (compile-time) vs record (runtime) — different execution models, explicitly documented | closed | justified divergence |
 | convergence | C12 graph/session mode | ADR-0039 pipeline verified as residence; orthogonality justified (same agent, two consumption modes) | gap | **F1** (graphs: list) |
 | convergence | C13 special agents | code-constructed (pool_wiring.py:96 verified); shared assembly core; N8 documented | closed-under-interpretation | bounded divergence, user decision, flip condition documented; strict deletion-test reading noted |
-| convergence | C14 use_terminal | verified: flag builds manager only; roster drives tools; factories enforce invariant | closed | |
+| convergence | C14 shell group | superseded by the shell capability: one `bash` anchor, contextual candidate manifest, one per-agent group factory and lifecycle owner | closed | [shell SPEC](../shell-capability/SPEC.md) |
 
 ## Seams (Phase 2)
 

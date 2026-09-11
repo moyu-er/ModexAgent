@@ -50,6 +50,7 @@ from modex_agent.runtime.enums import TurnCustomKey
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.emitter import AgentResult
+    from modex_agent.core.tool_group import ToolGroup
 
 logger = logging.getLogger(__name__)
 
@@ -489,6 +490,14 @@ class _RecordingToolManager(ToolManager):
     def unregister(self, tool_name: str) -> bool:
         return self._wrapped.unregister(tool_name)
 
+    def register_group(
+        self,
+        group: ToolGroup,
+        *,
+        origin: ToolOrigin | None = None,
+    ) -> None:
+        self._wrapped.register_group(group, origin=origin)
+
     def get_tool(self, tool_name: str) -> Tool | None:
         return self._wrapped.get_tool(tool_name)
 
@@ -497,6 +506,16 @@ class _RecordingToolManager(ToolManager):
 
     def is_registered(self, tool_name: str) -> bool:
         return self._wrapped.is_registered(tool_name)
+
+    @property
+    def tool_groups(self) -> tuple[ToolGroup, ...]:
+        return self._wrapped.tool_groups
+
+    def get_tool_group(self, tool_name: str) -> ToolGroup | None:
+        return self._wrapped.get_tool_group(tool_name)
+
+    def origin_of(self, tool_name: str) -> ToolOrigin | None:
+        return self._wrapped.origin_of(tool_name)
 
     @property
     def override_records(self) -> tuple[ToolOverrideRecord, ...]:
@@ -645,6 +664,14 @@ class _ReplayToolManager(ToolManager):
     def unregister(self, tool_name: str) -> bool:
         return self._wrapped.unregister(tool_name)
 
+    def register_group(
+        self,
+        group: ToolGroup,
+        *,
+        origin: ToolOrigin | None = None,
+    ) -> None:
+        self._wrapped.register_group(group, origin=origin)
+
     def get_tool(self, tool_name: str) -> Tool | None:
         return self._wrapped.get_tool(tool_name)
 
@@ -653,6 +680,16 @@ class _ReplayToolManager(ToolManager):
 
     def is_registered(self, tool_name: str) -> bool:
         return self._wrapped.is_registered(tool_name)
+
+    @property
+    def tool_groups(self) -> tuple[ToolGroup, ...]:
+        return self._wrapped.tool_groups
+
+    def get_tool_group(self, tool_name: str) -> ToolGroup | None:
+        return self._wrapped.get_tool_group(tool_name)
+
+    def origin_of(self, tool_name: str) -> ToolOrigin | None:
+        return self._wrapped.origin_of(tool_name)
 
     @property
     def override_records(self) -> tuple[ToolOverrideRecord, ...]:

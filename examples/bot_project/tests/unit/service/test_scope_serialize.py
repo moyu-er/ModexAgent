@@ -2,7 +2,7 @@
 
 Covers ``bot.service.scope_serialize.serialize_scope_declaration``: the
 strip-on-default rules (spec field defaults + position-derived defaults),
-the pool-root terminal-face exception, roster prefix preservation, both
+capability configuration preservation, roster prefix preservation, both
 root forms, and load→serialize→load round-trip idempotence (including
 against the shipped declaration — a property check, not a content pin).
 """
@@ -89,24 +89,35 @@ def test_deviations_are_kept(tmp_path: Path) -> None:
     assert "toolset: read_only" in first
 
 
-def test_root_terminal_face_always_emitted(tmp_path: Path) -> None:
+def test_shell_capability_states_and_requested_modes_round_trip(tmp_path: Path) -> None:
     first, _ = _round_trip(
         tmp_path,
         "pool:\n"
         "  name: solo\n"
         "  agents:\n"
         "    root:\n"
+        "      capabilities:\n"
+        "        shell: {}\n"
         "      agents:\n"
-        "        sub:\n"
-        "          description: child\n",
+        "        disabled:\n"
+        "          capabilities:\n"
+        "            shell: false\n"
+        "        requested-terminal:\n"
+        "          capabilities:\n"
+        "            shell:\n"
+        "              mode: terminal\n"
+        "              terminal_visibility: true\n",
     )
     data = yaml.safe_load(first)
     root = data["pool"]["agents"]["root"]
-    assert root["use_terminal"] is False
-    assert root["terminal_visibility"] is False
-    sub = root["agents"]["sub"]
-    assert "use_terminal" not in sub
-    assert "terminal_visibility" not in sub
+    assert root["capabilities"]["shell"] == {}
+    assert root["agents"]["disabled"]["capabilities"]["shell"] is False
+    assert root["agents"]["requested-terminal"]["capabilities"]["shell"] == {
+        "mode": "terminal",
+        "terminal_visibility": True,
+    }
+    assert "use_terminal" not in first
+    assert "terminal_visibility" not in root
 
 
 def test_roster_prefixes_and_capability_vetoes_preserved(tmp_path: Path) -> None:
@@ -147,8 +158,6 @@ def test_canonical_field_order(tmp_path: Path) -> None:
     assert keys == [
         "description",
         "max_steps",
-        "use_terminal",
-        "terminal_visibility",
         "capabilities",
         "approval",
         "mcp",

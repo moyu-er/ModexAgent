@@ -281,13 +281,11 @@ class TestC0EnablementMatrix:
     def test_declaration_view_carries_declared_fields(self) -> None:
         capability = _BundleCapability(applies_to=True)
         spec = _tree(
-            root=AgentSpec(
-                name="root", use_terminal=True, toolset=ToolPreset.READ_ONLY, mcp=["srv"]
-            )
+            root=AgentSpec(name="root", toolset=ToolPreset.READ_ONLY, mcp=["srv"])
         )
         _compile(spec, _registry(capability))
         view = capability.applies_views[0]
-        assert view.declared.use_terminal is True
+        assert "use_terminal" not in view.declared.__class__.model_fields
         assert view.declared.toolset == "read_only"
         assert view.declared.mcp == ["srv"]
         # tree facts: the root of pool "p" with one direct child, no peers

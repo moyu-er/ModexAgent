@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-09-02 -->
+<!-- Updated: 2026-09-10 | per-agent resource ownership -->
 
 # multi_agent
 
@@ -98,12 +98,12 @@ enter native materialization.
 | `template.py` | `AgentTemplate` — subagent preset + the **only** construction path (`materialize`). Builds native tools/session memory, looks up the compiled agent's `SkillResolver` from `SkillsSupply`, and wires per-invocation FORK prompt context. |
 | `template_registry.py` | `AgentTemplateRegistry` — seeded per-pool subagent templates from the compiled scope declaration. |
 | `materialize_deps.py` | `AgentMaterializeDeps` — regular runtime object bundling construction connections, including the pool-wide capability-supply mapping used for subagent resolver lookup. |
-| `pool_instance.py` | `PoolInstance` — deployment resources for one pool, including the typed root `skill_resolver` consumed by the Bot input pipeline; it is a reference to the supply-owned catalog, not a second construction path. |
+| `pool_instance.py` | `PoolInstance` — deployment resources for one pool, including the typed root `skill_resolver` consumed by the Bot input pipeline. Shell managers/watchdogs are not pool fields; each native `AgentInstance` owns its selected shell-group resource. |
 | `context_fork.py` | `ContextForkBuilder` — builds the FORK context XML from parent message history (pure computation, T18). `build()` queries the parent session's messages via `MemorySystem.get_full_history(limit=)`, returns the XML string. No fork files written to disk; no cleanup methods (file I/O removed in T17/T18). |
 | `pool_router.py` | `PoolRouter` — session→pool dispatch shell (framework-level). Routes every message to the pool recorded in a `PoolRoutingStore`; agent→pool ownership is a compile-time declaration lookup (`agent_pool_ownership(spec)` — agent name → declaring pools in declaration order; a miss is an error log + drop, never a silent fallback or an all-pools scan). The path resolution half of addressing lives in `modex_agent/workspace/scope_path.py`. |
 | `router.py` | `DefaultMeshRouter` — session identity resolved via `InputMessage.session` (no string parsing). |
 | `envelope.py` | `AgentMessageEnvelope` — source, target, session id, agent_session_id, invocation id, message_type, payload. |
-| `descriptor.py` | `AgentDescriptor`, `AgentInstance`, `AgentLLMConfig`, `ContextGovernanceConfig` — agent metadata + `comm_kind`. All are frozen Pydantic `BaseModel` (B5B). |
+| `descriptor.py` | `AgentDescriptor`, `AgentInstance`, `AgentLLMConfig`, `ContextGovernanceConfig` — agent metadata + `comm_kind`. `AgentInstance` drains its pipeline before closing adopted resources in reverse dependency order; failed dependent cleanup retains that resource and its prerequisites for retry. |
 | `factory.py` | Agent instance factory — assembles `AgentInstance` via `create_agent()`. `DefaultAgentFactory` builds React agents with their bound skill resolver; `ExternalAwareFactory` builds the minimal external runner/pipeline without native tools, memory, hooks, or skills. |
 | `execution_strategy.py` | Stateless pool-shape strategies. `ComponentRegistry`'s `EXECUTION_STRATEGY` slot is the sole registration source; service boot derives `ExecutionStrategyRegistry` from `SimpleFactory` instances. |
 | `subagent_validator.py` | Framework-layer star-topology enforcement at registration. |
@@ -261,6 +261,7 @@ reference is not constructible.
   within a session is structural — one `inflight` task per session.
 - Subagents are built lazily by the poller on first turn and reused by
   `agent_name`; invocation-specific prompt parts rebuild per session.
+- Every native agent, including a lazy subagent, owns its own assembled shell resource. `PoolInstance` carries no terminal manager, and graph tool-manager views borrow rather than adopt the agent's group resources.
 - `InboxFlushHook` is the fold-in path (mid-turn, `role=AGENT`); it consumes
   inter-agent types only, so a human DM always starts a fresh turn.
 - `SubagentAutoSendHook` always fires on `FINALLY_GRAPH` and notifies the parent

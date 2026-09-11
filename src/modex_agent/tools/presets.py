@@ -26,9 +26,9 @@ class ToolPreset(StrEnum):
     Values map to tool factory lists in TOOL_PRESETS.
     """
 
-    FULL = "full"  # all tools + bash + terminal
-    READ_WRITE = "read_write"  # read + write + edit + grep/glob + bash (review & fix)
-    READ_ONLY = "read_only"  # read + grep/glob + bash (prompt-constrained read-only)
+    FULL = "full"  # all scalar standard tools
+    READ_WRITE = "read_write"  # read + write + edit + grep/glob
+    READ_ONLY = "read_only"  # read + grep/glob
     NONE = "none"  # no standard tools — communication tools only (MCP still loaded)
     WEB = "web"  # web search + web reader (opt-in, not included in FULL)
 
@@ -100,7 +100,6 @@ def _make_web_tools() -> list[Tool]:
 def get_preset_tools(
     preset: ToolPreset,
     *,
-    subprocess_tool_factory: Callable[[], Tool] | None = None,
     scoped_write_dir: Path | None = None,
     root_provider: WorkspaceRootProvider | None = None,
 ) -> list[Tool]:
@@ -108,7 +107,6 @@ def get_preset_tools(
 
     Args:
         preset: The tool preset enum value.
-        subprocess_tool_factory: If provided, creates a bash tool (SubprocessTool or CommandTool).
         scoped_write_dir: Retained for potential future scoped-write needs;
             currently no caller (subagent deliverable is now reply-text-based).
             If provided and the preset lacks native write capability
@@ -145,20 +143,6 @@ def get_preset_tools(
         scoped = [scoped_write_dir]
         tools.append(ScopedWriteFileTool(allowed_dirs=scoped))
         tools.append(ScopedEditFileTool(allowed_dirs=scoped))
-
-    # Bash tool: FULL, READ_ONLY, and READ_WRITE get bash; NONE does not
-    if subprocess_tool_factory is not None and preset in (
-        ToolPreset.FULL,
-        ToolPreset.READ_ONLY,
-        ToolPreset.READ_WRITE,
-    ):
-        bash_tool = subprocess_tool_factory()
-        if root_provider is not None:
-            wrapped = wrap_standard_tools([bash_tool], root_provider)
-            if not wrapped:
-                raise RuntimeError("wrap_standard_tools returned empty list for bash tool")
-            bash_tool = wrapped[0]
-        tools.append(bash_tool)
 
     return tools
 

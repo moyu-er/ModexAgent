@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-28 | capability-bundles doc sync (ADR-0047) -->
+<!-- Updated: 2026-09-10 | atomic tool-group registration and views -->
 
 # tools
 
@@ -11,9 +11,10 @@ Tool subsystem — the concrete tool manager, type definitions, filtering, metad
 
 | File | Description |
 |------|-------------|
-| `manager.py` | `InMemoryToolManager` — the concrete ToolManager registry (moved from `core/tool_manager.py`, C2). Core keeps the `ToolManager` ABC + shared `execute()` behavior (result normalization, ctx propagation); this is the concrete implementation. Registration arbitrates same-name slots by `ToolOrigin.OVERRIDE_PRIORITY` rank (`register(tool, config, *, origin=...)`; INTERNAL slots protected, EXTERNAL never displaces, equal-rank collision raises) — the audit is exposed via `override_records` |
+| `manager.py` | `InMemoryToolManager` — the concrete ToolManager registry. Scalar registration arbitrates same-name slots by `ToolOrigin.OVERRIDE_PRIORITY`; `register_group()` applies that arbitration to every exact member atomically, rolls all registry/audit state back on failure, and stores resource-free group metadata. Scalar overwrite of a group member is rejected; unregistering one member removes the whole group. |
 | `types.py` | Tool-related type definitions (767 lines) — `ToolParameter`, `ToolSpec`, `ToolResult`, `ToolCall` |
 | `filter.py` | `FilteredToolManager` — per-agent tool visibility and access control (allow/deny wrap over any ToolManager) |
+| `graph_tool_preset.py` | `GraphToolPreset` — creates graph-scoped manager views. It copies complete groups with the same tool objects but `resource=None`: graph execution borrows the base agent's tools while `AgentInstance` remains the sole resource owner. Whole-anchor exclusion is allowed; partial companion exclusion is rejected. |
 | `metadata_parser.py` | Rich docstring parser (Google/NumPy/Sphinx styles) — extracts parameter schemas for automatic tool definition |
 | `presets.py` | Tool preset definitions — named sets of tools for different agent configurations |
 | `mcp_adapter.py` | `MCPToolAdapter`, `acquire_mcp_tools` — bridges MCP protocol tools to the framework `Tool` interface |
@@ -41,6 +42,8 @@ Tool subsystem — the concrete tool manager, type definitions, filtering, metad
 - New tools: subclass `Tool` ABC with `name`, `description`, `parameters`, and `execute()` method
 - `MCPClientManager` auto-registers tools from MCP servers with automatic reconnection
 - `FilteredToolManager` enforces per-agent tool visibility rules at runtime
+- Group policy is anchor-atomic: allowing/denying one group through its anchor expands to every member; naming only a companion is an error.
+- Tool managers record group identity but never own group resources. Graph views and transformed managers borrow tools; assembly transfers the resource exactly once to the agent instance.
 - `metadata_parser.py` enables automatic parameter schema extraction from docstrings
 - Terminal sessions are stateful — use session IDs for persistent shell interaction
 - No standalone `executor.py` exists; tool execution is handled by `ToolManager.execute()` (shared behavior on the core ABC: not-found/disabled guards, ctx propagation via contextvar, result normalization via `result_metadata`) + individual tool `.execute()` calls, coordinated by the agent's `ToolNode` (see `modex_agent/agents/AGENTS.md`)

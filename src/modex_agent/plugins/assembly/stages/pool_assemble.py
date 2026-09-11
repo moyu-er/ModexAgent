@@ -35,8 +35,6 @@ from typing import TYPE_CHECKING
 
 from modex_agent.commands.handlers import CommandHandler
 from modex_agent.commands.processor import SlashCommandProcessor
-from modex_agent.interceptor.abc import Interceptor
-from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.ioc.configs.observability import TraceBackend
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentDescriptor
@@ -51,9 +49,10 @@ from modex_agent.plugins.assembly.context import (
     SupplyInfra,
     agent_context_chain,
 )
+from modex_agent.plugins.assembly.interceptors import assemble_interceptor_chain
 from modex_agent.plugins.assembly.pipeline import AssemblyStage
+from modex_agent.plugins.assembly.resources import AssemblyResourceOwner
 from modex_agent.plugins.capability import PoolSupplyView
-from modex_agent.tools.terminal import ProcessRegistry, TerminalWatchdog
 
 if TYPE_CHECKING:
     from modex_agent.commands.models import CommandProcessor
@@ -144,12 +143,8 @@ class PoolAssembleStage(AssemblyStage):
      6. Records the supplied pool + a fresh :class:`AgentDescriptor` on the
         builder. The caller owns the supplied pool's lifecycle (the stage
         never registers pool shutdown on the builder); the stage registers
-        TWO pool-scoped cleanups — the capability supplies' shared stop
-        and the terminal watchdog's ``stop`` — each on BOTH roads: the
-        builder (assembly-failure teardown) and the pool
-        (``AgentPool.attach_background_stop`` for ``shutdown_all``); both
-        stops are idempotent, so a failed assembly whose pool is also
-        torn down double-stops safely.
+        capability supplies' shared stop on both teardown roads: the builder
+        for assembly failure and the pool for ``shutdown_all``.
     """
 
     async def process(
@@ -209,35 +204,6 @@ class PoolAssembleStage(AssemblyStage):
 
         strategy_result: StrategyAssembly = await strategy.assemble_main(infra.pool_assembly_ctx)
 
-        # Invariant: terminal_manager is not None ⇒ process_registry is not
-        # None. Strategies that build the terminal trio fill the registry;
-        # a third-party strategy supplying only a manager gets a fresh one
-        # here — the half-state (manager without registry) is impossible.
-        process_registry = strategy_result.process_registry
-        if process_registry is None and strategy_result.terminal_manager is not None:
-            process_registry = ProcessRegistry()
-
-        terminal_manager = strategy_result.terminal_manager
-        if (
-            terminal_manager is not None
-            and process_registry is not None
-            and dataclasses.is_dataclass(strategy_result)
-        ):
-            watchdog = TerminalWatchdog(terminal_manager, process_registry)
-            watchdog.start()
-            # Failure path: AssemblyPipeline runs builder.cleanup() on any
-            # later stage failure — the builder registration stops the
-            # scanner there. Success path: AgentPool.shutdown_all() runs the
-            # pool registration at pool teardown. stop() is idempotent, so a
-            # failed assembly whose pool is also torn down double-stops
-            # safely.
-            builder.register_cleanup(watchdog.stop)
-            infra.pool.attach_background_stop(watchdog.stop)
-            strategy_result = dataclasses.replace(
-                strategy_result,
-                process_registry=process_registry,
-            )
-
         pool_runtime = dataclasses.replace(
             pool_runtime,
             session_tree_manager=infra.pool.tree,
@@ -249,9 +215,6 @@ class PoolAssembleStage(AssemblyStage):
             root_provider=strategy_result.root_provider,
             mcp_registry=infra.pool_assembly_ctx.mcp_registry,
             emitter_factory=infra.pool_assembly_ctx.emitter_factory,
-            terminal_manager=terminal_manager,
-            process_registry=process_registry,
-            persistent_bash=strategy_result.persistent_bash,
         )
         # Pool-level extensions (ticket 10) resolve against the
         # pool_runtime-ENRICHED context — the factories may read any
@@ -262,9 +225,18 @@ class PoolAssembleStage(AssemblyStage):
         # exists after the strategy_result harvest above.
         ctx = dataclasses.replace(ctx, pool_runtime=pool_runtime)
         extension_chain = agent_context_chain(ctx, spec=spec)
+        resource_owner = AssemblyResourceOwner()
+        interceptor_chain = await assemble_interceptor_chain(
+            spec,
+            extension_chain,
+            resource_owner,
+        )
+        if resource_owner.has_resources:
+            builder.agent_resource_owner = resource_owner
+            builder.register_cleanup(resource_owner.rollback)
         pool_runtime = dataclasses.replace(
             pool_runtime,
-            interceptor_chain=await self._resolve_interceptor_chain(spec, extension_chain),
+            interceptor_chain=interceptor_chain,
             command_processor=await self._resolve_command_processor(spec, extension_chain),
         )
         ctx = dataclasses.replace(ctx, pool_runtime=pool_runtime)
@@ -275,36 +247,6 @@ class PoolAssembleStage(AssemblyStage):
         builder.descriptor = self._create_agent_descriptor(spec)
 
     # ── private helpers ───────────────────────────────────────────────
-
-    async def _resolve_interceptor_chain(
-        self,
-        spec: AssemblySpec,
-        ctx: AgentContext,
-    ) -> InterceptorChain | None:
-        """Resolve the spec's INTERCEPTOR roster into a pool-level chain.
-
-        ``None`` when the spec adds no interceptors — the orchestrator
-        keeps the workspace-shared chain (ticket 10: this resolution moved
-        from the BIZ orchestrator into the pool stage; the factories
-        resolve against the pool_runtime-enriched context).
-        """
-        if not spec.interceptors:
-            return None
-        infra_shared = ctx.pool_runtime
-        shared = (
-            infra_shared.pool_assembly_ctx.shared_interceptor_chain
-            if infra_shared is not None and infra_shared.pool_assembly_ctx is not None
-            else None
-        )
-        chain = InterceptorChain(shared.interceptors if shared is not None else [])
-        for name in spec.interceptors:
-            factory = ctx.registry.resolve(ComponentSlot.INTERCEPTOR, name)
-            config = factory.config_model.model_validate(spec.interceptor_configs.get(name, {}))
-            interceptor = await factory.create(config, ctx)
-            if not isinstance(interceptor, Interceptor):
-                raise TypeError(f"INTERCEPTOR component {name!r} did not create Interceptor")
-            chain.add(interceptor)
-        return chain
 
     async def _resolve_command_processor(
         self,

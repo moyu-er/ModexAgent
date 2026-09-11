@@ -250,9 +250,8 @@ class PrototypeFactory(ComponentFactory):
 
     Pair with :class:`SimpleFactory` (singleton semantics) as the two
     off-the-shelf instantiations; dedicated factory subclasses own the
-    cases between them (differentiated construction with internal
-    reuse, e.g. ``BashToolFactory`` returning the pool's shared
-    persistent shell).
+    cases between them (differentiated construction, e.g.
+    ``ShellToolGroupFactory`` returning one per-agent shell group).
 
     ``config_model`` is set per-instance (each ``PrototypeFactory``
     produces a different component type) rather than at class

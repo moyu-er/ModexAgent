@@ -250,7 +250,7 @@ export function PoolsConfigView() {
     setSaving(true);
     setSaveError("");
     try {
-      await saveScopeModel(model);
+      const saved = await saveScopeModel(model);
       // The backend canonicalizes on write (deviations only) — reset the
       // form state from what the file actually holds now, including the
       // fresh disk bill (the preview was of the pre-canonical draft).
@@ -260,7 +260,7 @@ export function PoolsConfigView() {
       setDiskBill(freshBill);
       setPreviewBill(null);
       setIssues([]);
-      restartToast(toast, t);
+      if (saved.restart_required) restartToast(toast, t);
     } catch (e) {
       const found = parseIssues(e);
       if (found.length > 0) {

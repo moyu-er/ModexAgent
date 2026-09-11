@@ -215,16 +215,22 @@ O2/O3 互补：全局替换走 O2（装插件即全局生效），按池替换�
 
 ## 5. 代表性收敛项（before/after）
 
-### 5.1 终端三合一
+### 5.1 Shell capability 原子工具组（取代原终端三合一中间态）
 
-| 东西 | 现状 | 设计后 |
-|---|---|---|
-| 工具注册 | `builders.py` 直接构造 `CommandTool/ProcessTool/TerminalTool`；subagent 另构造 `SubprocessTool` | roster `tools: [bash, process, terminal]`，FW 工厂按名创建 |
-| `use_terminal` | 隐含"注册三件套 + 建 manager"两件事 | 只管一件事：建不建 terminal manager（基础设施） |
-| 平台/后端选择 | `_build_terminal_manager` 的 fallback 阶梯（BIZ Python） | **留在 FW 的 manager 工厂**——这是真正的平台逻辑（winpty/tmux/pexpect 探测），不是胶水，**不配置化** |
-| bash 无后端退化 | BIZ 分支 | 工厂内部行为：`bash` 工厂解析到 manager 不可用 → 返回 SubprocessTool，对配置不可见 |
+本节是当前契约；最初 W2 的 `use_terminal` + 三个独立工厂设计仅是 2026-08-21 的历史迁移台阶，已由 [shell capability SPEC](../shell-capability/SPEC.md) 取代。
 
-FW 侧 `BashToolFactory/ProcessToolFactory/TerminalToolFactory` 已存在（`plugins/defaults/tools.py`，含 split-brain 测试）——W2 是**删除性工作**。
+| 关注点 | 当前收敛契约 |
+|---|---|
+| 声明 | `capabilities.shell.mode = subprocess/persistent/terminal`；`terminal_visibility` 只在 capability config 内 |
+| 编译 | capability 贡献唯一 `bash` anchor 的 `ToolGroupSpec`；manifest 只列该位置可达的候选 variant，不声称实际运行 variant |
+| 组成员 | subprocess=`bash`；persistent=`bash,bash_input`；terminal=`bash,process,terminal`；companion 不可独立增删 |
+| 装配 | TOOL 槽只注册 `bash -> ShellToolGroupFactory`；每个 native agent 恰建一个实际组，工厂记录 requested/effective/reason/substrate |
+| 位置 | subagent 的 terminal 请求原样保留并静默降为 persistent/subprocess；编译产物不列 terminal 候选 |
+| substrate | LOCAL/OCI 保留所选 engine；terminal 请求在 sandbox 下退为 sandbox persistent/subprocess，绝不偷跑 HOST terminal |
+| 生命周期 | 同一个 `AssemblyResourceOwner` 按 sandbox guard -> shell resource 收养，成功后 transfer 给 `AgentInstance`，逆序清理失败时保留 dependent 及 prerequisites 重试 |
+| 视图 | ToolManager 原子注册/过滤；graph tool-manager 借用同一工具对象但 `resource=None`，不成为第二 owner |
+
+已删除且不兼容读取：`use_terminal`、AgentSpec 根级 `terminal_visibility`、`ShellAssemblyDeps`、`build_bash_tool`、`ensure_input_companion`、`PoolInstance.terminal_manager` 以及独立 process/terminal/bash_input 注册路。完整 mode matrix、配置迁移和测试映射见上述 shell SPEC。
 
 ### 5.2 通信工具注册
 
@@ -334,7 +340,7 @@ V8（列表字段整字段替换）为语义规则，文档化 + WebUI 提示，
 
 ## 8. Wave 计划与删除台账
 
-体系先行（用户定的顺序），每 wave 净减或持平（P5 纪律）：
+体系先行（用户定的顺序），每 wave 净减或持平（P5 纪律）。下表是历史执行计划；W2 的终端内部形状以 §5.1 当前契约为准：
 
 | Wave | 内容 | 删除台账（对冲目标） | 交付判据 | 规模估算 |
 |---|---|---|---|---|

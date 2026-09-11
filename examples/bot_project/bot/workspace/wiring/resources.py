@@ -63,8 +63,6 @@ from modex_agent.tools.overflow.cleaner import OverflowCleaner
 from modex_agent.tools.overflow.handler import ToolResultOverflowHandler
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 from modex_agent.tools.overflow.store import ToolOverflowStore
-from modex_agent.tools.terminal.managers import TerminalManagerBase
-from modex_agent.tools.terminal.persistent_bash import PersistentBashTool
 from modex_agent.workspace.context import WorkspaceContext
 
 logger = logging.getLogger(__name__)
@@ -643,7 +641,7 @@ async def _assemble_resources(
 async def _stop_resources(resources: PoolWorkspaceResources) -> None:
     """Tear down one workspace's resources (re-home of _on_workspace_deactivate).
 
-    Stop order: background tasks → terminals → pools (MCP release + shutdown +
+    Stop order: background tasks → pools (agent resources + MCP release + shutdown +
     broker bridges) → broker → per-pool trace stores (bounded OTLP flush) →
     graph orchestrator → graph connection. The workspace DB closes LAST
     (after all DB-writing producers have stopped and final flushes complete)
@@ -673,21 +671,6 @@ async def _stop_pools(resources: PoolWorkspaceResources) -> None:
     if resources.background is not None:
         with contextlib.suppress(BaseException):
             await resources.background.stop()
-    tasks: list[asyncio.Task[None]] = []
-    for pi in resources.pools.values():
-        mgr = pi.terminal_manager
-        if mgr is not None:
-            for term_name in list(mgr.list_names()):
-                tasks.append(asyncio.create_task(_close_terminal(mgr, term_name)))
-        # Fallback persistent bash (no terminal manager): the registered
-        # "bash" tool IS the shell owner — close it so the PTY child is
-        # reaped at pool shutdown. Idempotent (safe with the eval roster's
-        # own trial-teardown close).
-        bash_tool = pi.tool_manager.get_tool("bash")
-        if isinstance(bash_tool, PersistentBashTool):
-            tasks.append(asyncio.create_task(_close_persistent_bash(bash_tool)))
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
     pools_stopped = True
     cancellation: asyncio.CancelledError | None = None
     for pi in resources.pools.values():
@@ -719,20 +702,6 @@ async def _stop_pools(resources: PoolWorkspaceResources) -> None:
     if resources.owned_pool_routing_store is not None:
         with contextlib.suppress(BaseException):
             resources.owned_pool_routing_store.close()
-
-
-async def _close_terminal(mgr: TerminalManagerBase, name: str) -> None:
-    try:
-        await mgr.close(name)
-    except BaseException:
-        logger.debug("terminal close failed for %s", name, exc_info=True)
-
-
-async def _close_persistent_bash(bash: PersistentBashTool) -> None:
-    try:
-        await bash.close()
-    except BaseException:
-        logger.debug("persistent bash close failed", exc_info=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────

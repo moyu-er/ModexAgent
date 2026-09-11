@@ -99,8 +99,7 @@ def _expected_tool_names() -> frozenset[str]:
     Same anchoring as ``test_defaults_tools.py``: iterate every
     ``ToolPreset``, expand via ``get_preset_tools`` (default args), union
     tool names, plus the registry-level extras �� ``bash`` (preset-gated
-    name with a runtime factory), ``process``/``terminal`` (terminal-trio
-    companions, explicit roster opt-in), ``aci_edit`` (the ACI
+    anchor with an atomic runtime group factory), ``aci_edit`` (the ACI
     upgrade's registry name), ``ast_grep_search``/``ast_grep_replace``
     (the ast_grep capability's direct registrations),
     ``todo_write``/``todo_read`` (the todo capability's direct
@@ -117,8 +116,6 @@ def _expected_tool_names() -> frozenset[str]:
     names.update(
         {
             "bash",
-            "process",
-            "terminal",
             "aci_edit",
             "ast_grep_search",
             "ast_grep_replace",
@@ -245,11 +242,11 @@ class TestPerSlotNameSets:
 
     async def test_capability_slot_has_bundled_packages(self) -> None:
         """CAPABILITY carries the FW-bundled capability packages — ``aci``,
-        ``ast_grep``, ``experience``, ``subagents``, ``todo`` and
+        ``ast_grep``, ``experience``, ``shell``, ``subagents``, ``todo`` and
         ``tracing`` (ADR-0047; grows one package per migration wave)."""
         registry = await _load_default_plugin()
         actual = _slot_names(registry, ComponentSlot.CAPABILITY)
-        assert actual == {"aci", "ast_grep", "experience", "skills", "subagents", "todo", "tracing"}, (
+        assert actual == {"aci", "ast_grep", "experience", "shell", "skills", "subagents", "todo", "tracing"}, (
             f"CAPABILITY drift: {actual}"
         )
 

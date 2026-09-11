@@ -61,6 +61,19 @@ export interface ScopeHookBill {
   capability: string | null;
 }
 
+export interface ScopeToolGroupVariant {
+  name: string;
+  tools: string[];
+}
+
+/** Candidate runtime variants; compilation does not select one. */
+export interface ScopeToolGroupManifest {
+  anchor: string;
+  origin: string;
+  capability: string | null;
+  variants: ScopeToolGroupVariant[];
+}
+
 export interface ScopeCapabilityContributionBill {
   /** Component category: tool | hook | section. */
   kind: string;
@@ -83,6 +96,7 @@ export interface ScopeAgentBill {
   root: boolean;
   fields: ScopeFieldBill[];
   tools: ScopeToolBill[];
+  tool_groups: ScopeToolGroupManifest[];
   hooks: ScopeHookBill[];
   capabilities: ScopeCapabilityBill[];
 }
@@ -114,10 +128,27 @@ export interface ScopePositionDefaultRow {
   registration: string;
 }
 
-/** What one capability carries (tools + hooks) — the bundle unit (ADR-0047). */
+export type ScopeConfigValueType =
+  | "string"
+  | "boolean"
+  | "integer"
+  | "number"
+  | "array"
+  | "object";
+
+export interface ScopeCapabilityConfigField {
+  value_type: ScopeConfigValueType;
+  default: unknown;
+  choices: unknown[];
+}
+
+/** What one capability carries — the bundle unit (ADR-0047). */
 export interface ScopeCapabilityBundle {
+  /** Fixed tools only; group anchors are represented by tool_groups. */
   tools: string[];
+  tool_groups: ScopeToolGroupManifest[];
   hooks: string[];
+  config_fields: Record<string, ScopeCapabilityConfigField>;
 }
 
 /** Enumeration source for every pools-panel form control (hardcode nothing). */

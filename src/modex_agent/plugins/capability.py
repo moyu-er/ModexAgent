@@ -25,7 +25,8 @@ Design constraints:
 - C0/C1/C2 are deterministic pure functions (SPEC P1): no IO, no clocks,
   no registry reads — violations break the spec-hash byte-stability
   contract.
-- This module imports ONLY pydantic + abc + pathlib at runtime. The
+- This module imports only pydantic, stdlib, and the leaf ``core.tool_group``
+  value contract at runtime. The
   dependency direction is scope→plugins (``scope/compiler.py`` imports
   ``plugins.assembly.spec``); importing ``modex_agent.scope`` here would
   invert it. ``AgentContext`` and ``SystemPromptProvider`` are
@@ -42,6 +43,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from modex_agent.core.tool_group import ToolGroupSpec
 
 if TYPE_CHECKING:
     # Forward references only — this module stays import-light at
@@ -235,7 +238,6 @@ class AgentDeclaredFields(BaseModel):
     """Hook roster declaration (verbatim, merge prefixes included)."""
 
     mcp: list[str] = Field(default_factory=list)
-    use_terminal: bool = False
     execution_strategy: str = "react"
     """Mirrors ``AgentSpec``'s ``ExecutionStrategyKind.REACT`` default."""
 
@@ -372,6 +374,9 @@ class CapabilityContribution(BaseModel):
 
     tools: tuple[str, ...] = ()
     """Tool names entering the roster merge base."""
+
+    tool_groups: tuple[ToolGroupSpec, ...] = ()
+    """Variant manifests for group anchors contributed through ``tools``."""
 
     derived_tools: tuple[DerivedToolSpec, ...] = ()
     """Tree-derived tool entries entering the merge base THROUGH the

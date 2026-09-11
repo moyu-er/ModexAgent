@@ -54,9 +54,6 @@ if TYPE_CHECKING:
     from modex_agent.plugins.registry import ComponentRegistry
     from modex_agent.scope.spec import WorkspaceSpec
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
-    from modex_agent.tools.terminal.managers import TerminalManagerBase
-    from modex_agent.tools.terminal.persistent_bash import PersistentBashTool
-    from modex_agent.tools.terminal.process_registry import ProcessRegistry
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
     # Aliased: the per-workspace identity/paths type must not collide with
@@ -121,12 +118,6 @@ class PoolRuntimeDeps:
     root_provider: WorkspaceRootProvider | None = None
     mcp_registry: McpConnectionRegistry | None = None
     emitter_factory: Callable[[str], ContentEmitter[Any]] | None = None
-    terminal_manager: TerminalManagerBase | None = None
-    # Pool-unique process registry (same ownership chain as
-    # terminal_manager; the no-manager-without-registry invariant is
-    # enforced by PoolAssembleStage). All terminal tool factories share
-    # this single instance.
-    process_registry: ProcessRegistry | None = None
     # Pool-level extensions resolved by PoolAssembleStage (ticket 10) from
     # the spec's INTERCEPTOR / COMMAND_HANDLER rosters against this
     # enriched context. ``None`` = no roster additions — the orchestrator
@@ -134,11 +125,6 @@ class PoolRuntimeDeps:
     # processor.
     interceptor_chain: InterceptorChain | None = None
     command_processor: CommandProcessor | None = None
-    # Pool-unique fallback persistent bash (set iff terminal_manager is
-    # None). The FW bash factory resolves to this same instance so the
-    # roster-resolved ``bash`` IS the tool whose ``bash_input`` companion
-    # shares its session.
-    persistent_bash: PersistentBashTool | None = None
     # Pool-level capability supply (SPEC §7.1): ONE aggregated mapping per
     # pool, keyed by capability registration name. Aggregated by
     # ``PoolAssembleStage`` over the pool's compiled specs; the subagent
@@ -236,8 +222,8 @@ class WorkspaceContext:
 class PoolContext:
     """Pool-layer carrier of the assembly context chain (SPEC §3.3).
 
-    Holds the pool runtime dependencies — terminal manager, capability
-    supply, session tree, notification service — all inside
+    Holds the pool runtime dependencies — capability supply, session tree,
+    notification service — all inside
     :class:`PoolRuntimeDeps` — plus the pool-scoped LLM provider. Memory
     handles join this layer when their construction migrates into the
     chain (tickets 09/10).

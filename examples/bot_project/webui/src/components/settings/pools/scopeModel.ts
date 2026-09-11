@@ -182,8 +182,8 @@ export function addPool(draft: ScopeModelTree, name: string): void {
   pools[name] = {
     agents: {
       // Every pool needs exactly one root (V3); create it named after the
-      // pool, terminal flags explicit per the declaration convention.
-      [name]: { description: "", use_terminal: false, terminal_visibility: false },
+      // pool. Capability defaults stay implicit until the user overrides one.
+      [name]: { description: "" },
     },
   };
 }
@@ -290,9 +290,24 @@ export function capabilityMode(body: AgentBody, name: string): CapabilityMode {
 export function setCapabilityMode(body: AgentBody, name: string, mode: CapabilityMode): void {
   const caps = { ...(asMap(body.capabilities) ?? {}) };
   if (mode === "auto") delete caps[name];
-  else if (mode === "on") caps[name] = {};
+  else if (mode === "on") caps[name] = asMap(caps[name]) ?? {};
   else caps[name] = false;
   setField(body, "capabilities", Object.keys(caps).length > 0 ? caps : null);
+}
+
+/** Update one package-owned config key while retaining every sibling key. */
+export function setCapabilityConfigField(
+  body: AgentBody,
+  name: string,
+  key: string,
+  value: unknown,
+): void {
+  const caps = { ...(asMap(body.capabilities) ?? {}) };
+  const config = { ...(asMap(caps[name]) ?? {}) };
+  if (value === null || value === undefined) delete config[key];
+  else config[key] = value;
+  caps[name] = config;
+  setField(body, "capabilities", caps);
 }
 
 // Hooks: the declared list carries +/- merge prefixes verbatim. The form

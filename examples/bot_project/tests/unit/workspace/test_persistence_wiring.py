@@ -134,7 +134,6 @@ async def test_incomplete_pool_stop_keeps_owned_workspace_manager_open(
     )
     resources = await _build_resources(service, ctx)
     pool_instance = MagicMock()
-    pool_instance.terminal_manager = None
     pool_instance.mcp_manager = None
     pool_instance.pool.shutdown_all = AsyncMock(return_value=False)
     pool_instance.broker_bridge.stop = AsyncMock()
@@ -177,7 +176,6 @@ async def test_cancelled_pool_stop_cleans_non_persistence_and_propagates(
     )
     resources = await _build_resources(service, ctx)
     pool_instance = MagicMock()
-    pool_instance.terminal_manager = None
     pool_instance.mcp_manager = None
     pool_instance.pool.shutdown_all = AsyncMock(side_effect=asyncio.CancelledError)
     pool_instance.broker_bridge.stop = AsyncMock()

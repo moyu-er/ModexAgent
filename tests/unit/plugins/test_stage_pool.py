@@ -47,7 +47,9 @@ from modex_agent.plugins.assembly.context import (
     PoolRuntimeDeps,
     SupplyInfra,
 )
+from modex_agent.plugins.assembly.interceptors import assemble_interceptor_chain
 from modex_agent.plugins.assembly.pipeline import AssemblyStage
+from modex_agent.plugins.assembly.resources import AssemblyResourceOwner
 from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
 from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
 from modex_agent.plugins.registry import ComponentRegistry
@@ -230,11 +232,9 @@ class TestStrategyResolutionAndAssemble:
         stub.assemble_main.assert_awaited()  # type: ignore[attr-defined]
         stub.assemble_main.assert_awaited_once()  # type: ignore[attr-defined]
 
-    async def test_strategy_runtime_outputs_are_propagated(self) -> None:
+    async def test_strategy_root_provider_is_propagated(self) -> None:
         stub = _make_stub_strategy()
-        terminal_manager = MagicMock()
         root_provider = MagicMock()
-        stub._mock_assembly.terminal_manager = terminal_manager  # type: ignore[attr-defined]
         stub._mock_assembly.root_provider = root_provider  # type: ignore[attr-defined]
         registry = _make_registry(stub)
         builder = AssemblyBuilder()
@@ -246,112 +246,7 @@ class TestStrategyResolutionAndAssemble:
         propagated = builder.propagated_context
         assert propagated is not None
         assert propagated.pool_runtime is not None
-        assert propagated.pool_runtime.terminal_manager is terminal_manager
         assert propagated.pool_runtime.root_provider is root_provider
-
-    async def test_strategy_process_registry_is_propagated(self) -> None:
-        """Split-brain fix: the strategy's ProcessRegistry must reach
-        pool_runtime verbatim so the FW tool factories resolve bash
-        against the SAME registry the BIZ terminal trio uses."""
-        from modex_agent.tools.terminal import ProcessRegistry
-
-        stub = _make_stub_strategy()
-        process_registry = ProcessRegistry()
-        stub._mock_assembly.terminal_manager = MagicMock()  # type: ignore[attr-defined]
-        stub._mock_assembly.process_registry = process_registry  # type: ignore[attr-defined]
-        registry = _make_registry(stub)
-        builder = AssemblyBuilder()
-        builder.workspace_resources = _make_workspace_resources()
-        builder.infra = _make_supply()
-
-        await PoolAssembleStage().process(_make_spec(), builder, _make_ctx(registry))
-
-        propagated = builder.propagated_context
-        assert propagated is not None
-        assert propagated.pool_runtime is not None
-        assert propagated.pool_runtime.process_registry is process_registry
-
-    async def test_terminal_manager_without_registry_gets_fallback(self) -> None:
-        """Invariant: terminal_manager is not None ⇒ process_registry is not
-        None. A strategy supplying only a manager gets a fresh registry —
-        the half-state is impossible."""
-        from modex_agent.tools.terminal import ProcessRegistry
-
-        stub = _make_stub_strategy()
-        stub._mock_assembly.terminal_manager = MagicMock()  # type: ignore[attr-defined]
-        stub._mock_assembly.process_registry = None  # type: ignore[attr-defined]
-        registry = _make_registry(stub)
-        builder = AssemblyBuilder()
-        builder.workspace_resources = _make_workspace_resources()
-        builder.infra = _make_supply()
-
-        await PoolAssembleStage().process(_make_spec(), builder, _make_ctx(registry))
-
-        propagated = builder.propagated_context
-        assert propagated is not None
-        assert propagated.pool_runtime is not None
-        assert isinstance(propagated.pool_runtime.process_registry, ProcessRegistry)
-
-    async def test_no_terminal_manager_leaves_registry_none(self) -> None:
-        stub = _make_stub_strategy()
-        stub._mock_assembly.terminal_manager = None  # type: ignore[attr-defined]
-        stub._mock_assembly.process_registry = None  # type: ignore[attr-defined]
-        registry = _make_registry(stub)
-        builder = AssemblyBuilder()
-        builder.workspace_resources = _make_workspace_resources()
-        builder.infra = _make_supply()
-
-        await PoolAssembleStage().process(_make_spec(), builder, _make_ctx(registry))
-
-        propagated = builder.propagated_context
-        assert propagated is not None
-        assert propagated.pool_runtime is not None
-        assert propagated.pool_runtime.process_registry is None
-
-    async def test_watchdog_stop_registered_on_builder_and_pool(self) -> None:
-        from unittest.mock import patch
-
-        from modex_agent.multi_agent.execution_strategy import StrategyAssembly
-        from modex_agent.tools.terminal import ProcessRegistry
-
-        terminal_manager = MagicMock()
-        process_registry = ProcessRegistry()
-        strategy_result = StrategyAssembly(
-            terminal_manager=terminal_manager,
-            process_registry=process_registry,
-        )
-        stub = _make_stub_strategy()
-        stub.assemble_main = AsyncMock(return_value=strategy_result)  # type: ignore[method-assign]
-        registry = _make_registry(stub)
-        pool = MagicMock()
-        pool.tree = None
-        supply = SupplyInfra(
-            pool_assembly_ctx=_make_pool_assembly_ctx(),
-            pool=pool,
-        )
-        builder = AssemblyBuilder()
-        builder.workspace_resources = _make_workspace_resources()
-        builder.infra = supply
-
-        with patch(
-            "modex_agent.plugins.assembly.stages.pool_assemble.TerminalWatchdog"
-        ) as watchdog_cls:
-            await PoolAssembleStage().process(
-                _make_spec(),
-                builder,
-                _make_ctx(registry, builder.workspace_resources, supply),
-            )
-
-        watchdog = watchdog_cls.return_value
-        watchdog.start.assert_called_once_with()
-        # Success path: the pool stops the watchdog in shutdown_all.
-        pool.attach_background_stop.assert_called_once_with(watchdog.stop)
-        # Failure path: the builder stops it in cleanup() when a later
-        # stage fails (AssemblyPipeline runs builder.cleanup() then
-        # re-raises). stop() is idempotent, so both registrations coexist.
-        assert builder._cleanups == [watchdog.stop]  # noqa: SLF001
-        assert builder.strategy_result is not None
-        assert builder.strategy_result.extra_cleanup == ()
 
     async def test_strategy_assemble_called_with_pool_assembly_ctx(self) -> None:
         """``strategy.assemble_main`` receives a :class:`PoolAssemblyContext`."""
@@ -388,115 +283,6 @@ class TestStrategyResolutionAndAssemble:
         # if factory.create weren't awaited, strategy.assemble_main would be
         # a coroutine, not an AsyncMock, and assert_awaited would fail.
         stub.assemble_main.assert_awaited()  # type: ignore[attr-defined]
-
-
-# ─── Assembly-failure watchdog lifecycle (final-review F1) ───────────────────
-
-
-class _NoopStage(AssemblyStage):
-    """Stub stage — does nothing (stands in for WorkspaceMaterializeStage)."""
-
-    async def process(
-        self,
-        spec: AssemblySpec,
-        builder: AssemblyBuilder,
-        ctx: AssemblyContext,
-    ) -> None:
-        del spec, builder, ctx
-
-
-class _FailingStage(AssemblyStage):
-    """Stub stage 4 — always fails, forcing the pipeline's cleanup-on-failure."""
-
-    async def process(
-        self,
-        spec: AssemblySpec,
-        builder: AssemblyBuilder,
-        ctx: AssemblyContext,
-    ) -> None:
-        del spec, builder, ctx
-        raise RuntimeError("stage 4 boom")
-
-
-class TestAssemblyFailureStopsWatchdog:
-    """F1 regression: on assembly failure AFTER PoolAssembleStage, the
-    builder-registered ``watchdog.stop`` must run via ``builder.cleanup()``.
-    Before the fix the only registration lived on the supplied pool — which
-    failure teardown never reaches — so a stage-4 failure leaked the scanner
-    task."""
-
-    async def test_stage_failure_after_pool_stage_stops_watchdog(self) -> None:
-        import dataclasses
-        from unittest.mock import patch
-
-        from modex_agent.multi_agent.execution_strategy import StrategyAssembly
-        from modex_agent.plugins.assembly.pipeline import AssemblyPipeline
-        from modex_agent.plugins.assembly.stages.infra_assemble import InfraAssembleStage
-        from modex_agent.tools.terminal import ProcessRegistry
-        from modex_agent.tools.terminal.managers import TerminalManagerBase
-        from modex_agent.tools.terminal.watchdog import TerminalWatchdog
-
-        created: list[TerminalWatchdog] = []
-
-        class _RecordingWatchdog(TerminalWatchdog):
-            def __init__(
-                self,
-                manager: TerminalManagerBase,
-                registry: ProcessRegistry,
-                *,
-                interval_s: float = 5.0,
-            ) -> None:
-                super().__init__(manager, registry, interval_s=interval_s)
-                created.append(self)
-
-        class _AssemblyReturningStrategy(_StubExecutionStrategy):
-            """Returns a REAL StrategyAssembly dataclass — the watchdog
-            wiring path requires a dataclass strategy result (mock strategy
-            results skip it via the is_dataclass guard)."""
-
-            def __init__(self, strategy_result: StrategyAssembly) -> None:
-                super().__init__()
-                self._strategy_result = strategy_result
-
-            async def assemble_main(self, ctx: PoolAssemblyContext) -> StrategyAssembly:
-                del ctx
-                return self._strategy_result
-
-        strategy_result = StrategyAssembly(
-            terminal_manager=MagicMock(spec=TerminalManagerBase),
-            process_registry=ProcessRegistry(),
-        )
-        registry = _make_registry(_AssemblyReturningStrategy(strategy_result))
-        pool = MagicMock()
-        pool.tree = None
-        supply = SupplyInfra(
-            pool_assembly_ctx=_make_pool_assembly_ctx(),
-            pool=pool,
-        )
-
-        pipeline = AssemblyPipeline(
-            workspace_materialize=_NoopStage(),
-            infra_assemble=InfraAssembleStage(),
-            pool_assemble=PoolAssembleStage(),
-            agent_assemble=_FailingStage(),
-        )
-        ctx = dataclasses.replace(_make_ctx(registry), infra=supply)
-
-        with (
-            patch(
-                "modex_agent.plugins.assembly.stages.pool_assemble.TerminalWatchdog",
-                _RecordingWatchdog,
-            ),
-            pytest.raises(RuntimeError, match="stage 4 boom"),
-        ):
-            await pipeline.run(_make_spec(), ctx)
-
-        assert len(created) == 1
-        watchdog = created[0]
-        pool.attach_background_stop.assert_called_once_with(watchdog.stop)
-        # start() set _task; only stop() resets it to None — the pipeline's
-        # builder.cleanup() ran and stopped the scanner.
-        assert watchdog._task is None  # noqa: SLF001
 
 
 # ─── Process: builder outputs ───────────────────────────────────────────────
@@ -705,12 +491,14 @@ class TestExtensionTypeGuards:
         registry = ComponentRegistry()
         registry.register(ComponentSlot.INTERCEPTOR, "probe_bad", _WrongProductFactory())
         ctx = AssemblyContext(registry=registry, workspace_ctx=_make_workspace_ctx())
-        stage = PoolAssembleStage()
-
         with pytest.raises(
             TypeError, match="INTERCEPTOR component 'probe_bad' did not create Interceptor"
         ):
-            await stage._resolve_interceptor_chain(self._spec_with(interceptors=["probe_bad"]), ctx)
+            await assemble_interceptor_chain(
+                self._spec_with(interceptors=["probe_bad"]),
+                ctx,  # type: ignore[arg-type]
+                AssemblyResourceOwner(),
+            )
 
     async def test_command_factory_wrong_product_type_raises(self) -> None:
         registry = ComponentRegistry()
@@ -730,5 +518,12 @@ class TestExtensionTypeGuards:
         ctx = AssemblyContext(registry=ComponentRegistry(), workspace_ctx=_make_workspace_ctx())
         stage = PoolAssembleStage()
 
-        assert await stage._resolve_interceptor_chain(_make_spec(), ctx) is None
+        assert (
+            await assemble_interceptor_chain(
+                _make_spec(),
+                ctx,  # type: ignore[arg-type]
+                AssemblyResourceOwner(),
+            )
+            is None
+        )
         assert await stage._resolve_command_processor(_make_spec(), ctx) is None

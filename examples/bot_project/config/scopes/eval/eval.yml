@@ -16,12 +16,9 @@ arms:
         # available for a dedicated ablation arm if ever needed.
         strip_mcp: true
         tools_remove:
-          - process
-          - terminal
           - experience
         memory:
           core_enabled: false
         system_prompt:
           provider: file_prompt
           path: agents/benchmark.md
-

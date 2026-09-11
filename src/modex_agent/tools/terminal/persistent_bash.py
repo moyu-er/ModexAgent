@@ -30,10 +30,9 @@ below it)::
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable
 from typing import Any
 
-from modex_agent.core.tool_manager import ExclusiveTool, Tool, ToolManager, ToolOrigin
+from modex_agent.core.tool_manager import ExclusiveTool
 from modex_agent.tools.terminal._persistent_session import (
     PersistentShellManager,
     PersistentShellSession,
@@ -47,7 +46,6 @@ __all__ = [
     "PersistentShellManager",
     "PersistentShellStartError",
     "PersistentShellUnsupportedError",
-    "ensure_input_companion",
     "persistent_bash_supported",
 ]
 
@@ -63,51 +61,6 @@ def _routed_session(manager: PersistentShellManager) -> PersistentShellSession:
     from modex_agent.runtime.env_context import _current_session_id
 
     return manager.session_for(_current_session_id.get())
-
-
-def ensure_input_companion(
-    manager: ToolManager,
-    bash_tool: Tool | None,
-    *,
-    tool_transform: Callable[[Tool], Tool] | None = None,
-) -> None:
-    """Register the ``bash_input`` companion when *bash_tool* is a
-    :class:`PersistentBashTool`.
-
-    The pair is structural: a persistent shell without its stdin-answer
-    tool deadlocks on interactive prompts (commands have no default
-    timeout, so the shell stays blocked on the pending command). The
-    companion registers under its own name directly into *manager* —
-    never via roster/preset expansion — and shares *bash_tool*'s shell
-    MANAGER so both tools route to the same conversation's shell.
-
-    A pre-registered ``bash_input`` bound to a DIFFERENT manager is
-    replaced: it belongs to a swapped-out bash (e.g. a roster swap that
-    unregistered ``bash`` but missed its companion) and would answer into
-    shells that never run. A same-manager companion is left untouched
-    (idempotent).
-
-    Non-persistent bash removes a stale framework ``BashInputTool`` only.
-    Custom input tools are left alone; terminal-manager ``CommandTool`` uses
-    process write, and ``SubprocessTool`` has no persistent stdin session.
-    """
-    existing = manager.get_tool("bash_input")
-    if not isinstance(bash_tool, PersistentBashTool):
-        if isinstance(existing, BashInputTool):
-            manager.unregister("bash_input")
-        return
-    if existing is not None:
-        if isinstance(existing, BashInputTool) and existing._manager is bash_tool._manager:
-            return
-        manager.unregister("bash_input")
-    companion: Tool = BashInputTool(manager=bash_tool._manager)
-    # INTERNAL: the companion is structural (never roster/preset-resolved),
-    # and its name slot is protected — a roster entry named ``bash_input``
-    # cannot displace the pairing that keeps the persistent shell answerable.
-    manager.register(
-        tool_transform(companion) if tool_transform is not None else companion,
-        origin=ToolOrigin.INTERNAL,
-    )
 
 
 class PersistentBashTool(ExclusiveTool):

@@ -39,8 +39,6 @@ def test_agent_template_dead_fields_absent():
         "agent_type",
         "thinking_budget",
         "default_reads",
-        "use_terminal",
-        "terminal_visibility",
         "extra_tools",
         "approval",
         "experience",

@@ -84,9 +84,6 @@ if TYPE_CHECKING:
     from modex_agent.scope.spec import PoolSpec
     from modex_agent.tools.mcp.manager import MCPClientManager
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
-    from modex_agent.tools.terminal.managers import BaseTerminalManager
-    from modex_agent.tools.terminal.persistent_bash import PersistentBashTool
-    from modex_agent.tools.terminal.process_registry import ProcessRegistry
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
     from modex_agent.trace.cassette import CassetteRecorder
     from modex_agent.workspace.scope_path import ScopePath
@@ -362,17 +359,6 @@ class StrategyAssembly:
     system_prompt_provider: SystemPromptProvider | None = None
     tool_manager: ToolManager | None = None
     mcp_manager: MCPClientManager | None = None
-    terminal_manager: BaseTerminalManager | None = None
-    # Pool-unique ProcessRegistry backing the terminal trio; harvested by
-    # PoolAssembleStage into PoolRuntimeDeps so FW tool factories resolve
-    # against the SAME registry (split-brain fix).
-    process_registry: ProcessRegistry | None = None
-    # Pool-unique fallback persistent bash (set iff terminal_manager is
-    # None); harvested by PoolAssembleStage into PoolRuntimeDeps so the FW
-    # bash factory resolves to the SAME instance the strategy registered
-    # with its ``bash_input`` companion — no session fork between the two
-    # roster-resolved/pre-registered tools.
-    persistent_bash: PersistentBashTool | None = None
     context_manager: ContextManager | None = None
     dream_engine: DreamEngine | None = None
     dream_interval: float | None = None

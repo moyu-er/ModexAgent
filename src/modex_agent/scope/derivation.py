@@ -23,15 +23,6 @@ _DEFAULT_LLM_PROVIDER: str = "default"
 # Default system prompt provider component name (SPEC §5.6).
 _FILE_PROMPT_PROVIDER: str = "file_prompt"
 
-_BASH_TOOL_NAME = "bash"
-
-# Presets that include the bash tool — mirrors ``get_preset_tools``' bash
-# gating (``subprocess_tool_factory`` branch in presets.py).
-_BASH_PRESETS = frozenset(
-    {ToolPreset.FULL, ToolPreset.READ_ONLY, ToolPreset.READ_WRITE}
-)
-
-
 def _derive_agent_type(
     is_main: bool,
     provider_kind: ProviderKind | None,
@@ -50,17 +41,12 @@ def _derive_agent_type(
 def _expand_preset_tool_names(preset: ToolPreset) -> list[str]:
     """Expand a ToolPreset to its component tool names.
 
-    ``get_preset_tools`` is called without ``subprocess_tool_factory`` (it
-    returns Tool instances; only names are needed here), so the bash name is
-    appended explicitly per the same gating presets.py applies: FULL,
-    READ_ONLY, and READ_WRITE include ``bash``; NONE and WEB do not. The
-    default registry registers a ``bash`` factory, keeping the name
-    resolvable.
+    ``get_preset_tools`` returns the scalar standard tools. Additive runtime
+    groups such as shell enter through capability contributions instead of
+    preset-specific injection.
     """
     tools = get_preset_tools(preset)
     names = [t.name for t in tools]
-    if preset in _BASH_PRESETS:
-        names.append(_BASH_TOOL_NAME)
     return names
 
 

@@ -104,7 +104,6 @@ def _pool_instance() -> MagicMock:
     instance.pool._agents = {}
     instance.pool.shutdown_all = AsyncMock(return_value=True)
     instance.broker_bridge.start = AsyncMock()
-    instance.terminal_manager = None
     instance.mcp_manager = None
     return instance
 

@@ -66,6 +66,7 @@ from modex_agent.plugins.assembly.context import (
     AssemblyContext,
     PoolRuntimeDeps,
     SupplyInfra,
+    agent_context_chain,
     resolution_context,
 )
 from modex_agent.plugins.assembly.native_core import (
@@ -167,12 +168,15 @@ async def _resolve_llm_slot(
         workspace_ctx,
         PoolRuntimeDeps(pool_assembly_ctx=pool_assembly_ctx),
     )
+    spec = pool_assembly_ctx.assembly_spec
+    if spec is None:
+        raise ValueError("LLM slot resolution requires the pool's root assembly spec")
     return await _resolve_single(
         registry,
         ComponentSlot.LLM_PROVIDER,
         name,
         config,
-        component_ctx,
+        agent_context_chain(component_ctx, spec=spec),
     )
 
 
@@ -647,7 +651,6 @@ async def create_pool(
         assembly = None
 
     if assembly is not None:
-        terminal_manager = assembly.terminal_manager
         tool_manager = assembly.tool_manager
         context_manager = assembly.context_manager
         cassette_recorder = assembly.cassette_recorder
@@ -656,7 +659,6 @@ async def create_pool(
         if assembly.external_deps is not None:
             external_deps = assembly.external_deps
     else:
-        terminal_manager = None
         tool_manager = None
         context_manager = None
         cassette_recorder = None
@@ -930,7 +932,6 @@ async def create_pool(
         tool_manager=tool_manager,
         skill_resolver=skill_resolver,
         mcp_manager=mcp_manager,
-        terminal_manager=terminal_manager,
         root_agent_name=root_agent_name,
         main_execution_strategy=ExecutionStrategyKind(main_spec.execution_strategy),
         provider=main_provider,

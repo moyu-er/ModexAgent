@@ -22,10 +22,28 @@ interface Props {
   bundle: ScopeCapabilityBundle | null;
   isRoot: boolean;
   mode: CapabilityMode;
+  config: Record<string, unknown>;
   onModeChange: (mode: CapabilityMode) => void;
+  onConfigFieldChange: (key: string, value: unknown) => void;
 }
 
-export function CapabilityRow({ name, bill, bundle, isRoot, mode, onModeChange }: Props) {
+function shellModeLabel(mode: string, t: ReturnType<typeof useT>): string {
+  if (mode === "subprocess") return t("settings.poolsPanel.shellModeSubprocess");
+  if (mode === "persistent") return t("settings.poolsPanel.shellModePersistent");
+  if (mode === "terminal") return t("settings.poolsPanel.shellModeTerminal");
+  return mode;
+}
+
+export function CapabilityRow({
+  name,
+  bill,
+  bundle,
+  isRoot,
+  mode,
+  config,
+  onModeChange,
+  onConfigFieldChange,
+}: Props) {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
 
@@ -35,6 +53,16 @@ export function CapabilityRow({ name, bill, bundle, isRoot, mode, onModeChange }
   ];
   const visible = expanded ? items : items.slice(0, CHIP_PREVIEW_COUNT);
   const hiddenCount = items.length - visible.length;
+  const modeField = name === "shell" ? bundle?.config_fields.mode : undefined;
+  const configuredMode = typeof config.mode === "string" ? config.mode : null;
+  const defaultMode = typeof modeField?.default === "string" ? modeField.default : "";
+  const shellMode = configuredMode ?? defaultMode;
+  const shellModes = (modeField?.choices ?? []).filter(
+    (choice): choice is string => typeof choice === "string",
+  );
+  const visibleShellModes = shellModes.filter(
+    (choice) => isRoot || choice !== "terminal" || shellMode === "terminal",
+  );
 
   return (
     <div
@@ -104,6 +132,53 @@ export function CapabilityRow({ name, bill, bundle, isRoot, mode, onModeChange }
             >
               {t("settings.poolsPanel.moreItems", { count: hiddenCount })}
             </button>
+          ) : null}
+        </div>
+      ) : null}
+      {(bundle?.tool_groups.length ?? 0) > 0 ? (
+        <div className="mt-2 space-y-1.5">
+          {bundle!.tool_groups.map((group) => (
+            <div
+              key={group.anchor}
+              data-testid={`capability-tool-group-${group.anchor}`}
+              className="rounded-sm border border-hairline-soft px-2 py-1.5"
+            >
+              <div className="font-mono text-xs text-body">{group.anchor}</div>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {group.variants.map((variant) => (
+                  <Chip key={variant.name} title={t("settings.poolsPanel.groupCandidateTitle")}>
+                    {variant.name}: {variant.tools.join(", ")}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {modeField && mode !== "off" ? (
+        <div className="mt-3 space-y-2 border-t border-hairline pt-3">
+          <DropdownPanel
+            label={t("settings.poolsPanel.shellMode")}
+            ariaLabel={t("settings.poolsPanel.shellMode")}
+            value={shellMode}
+            options={visibleShellModes.map((value) => ({
+              value,
+              label: shellModeLabel(value, t),
+            }))}
+            onChange={(value) => onConfigFieldChange("mode", value)}
+          />
+          {!isRoot && shellMode === "terminal" ? (
+            <p className="text-xs text-mute">{t("settings.poolsPanel.shellSubTerminalHint")}</p>
+          ) : null}
+          {isRoot && shellMode === "terminal" ? (
+            <Checkbox
+              label={t("settings.poolsPanel.terminalVisibility")}
+              helper={t("settings.poolsPanel.terminalVisibilityHelper")}
+              checked={config.terminal_visibility === true}
+              onChange={(event) =>
+                onConfigFieldChange("terminal_visibility", event.target.checked)
+              }
+            />
           ) : null}
         </div>
       ) : null}

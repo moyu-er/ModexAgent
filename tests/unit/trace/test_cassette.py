@@ -22,6 +22,7 @@ from modex_agent.core.message import (
     ToolCall,
 )
 from modex_agent.core.provider import CallbackStreamProvider
+from modex_agent.core.tool_group import ToolGroup
 from modex_agent.core.tool_manager import Tool, ToolConfig, ToolManager, ToolOrigin, ToolResult
 from modex_agent.ioc.configs.observability import CassetteScope
 from modex_agent.trace.cassette import (
@@ -105,6 +106,11 @@ class _ScriptedToolManager(ToolManager):
     def unregister(self, tool_name: str) -> bool:
         return False
 
+    def register_group(
+        self, group: ToolGroup, *, origin: ToolOrigin | None = None
+    ) -> None:
+        pass
+
     def get_tool(self, tool_name: str) -> Tool | None:
         return None
 
@@ -113,6 +119,16 @@ class _ScriptedToolManager(ToolManager):
 
     def is_registered(self, tool_name: str) -> bool:
         return False
+
+    @property
+    def tool_groups(self) -> tuple[ToolGroup, ...]:
+        return ()
+
+    def get_tool_group(self, tool_name: str) -> ToolGroup | None:
+        return None
+
+    def origin_of(self, tool_name: str) -> ToolOrigin | None:
+        return None
 
     async def execute(
         self,
@@ -139,6 +155,11 @@ class _RaisingToolManager(ToolManager):
     def unregister(self, tool_name: str) -> bool:
         return False
 
+    def register_group(
+        self, group: ToolGroup, *, origin: ToolOrigin | None = None
+    ) -> None:
+        pass
+
     def get_tool(self, tool_name: str) -> Tool | None:
         return None
 
@@ -147,6 +168,16 @@ class _RaisingToolManager(ToolManager):
 
     def is_registered(self, tool_name: str) -> bool:
         return False
+
+    @property
+    def tool_groups(self) -> tuple[ToolGroup, ...]:
+        return ()
+
+    def get_tool_group(self, tool_name: str) -> ToolGroup | None:
+        return None
+
+    def origin_of(self, tool_name: str) -> ToolOrigin | None:
+        return None
 
     async def execute(
         self,
@@ -157,9 +188,46 @@ class _RaisingToolManager(ToolManager):
         raise AssertionError("Replay must not call the wrapped tool manager")
 
 
+class _GroupTool(Tool):
+    def __init__(self, name: str) -> None:
+        super().__init__(name=name, description=name, parameters={"type": "object"})
+
+    async def execute(self, **kwargs: object) -> str:
+        return self.name
+
+
 # ------------------------------------------------------------------
 # LLM record / replay
 # ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("wrapper_kind", ["record", "replay"])
+def test_cassette_tool_manager_preserves_group_and_origin_contract(
+    tmp_path: Path,
+    wrapper_kind: str,
+) -> None:
+    from modex_agent.tools.graph_tool_preset import GraphToolPreset
+    from modex_agent.tools.manager import InMemoryToolManager
+
+    base = InMemoryToolManager()
+    if wrapper_kind == "record":
+        wrapped = CassetteRecorder(tmp_path).wrap_tool_executor(base)
+    else:
+        wrapped = CassetteReplayEngine(tmp_path).wrap_tool_executor(base)
+    group = ToolGroup(
+        anchor="shell",
+        variant="persistent",
+        tools=(_GroupTool("shell"), _GroupTool("shell_input")),
+    )
+
+    wrapped.register_group(group, origin=ToolOrigin.CAPABILITY_DERIVED)
+    copied = GraphToolPreset([]).build_tool_manager(wrapped)
+
+    assert wrapped.tool_groups[0].anchor == "shell"
+    assert wrapped.get_tool_group("shell_input") is wrapped.tool_groups[0]
+    assert wrapped.origin_of("shell_input") is ToolOrigin.CAPABILITY_DERIVED
+    assert copied.get_tool("shell") is base.get_tool("shell")
+    assert copied.get_tool("shell_input") is base.get_tool("shell_input")
 
 
 class TestLLMRecordReplay:

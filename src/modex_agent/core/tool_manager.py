@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
 from modex_agent.core.media import MediaStore
 from modex_agent.core.message import ContentFormat, ContentPart, TextPart
+from modex_agent.core.tool_group import ToolGroup
 
 logger = logging.getLogger(__name__)
 
@@ -539,6 +540,32 @@ class ToolManager(ABC):
     @abstractmethod
     def is_registered(self, tool_name: str) -> bool:
         """检查工具是否已注册"""
+        pass
+
+    @abstractmethod
+    def register_group(
+        self,
+        group: ToolGroup,
+        *,
+        origin: ToolOrigin | None = None,
+    ) -> None:
+        """Atomically register every member of one tool group."""
+        pass
+
+    @property
+    @abstractmethod
+    def tool_groups(self) -> tuple[ToolGroup, ...]:
+        """Registered group metadata without resource ownership."""
+        pass
+
+    @abstractmethod
+    def get_tool_group(self, tool_name: str) -> ToolGroup | None:
+        """Return the group containing *tool_name*, if one is registered."""
+        pass
+
+    @abstractmethod
+    def origin_of(self, tool_name: str) -> ToolOrigin | None:
+        """Return the registration origin for one runtime name slot."""
         pass
 
     @property

@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-09-05 -->
+<!-- Updated: 2026-09-10 | shell capability ownership -->
 
 # sandbox
 
@@ -16,7 +16,7 @@ Opt-in execution substrate plus backend-independent permission judgments. Read [
 - Downgrade is not authorization. Main-agent BOUNDARY uses the existing transaction/GraphInterrupt channel when approval is enabled, even with `tools: {}`; disabled approval returns denial. CLEAN reaches inner per-tool rules. Native subagents return errors with allowed roots, never cards, even when parent approval is on. Hard deny findings (write-surface none refusals, protected-path writes) cannot be approved;; SSRF escalates like BOUNDARY.
 - HOST guards are best-effort checks on known targets/command text, not kernel read/write containment. Dynamic scripts and inherited credential environment remain host-capable. No syscall read-isolation claim or default secret-env filtering.
 - Only confirmed pre-command initialization unavailability permits HOST fallback. Generic OS launcher PermissionError propagates; recognized namespace unavailability or a missing executable can degrade. A possibly-submitted command is never replayed.
-- `process` and `terminal` are host-terminal controls. `bash_input` belongs to the final persistent bash manager/session, not a discarded host shell.
+- `process` and `terminal` exist only in the effective HOST terminal group. `bash_input` exists only in the effective persistent group and shares that group's manager; none is independently registered.
 - External provider tools bypass framework ToolNode. Current delegation metadata records limits, not provider enforcement: no provider-neutral permission capability is propagated, file guards are false, kernel enforcement is unknown. Do not invent enforcement or prohibit external agents.
 
 ## Key Files
@@ -27,7 +27,7 @@ Opt-in execution substrate plus backend-independent permission judgments. Read [
 | `selection.py` | `SandboxSelection`, `resolve_selection`, `select_runtime`: single typed probe/factory path; DEFAULT rejected, AUTO resolved away, reasons on fallback |
 | `engine_probe.py` | Cached bwrap/Seatbelt/Docker/Podman probes; `clear_probe_cache` test seam |
 | `runtime.py` | `SandboxRuntime.resolve_available` canonicalizes workspace/extra roots before mount/profile compilation; pre-command availability, startup no-op, telemetry and cleanup contract |
-| `shell_plan.py` | `SandboxBinding`, `ShellAssemblyDeps`, `resolved_binding`, `resolved_substrate`, `build_bash_tool`: common native bash binding; per-session pre-command HOST fallback shared with telemetry |
+| `shell_plan.py` | `SandboxBinding`, `resolved_binding`, `resolved_substrate`: live execution/telemetry binding with per-session pre-command HOST fallback. Shell group construction is owned by `plugins/defaults/capabilities/shell/factory.py`. |
 | `bwrap_runtime.py` | Linux argv compilation and startup validation. `full` retains LOCAL with writable host root bind; `roots` keeps the workspace ro-bound and rw-binds only declared roots; network flag still applies |
 | `seatbelt_runtime.py` | macOS profile compilation, `sandbox-exec -f`, profile lifetime/cleanup and startup validation; simulated tests only, live execution unverified |
 | `oci_runtime.py`, `oci_lifecycle.py`, `oci_support.py` | Selected engine, container lifecycle/config hash, mount compilation/probe, argv products and initialization failure classification |
@@ -47,13 +47,13 @@ Opt-in execution substrate plus backend-independent permission judgments. Read [
 
 The actual YAML shape is `workspace.pools.<pool>.agents.<root>` with `approval`, `interceptors: [+sandbox_guard]` and `interceptor_configs.sandbox_guard.sandbox`. There is no scope-root sandbox field. A roster-enabled guard with DEFAULT settings is a configuration error; registered factory availability does not mean an instance is enabled.
 
-`plugins/defaults/interceptors.py` eagerly resolves the selected substrate before bash construction. `shell_plan.py` passes the shared `SandboxBinding` to execution and telemetry; a pre-command fallback changes only the affected session. `tools/terminal/persistent_bash.py:ensure_input_companion` binds the companion to the resulting persistent manager. PTY cancellation drains the active reader before session reuse. Guard/classifier consumers share `SecurityDecisionService` implementation and settings/root semantics, not necessarily one object instance.
+`plugins/assembly/interceptors.py` resolves the declared sandbox guard before shell construction and adopts it into the per-agent `AssemblyResourceOwner`. The shell capability reads that guard's live `SandboxBinding`; `ShellToolGroupFactory` creates the complete effective group and its dependent resource, which native assembly adopts into the same owner. Successful assembly transfers guard then shell to `AgentInstance`; teardown closes shell then guard, retaining both if shell close fails. A pre-command fallback changes only the affected session. PTY cancellation drains the active reader before session reuse. Guard/classifier consumers share `SecurityDecisionService` implementation and settings/root semantics, not necessarily one object instance.
 
 `multi_agent/template.py:materialize` derives the effective settings through `delegation.resolve_agent_sandbox` — the ONE derivation: an undeclared subagent inherits the caller wholesale (a dormant caller normalizes to guard-only HOST), a declared block is authoritative for the permission face while the substrate (backend/network/image) stays with the caller, and every declared path must fit the caller envelope (a delegation can only narrow, never amplify — violations fail assembly). DEFAULT still skips substrate construction/probing but native delegation installs a guard-only classifier. External strategies receive truthful metadata, not framework tool enforcement.
 
 Path normalization/containment belongs to `workspace/boundary.py`. Runtime compilation canonicalizes workspace/extra roots first; native main/subagent file and AST path tools use the same workspace wrapper. Known child file writes use the caller workspace + validated declared roots; child reads (parallel class) are unrestricted by default. Nonempty whitespace spelling is preserved, and explicit relative cwd shares canonical permission/approval-anchor semantics. Additional roots are not authorized by approval, and changing configuration does not mutate an existing delegation snapshot. See the [multi-root example](../../../docs/design/unified-security/PRD.md#multi-root-example) for relative and host-native absolute paths.
 
-All three bash implementations share tool-name judging: terminal trio execution is HOST, persistent PTY uses selected argv, and subprocess uses the selected prefix. Approval waives only the matching BOUNDARY backstop, never kernel bounds; approved outside-envelope shell calls may still fail at the OS boundary. Graph turns are noninteractive and retain active guard-only classification; DEFAULT is filtered before that wiring. Native delegation receives the pool audit sink, keeping ESCALATED and APPROVED distinct.
+All three shell variants share tool-name judging: terminal-group execution is HOST, persistent PTY uses selected argv, and subprocess uses the selected prefix. LOCAL/OCI terminal requests select their persistent/subprocess variant without changing substrate. Approval waives only the matching BOUNDARY backstop, never kernel bounds; approved outside-envelope shell calls may still fail at the OS boundary. Graph turns are noninteractive and retain active guard-only classification; DEFAULT is filtered before that wiring. Native delegation receives the pool audit sink, keeping ESCALATED and APPROVED distinct.
 
 ## Independent Web Safety
 

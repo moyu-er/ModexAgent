@@ -167,7 +167,7 @@ def _facets(text: str) -> dict[str, object]:
 def main() -> None:
     shapes = {name: _facets(text) for name, text in _DECLARATIONS.items()}
     payload = {
-        "captured_on": "name-slot overwrite era (O3 compile-time replacement removed)",
+        "captured_on": "name-slot overwrite era after shell capability extraction",
         "shapes": shapes,
     }
     out = _DIR / "facets.json"

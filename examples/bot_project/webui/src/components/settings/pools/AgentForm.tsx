@@ -48,6 +48,7 @@ import {
   removeDeclaredHook,
   restoreHook,
   setCapabilityMode,
+  setCapabilityConfigField,
   setField,
   setInterceptor,
   toggleInListField,
@@ -196,24 +197,6 @@ export function AgentForm({
                 );
               }}
             />
-            {isRoot ? (
-              <div className="space-y-2">
-                <Checkbox
-                  label={t("settings.poolsPanel.useTerminal")}
-                  checked={body.use_terminal === true}
-                  onChange={(e) =>
-                    updateAgent((b) => setField(b, "use_terminal", e.target.checked))
-                  }
-                />
-                <Checkbox
-                  label={t("settings.poolsPanel.terminalVisibility")}
-                  checked={body.terminal_visibility === true}
-                  onChange={(e) =>
-                    updateAgent((b) => setField(b, "terminal_visibility", e.target.checked))
-                  }
-                />
-              </div>
-            ) : null}
           </>
         ) : null}
       </FormSection>
@@ -231,8 +214,12 @@ export function AgentForm({
                   bundle={options.capability_bundles[name] ?? null}
                   isRoot={isRoot}
                   mode={capabilityMode(body, name)}
+                  config={nestedMap(body, "capabilities", name) ?? {}}
                   onModeChange={(mode: CapabilityMode) =>
                     updateAgent((b) => setCapabilityMode(b, name, mode))
+                  }
+                  onConfigFieldChange={(key, value) =>
+                    updateAgent((b) => setCapabilityConfigField(b, name, key, value))
                   }
                 />
               ))}

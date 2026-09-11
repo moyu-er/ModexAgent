@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-17 -->
+<!-- Updated: 2026-09-10 | scope shell manifests -->
 
 # webui
 
@@ -17,6 +17,7 @@ WebUI backend — aiohttp server with REST API, WebSocket, and transcript storag
 | `routes/sessions/` | Session/Messages/Todos/Approvals/Attachments routes — `GET|POST /api/sessions`, `GET /api/sessions/{id}/messages`, todos, approvals, attachments, media config. Split into `__init__.py` (register + helpers), `lifecycle.py`, `messages.py`, `approvals.py`, `attachments.py` |
 | `routes/workspace.py` | Workspace routes — `GET /api/workspace`, `POST /api/workspace/cd`, `POST /api/workspace/pick`, `GET /api/workspace/recent`, media tmp sweep |
 | `routes/pool_config/` | Pool/MCP/Skills/Prompts routes — 22 handlers for `GET|POST|PUT|DELETE /api/pools/*`, `/api/mcp/*`, `/api/skills/*`, `/api/prompts/*`. Split into `__init__.py` (register + helpers), `pools.py`, `mcp.py`, `skills.py`, `prompts.py` |
+| `routes/scope_models.py`, `routes/scope_routes.py` | Scope declaration/model/options/preview/bill API. Tool-group manifests contain compile-time candidate variants only. `/api/scope/options` derives shell modes and candidate groups from the registered capability schema/contributions; it performs no runtime backend probe. Canonical writes preserve `capabilities.shell` and emit no legacy terminal fields. |
 | `routes/websocket/__init__.py` | WebSocket entry point + action dispatch — `GET /ws`, `dispatch_ws_message` |
 | `routes/websocket/attach.py` | WS ATTACH action: session registration, eligibility-gated pool-route writes (rules in "Conversation Attribution"), deferred materialize |
 | `routes/websocket/messaging.py` | WS SEND_MESSAGE action — user message → input pipeline → enqueue |
@@ -45,6 +46,9 @@ WebUI backend — aiohttp server with REST API, WebSocket, and transcript storag
 | GET | `/api/workspace/browse?path=...` | Directory browser for workspace selection. |
 | POST | `/api/workspace/cd` | Change workspace (`{"path": "/target"}`). |
 | GET | `/api/workspace/recent` | Recently visited workspace paths. |
+| GET | `/api/scope/options` | Registry-derived settings options, capability config schemas, and candidate tool-group manifests. |
+| POST | `/api/scope/preview` | Compile a draft model and return its effective bill without committing. |
+| GET/PUT | `/api/scope/model` | Read/write the structured scope declaration tree; successful writes are canonical and restart-effective. |
 | GET | `/ws` | WebSocket for real-time chat and streaming. Attach with `{uuid_prefix, pool, ws}` for new conversations, or `{session_id, ws, pool}` for existing ones. `send_message` payload includes `_request_id` for optimistic-message dedup and `pool` for pool-scoped writes. |
 
 ## Conversation Attribution
@@ -83,6 +87,7 @@ Each WebSocket connection is tracked by `_WsConnectionState`:
 - Conversation attribution is split (see "Conversation Attribution" above): pool ownership resolves tree-first via `SessionPoolIndex`, with the `PoolSessionStore` prefix route only as a legacy fallback; routing is a first-class parameter carried by every request (`?pool=` on REST, `pool` in WS payload) whose writes are gated to explicit intent (S5 `explicit_pool`, attach bootstrap / main-session switch). Workspace is derived from `?ws=` via `_ws_root_of` / `_sessions_dir_of_ws` / `_index_dir_of_ws`, and session records live in the per-workspace `SessionStore` JSONL index. There is no `_conv_meta` dict, no `conversations.json`, and no `agent_name → pool` reverse-lookup map: pool is never inferred from agent_name.
 - Late-binding configuration is injected by `WebUIService` after init via `set_pool_switch_callback()`, `set_workspace_control()` (NOT `set_workspace_context`), `set_pool_resolver()`, `set_graph_workspace_resolver()`, `set_agent_resolver()`, `set_workspace_index()`, `set_session_store()`, `set_session_factory()`, `set_input_pipeline()`, `set_input_context()`, `set_data_dir_name()`, `set_pool_agent_names()`, `set_recent_workspaces()`.
 - WebSocket messages follow `action`/`payload` protocol defined in `events.py`.
+- Scope bill/options manifests are compile-time candidates. Do not label one as the effective runtime shell variant; `ShellToolGroupFactory` reports that selection through structured logs.
 - **Session isolation**: switching conversations via `attach` must unregister every previous session (main + pool agents + subagents), not just the main session. `_WsConnectionState.cleanup()` handles this.
 - **Multicast delta queues**: each session maps to one delta queue PER attached connection (workspace tabs can duplicate a conversation across pods). `register_connection` returns the caller's own queue, `send_envelope` fans out to all of a session's queues, and `cleanup`/`unregister_connection` only ever touch the calling connection's queues — closing one tab must never kill another tab's stream. `register_subagent(child, parent)` is the dispatch-time seam that pairs the anonymous pre-attach buffer with its genealogy link; the buffer is adopted by the first registrant, or dropped on `turn_end` if no ancestor has a live connection (IM-driven turns no browser opens), so queue entries never accumulate unboundedly. The genealogy map itself is append-only — late envelopes after all observers detach still resolve parent ids (`get_parent`/`ancestors`).
 

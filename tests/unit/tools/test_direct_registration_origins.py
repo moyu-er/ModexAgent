@@ -1,14 +1,9 @@
 """Origin annotations of the direct tool-registration paths (T3).
 
-Two FW paths register tools OUTSIDE the compiled roster, each with a
-dedicated origin semantic:
-
-- ``ensure_input_companion`` registers the structural ``bash_input``
-  companion as INTERNAL — the name slot is protected, so a later roster
-  entry named ``bash_input`` cannot break the persistent-shell pairing;
-- ``load_per_agent_mcp`` registers adapted MCP tools as EXTERNAL — they
-  rely on namespace-prefix isolation and never displace an existing slot
-  on an unexpected same-name collision.
+MCP registers adapted tools outside the compiled roster as EXTERNAL. They
+rely on namespace-prefix isolation and never displace an existing slot on
+an unexpected same-name collision. Shell companions now arrive only as
+members of an atomic compiled tool group.
 """
 
 from __future__ import annotations
@@ -18,20 +13,12 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from modex_agent.core.tool_manager import Tool, ToolOrigin, ToolOverrideRecord
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.mcp.client import BaseMCPClient
 from modex_agent.tools.mcp.injector import MCPTransportInjector
 from modex_agent.tools.mcp.registry import McpConnectionRegistry
 from modex_agent.tools.mcp_loader import load_per_agent_mcp
-from modex_agent.tools.terminal.persistent_bash import (
-    BashInputTool,
-    PersistentBashTool,
-    ensure_input_companion,
-    persistent_bash_supported,
-)
 
 
 class _FakeTool(Tool):
@@ -42,27 +29,6 @@ class _FakeTool(Tool):
 
     async def execute(self, **kwargs: Any) -> str:  # pragma: no cover
         return "ok"
-
-
-# ── ensure_input_companion → INTERNAL ───────────────────────────────────────
-
-
-class TestBashInputCompanionOrigin:
-    @pytest.mark.skipif(
-        not persistent_bash_supported(), reason="persistent bash needs a POSIX pty"
-    )
-    def test_companion_slot_is_protected_against_roster_registration(self) -> None:
-        """The companion registers INTERNAL: a later roster-style
-        registration of ``bash_input`` raises instead of displacing the
-        structural pairing."""
-        manager = InMemoryToolManager()
-        bash = PersistentBashTool()
-        ensure_input_companion(manager, bash)
-
-        assert isinstance(manager.get_tool("bash_input"), BashInputTool)
-        with pytest.raises(ValueError, match="bash_input"):
-            manager.register(_FakeTool("bash_input"), origin=ToolOrigin.PRESET)
-        assert isinstance(manager.get_tool("bash_input"), BashInputTool)
 
 
 # ── load_per_agent_mcp → EXTERNAL ───────────────────────────────────────────

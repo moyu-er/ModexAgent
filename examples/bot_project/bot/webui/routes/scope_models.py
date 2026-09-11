@@ -11,6 +11,8 @@ the handler boundary.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from modex_agent.core.tool_manager import ToolOrigin
@@ -96,6 +98,26 @@ class ScopeHookBill(BaseModel):
     capability: str | None = None
 
 
+class ScopeToolGroupVariant(BaseModel):
+    """One candidate runtime variant and its exact ordered tool names."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    tools: list[str]
+
+
+class ScopeToolGroupManifest(BaseModel):
+    """Candidate variants plus the group anchor's compile-time attribution."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    anchor: str
+    origin: ToolOrigin
+    capability: str | None = None
+    variants: list[ScopeToolGroupVariant]
+
+
 class ScopeCapabilityContributionBill(BaseModel):
     """One capability contribution with its compile-time gating result."""
 
@@ -127,6 +149,7 @@ class ScopeAgentBill(BaseModel):
     root: bool
     fields: list[ScopeFieldBill]
     tools: list[ScopeToolBill]
+    tool_groups: list[ScopeToolGroupManifest] = Field(default_factory=list)
     hooks: list[ScopeHookBill] = Field(default_factory=list)
     capabilities: list[ScopeCapabilityBill] = Field(default_factory=list)
 
@@ -195,6 +218,27 @@ class ScopePositionDefaultRow(BaseModel):
     registration: str
 
 
+class ScopeConfigValueType(StrEnum):
+    """JSON-schema scalar/container kinds exposed to form renderers."""
+
+    STRING = "string"
+    BOOLEAN = "boolean"
+    INTEGER = "integer"
+    NUMBER = "number"
+    ARRAY = "array"
+    OBJECT = "object"
+
+
+class ScopeCapabilityConfigField(BaseModel):
+    """One capability config field derived from its registered model schema."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    value_type: ScopeConfigValueType
+    default: JsonValue = None
+    choices: list[JsonValue] = Field(default_factory=list)
+
+
 class ScopeCapabilityBundle(BaseModel):
     """What a capability carries (ADR-0047) — these ride the bundle and are
     NOT independently declarable in the panel."""
@@ -202,7 +246,9 @@ class ScopeCapabilityBundle(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     tools: list[str]
+    tool_groups: list[ScopeToolGroupManifest] = Field(default_factory=list)
     hooks: list[str]
+    config_fields: dict[str, ScopeCapabilityConfigField] = Field(default_factory=dict)
 
 
 class ScopeOptionsResponse(BaseModel):
@@ -236,7 +282,9 @@ __all__ = [
     "ScopeBillResponse",
     "ScopeCapabilityBill",
     "ScopeCapabilityBundle",
+    "ScopeCapabilityConfigField",
     "ScopeCapabilityContributionBill",
+    "ScopeConfigValueType",
     "ScopeDeclarationResponse",
     "ScopeDeclarationSaveResponse",
     "ScopeDeclarationUpdateRequest",
@@ -248,5 +296,7 @@ __all__ = [
     "ScopePoolTopology",
     "ScopePositionDefaultRow",
     "ScopeToolBill",
+    "ScopeToolGroupManifest",
+    "ScopeToolGroupVariant",
     "ScopeTopologyResponse",
 ]

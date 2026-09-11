@@ -37,6 +37,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel, ConfigDict
 
+from modex_agent.core.tool_manager import Tool
 from modex_agent.hook import Hook, HookRunner
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.plugins.abc import (
@@ -94,8 +95,21 @@ pytestmark = [
 
 # ─── Sentinels ──────────────────────────────────────────────────────────────
 
-_CUSTOM_TOOL = MagicMock()
-_CUSTOM_TOOL.name = "custom_tool"
+
+class _CustomTool(Tool):
+    def __init__(self) -> None:
+        super().__init__(
+            name="custom_tool",
+            description="Integration fixture tool",
+            parameters={"type": "object", "properties": {}},
+        )
+
+    async def execute(self, **kwargs: object) -> str:
+        del kwargs
+        return "custom tool result"
+
+
+_CUSTOM_TOOL = _CustomTool()
 
 
 class _ProbeHook(Hook):

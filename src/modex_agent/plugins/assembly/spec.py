@@ -23,6 +23,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.core.tool_group import ToolGroupSpec
 from modex_agent.core.tool_manager import ToolOrigin
 from modex_agent.plugins.abc import AgentType
 from modex_agent.plugins.capability import CompiledCapability
@@ -110,6 +111,8 @@ class AssemblySpec(BaseModel):
     """Tool roster as ``(name, origin)`` entries — origin feeds the
     same-name override arbitration at registration (the compiler's
     classification, carried forward; roster order preserved)."""
+    tool_groups: tuple[ToolGroupSpec, ...] = ()
+    """Group manifests whose anchors survived the final tool merge."""
     tool_configs: dict[str, dict[str, Any]] = Field(default_factory=dict)
     hooks: list[str]
     hook_configs: dict[str, dict[str, Any]] = Field(default_factory=dict)

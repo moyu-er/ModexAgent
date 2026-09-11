@@ -216,10 +216,11 @@ class BaseTerminalManager(TerminalManagerBase):
         return result
 
     async def close(self, name: str) -> bool:
-        session = self._sessions.pop(name, None)
+        session = self._sessions.get(name)
         if session is None:
             return False
         await session.terminate()
+        self._sessions.pop(name, None)
         if self._default_name == name:
             self._default_name = next(iter(self._sessions), None)
         return True
@@ -278,45 +279,33 @@ def create_terminal_manager(
 
 def create_terminal_manager_or_none(
     *,
-    use_terminal: bool,
     terminal_visibility: bool,
-    pool_name: str,
+    owner_name: str,
     default_cwd: str | None = None,
 ) -> TerminalManagerBase | None:
-    """Pool terminal manager with the platform/backend fallback ladder.
+    """Build a terminal manager through the platform/backend fallback ladder.
 
-    ``use_terminal`` governs exactly one thing (SPEC scope-assembly §5.1):
-    whether the terminal manager — infrastructure — is built. The tool
-    roster (``bash``/``process``/``terminal``) is assembled independently
-    through the TOOL-slot factories; bash degrades to SubprocessTool when
-    no manager exists, process/terminal raise.
-
-    Ladder (real platform logic, not glue — not config-ized): shell
+    The shell capability calls this only for a native main agent requesting
+    its terminal variant. Ladder (real platform logic, not glue): shell
     detection -> requested-visibility attempt -> fallback visibility ->
-    None (SubprocessTool-only) so the agent still works. Migrated from the
-    BIZ ``builders._build_terminal_manager`` (ADR-0010 two-axis
-    construction; ``terminal_visibility`` True -> VISIBLE, False ->
-    HIDDEN).
+    ``None``, after which the owning shell factory continues down its
+    persistent/subprocess ladder. ``terminal_visibility=True`` means
+    VISIBLE then HIDDEN; false means HIDDEN only.
 
     Args:
-        use_terminal: ``False`` -> no manager (logged, info).
         terminal_visibility: requested visibility axis.
-        pool_name: log-context label only.
+        owner_name: agent label used only for logs.
         default_cwd: workspace default cwd for new sessions.
 
     Returns:
-        A ``TerminalManagerBase``, or ``None`` when terminal support is
-        disabled or every backend is unavailable on this platform.
+        A ``TerminalManagerBase``, or ``None`` when every backend is
+        unavailable on this platform.
     """
-    if not use_terminal:
-        logger.info("Pool '%s': use_terminal=false, skipping terminal tools", pool_name)
-        return None
-
     shell_info = detect_platform_shell()
     if shell_info is None:
         logger.warning(
-            "Pool '%s': no supported shell detected; falling back to SubprocessTool.",
-            pool_name,
+            "Shell owner '%s': no supported terminal shell detected.",
+            owner_name,
         )
         return None
 
@@ -335,8 +324,8 @@ def create_terminal_manager_or_none(
                 default_cwd=default_cwd,
             )
             logger.info(
-                "Pool '%s': terminal manager created (family=%s, visibility=%s)",
-                pool_name,
+                "Shell owner '%s': terminal manager created (family=%s, visibility=%s)",
+                owner_name,
                 shell_info.family.value,
                 vis.value,
             )
@@ -344,8 +333,8 @@ def create_terminal_manager_or_none(
         except UnsupportedVisibilityForTransport as exc:
             last_err = exc
             logger.warning(
-                "Pool '%s': terminal backend (family=%s, visibility=%s) unavailable: %s",
-                pool_name,
+                "Shell owner '%s': terminal backend (family=%s, visibility=%s) unavailable: %s",
+                owner_name,
                 shell_info.family.value,
                 vis.value,
                 exc,
@@ -353,17 +342,16 @@ def create_terminal_manager_or_none(
         except Exception as exc:
             last_err = exc
             logger.warning(
-                "Pool '%s': terminal backend (family=%s, visibility=%s) failed: %s",
-                pool_name,
+                "Shell owner '%s': terminal backend (family=%s, visibility=%s) failed: %s",
+                owner_name,
                 shell_info.family.value,
                 vis.value,
                 exc,
             )
 
     logger.error(
-        "Pool '%s': ALL terminal backends failed (tried %s). Last error: %s. "
-        "Falling back to SubprocessTool only.",
-        pool_name,
+        "Shell owner '%s': all terminal backends failed (tried %s). Last error: %s.",
+        owner_name,
         attempts,
         last_err,
     )
@@ -381,4 +369,3 @@ def _make_backend_factory(visibility: TerminalVisibility) -> Callable[[], Termin
         return create_pty_backend(visibility=visibility)
 
     return _factory
-

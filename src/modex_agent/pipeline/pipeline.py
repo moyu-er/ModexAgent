@@ -103,6 +103,7 @@ class AgentPipeline:
         self._running = False
         self._dream_task: asyncio.Task | None = None
         self._dream_scanner: DreamScanner | None = None
+        self._turns_drained = False
 
     # ── Backward-compat read-only delegation properties ──────────────────
 
@@ -233,7 +234,19 @@ class AgentPipeline:
         ``AgentResult | None`` contract (FINISHED → result, otherwise None);
         pool dispatch consumes the typed fact directly (DESIGN.md §6.3).
         """
-        return await self._process_message_outcome(input_msg)
+        task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("pipeline request has no owning asyncio task")
+        await self._registry.admit(task)
+        try:
+            return await self._process_message_outcome(input_msg)
+        finally:
+            self._registry.release(task)
+
+    @property
+    def turns_drained(self) -> bool:
+        """Whether shutdown closed admission and confirmed all requests settled."""
+        return self._turns_drained
 
     def is_session_active(self, session_id: str) -> bool:
         """Check if a turn is currently executing for this session."""
@@ -253,7 +266,7 @@ class AgentPipeline:
 
     async def _process_message(self, input_msg: InputMessage) -> AgentResult | None:
         """处理单个消息（内部入口 — ``on_drain`` 兼同合同）。"""
-        return (await self._process_message_outcome(input_msg)).result
+        return (await self.process_message_outcome(input_msg)).result
 
     async def _process_message_outcome(self, input_msg: InputMessage) -> TurnOutcome:
         """处理单个消息（内部 typed producer — 所有 return 点的单一事实源）。"""
@@ -411,15 +424,38 @@ class AgentPipeline:
             except Exception:
                 logger.debug("cleanup_session failed for %s", session_id, exc_info=True)
 
-    async def stop(self) -> None:
+    async def stop(self) -> bool:
         """停止流水线"""
         self._running = False
-        for sid in self._registry.session_ids():
-            await self.cleanup_session_resources(sid)
+        if not await self._registry.close_admission_and_drain():
+            logger.warning(
+                "Pipeline stop retained resources because a current turn is still active"
+            )
+            return False
+        self._turns_drained = True
         logger.info("Pipeline stop requested, waiting for current message to complete...")
+        first_error: BaseException | None = None
+        for sid in self._registry.session_ids():
+            try:
+                await self.cleanup_session_resources(sid)
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+                logger.exception("Session cleanup failed during pipeline stop: %s", sid)
         try:
             hook_runner = self.hook_runner
             if hook_runner is not None:
                 await hook_runner.aclose()
-        finally:
+        except BaseException as exc:
+            if first_error is None:
+                first_error = exc
+            logger.exception("Hook cleanup failed during pipeline stop")
+        try:
             await self.agent.stop()
+        except BaseException as exc:
+            if first_error is None:
+                first_error = exc
+            logger.exception("Agent cleanup failed during pipeline stop")
+        if first_error is not None:
+            raise first_error
+        return True

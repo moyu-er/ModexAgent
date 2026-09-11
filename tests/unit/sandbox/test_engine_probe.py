@@ -2,11 +2,10 @@
 
 CLI existence/version probing for bwrap / sandbox-exec / docker / podman with
 a per-process result cache. Probes are async and use ``shutil.which`` +
-``subprocess`` version checks; tests monkeypatch both layers. ``probe_bwrap``
-additionally runs a real sandbox smoke after the version check (userns/mount
-proof) — tests monkeypatch the smoke seam the same way, plus one test that
-runs the real seams against a patched ``subprocess.run`` to prove the event
-loop stays responsive while a CLI check is in flight.
+``subprocess`` checks; tests monkeypatch both layers. Local engine probes run
+real no-op sandbox smokes — tests monkeypatch the smoke seam the same way,
+plus one test that runs the real seams against a patched ``subprocess.run``
+to prove the event loop stays responsive while a CLI check is in flight.
 """
 
 from __future__ import annotations
@@ -145,12 +144,24 @@ class TestProbeAvailable:
         assert "0.10.0" in result.detail
 
     async def test_seatbelt_available(self, patch_probe_layers: Any) -> None:
-        patch_probe_layers(
+        smoke = FakeVersionRunner({"sandbox-exec": (0, "")})
+        version = patch_probe_layers(
             {"sandbox-exec": "/usr/bin/sandbox-exec"},
             {"sandbox-exec": (0, "sandbox-exec 1")},
+            smoke,
         )
         result = await probe_seatbelt()
         assert result.available is True
+        assert version.calls == []
+        assert smoke.calls == [
+            [
+                "sandbox-exec",
+                "-p",
+                "(version 1)(allow default)",
+                "/usr/bin/true",
+            ]
+        ]
+        assert "-n" not in smoke.calls[0]
 
     async def test_docker_available(self, patch_probe_layers: Any) -> None:
         patch_probe_layers(
@@ -191,9 +202,11 @@ class TestProbeUnavailable:
         assert result.available is False
 
     async def test_seatbelt_missing(self, patch_probe_layers: Any) -> None:
-        patch_probe_layers({}, {})
+        smoke = FakeVersionRunner({"sandbox-exec": (0, "")})
+        patch_probe_layers({}, {}, smoke)
         result = await probe_seatbelt()
         assert result.available is False
+        assert smoke.calls == []
 
     async def test_version_check_fails(self, patch_probe_layers: Any) -> None:
         patch_probe_layers(
@@ -312,6 +325,47 @@ class TestBwrapSmokeCheck:
         assert smoke.calls == []
 
 
+class TestSeatbeltSmokeCheck:
+    """``probe_seatbelt`` executes a fixed no-op inside sandbox-exec."""
+
+    async def test_smoke_failure_preserves_actionable_stderr(self, patch_probe_layers: Any) -> None:
+        smoke = FakeVersionRunner(
+            {"sandbox-exec": (65, "sandbox-exec: profile parse failed at line 1")}
+        )
+        patch_probe_layers({"sandbox-exec": "/usr/bin/sandbox-exec"}, {}, smoke)
+
+        result = await probe_seatbelt()
+
+        assert result.available is False
+        assert "exit 65" in result.detail
+        assert "profile parse failed at line 1" in result.detail
+
+    async def test_smoke_timeout_reports_unavailable(self, patch_probe_layers: Any) -> None:
+        smoke = ExplodingVersionRunner(subprocess.TimeoutExpired(cmd=["sandbox-exec"], timeout=10))
+        patch_probe_layers({"sandbox-exec": "/usr/bin/sandbox-exec"}, {}, smoke)
+
+        result = await probe_seatbelt()
+
+        assert result.available is False
+        assert "sandbox smoke timed out" in result.detail
+
+    async def test_smoke_oserror_preserves_cause(self, patch_probe_layers: Any) -> None:
+        smoke = ExplodingVersionRunner(OSError("spawn failed"))
+        patch_probe_layers({"sandbox-exec": "/usr/bin/sandbox-exec"}, {}, smoke)
+
+        result = await probe_seatbelt()
+
+        assert result.available is False
+        assert "spawn failed" in result.detail
+
+    async def test_smoke_permission_error_propagates(self, patch_probe_layers: Any) -> None:
+        smoke = ExplodingVersionRunner(PermissionError(13, "launcher denied"))
+        patch_probe_layers({"sandbox-exec": "/usr/bin/sandbox-exec"}, {}, smoke)
+
+        with pytest.raises(PermissionError, match="launcher denied"):
+            await probe_seatbelt()
+
+
 class TestProbeCaching:
     """Results are cached per process — the second probe spawns no subprocess."""
 
@@ -334,6 +388,17 @@ class TestProbeCaching:
         second = await probe_bwrap()
         assert first is second
         assert len(runner.calls) == 1
+        assert len(smoke.calls) == 1
+
+    async def test_seatbelt_smoke_runs_once_then_caches(self, patch_probe_layers: Any) -> None:
+        smoke = FakeVersionRunner({"sandbox-exec": (0, "")})
+        version = patch_probe_layers({"sandbox-exec": "/usr/bin/sandbox-exec"}, {}, smoke)
+
+        first = await probe_seatbelt()
+        second = await probe_seatbelt()
+
+        assert first is second
+        assert version.calls == []
         assert len(smoke.calls) == 1
 
     async def test_clear_cache_reprobes(self, patch_probe_layers: Any) -> None:

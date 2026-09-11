@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-09-02 -->
+<!-- Updated: 2026-09-10 | atomic tool-group contracts -->
 
 # core
 
@@ -7,7 +7,7 @@ Abstract base classes and shared types forming the framework's type-safe foundat
 
 ## Purpose
 
-The `core/` module defines foundational contracts and values used directly across the framework: agents, emitters, canonical messages, LLM requests/results, tools, media, `MessageHistory`, system-prompt seams, session identity, and `RecordScope`. Concrete memory/context behavior lives in `memory/`; session stores and registries live in `persistence/`. The graph engine is the standalone `modex_graph` package (ADR-0033).
+The `core/` module defines foundational contracts and values used directly across the framework: agents, emitters, canonical messages, LLM requests/results, tools and atomic tool groups, media, `MessageHistory`, system-prompt seams, session identity, and `RecordScope`. Concrete memory/context behavior lives in `memory/`; session stores and registries live in `persistence/`. The graph engine is the standalone `modex_graph` package (ADR-0033).
 
 ## Key Files
 
@@ -30,6 +30,7 @@ The `core/` module defines foundational contracts and values used directly acros
 | `session_id.py` | `SessionInfo`, `SessionIdFactory`, and identity encoding/parsing helpers; persistence lives in `persistence/`. |
 | `stream_events.py` | Closed LLM stream-event union and `EventAssembler`. |
 | `tool_manager.py` | Tool/manager contracts, execution values, and shared execution behavior; `ToolOrigin` + `ToolOrigin.OVERRIDE_PRIORITY` (name-slot overwrite arbitration — `tool.name` is the runtime identity, moved from `scope/compiler.py`); `InMemoryToolManager` lives in `tools/manager.py`. |
+| `tool_group.py` | Atomic group contracts: frozen compile-time `ToolGroupSpec` / `ToolGroupVariant`; runtime `ToolGroup` (anchor, selected variant, exact tools, optional resource); `ToolGroupResource` ABC with idempotent async `aclose()`. Concrete registration and ownership live in `tools/` and `plugins/assembly/`. |
 | `turn_events.py` | Provider-neutral semantic `TurnEvent` variants. |
 
 ## For AI Agents
@@ -39,6 +40,7 @@ The `core/` module defines foundational contracts and values used directly acros
 - `AgentContext` is a dataclass — new fields must have `None` defaults
 - Event enums: `class MyEvent(AgentEvent, Enum)`
 - **`Tool` is in `tool_manager.py` (not `tool.py` — deleted in C2)**. Dual-mode: pass args to `__init__` OR define `@property` name/description/parameters
+- A `ToolGroupSpec` is a candidate manifest, not a runtime selection report. A runtime `ToolGroup` must match one declared variant exactly; its resource has one lifecycle owner outside the tool manager.
 - `from __future__ import annotations` in all modules
 
 ### Type Safety

@@ -1,5 +1,10 @@
 # 05 — Terminal trio + todo via roster (first vertical slice)
 
+> Historical closed ticket (2026-08-21). Its `use_terminal`, independent trio
+> factories, and pool-owned manager describe an intermediate migration state,
+> not the current API. The living replacement is
+> [`docs/design/shell-capability/SPEC.md`](../../shell-capability/SPEC.md).
+
 **What to build:** The terminal trio (`bash`/`process`/`terminal`) and the todo tool assemble entirely through the roster + factory path for one pool; the business glue dies. `use_terminal` now governs exactly one thing: whether the terminal manager (infrastructure) is built. Platform/backend selection (winpty/tmux/pexpect fallback ladder) stays inside the FW manager factory — it is real platform logic, not glue, and is not config-ized. The bash-without-backend degradation to `SubprocessTool` becomes factory-internal behavior, invisible to config. The ACI same-name replacement is resolved at compile time with an auditable record (`edit ← aci`). This ticket proves the design's load-bearing assumption end to end: a factory reading the context chain gets everything it needs.
 
 **Blocked by:** 04 (factories read from the context chain).

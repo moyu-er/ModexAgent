@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -10,7 +11,7 @@ from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.provider import LLMProvider
-from modex_agent.core.tool_manager import Tool
+from modex_agent.core.tool_manager import Tool, ToolManager
 from modex_agent.hook import Hook
 from modex_agent.ioc.factories.governance import create_governance
 from modex_agent.ioc.factories.memory import create_memory
@@ -30,12 +31,14 @@ from modex_agent.plugins.assembly.context import (
     agent_context_chain,
     resolution_context,
 )
+from modex_agent.plugins.assembly.interceptors import assemble_interceptor_chain
 from modex_agent.plugins.assembly.native_core import (
     LlmDefaults,
     NativeAssemblyInputs,
     _resolve_single,
     assemble_native_agent,
 )
+from modex_agent.plugins.assembly.resources import AssemblyResourceOwner
 from modex_agent.plugins.capability import CapabilitySupply, PoolSupplyView
 from modex_agent.plugins.defaults.capabilities.skills import (
     SKILLS_CAPABILITY_NAME,
@@ -52,6 +55,14 @@ from modex_agent.workspace.paths import WorkspacePaths
 
 if TYPE_CHECKING:
     from modex_agent.trace.otel_store import OtelSpanTraceStore
+
+
+class _StaticRootProvider(WorkspaceRootProvider):
+    def __init__(self, root: Path) -> None:
+        self._root = root
+
+    def current(self) -> Path:
+        return self._root
 
 
 class SingleAgentInfra:
@@ -88,7 +99,7 @@ class SingleAgentAssembled:
         instance: AgentInstance,
         memory_system: MemorySystem,
         context_manager: MemorySystemContextManager,
-        tool_manager: InMemoryToolManager,
+        tool_manager: ToolManager,
         descriptor: AgentDescriptor,
         capability_supplies: tuple[CapabilitySupply, ...],
     ) -> None:
@@ -99,15 +110,31 @@ class SingleAgentAssembled:
         self.descriptor = descriptor
         self._capability_supplies = capability_supplies
 
-    async def close(self) -> None:
+    async def close(self) -> bool:
         """Stop the agent, capability supplies, and memory in ownership order."""
+        first_error: BaseException | None = None
         try:
-            await self.instance.stop()
-        finally:
-            try:
-                await stop_capability_supplies(self._capability_supplies)
-            finally:
-                await self.memory_system.close()
+            stopped = await self.instance.stop()
+        except BaseException as exc:
+            if not self.instance.drain_confirmed or self.instance.resources:
+                raise
+            stopped = True
+            first_error = exc
+        if not stopped:
+            return False
+        try:
+            await stop_capability_supplies(self._capability_supplies)
+        except BaseException as exc:
+            if first_error is None:
+                first_error = exc
+        try:
+            await self.memory_system.close()
+        except BaseException as exc:
+            if first_error is None:
+                first_error = exc
+        if first_error is not None:
+            raise first_error
+        return True
 
 
 async def _resolve_provider(
@@ -162,6 +189,7 @@ async def assemble_declared_single_agent(
 ) -> SingleAgentAssembled:
     """Assemble one compiled root without a pool, bus, inbox, or poller."""
     spec = compiled.spec
+    root_provider = infra.root_provider or _StaticRootProvider(project_dir)
     workspace_ctx = WorkspaceContext(
         target=project_dir,
         paths=WorkspacePaths(root=data_dir),
@@ -171,7 +199,7 @@ async def assemble_declared_single_agent(
         component_registry,
         workspace_ctx,
         PoolRuntimeDeps(
-            root_provider=infra.root_provider,
+            root_provider=root_provider,
             emitter_factory=infra.emitter_factory,
         ),
     )
@@ -190,14 +218,28 @@ async def assemble_declared_single_agent(
         ),
     )
     memory_system: MemorySystem | None = None
+    resource_owner = AssemblyResourceOwner()
     try:
         component_ctx = resolution_context(
             component_registry,
             workspace_ctx,
             PoolRuntimeDeps(
-                root_provider=infra.root_provider,
+                root_provider=root_provider,
                 emitter_factory=infra.emitter_factory,
                 capability_supply=capability_supply,
+            ),
+        )
+        interceptor_chain = await assemble_interceptor_chain(
+            spec,
+            agent_context_chain(component_ctx, spec=spec),
+            resource_owner,
+        )
+        assert component_ctx.pool_runtime is not None
+        component_ctx = dataclasses.replace(
+            component_ctx,
+            pool_runtime=dataclasses.replace(
+                component_ctx.pool_runtime,
+                interceptor_chain=interceptor_chain,
             ),
         )
         skill_resolver = None
@@ -230,7 +272,10 @@ async def assemble_declared_single_agent(
             spec,
             component_registry,
             NativeAssemblyInputs(
-                agent_factory=DefaultAgentFactory(default_llm_provider=provider),
+                agent_factory=DefaultAgentFactory(
+                    default_llm_provider=provider,
+                    default_interceptor_chain=interceptor_chain,
+                ),
                 broker=None,
                 llm_defaults=LlmDefaults(),
                 pool=None,
@@ -240,7 +285,7 @@ async def assemble_declared_single_agent(
                 llm_provider=provider,
                 tool_manager=tool_manager,
                 skill_resolver=skill_resolver,
-                root_provider=infra.root_provider,
+                root_provider=root_provider,
                 safety=infra.safety,
                 project_dir=project_dir,
                 extra_hooks=infra.extra_hooks,
@@ -248,6 +293,7 @@ async def assemble_declared_single_agent(
                 # synthesized companion, and MCP tools before the factory
                 # receives the manager.
                 tool_transform=infra.tool_wrapper,
+                resource_owner=resource_owner,
             ),
             ctx=component_ctx,
         )
@@ -268,8 +314,19 @@ async def assemble_declared_single_agent(
             descriptor=result.descriptor,
             capability_supplies=capability_supplies,
         )
-    except BaseException:
-        await stop_capability_supplies(capability_supplies)
+    except BaseException as failure:
+        await resource_owner.rollback(failure)
+        try:
+            await stop_capability_supplies(capability_supplies)
+        except BaseException as cleanup_error:
+            if cleanup_error is not failure:
+                failure.add_note(
+                    f"Capability supply cleanup also failed: {cleanup_error!r}"
+                )
         if memory_system is not None:
-            await memory_system.close()
+            try:
+                await memory_system.close()
+            except BaseException as cleanup_error:
+                if cleanup_error is not failure:
+                    failure.add_note(f"Memory cleanup also failed: {cleanup_error!r}")
         raise

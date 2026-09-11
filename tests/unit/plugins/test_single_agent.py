@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import BaseModel, ConfigDict
@@ -19,6 +19,7 @@ from modex_agent.commands.models import CommandContext, SlashCommandInvocation
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_group import ToolGroupResource
 from modex_agent.core.tool_manager import Tool, ToolResult
 from modex_agent.hook import Hook
 from modex_agent.memory.context import InMemoryContextManager
@@ -27,6 +28,7 @@ from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
 from modex_agent.plugins.assembly.single_agent import (
+    SingleAgentAssembled,
     SingleAgentInfra,
     assemble_declared_single_agent,
 )
@@ -52,6 +54,7 @@ from modex_agent.scope.spec import (
     ScopeKind,
     ScopeSpec,
 )
+from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.presets import ToolPreset
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
@@ -110,6 +113,77 @@ class _StandaloneLifecycleCapability(Capability):
 
     async def assemble(self, binding: CapabilityBinding, ctx: object) -> CapabilityWiring:
         return CapabilityWiring()
+
+
+async def test_standalone_close_retains_dependencies_when_agent_did_not_drain() -> None:
+    events: list[str] = []
+
+    class Supply(_StandaloneLifecycleSupply):
+        pass
+
+    class Memory:
+        async def close(self) -> None:
+            events.append("memory")
+
+    instance = MagicMock()
+    instance.stop = AsyncMock(side_effect=[False, True])
+    assembled = SingleAgentAssembled(
+        instance=instance,
+        memory_system=Memory(),  # type: ignore[arg-type]
+        context_manager=MagicMock(),
+        tool_manager=InMemoryToolManager(),
+        descriptor=MagicMock(),
+        capability_supplies=(Supply(events),),
+    )
+
+    assert await assembled.close() is False
+    assert events == []
+
+    assert await assembled.close() is True
+    assert events == ["stop", "memory"]
+
+
+async def test_standalone_close_retains_dependencies_when_agent_resources_remain() -> None:
+    events: list[str] = []
+
+    class Supply(_StandaloneLifecycleSupply):
+        pass
+
+    class Memory:
+        async def close(self) -> None:
+            events.append("memory")
+
+    resource = MagicMock(spec=ToolGroupResource)
+    instance = MagicMock()
+    instance.drain_confirmed = True
+    instance.resources = (resource,)
+    attempts = 0
+
+    async def stop() -> bool:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("shell close failed")
+        instance.resources = ()
+        return True
+
+    instance.stop = AsyncMock(side_effect=stop)
+    assembled = SingleAgentAssembled(
+        instance=instance,
+        memory_system=Memory(),  # type: ignore[arg-type]
+        context_manager=MagicMock(),
+        tool_manager=InMemoryToolManager(),
+        descriptor=MagicMock(),
+        capability_supplies=(Supply(events),),
+    )
+
+    with pytest.raises(RuntimeError, match="shell close failed"):
+        await assembled.close()
+    assert instance.resources == (resource,)
+    assert events == []
+
+    assert await assembled.close() is True
+    assert events == ["stop", "memory"]
 
 
 def _compiled(
@@ -225,11 +299,15 @@ class TestDeclaredPrompt:
 
 
 class TestDeclaredTools:
-    async def test_read_write_uses_platform_bash_ladder(self, tmp_path: Path) -> None:
+    async def test_explicit_shell_capability_uses_platform_ladder(self, tmp_path: Path) -> None:
         registry = _registry()
         compiled = _compiled(
             tmp_path,
-            AgentSpec(name="solo", toolset=ToolPreset.READ_WRITE),
+            AgentSpec(
+                name="solo",
+                toolset=ToolPreset.READ_WRITE,
+                capabilities={"shell": {}},
+            ),
             registry,
         )
 
@@ -241,11 +319,14 @@ class TestDeclaredTools:
             component_registry=registry,
         )
 
-        bash = assembled.tool_manager.get_tool("bash")
-        if sys.platform == "win32":
-            assert type(bash).__name__ == "SubprocessTool"
-        else:
-            assert type(bash).__name__ == "PersistentBashTool"
+        try:
+            bash = assembled.tool_manager.get_tool("bash")
+            if sys.platform == "win32":
+                assert type(bash).__name__ == "SubprocessTool"
+            else:
+                assert type(bash).__name__ == "PersistentBashTool"
+        finally:
+            await assembled.close()
 
 
 class TestGovernanceDerivation:
