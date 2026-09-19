@@ -321,10 +321,15 @@ class TestDeclaredTools:
 
         try:
             bash = assembled.tool_manager.get_tool("bash")
+            assert bash is not None
+            group = assembled.tool_manager.get_tool_group("bash")
+            assert group is not None
             if sys.platform == "win32":
-                assert type(bash).__name__ == "SubprocessTool"
+                assert group.variant == "subprocess"
+                assert assembled.tool_manager.get_tool("bash_input") is None
             else:
-                assert type(bash).__name__ == "PersistentBashTool"
+                assert group.variant == "persistent"
+                assert assembled.tool_manager.get_tool("bash_input") is not None
         finally:
             await assembled.close()
 

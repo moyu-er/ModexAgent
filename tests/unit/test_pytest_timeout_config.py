@@ -16,6 +16,10 @@ def test_timeout_watchdog_terminates_blocked_test(tmp_path: Path) -> None:
     config = Path(__file__).resolve().parents[2] / "pyproject.toml"
     result = subprocess.run(
         [sys.executable, "-m", "pytest", str(test_file), "-c", str(config),
+         # On Windows the repo and temp directory may be on different drives.
+         # Bound collection to this fixture rather than traversing temp's
+         # ancestors before the per-test watchdog can even start.
+         "--rootdir", str(tmp_path), "--confcutdir", str(tmp_path),
          "--timeout=0.2", "-q"],
         capture_output=True,
         text=True,
