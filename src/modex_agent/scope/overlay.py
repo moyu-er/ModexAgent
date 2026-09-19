@@ -54,6 +54,8 @@ class AgentOverlay(BaseModel):
 
     toolset: ToolPreset | None = None
     tools: list[str] | None = None
+    hooks: list[str] | None = None
+    """Append Hook roster declarations; compiler merge owns additions/vetoes."""
     memory: MemoryDeclaration | None = None
     system_prompt_provider: str | None = None
     # Open heterogeneous payload mirroring AgentSpec; the named prompt factory
@@ -210,6 +212,8 @@ def _apply_agent_overlay(
         )
     if overlay.memory is not None:
         updates["memory"] = merge_memory_declarations(agent.memory, overlay.memory)
+    if overlay.hooks is not None:
+        updates["hooks"] = [*(agent.hooks or []), *overlay.hooks]
     if overlay.system_prompt_provider is not None:
         updates["system_prompt_provider"] = overlay.system_prompt_provider
     if "system_prompt_provider_config" in overlay.model_fields_set:
