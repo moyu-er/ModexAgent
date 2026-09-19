@@ -6,8 +6,8 @@ import { useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { SectionLabel } from "../../ui/SectionLabel";
 
-export function FormSection({ title, children }: { title: string; children: ReactNode }) {
-  const [open, setOpen] = useState(true);
+export function FormSection({ title, children, defaultOpen = true }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <section className="rounded-lg border border-hairline bg-canvas-elevated p-4">
       <button
@@ -23,7 +23,7 @@ export function FormSection({ title, children }: { title: string; children: Reac
           className={`shrink-0 text-mute transition-transform duration-app ease-out ${open ? "" : "-rotate-90"}`}
         />
       </button>
-      {open ? <div className="mt-1 space-y-4">{children}</div> : null}
+      <div hidden={!open} className="mt-1 space-y-4">{children}</div>
     </section>
   );
 }

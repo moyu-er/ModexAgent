@@ -1,10 +1,10 @@
-// PoolsConfigView.tsx — the `pools` settings tab (PRD Part C / tickets T4+T5):
-// master/detail over the scope declaration. Left column is the declaration
-// tree (workspace → pools → agents); the right column is the selected node's
-// form. The whole declaration is ONE dirty-tracked document — edits mutate a
-// cloned draft, one Save button PUTs /api/scope/model, and a successful save
-// re-fetches the canonicalized model (the backend strips default-valued
-// fields) before resetting the form state.
+// PoolsConfigView.tsx — the `assistants` settings page (user UI corrections
+// 3+4): a friendly assistants list (left) + the selected root/collaborator
+// AgentForm (right). The whole declaration is ONE dirty-tracked document —
+// edits mutate a cloned draft, one Save button PUTs /api/scope/model, and a
+// successful save re-fetches the canonicalized model (the backend strips
+// default-valued fields) before resetting the form state. Experts edit the
+// raw declaration through Settings → Advanced (ScopeView), never here.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../../../lib/api";
@@ -20,33 +20,28 @@ import {
   type ScopeOptions,
 } from "../../../lib/scopeApi";
 import { listPrompts } from "../../../lib/promptsApi";
+import { fetchPreferences } from "../../../lib/preferencesApi";
 import { useToast } from "../../ToastContext";
 import { useT, type TFn } from "../../../i18n";
+import { useRegisterSettingsEditor, useSettingsNavigation, type SettingsEditorHandle } from "../editorNavigation";
 import { ActionBar } from "../../ui/ActionBar";
 import { Button } from "../../ui/Button";
+import { Input } from "../../ui/Input";
 import { CATEGORY } from "../categoryMeta";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { restartToast } from "../restartToast";
-import { DeclarationTree } from "./DeclarationTree";
 import { AgentForm } from "./AgentForm";
-import { PoolForm } from "./PoolForm";
-import { WorkspaceForm } from "./WorkspaceForm";
 import {
   addPool,
-  addSubagent,
   agentBodyOf,
   agentNodeId,
-  applyPermissionsToOtherPools,
   deleteAgent,
   deletePool,
   findAgent,
   nodeIdsByName,
   poolNodeId,
-  setPeer,
   viewModel,
-  WORKSPACE_NODE_ID,
   type AgentBody,
-  type WorkspaceBody,
 } from "./scopeModel";
 
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
@@ -54,8 +49,7 @@ const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 /** Parse a tree node id back into its coordinates. */
 function parseNodeId(
   id: string,
-): { kind: "workspace" } | { kind: "pool"; pool: string } | { kind: "agent"; pool: string; path: string[] } | null {
-  if (id === WORKSPACE_NODE_ID) return { kind: "workspace" };
+): { kind: "pool"; pool: string } | { kind: "agent"; pool: string; path: string[] } | null {
   const parts = id.split("/");
   if (parts[0] === "pool" && parts.length === 2) return { kind: "pool", pool: parts[1]! };
   if (parts[0] === "agent" && parts.length >= 3) {
@@ -100,6 +94,9 @@ function formatSaveError(e: unknown, t: TFn): string {
 export function PoolsConfigView() {
   const toast = useToast();
   const t = useT();
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [nameError, setNameError] = useState("");
   const [model, setModel] = useState<ScopeModelTree | null>(null);
   const [original, setOriginal] = useState<ScopeModelTree | null>(null);
   const [options, setOptions] = useState<ScopeOptions | null>(null);
@@ -115,8 +112,23 @@ export function PoolsConfigView() {
   const [saveError, setSaveError] = useState<string>("");
   const [saving, setSaving] = useState<boolean>(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  /** The user's default-assistant preference (PA-15): deleting that pool
+   * requires saving another default first (two owners, honest ordering). */
+  const [defaultPool, setDefaultPool] = useState<string | null>(null);
   const formPanelRef = useRef<HTMLDivElement>(null);
   const previewSeq = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchPreferences()
+      .then((p) => {
+        if (!cancelled) setDefaultPool(p.defaultPool || null);
+      })
+      .catch(() => {});
+    return (): void => {
+      cancelled = true;
+    };
+  }, []);
 
   const load = useCallback(async (): Promise<void> => {
     setLoadError("");
@@ -156,31 +168,52 @@ export function PoolsConfigView() {
 
   const view = useMemo(() => (model ? viewModel(model) : null), [model]);
 
-  // Default + dangling selection repair: workspace first, then first pool.
+  const dirty = model !== null && original !== null && JSON.stringify(model) !== JSON.stringify(original);
+
+  // Register with the settings page's navigation guard (PA-11): expose this
+  // editor's dirty/save/discard contract through live refs.
+  const saveRef = useRef<() => Promise<boolean>>(() => Promise.resolve(false));
+  const cancelRef = useRef<() => void>(() => undefined);
+  const dirtyRef = useRef<boolean>(dirty);
+  dirtyRef.current = dirty;
+  const guardHandle = useMemo<SettingsEditorHandle>(
+    () => ({
+      isDirty: () => dirtyRef.current,
+      save: async () => {
+        try {
+          return await saveRef.current();
+        } catch {
+          return false;
+        }
+      },
+      discard: () => cancelRef.current(),
+    }),
+    [],
+  );
+  useRegisterSettingsEditor(() => guardHandle);
+  const requestLeave = useSettingsNavigation(guardHandle);
+
+  // Default + dangling selection repair: default pool's root first.
   useEffect(() => {
     if (!view) return;
     const valid =
       selection !== null &&
-      (selection === WORKSPACE_NODE_ID
-        ? view.workspaceBody !== null
-        : (() => {
-            const parsed = parseNodeId(selection);
-            if (!parsed) return false;
-            if (parsed.kind === "pool") {
-              return view.pools.some((p) => p.name === parsed.pool);
-            }
-            if (parsed.kind === "agent") {
-              return findAgent(view, parsed.pool, parsed.path) !== null;
-            }
-            return false;
-          })());
+      (() => {
+        const parsed = parseNodeId(selection);
+        if (!parsed) return false;
+        if (parsed.kind === "pool") {
+          return view.pools.some((p) => p.name === parsed.pool);
+        }
+        if (parsed.kind === "agent") {
+          return findAgent(view, parsed.pool, parsed.path) !== null;
+        }
+        return false;
+      })();
     if (valid) return;
-    if (view.workspaceBody) setSelection(WORKSPACE_NODE_ID);
-    else if (view.pools[0]) setSelection(poolNodeId(view.pools[0].name));
+    const preferred = view.pools.find((pool) => pool.name === defaultPool) ?? view.pools[0];
+    if (preferred?.agents[0]) setSelection(agentNodeId(preferred.name, preferred.agents[0].path));
     else setSelection(null);
-  }, [view, selection]);
-
-  const dirty = model !== null && original !== null && JSON.stringify(model) !== JSON.stringify(original);
+  }, [view, selection, defaultPool]);
 
   // C0 — while the draft is dirty, the on-disk bill is stale w.r.t. the form:
   // debounce a POST /api/scope/preview so effective sections track the draft
@@ -238,15 +271,16 @@ export function PoolsConfigView() {
     return map;
   }, [issues, view, selection]);
 
-  const focusFirstInvalid = (found: ScopeModelIssue[]): void => {
+  const focusFirstInvalidRef = useRef<(found: ScopeModelIssue[]) => void>(() => undefined);
+  focusFirstInvalidRef.current = (found: ScopeModelIssue[]): void => {
     if (!view || found.length === 0) return;
     const ids = nodeIdsByName(view, found[0]!.node);
     if (ids[0]) setSelection(ids[0]);
     formPanelRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const save = async (): Promise<void> => {
-    if (model === null) return;
+  const save = useCallback(async (): Promise<boolean> => {
+    if (model === null || saving) return false;
     setSaving(true);
     setSaveError("");
     try {
@@ -261,35 +295,39 @@ export function PoolsConfigView() {
       setPreviewBill(null);
       setIssues([]);
       if (saved.restart_required) restartToast(toast, t);
+      return true;
     } catch (e) {
       const found = parseIssues(e);
       if (found.length > 0) {
         setIssues(found);
-        focusFirstInvalid(found);
+        focusFirstInvalidRef.current(found);
       }
       setSaveError(formatSaveError(e, t));
+      return false;
     } finally {
       setSaving(false);
     }
-  };
+  }, [model, saving, toast, t]);
 
-  const cancel = (): void => {
+  const cancel = useCallback((): void => {
     if (original !== null) setModel(clone(original));
     setPreviewBill(null);
     setIssues([]);
     setSaveError("");
-  };
+  }, [original]);
+
+  saveRef.current = () => save();
+  cancelRef.current = cancel;
 
   // ── Structure operations ────────────────────────────────────────────────
 
   const createPool = (name: string): void => {
-    update((d) => addPool(d, name));
+    update((d) => {
+      addPool(d, name);
+      const body = agentBodyOf(d, name, [name]);
+      if (body && options?.hooks.includes("session_title")) body.hooks = ["+session_title"];
+    });
     setSelection(agentNodeId(name, [name]));
-  };
-
-  const createAgent = (pool: string, parentPath: string[], name: string): void => {
-    update((d) => addSubagent(d, pool, parentPath, name));
-    setSelection(agentNodeId(pool, [...parentPath, name]));
   };
 
   const confirmDelete = (): void => {
@@ -316,15 +354,19 @@ export function PoolsConfigView() {
     const parsed = parseNodeId(deleteTarget);
     return parsed?.kind === "pool" || (parsed?.kind === "agent" && parsed.path.length === 1);
   })();
-
-  const applyToPools = (pool: string, path: string[]): void => {
-    if (!view) return;
-    update((d) => applyPermissionsToOtherPools(d, pool, path));
-    toast.show({
-      message: t("settings.poolsPanel.appliedToPools", { count: view.pools.length - 1 }),
-      tone: "success",
-    });
-  };
+  /** Deleting the preferred default assistant is blocked (PA-15): choose
+   * and save another default in General first. */
+  const deleteTargetPoolName = ((): string => {
+    if (deleteTarget === null) return "";
+    const parsed = parseNodeId(deleteTarget);
+    if (parsed?.kind === "pool") return parsed.pool;
+    if (parsed?.kind === "agent" && parsed.path.length === 1) return parsed.pool;
+    return "";
+  })();
+  const deletingDefaultPool =
+    deleteTargetPoolName !== "" &&
+    defaultPool !== null &&
+    deleteTargetPoolName === defaultPool;
 
   // ── Render ──────────────────────────────────────────────────────────────
 
@@ -363,17 +405,32 @@ export function PoolsConfigView() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 gap-4">
-        <div className="w-64 shrink-0 overflow-hidden rounded-lg border border-hairline bg-canvas-elevated">
-          <DeclarationTree
-            view={view}
-            selection={selection}
-            issueNodeIds={new Set(issuesByNode.keys())}
-            onSelect={setSelection}
-            onCreatePool={createPool}
-            onCreateAgent={createAgent}
-            onDelete={setDeleteTarget}
-          />
+      <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
+        <div className="w-full shrink-0 overflow-auto rounded-lg border border-hairline bg-canvas-elevated lg:w-64">
+          <nav aria-label={t("settings.nav.assistants")} className="space-y-1 p-3">
+            {[...view.pools].sort((a, b) => Number(b.name === defaultPool) - Number(a.name === defaultPool)).map((pool) => {
+              const root = pool.agents[0];
+              return <div key={pool.name} className="flex items-center gap-1 border-b border-hairline py-2">
+                <button type="button" className="min-w-0 flex-1 rounded px-2 py-2 text-left hover:bg-hairline-soft" onClick={() => requestLeave(() => setSelection(root ? agentNodeId(pool.name, root.path) : poolNodeId(pool.name)))}>
+                  <span className="block truncate font-medium text-ink">{pool.name} {pool.name === defaultPool ? `· ${t("composer.default")}` : ""}</span>
+                  <span className="line-clamp-2 text-xs text-mute">{typeof root?.body.description === "string" ? root.body.description : ""}</span>
+                </button>
+                <Button variant="ghost" size="sm" aria-label={t("settings.poolsPanel.deleteNode", { name: pool.name })} onClick={() => setDeleteTarget(poolNodeId(pool.name))}>×</Button>
+              </div>;
+            })}
+            {creating ? <form className="space-y-2 pt-3" onSubmit={(event) => {
+              event.preventDefault();
+              const name = newName.trim();
+              if (!/^[a-z][a-z0-9-]*$/.test(name)) { setNameError(t("settings.poolsPanel.newAgentInvalidKey")); return; }
+              if (view.pools.some((pool) => pool.name === name)) { setNameError(t("settings.poolsPanel.nameTaken", { name })); return; }
+              requestLeave(() => { createPool(name); setCreating(false); setNewName(""); setNameError(""); });
+            }}>
+              <Input autoFocus label={t("settings.poolsPanel.keyLabel")} value={newName} onChange={(event) => setNewName(event.target.value)} />
+              {nameError && <p role="alert" className="text-xs text-danger">{nameError}</p>}
+              <Button type="submit" size="sm">{t("common.add")}</Button>
+              <Button variant="ghost" size="sm" onClick={() => setCreating(false)}>{t("common.cancel")}</Button>
+            </form> : !view.poolAsRoot && <Button variant="secondary" size="sm" onClick={() => setCreating(true)}>{t("settings.poolsPanel.newAgentHeading")}</Button>}
+          </nav>
         </div>
 
         <div ref={formPanelRef} className="min-w-0 flex-1 overflow-auto">
@@ -394,34 +451,20 @@ export function PoolsConfigView() {
             </pre>
           ) : null}
 
-          {parsed?.kind === "workspace" && view.workspaceBody ? (
-            <WorkspaceForm
-              workspace={view.workspaceBody}
-              updateWorkspace={(mut: (b: WorkspaceBody) => void) =>
-                update((d) => {
-                  const v = viewModel(d);
-                  if (v.workspaceBody) mut(v.workspaceBody);
-                })
-              }
-            />
-          ) : parsed?.kind === "pool" ? (
-            (() => {
-              const pool = view.pools.find((p) => p.name === parsed.pool);
-              if (!pool) return null;
-              return (
-                <PoolForm
-                  pool={pool}
-                  otherPoolNames={view.pools.map((p) => p.name).filter((n) => n !== pool.name)}
-                  onSetPeer={(other, on) => update((d) => setPeer(d, pool.name, other, on))}
-                />
-              );
-            })()
-          ) : parsed?.kind === "agent" ? (
+          {parsed?.kind === "agent" ? (
             (() => {
               const node = findAgent(view, parsed.pool, parsed.path);
               if (!node) return null;
+              // Identity gating (PLAN §3.3): an agent that exists only in the
+              // dirty draft (absent from the on-disk original) has no
+              // persisted identity yet — identity-dependent actions (Skills
+              // assignment, MCP, prompt body) wait for a save.
+              const identityPersisted =
+                original !== null &&
+                findAgent(viewModel(original), parsed.pool, parsed.path) !== null;
               return (
                 <AgentForm
+                  key={selection}
                   pool={parsed.pool}
                   node={node}
                   options={options}
@@ -438,7 +481,18 @@ export function PoolsConfigView() {
                       if (body) mut(body);
                     })
                   }
-                  onApplyToPools={() => applyToPools(parsed.pool, parsed.path)}
+                  updateModel={update}
+                  agentPath={parsed.path}
+                  identityPersisted={identityPersisted}
+                  persistedSkillsEnabled={diskBill?.find(
+                    (agent) => agent.pool === parsed.pool && agent.agent === node.name,
+                  )?.capabilities.some(
+                    (capability) => capability.capability === "skills" &&
+                      (capability.state === "auto" || capability.state === "declared"),
+                  ) ?? false}
+                  declaredPools={view.pools.map((p) => p.name)}
+                  onChangeInstructions={requestLeave}
+                  onSelectAgent={(path) => requestLeave(() => setSelection(agentNodeId(parsed.pool, path)))}
                 />
               );
             })()
@@ -464,7 +518,15 @@ export function PoolsConfigView() {
         </Button>
       </ActionBar>
 
-      {deleteTarget !== null ? (
+      {deleteTarget !== null && deletingDefaultPool ? (
+        <ConfirmDialog
+          title={t("settings.poolsPanel.newPoolDefaultDeletionTitle")}
+          message={t("settings.poolsPanel.newPoolDefaultDeletionMessage", { pool: deleteTargetPoolName })}
+          confirmLabel={t("settings.common.stay")}
+          onConfirm={() => setDeleteTarget(null)}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      ) : deleteTarget !== null ? (
         <ConfirmDialog
           title={
             deleteIsPool

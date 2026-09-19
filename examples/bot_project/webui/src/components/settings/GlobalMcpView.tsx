@@ -31,6 +31,7 @@ import { Trash2 } from "lucide-react";
 import { ChevronRightIcon, PlusIcon } from "../ui/icons";
 import { CATEGORY } from "./categoryMeta";
 import { useT } from "../../i18n";
+import { useRegisterSettingsEditor } from "./editorNavigation";
 
 // Protocol choice shown only under the Remote HTTP category. The two share
 // fields, so this is metadata only — no data reset on change.
@@ -47,6 +48,7 @@ interface CardState {
   /** Currently-edited name. */
   name: string;
   entry: McpServerEntry;
+  originalEntry: McpServerEntry | null;
 }
 
 const emptyEntry = (): McpServerEntry => ({
@@ -79,6 +81,7 @@ export function GlobalMcpView() {
         originalName: name,
         name,
         entry,
+        originalEntry: entry,
       }));
       setCards(list);
       // Default: only the first persisted card is expanded.
@@ -91,13 +94,6 @@ export function GlobalMcpView() {
   useEffect(() => {
     void load();
   }, []);
-
-  if (loadError) {
-    return <p className="text-base text-error">{t("common.failedToLoad", { error: loadError })}</p>;
-  }
-  if (!cards) {
-    return <p className="text-base text-mute">{t("common.loading")}</p>;
-  }
 
   const update = (i: number, patch: Partial<CardState>): void => {
     setCards((prev) => prev!.map((c, j) => (j === i ? { ...c, ...patch } : c)));
@@ -131,7 +127,7 @@ export function GlobalMcpView() {
   const addCard = (): void => {
     const newId = nextId.current++;
     setCards((prev) => [
-      { id: newId, originalName: null, name: "", entry: emptyEntry() },
+      { id: newId, originalName: null, name: "", entry: emptyEntry(), originalEntry: null },
       ...(prev ?? []),
     ]);
     setExpanded((prev) => {
@@ -141,34 +137,35 @@ export function GlobalMcpView() {
     });
   };
 
-  const onSave = async (i: number): Promise<void> => {
-    const card = cards[i]!;
+  const onSave = async (i: number): Promise<boolean> => {
+    const card = cards?.[i];
+    if (!card) return false;
     const name = card.name.trim();
     if (!name) {
       toast.show({ message: t("settings.mcp.serverNameRequired"), tone: "warning" });
-      return;
+      return false;
     }
 
     const renamed =
       card.originalName !== null && card.originalName !== name;
 
     try {
+      await upsertMcp(name, card.entry);
       if (renamed) {
         await deleteMcp(card.originalName!);
       }
-      await upsertMcp(name, card.entry);
-      update(i, { originalName: name, name });
+      update(i, { originalName: name, name, originalEntry: card.entry });
       restartToast(toast, t);
+      return true;
     } catch (e) {
-      if (renamed) {
-        update(i, { name: card.originalName! });
-      }
       toast.show({ message: t("settings.mcp.saveFailed", { detail: errDetail(e) }), tone: "warning" });
+      return false;
     }
   };
 
   const onDelete = async (i: number): Promise<void> => {
-    const card = cards[i]!;
+    const card = cards?.[i];
+    if (!card) return;
     const name = card.originalName ?? card.name.trim();
     if (!card.originalName) {
       // Never persisted — just drop locally.
@@ -189,6 +186,20 @@ export function GlobalMcpView() {
       setConfirmId(null);
     }
   };
+
+  const isDirty = (card: CardState): boolean => card.name.trim() !== card.originalName || JSON.stringify(card.entry) !== JSON.stringify(card.originalEntry);
+  useRegisterSettingsEditor(() => ({
+    isDirty: () => cards?.some(isDirty) ?? false,
+    save: async () => {
+      for (let i = 0; i < (cards?.length ?? 0); i++) {
+        if (isDirty(cards![i]!) && !(await onSave(i))) return false;
+      }
+      return true;
+    },
+    discard: () => setCards((prev) => prev?.filter((card) => card.originalName !== null).map((card) => ({ ...card, name: card.originalName!, entry: card.originalEntry! })) ?? null),
+  }));
+  if (loadError) return <p className="text-base text-error">{t("common.failedToLoad", { error: loadError })}</p>;
+  if (!cards) return <p className="text-base text-mute">{t("common.loading")}</p>;
 
   const meta = CATEGORY.mcp;
   const PageHeadIcon = meta.icon;
@@ -212,7 +223,7 @@ export function GlobalMcpView() {
         {t("settings.mcp.availableToAll")}
       </p>
 
-      <div className="space-y-2">
+      <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
         {cards.map((card, i) => (
           <McpCard
             key={card.id}
@@ -233,15 +244,15 @@ export function GlobalMcpView() {
             {t("settings.mcp.noServers")}
           </p>
         )}
-
-        <button
-          type="button"
-          className="mt-1 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-hairline py-2.5 text-base text-body hover:border-ink hover:bg-hairline-soft hover:text-ink"
-          onClick={addCard}
-        >
-          <PlusIcon /> {t("settings.mcp.addServer")}
-        </button>
       </div>
+
+      <button
+        type="button"
+        className="mt-1 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-hairline py-2.5 text-base text-body hover:border-ink hover:bg-hairline-soft hover:text-ink"
+        onClick={addCard}
+      >
+        <PlusIcon /> {t("settings.mcp.addServer")}
+      </button>
     </div>
   );
 }

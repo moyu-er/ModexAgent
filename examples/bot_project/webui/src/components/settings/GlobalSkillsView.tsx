@@ -53,12 +53,16 @@ export function GlobalSkillsView() {
   const [topologyError, setTopologyError] = useState<string>("");
   const [selectedPool, setSelectedPool] = useState<string>("");
   const [selectedAgent, setSelectedAgent] = useState<string>("");
+  /** Bumped on every library reload so the assignments list remounts and
+   * re-reads both the library and the agent assignments from one owner. */
+  const [libSeq, setLibSeq] = useState(0);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const load = async (): Promise<void> => {
     setLoadError("");
     try {
       setSkills(await listSkills());
+      setLibSeq((n) => n + 1);
     } catch (e) {
       setLoadError(String(e));
     }
@@ -261,10 +265,9 @@ export function GlobalSkillsView() {
             </div>
             {selectedPool && selectedAgent ? (
               <AgentSkillSelector
-                key={`${selectedPool}:${selectedAgent}`}
+                key={`${selectedPool}:${selectedAgent}:${libSeq}`}
                 pool={selectedPool}
                 agent={selectedAgent}
-                globalSkills={skills}
               />
             ) : (
               <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-base text-mute">
@@ -403,7 +406,7 @@ export function GlobalSkillsView() {
 
       {sortedSkills.length > 0 && (
         <Card>
-          <div className="space-y-1 p-1">
+          <div className="max-h-80 space-y-1 overflow-y-auto p-1">
             {sortedSkills.map((s) => {
               const isSelected = selectedSkill === s.name;
               return (

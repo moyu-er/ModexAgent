@@ -53,6 +53,15 @@ describe("WorkspaceBrowser", () => {
   }
 
   describe("open folder picker", () => {
+    it("opens a typed server path through the same workspace switch owner", async () => {
+      mockedChangeWorkspace.mockResolvedValue({ success: true, cwd: "/canonical/project", notice: "" });
+      const onChanged = vi.fn();
+      const { getByLabelText, getByRole } = renderBrowser({ onChanged });
+      fireEvent.change(getByLabelText("Server folder path"), { target: { value: "/project/../project" } });
+      fireEvent.click(getByRole("button", { name: "Open path" }));
+      await waitFor(() => expect(onChanged).toHaveBeenCalledWith("/canonical/project"));
+      expect(mockedChangeWorkspace).toHaveBeenCalledWith("/project/../project");
+    });
     it("calls pickWorkspace and switches on success (single request)", async () => {
       mockedPickWorkspace.mockResolvedValue({
         path: "/selected/path",

@@ -31,6 +31,8 @@ describe("OpenWorkspaceMenu", () => {
           recentWorkspaces={[{ path: "/ws_a" }, { path: "/ws_b" }]}
           onOpenRecent={noop}
           onBrowsePicked={noop}
+          onSetDefault={noop}
+          defaultWorkspace={null}
           onGoHome={noop}
           {...props}
         />
@@ -100,6 +102,8 @@ describe("OpenWorkspaceMenu", () => {
           recentWorkspaces={[{ path: "/ws_a" }]}
           onOpenRecent={noop}
           onBrowsePicked={noop}
+          onSetDefault={noop}
+          defaultWorkspace={null}
           onGoHome={noop}
         />
       </ToastProvider>,

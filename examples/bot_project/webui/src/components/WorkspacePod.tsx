@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, type FC, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FC, type CSSProperties } from "react";
 import { Sidebar } from "./Sidebar";
 import { ChatView } from "./ChatView";
+import { RenameDialog } from "./RenameDialog";
 import { GraphSpecListPage } from "./graphs/GraphSpecListPage";
 import { GraphSpecEditor } from "./graphs/GraphSpecEditor";
 import { GraphSpecDetail } from "./graphs/GraphSpecDetail";
@@ -40,6 +41,13 @@ export interface WorkspacePodProps {
   onCloseMobile: () => void;
   onOpenMobile: () => void;
   onReportStatus: (tabId: string, status: WorkspaceTabStatus) => void;
+  /** The user's default-assistant preference (PA-07) — seeds the hero
+   *  composer's new-conversation pool. */
+  preferredPool?: string | null;
+  /** True when this pod's path IS the saved default workspace (pin state). */
+  isDefaultWorkspace?: boolean;
+  /** Save this pod's path as the default workspace (preference write only). */
+  onSetDefaultWorkspace?: (path: string) => void;
 }
 
 /**
@@ -65,6 +73,9 @@ export const WorkspacePod: FC<WorkspacePodProps> = ({
   onCloseMobile,
   onOpenMobile,
   onReportStatus,
+  preferredPool,
+  isDefaultWorkspace = false,
+  onSetDefaultWorkspace,
 }) => {
   const {
     sessions,
@@ -82,16 +93,18 @@ export const WorkspacePod: FC<WorkspacePodProps> = ({
     handleDelete,
     handlePoolChange,
     onSent,
+    renameSession,
+    onSessionsChanged,
     newConvNonce,
-  } = useSessions({ ws: scopeWs, pools });
+  } = useSessions({ ws: scopeWs, pools, preferredPool });
 
-  // Pool for the active session (or the hero view's active pool). Threads
+  // Pool for the active session (or the hero view's selected pool). Threads
   // into useWebUIStream (session-scoped API calls) and resolves the skill
   // set for /skillName autocomplete.
   const chatPool = useMemo(() => {
     if (!selectedId) return activePool;
-    return sessions.find((x) => x.session_id === selectedId)?.pool ?? activePool;
-  }, [sessions, selectedId, activePool]);
+    return getPoolForUuid(selectedId) ?? sessions.find((x) => x.session_id === selectedId)?.pool ?? activePool;
+  }, [sessions, selectedId, activePool, getPoolForUuid]);
 
   const {
     messages,
@@ -117,6 +130,7 @@ export const WorkspacePod: FC<WorkspacePodProps> = ({
     scopeWs,
     onSessionCreated,
     chatPool,
+    onSessionsChanged,
   );
 
   // Connect this pod's WebSocket on mount; drop it when the tab closes.
@@ -152,15 +166,17 @@ export const WorkspacePod: FC<WorkspacePodProps> = ({
     (pool: string): void => {
       navigate("");
       handleNew(pool);
+      onCloseMobile();
     },
-    [navigate, handleNew],
+    [navigate, handleNew, onCloseMobile],
   );
   const handlePoolChangeWithRoute = useCallback(
     (pool: string): void => {
       navigate("");
       handlePoolChange(pool);
+      onCloseMobile();
     },
-    [navigate, handlePoolChange],
+    [navigate, handlePoolChange, onCloseMobile],
   );
 
   // Approve every currently-pending card. Client-side loop — no new endpoint;
@@ -171,7 +187,55 @@ export const WorkspacePod: FC<WorkspacePodProps> = ({
     });
   }, [pendingApprovals, submitApproval]);
 
-  const sessionTree = useMemo(() => buildTree(sessions), [sessions]);
+  // No pool selected → no filter: the full workspace-wide session list shows.
+  // A selected pool filters the list, but never erases the active chat —
+  // selection state is independent of the visible tree.
+  const sessionTree = useMemo(
+    () =>
+      buildTree(
+        activePool === ""
+          ? sessions
+          : sessions.filter((session) => session.pool === activePool),
+      ),
+    [sessions, activePool],
+  );
+
+  // ── Shared rename interaction (PA-02) ─────────────────────────────────
+  // ONE dialog instance + ONE edit state for both entries (sidebar tree and
+  // chat header menu). A null target means closed; the dialog reads the
+  // title straight from the sessions list — no second mutable title store.
+  const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
+  const renameTarget = useMemo(
+    () =>
+      renameTargetId
+        ? sessions.find((s) => s.session_id === renameTargetId)
+        : undefined,
+    [sessions, renameTargetId],
+  );
+  const openRename = useCallback((sessionId: string): void => {
+    setRenameTargetId(sessionId);
+  }, []);
+  const handleRenameSave = useCallback(
+    (title: string): Promise<void> => {
+      if (!renameTargetId) return Promise.resolve();
+      return renameSession(renameTargetId, title).then(() => {
+        setRenameTargetId(null);
+      });
+    },
+    [renameTargetId, renameSession],
+  );
+  const handleRenameCancel = useCallback((): void => {
+    setRenameTargetId(null);
+  }, []);
+
+  // Selected session's title for the chat header (shared display rule).
+  const selectedTitle = useMemo(() => {
+    const meta = selectedId
+      ? sessions.find((s) => s.session_id === selectedId)?.metadata
+      : undefined;
+    const raw = meta?.["title"];
+    return typeof raw === "string" ? raw : undefined;
+  }, [sessions, selectedId]);
 
   const isSelectedSubagent = useMemo(
     () => !!(selectedId && sessions.some((s) => s.session_id === selectedId && s.parent_session_id)),
@@ -265,8 +329,11 @@ export const WorkspacePod: FC<WorkspacePodProps> = ({
         onDelete={handleDelete}
         onPoolChange={handlePoolChangeWithRoute}
         revealSessionId={revealSessionId}
-        graphsActive={route.kind !== "chat"}
+        onRenameSession={openRename}
+        graphsActive={route.kind !== "chat" && route.kind !== "settings" && route.kind !== "settingsSection"}
         onOpenGraphs={() => navigate("/graphs")}
+        isDefaultWorkspace={isDefaultWorkspace}
+        onSetDefaultWorkspace={onSetDefaultWorkspace}
       />
 
       {/* Resize handle — desktop only */}
@@ -329,10 +396,29 @@ export const WorkspacePod: FC<WorkspacePodProps> = ({
             onOpenSidebar={onOpenMobile}
             agentName={agentName}
             pool={chatPool}
+            canStart={pools.some((p) => p.name === activePool)}
+            sessionTitle={selectedTitle}
+            onRenameSession={
+              selectedId ? () => openRename(selectedId) : undefined
+            }
             heroFocusNonce={newConvNonce}
           />
         )}
       </main>
+
+      {/* The one shared rename dialog (PA-02) — sidebar + header entries. */}
+      {renameTarget && (
+        <RenameDialog
+          sessionId={renameTarget.session_id}
+          title={
+            typeof renameTarget.metadata?.["title"] === "string"
+              ? (renameTarget.metadata["title"] as string)
+              : undefined
+          }
+          onSave={handleRenameSave}
+          onCancel={handleRenameCancel}
+        />
+      )}
     </div>
   );
 };

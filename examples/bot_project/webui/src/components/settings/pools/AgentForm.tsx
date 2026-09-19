@@ -1,70 +1,73 @@
-// AgentForm.tsx — the pools panel's per-agent form, v2 (PRD Part C,
-// effective-state-driven). Composition sections render the EFFECTIVE state
-// from the bill (disk bill when clean, debounced /api/scope/preview when
-// dirty — the parent owns that loop); edits write declared deviations into
-// the draft model. Structure:
+// AgentForm.tsx — the assistants panel's per-agent form, v4 (user UI
+// corrections 3+4).
 //
-//   运行时   RuntimeSection (C3) — strategy-first; external replaces every
-//          native section with the provider panel (identity-only form).
-//   基本     description / max_steps / root terminal flags.
-//   能力     CapabilityRow bundle rows (C1) — the primary composition face.
-//   工具     toolset dropdown + read-only effective tool roster + MCP.
-//   Hooks    effective roster with provenance badges + veto/restore + add
-//            combobox (C2); dangling vetoes surfaced for cleanup.
-//   权限     (root only) interceptors effective roster + sandbox_guard config
-//            + approval + apply-to-other-pools.
-//   高级     context_mode / fork_max / eager / memory (root) / prompt_name.
+// ONE friendly face over one draft:
+//   - name/purpose (description), working instructions (prompt body via
+//     PromptStore, shared-impact notice), automatic naming (session_title)
+//   - capability/plugin enablement as plain checkboxes (off writes the
+//     real false/veto; on preserves any existing config object untouched)
+//   - Skills (immediate assign/unassign) + MCP servers as bounded
+//     one-column selection lists (Scope save)
+//   - memory & approval EFFECTIVE values with explicit off/reset semantics
+//   - collaborators (root only, one level; nested structures survive with
+//     an advanced-structure hint)
+//
+// External agents render the identity-only face (description + provider
+// note); they cannot configure native plugins/Skills/MCP. Advanced/custom
+// declaration fields never render here but are preserved verbatim on save —
+// experts edit them through the raw Scope editor (Settings → Advanced).
+//
+// Effective memory/approval values come from the bill (disk bill when the
+// draft is clean, debounced preview when dirty); edits write declared
+// deviations through scopeModel's unified tri-state mutations.
 
-import { Ban, RotateCcw, X } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 import type {
   ScopeAgentBill,
   ScopeModelIssue,
   ScopeOptions,
 } from "../../../lib/scopeApi";
-import { useT } from "../../../i18n";
+import { useT, type MessageKey } from "../../../i18n";
 import { Button } from "../../ui/Button";
 import { Checkbox } from "../../ui/Checkbox";
 import { DropdownPanel } from "../../ui/DropdownPanel";
 import { Input } from "../../ui/Input";
 import { Textarea } from "../../ui/Textarea";
 import { HelperText } from "../../ui/HelperText";
+import { SelectionList } from "../../ui/SelectionList";
 import { FormSection } from "./FormSection";
-import { RuntimeSection } from "./RuntimeSection";
-import { CapabilityRow } from "./CapabilityRow";
-import { RosterCombobox } from "./RosterCombobox";
-import { Badge, Chip } from "./chips";
+import { Badge } from "./chips";
+import { AgentSkillSelector } from "../AgentSkillSelector";
+import { PromptBodyEditor } from "./PromptBodyEditor";
 import {
-  addDeclaredHook,
-  asNumber,
+  addSubagent,
   asString,
   asStringList,
-  bundleCarriedHooks,
   capabilityMode,
-  declaredInterceptors,
-  ensureNested,
-  hookCandidates,
-  interceptorOn,
-  nestedMap,
-  removeDeclaredHook,
-  restoreHook,
+  deleteAgent,
+  directCollaborators,
+  hasNestedAgents,
+  memoryOverride,
+  resetApproval,
+  resetMemoryLayer,
+  sessionTitleOn,
+  setApprovalEnabled,
   setCapabilityMode,
-  setCapabilityConfigField,
   setField,
-  setInterceptor,
+  setMemoryLayer,
+  setSessionTitle,
   toggleInListField,
-  vetoedHooks,
-  vetoHook,
   type AgentBody,
   type AgentTreeNode,
-  type CapabilityMode,
 } from "./scopeModel";
 
-const SANDBOX_BACKENDS = ["host", "auto", "local", "oci"] as const;
-const WRITE_SURFACES = ["workspace", "roots", "none", "full"] as const;
-const APPROVAL_TOOLS = ["write", "edit", "bash"] as const;
-const MAX_STEPS_DEFAULT = 100;
-const FORK_MAX_DEFAULT = 80;
-const FORK_MAX_LIMIT = 100;
+const PLUGIN_LABELS = new Map<string, MessageKey>([
+  ["shell", "settings.plugins.shell"],
+  ["todo", "settings.plugins.todo"],
+  ["experience", "settings.plugins.experience"],
+  ["skills", "settings.plugins.skills"],
+  ["subagents", "settings.plugins.subagents"],
+]);
 
 interface Props {
   pool: string;
@@ -76,7 +79,25 @@ interface Props {
   bill: ScopeAgentBill | null;
   /** Apply a mutation to this agent's body inside the draft model. */
   updateAgent: (mut: (body: AgentBody) => void) => void;
-  onApplyToPools: () => void;
+  /**
+   * Mutate the WHOLE declaration draft (collaborator add/delete touch
+   * structure outside this agent's body). Absent disables structure edits.
+   */
+  updateModel?: (mut: (draft: import("../../../lib/scopeApi").ScopeModelTree) => void) => void;
+  /** The agent's full path (for collaborator structure edits). */
+  agentPath?: string[];
+  /**
+   * Identity gating (PLAN §3.3): false while the agent's identity is an
+   * unsaved draft — Skills/MCP/prompt actions that need a persisted
+   * identity are hidden with a "save first" notice.
+   */
+  identityPersisted?: boolean;
+  /** Assignment APIs validate the saved declaration, not the live preview. */
+  persistedSkillsEnabled: boolean;
+  /** Names of pools declared in the draft (collaborator key uniqueness). */
+  declaredPools?: string[];
+  onChangeInstructions?: (resume: () => void) => void;
+  onSelectAgent?: (path: string[]) => void;
 }
 
 export function AgentForm({
@@ -87,57 +108,111 @@ export function AgentForm({
   issues,
   bill,
   updateAgent,
-  onApplyToPools,
+  updateModel,
+  agentPath,
+  identityPersisted = true,
+  persistedSkillsEnabled,
+  declaredPools = [],
+  onChangeInstructions = (resume) => resume(),
+  onSelectAgent,
 }: Props) {
   const t = useT();
   const body = node.body;
   const isRoot = node.path.length === 1;
-  const position = isRoot ? options.position_defaults.root : options.position_defaults.sub;
-  const executionStrategy = asString(body.execution_strategy) || "react";
+  const executionStrategy = asString(body.execution_strategy);
   const isExternal = executionStrategy === "external";
-  const contextMode = asString(body.context_mode);
 
-  const declaredCaps = Object.keys(nestedMap(body, "capabilities") ?? {});
-  const capabilityNames = [
-    ...options.capabilities,
-    ...declaredCaps.filter((n) => !options.capabilities.includes(n)),
-  ];
+  const capabilitiesMap = useMemo(
+    () =>
+      body.capabilities !== null && typeof body.capabilities === "object"
+        ? (body.capabilities as Record<string, unknown>)
+        : null,
+    [body.capabilities],
+  );
+  const capabilityNames = useMemo(() => {
+    const declared = Object.keys(capabilitiesMap ?? {});
+    const extra = declared.filter((n) => !options.capabilities.includes(n));
+    return [...options.capabilities, ...extra];
+  }, [capabilitiesMap, options.capabilities]);
   const mcpNames = [
     ...options.mcp_servers,
     ...asStringList(body.mcp).filter((n) => !options.mcp_servers.includes(n)),
   ];
 
-  const effectiveHooks = new Set((bill?.hooks ?? []).map((h) => h.hook));
-  const enabledBundleHooks = new Set<string>(
-    (bill?.capabilities ?? [])
-      .filter((c) => c.state !== "vetoed")
-      .flatMap((c) => options.capability_bundles[c.capability]?.hooks ?? []),
-  );
-  const addHookCandidates = hookCandidates(
-    options.hooks,
-    bundleCarriedHooks(options.capability_bundles),
-    effectiveHooks,
-  );
-
-  const interceptors = declaredInterceptors(body);
-  const sandboxGuardOn = interceptorOn(body, "sandbox_guard");
-  const sandboxBackend =
-    asString(nestedMap(body, "interceptor_configs", "sandbox_guard", "sandbox")?.backend) ||
-    "host";
-  const writeSurface =
-    asString(
-      nestedMap(body, "interceptor_configs", "sandbox_guard", "sandbox", "exclusive")
-        ?.write_surface,
-    ) || "workspace";
-  const approval = nestedMap(body, "approval");
+  const memory = ((): Record<string, unknown> | null => {
+    const m = body.memory;
+    return m !== null && typeof m === "object" && !Array.isArray(m)
+      ? (m as Record<string, unknown>)
+      : null;
+  })();
+  const approval = ((): Record<string, unknown> | null => {
+    const a = body.approval;
+    return a !== null && typeof a === "object" && !Array.isArray(a)
+      ? (a as Record<string, unknown>)
+      : null;
+  })();
   const approvalEnabled = approval?.enabled === true;
 
-  const memory = nestedMap(body, "memory");
-  const archiveOn = memory?.archive_enabled === true;
-  const coreOn = memory?.core_enabled === true;
+  // Effective memory/approval from the bill: display the ACTUAL effective
+  // values, not the raw field presence.
+  const memoryEffective = bill?.memory ?? null;
+  const approvalEffective = bill?.approval ?? null;
+  const archiveOverride = memoryOverride(body, "archive_enabled");
+  const coreOverride = memoryOverride(body, "core_enabled");
+  const approvalOverride = approval?.enabled ?? null;
+
+  const autoNamingOn = sessionTitleOn(body, options.default_hooks);
+  const collaborators = useMemo(
+    () => (isRoot ? directCollaborators(node) : []),
+    [isRoot, node],
+  );
+
+  const promptName = asString(body.prompt_name);
+
+  const mcpChecked = useMemo(
+    () => new Set(asStringList(body.mcp)),
+    [body.mcp],
+  );
+
+  /** Capability checkbox: ON preserves any existing config object; OFF
+   * writes the real false veto. Uses the real tri-state mutation. */
+  const capabilityItems = useMemo(
+    () => capabilityNames.map((name) => {
+      const key = PLUGIN_LABELS.get(name);
+      return { id: name, label: key ? t(key) : name };
+    }),
+    [capabilityNames, t],
+  );
+  /**
+   * Checkbox state per capability. Precedence (correction 3):
+   *   1. explicit declared `false` → off (the veto always wins);
+   *   2. declared config object → on (a draft toggle or an expert's config);
+   *   3. otherwise follow the bill — checked only when the compiled bill
+   *      reports state auto | declared. A capability ABSENT from the bill
+   *      (an optional bundle that does not auto-apply, e.g. experience on
+   *      a declaration without it) renders OFF; enabling it writes the
+   *      real `on` deviation.
+   */
+  const capabilityChecked = useMemo(() => {
+    const set = new Set<string>();
+    for (const name of capabilityNames) {
+      const mode = capabilityMode(body, name);
+      if (mode === "off") continue;
+      if (mode === "on") {
+        set.add(name);
+        continue;
+      }
+      const billState = bill?.capabilities.find(
+        (c) => c.capability === name,
+      )?.state;
+      if (billState === "auto" || billState === "declared") set.add(name);
+    }
+    return set;
+  }, [capabilityNames, bill, body]);
 
   return (
     <div className="space-y-4" data-testid="pools-agent-form">
+      {!isRoot && onSelectAgent && <Button variant="ghost" size="sm" onClick={() => onSelectAgent(node.path.slice(0, 1))}>{t("settings.poolsPanel.backToAssistant")}</Button>}
       <h3 className="font-mono text-base font-semibold text-bright">
         {isRoot
           ? t("settings.poolsPanel.agentHeadingRoot", { pool, name: node.name })
@@ -149,30 +224,25 @@ export function AgentForm({
           data-testid="pools-node-issues"
           className="space-y-1 rounded-sm border border-danger bg-canvas-elevated px-3 py-2"
         >
-          {issues.map((issue, i) => (
-            <li key={`${issue.rule}-${i}`} className="text-xs text-danger">
+          {issues.map((issue) => (
+            <li key={`${issue.rule}-${issue.node}-${issue.message}`} className="text-xs text-danger">
               <span className="font-mono font-semibold">{issue.rule}</span> {issue.message}
             </li>
           ))}
         </ul>
       ) : null}
 
-      <RuntimeSection
-        strategy={asString(body.execution_strategy)}
-        providerKind={asString(body.provider_kind)}
-        options={options}
-        onStrategyChange={(v) =>
-          updateAgent((b) => {
-            setField(b, "execution_strategy", v || null);
-            if (v !== "external") delete b.provider_kind;
-          })
-        }
-        onProviderKindChange={(v) =>
-          updateAgent((b) => setField(b, "provider_kind", v || null))
-        }
-      />
+      {!identityPersisted ? (
+        <p
+          data-testid="identity-save-first"
+          className="rounded-sm border border-warning bg-canvas-elevated px-3 py-2 text-xs text-warning"
+        >
+          {t("settings.poolsPanel.identitySaveFirst")}
+        </p>
+      ) : null}
 
-      <FormSection title={t("settings.poolsPanel.sectionBasic")}>
+      {/* ── Overview ──────────────────────────────────────────────────── */}
+      <FormSection title={t("settings.poolsPanel.sectionFriendly")}>
         <Textarea
           label={t("settings.poolsPanel.description")}
           helper={t("settings.poolsPanel.descriptionHelper")}
@@ -182,397 +252,338 @@ export function AgentForm({
             updateAgent((b) => setField(b, "description", e.target.value || null))
           }
         />
+
+        {/* Working instructions: direct prompt-body edit through the
+            original PromptStore owner (immediate save; shared-impact
+            notice). Custom prompt/provider combinations fall back to the
+            prompt_name selector (not forced into prompt_name). */}
         {!isExternal ? (
           <>
-            <Input
-              type="number"
-              min={1}
-              label={t("settings.poolsPanel.maxSteps")}
-              helper={t("settings.poolsPanel.maxStepsHelper", { default: MAX_STEPS_DEFAULT })}
-              value={asNumber(body.max_steps)?.toString() ?? ""}
-              onChange={(e) => {
-                const raw = e.target.value;
-                updateAgent((b) =>
-                  setField(b, "max_steps", raw === "" ? null : Math.max(1, Number(raw))),
-                );
-              }}
-            />
-          </>
-        ) : null}
-      </FormSection>
-
-      {isExternal ? null : (
-        <>
-          <FormSection title={t("settings.poolsPanel.sectionCapabilities")}>
-            <HelperText>{t("settings.poolsPanel.capabilitiesHelper")}</HelperText>
-            <div className="space-y-2">
-              {capabilityNames.map((name) => (
-                <CapabilityRow
-                  key={name}
-                  name={name}
-                  bill={bill?.capabilities.find((c) => c.capability === name) ?? null}
-                  bundle={options.capability_bundles[name] ?? null}
-                  isRoot={isRoot}
-                  mode={capabilityMode(body, name)}
-                  config={nestedMap(body, "capabilities", name) ?? {}}
-                  onModeChange={(mode: CapabilityMode) =>
-                    updateAgent((b) => setCapabilityMode(b, name, mode))
-                  }
-                  onConfigFieldChange={(key, value) =>
-                    updateAgent((b) => setCapabilityConfigField(b, name, key, value))
-                  }
-                />
-              ))}
-            </div>
-          </FormSection>
-
-          <FormSection title={t("settings.poolsPanel.sectionTools")}>
-            <DropdownPanel
-              label={t("settings.poolsPanel.toolset")}
-              helper={t("settings.poolsPanel.toolsetHelper", { value: position.toolset })}
-              value={asString(body.toolset)}
-              options={[
-                { value: "", label: t("settings.poolsPanel.positionDefault") },
-                ...options.toolsets.map((ts) => ({ value: ts, label: ts })),
-              ]}
-              onChange={(v) => updateAgent((b) => setField(b, "toolset", v || null))}
-            />
-            <div>
-              <span className="mb-1 block text-base text-ink">
-                {t("settings.poolsPanel.effectiveTools")}
-              </span>
-              {bill === null ? (
-                <HelperText>{t("settings.poolsPanel.effectiveLoading")}</HelperText>
-              ) : (
-                <div className="mt-2 flex flex-wrap gap-1.5" data-testid="pools-effective-tools">
-                  {bill.tools.map((tool) => (
-                    <Chip
-                      key={tool.tool}
-                      title={t("settings.poolsPanel.originTitle", { origin: tool.origin })}
-                    >
-                      {tool.tool}
-                      {tool.capability ? (
-                        <Badge tone="brand">
-                          {t("settings.poolsPanel.capabilityBadge", { name: tool.capability })}
-                        </Badge>
-                      ) : null}
-                    </Chip>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div>
-              <span className="mb-1 block text-base text-ink">
-                {t("settings.poolsPanel.mcp")}
-              </span>
-              {mcpNames.length === 0 ? (
-                <HelperText>{t("settings.poolsPanel.mcpEmpty")}</HelperText>
-              ) : (
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  {mcpNames.map((name) => (
-                    <Checkbox
-                      key={name}
-                      label={name}
-                      checked={asStringList(body.mcp).includes(name)}
-                      onChange={(e) =>
-                        updateAgent((b) => toggleInListField(b, "mcp", name, e.target.checked))
-                      }
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          </FormSection>
-
-          <FormSection title={t("settings.poolsPanel.sectionHooks")}>
-            {bill === null ? (
-              <HelperText>{t("settings.poolsPanel.effectiveLoading")}</HelperText>
-            ) : (
-              <div className="flex flex-wrap gap-1.5" data-testid="pools-effective-hooks">
-                {bill.hooks.map((hook) => (
-                  <Chip
-                    key={hook.hook}
-                    title={t("settings.poolsPanel.originTitle", { origin: hook.origin })}
-                    actionLabel={
-                      hook.origin === "local_hooks"
-                        ? t("settings.poolsPanel.removeHook", { name: hook.hook })
-                        : t("settings.poolsPanel.vetoHook", { name: hook.hook })
-                    }
-                    actionIcon={hook.origin === "local_hooks" ? <X size={11} /> : <Ban size={11} />}
-                    onAction={() =>
-                      updateAgent((b) =>
-                        hook.origin === "local_hooks"
-                          ? removeDeclaredHook(b, hook.hook)
-                          : vetoHook(b, hook.hook),
-                      )
-                    }
-                  >
-                    {hook.hook}
-                    {hook.origin === "position_default" ? (
-                      <Badge>{t("settings.poolsPanel.hookBadgeDefault")}</Badge>
-                    ) : hook.origin === "capability_derived" && hook.capability ? (
-                      <Badge tone="brand">
-                        {t("settings.poolsPanel.capabilityBadge", { name: hook.capability })}
-                      </Badge>
-                    ) : (
-                      <Badge>{t("settings.poolsPanel.hookBadgeDeclared")}</Badge>
-                    )}
-                  </Chip>
-                ))}
-              </div>
-            )}
-            {vetoedHooks(body).length > 0 ? (
-              <div className="flex flex-wrap items-center gap-1.5" data-testid="pools-vetoed-hooks">
-                <span className="text-xs text-mute">{t("settings.poolsPanel.vetoedHooks")}</span>
-                {vetoedHooks(body).map((name) => {
-                  const restorable =
-                    options.default_hooks.includes(name) || enabledBundleHooks.has(name);
-                  return (
-                    <Chip
-                      key={name}
-                      struck
-                      title={t("settings.poolsPanel.vetoedTitle", { name })}
-                      actionLabel={
-                        restorable
-                          ? t("settings.poolsPanel.restoreHook", { name })
-                          : t("settings.poolsPanel.removeVeto", { name })
-                      }
-                      actionIcon={<RotateCcw size={11} />}
-                      onAction={() => updateAgent((b) => restoreHook(b, name))}
-                    >
-                      {name}
-                    </Chip>
-                  );
-                })}
-              </div>
-            ) : null}
-            <RosterCombobox
-              label={t("settings.poolsPanel.addHook")}
-              candidates={addHookCandidates}
-              emptyText={t("settings.poolsPanel.noHookCandidates")}
-              onPick={(name) => updateAgent((b) => addDeclaredHook(b, name))}
-            />
-          </FormSection>
-
-          {isRoot ? (
-            <FormSection title={t("settings.poolsPanel.sectionPermissions")}>
-              <div>
-                <span className="mb-1 block text-base text-ink">
-                  {t("settings.poolsPanel.interceptors")}
-                </span>
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  {interceptors.map((name) => (
-                    <Chip
-                      key={name}
-                      actionLabel={t("settings.poolsPanel.removeInterceptor", { name })}
-                      actionIcon={<X size={11} />}
-                      onAction={() => updateAgent((b) => setInterceptor(b, name, false))}
-                    >
-                      {name}
-                    </Chip>
-                  ))}
-                  <RosterCombobox
-                    label={t("settings.poolsPanel.addInterceptor")}
-                    candidates={options.interceptors.filter((i) => !interceptors.includes(i))}
-                    emptyText={t("settings.poolsPanel.noInterceptorCandidates")}
-                    onPick={(name) => updateAgent((b) => setInterceptor(b, name, true))}
-                  />
-                </div>
-              </div>
-
-              {sandboxGuardOn ? (
-                <div className="space-y-4 rounded-md border border-hairline p-3">
-                  <DropdownPanel
-                    label={t("settings.poolsPanel.sandboxBackend")}
-                    value={sandboxBackend}
-                    options={SANDBOX_BACKENDS.map((v) => ({ value: v, label: v }))}
-                    onChange={(v) =>
-                      updateAgent((b) => {
-                        ensureNested(b, "interceptor_configs", "sandbox_guard", "sandbox").backend =
-                          v;
-                      })
-                    }
-                  />
-                  <DropdownPanel
-                    label={t("settings.poolsPanel.writeSurface")}
-                    value={writeSurface}
-                    options={WRITE_SURFACES.map((v) => ({ value: v, label: v }))}
-                    onChange={(v) =>
-                      updateAgent((b) => {
-                        ensureNested(
-                          b,
-                          "interceptor_configs",
-                          "sandbox_guard",
-                          "sandbox",
-                          "exclusive",
-                        ).write_surface = v;
-                      })
-                    }
-                  />
-                </div>
-              ) : null}
-
-              <div className="space-y-3">
-                <Checkbox
-                  label={t("settings.poolsPanel.approvalEnabled")}
-                  checked={approvalEnabled}
-                  onChange={(e) =>
-                    updateAgent((b) => {
-                      if (e.target.checked) ensureNested(b, "approval").enabled = true;
-                      else delete b.approval;
-                    })
-                  }
-                />
-                {approvalEnabled
-                  ? APPROVAL_TOOLS.map((tool) => {
-                      const entry = nestedMap(body, "approval", "tools", tool);
-                      const enabled = entry !== null;
-                      const paths = entry ? asStringList(entry.allowed_paths) : [];
-                      return (
-                        <div key={tool} className="rounded-md border border-hairline p-3">
-                          <Checkbox
-                            label={tool}
-                            checked={enabled}
-                            onChange={(e) =>
-                              updateAgent((b) => {
-                                const tools = ensureNested(b, "approval", "tools");
-                                if (e.target.checked) tools[tool] = { allowed_paths: ["./*"] };
-                                else delete tools[tool];
-                              })
-                            }
-                          />
-                          {enabled ? (
-                            <Textarea
-                              className="mt-2"
-                              label={t("settings.poolsPanel.allowedPaths")}
-                              helper={t("settings.poolsPanel.allowedPathsHelper")}
-                              value={paths.join("\n")}
-                              onChange={(e) =>
-                                updateAgent((b) => {
-                                  ensureNested(b, "approval", "tools", tool).allowed_paths = e
-                                    .target.value
-                                    .split("\n")
-                                    .map((p) => p.trim())
-                                    .filter((p) => p.length > 0);
-                                })
-                              }
-                            />
-                          ) : null}
-                        </div>
-                      );
-                    })
-                  : null}
-              </div>
-
-              <div>
-                <Button variant="secondary" size="sm" onClick={onApplyToPools}>
-                  {t("settings.poolsPanel.applyToPools")}
-                </Button>
-                <HelperText>{t("settings.poolsPanel.applyToPoolsHelper")}</HelperText>
-              </div>
-            </FormSection>
-          ) : null}
-
-          <FormSection title={t("settings.poolsPanel.sectionAdvanced")}>
-            <DropdownPanel
-              label={t("settings.poolsPanel.contextMode")}
-              helper={t("settings.poolsPanel.contextModeHelper")}
-              value={contextMode}
-              options={[
-                { value: "", label: t("settings.poolsPanel.positionDefaultFresh") },
-                ...options.context_modes.map((m) => ({ value: m, label: m })),
-              ]}
-              onChange={(v) =>
-                updateAgent((b) => {
-                  setField(b, "context_mode", v || null);
-                  if (v !== "fork") delete b.fork_max_messages;
-                })
-              }
-            />
-            {contextMode === "fork" ? (
-              <Input
-                type="number"
-                min={1}
-                max={FORK_MAX_LIMIT}
-                label={t("settings.poolsPanel.forkMax")}
-                helper={t("settings.poolsPanel.forkMaxHelper", {
-                  max: FORK_MAX_LIMIT,
-                  default: FORK_MAX_DEFAULT,
-                })}
-                value={asNumber(body.fork_max_messages)?.toString() ?? ""}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  updateAgent((b) =>
-                    setField(
-                      b,
-                      "fork_max_messages",
-                      raw === "" ? null : Math.min(FORK_MAX_LIMIT, Math.max(1, Number(raw))),
-                    ),
-                  );
-                }}
-              />
-            ) : null}
-
-            <DropdownPanel
-              label={t("settings.poolsPanel.eager")}
-              helper={t("settings.poolsPanel.eagerHelper", { value: position.registration })}
-              value={body.eager === true ? "eager" : body.eager === false ? "lazy" : ""}
-              options={[
-                { value: "", label: t("settings.poolsPanel.positionDefault") },
-                { value: "eager", label: t("settings.poolsPanel.eagerOn") },
-                { value: "lazy", label: t("settings.poolsPanel.eagerOff") },
-              ]}
-              onChange={(v) =>
-                updateAgent((b) => setField(b, "eager", v === "" ? null : v === "eager"))
-              }
-            />
-
-            {isRoot ? (
-              <div className="space-y-2">
-                <Checkbox
-                  label={t("settings.poolsPanel.memoryArchive")}
-                  checked={archiveOn}
-                  onChange={(e) =>
-                    updateAgent((b) => {
-                      const mem = ensureNested(b, "memory");
-                      mem.archive_enabled = e.target.checked;
-                      // Core is fed by archive consolidation — never leave the
-                      // invalid core-without-archive combination behind.
-                      if (!e.target.checked) mem.core_enabled = false;
-                      if (!mem.archive_enabled && !mem.core_enabled && !mem.session) {
-                        delete b.memory;
-                      }
-                    })
-                  }
-                />
-                <Checkbox
-                  label={t("settings.poolsPanel.memoryCore")}
-                  helper={t("settings.poolsPanel.memoryCoreHelper")}
-                  checked={coreOn}
-                  onChange={(e) =>
-                    updateAgent((b) => {
-                      const mem = ensureNested(b, "memory");
-                      mem.core_enabled = e.target.checked;
-                      if (e.target.checked) mem.archive_enabled = true;
-                    })
-                  }
-                />
-              </div>
-            ) : null}
-
             <DropdownPanel
               label={t("settings.poolsPanel.promptName")}
               helper={t("settings.poolsPanel.promptHelper")}
-              value={asString(body.prompt_name)}
+              value={promptName}
               options={[
                 { value: "", label: t("settings.poolsPanel.promptNone") },
                 ...prompts.map((p) => ({ value: p, label: p })),
               ]}
-              onChange={(v) => updateAgent((b) => setField(b, "prompt_name", v || null))}
+              onChange={(v) => onChangeInstructions(() => updateAgent((b) => setField(b, "prompt_name", v || null)))}
             />
-          </FormSection>
-        </>
-      )}
+            {promptName ? (
+              <PromptBodyEditor promptName={promptName} identityPersisted={identityPersisted} />
+            ) : (
+              <HelperText>{t("settings.poolsPanel.promptBodyMissing")}</HelperText>
+            )}
+          </>
+        ) : (
+          <HelperText>{t("settings.poolsPanel.providerOwns", { cli: asString(body.provider_kind) || "external" })}</HelperText>
+        )}
+
+        {isRoot ? (
+          <Checkbox
+            label={t("settings.poolsPanel.autoNaming")}
+            helper={t("settings.poolsPanel.autoNamingHelper")}
+            checked={autoNamingOn}
+            onChange={(e) =>
+              updateAgent((b) =>
+                setSessionTitle(b, e.target.checked, options.default_hooks),
+              )
+            }
+          />
+        ) : null}
+      </FormSection>
+
+      {/* Collaborators — root only, one level, nested preserved */}
+      {isRoot && !isExternal ? (
+        <FormSection title={t("settings.poolsPanel.sectionCollaborators")}>
+          <HelperText>{t("settings.poolsPanel.collaboratorsHelper")}</HelperText>
+          <div className="space-y-2" data-testid="collaborator-list">
+            {collaborators.length === 0 ? (
+              <p className="text-sm text-mute">{t("settings.poolsPanel.noCollaborators")}</p>
+            ) : (
+              collaborators.map((child) => (
+                <div
+                  key={child.name}
+                  className="flex items-center gap-2 rounded-md border border-hairline px-3 py-2"
+                >
+                  <button type="button" className="min-w-0 flex-1 truncate rounded text-left font-mono text-sm text-ink hover:text-brand" aria-label={t("settings.poolsPanel.editCollaborator", { name: child.name })} onClick={() => onSelectAgent?.(child.path)} disabled={!onSelectAgent}>
+                    {child.name}
+                  </button>
+                  {hasNestedAgents(child) ? (
+                    <span title={t("settings.poolsPanel.collaboratorNestedTitle")}>
+                      <Badge>{t("settings.poolsPanel.collaboratorNested")}</Badge>
+                    </span>
+                  ) : null}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() =>
+                      updateModel?.((draft) =>
+                        agentPath ? deleteAgent(draft, pool, [...agentPath, child.name]) : undefined,
+                      )
+                    }
+                    disabled={!updateModel || !agentPath}
+                    aria-label={t("settings.pools.removeSubagent", { name: child.name })}
+                  >
+                    {t("common.remove")}
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
+          {updateModel && agentPath ? (
+            <AddCollaboratorButton
+              parentPath={agentPath}
+              existingNames={[
+                ...collaborators.map((c) => c.name),
+                ...declaredPools,
+              ]}
+              onAdd={(name) =>
+                updateModel((draft) => addSubagent(draft, pool, agentPath, name))
+              }
+            />
+          ) : null}
+        </FormSection>
+      ) : null}
+      {isRoot && isExternal ? (
+        <HelperText>{t("settings.poolsPanel.externalNoCollaborators")}</HelperText>
+      ) : null}
+
+      {/* Capabilities & plugins — plain enable checkboxes (Scope save) */}
+      {!isExternal && capabilityNames.length > 0 ? (
+        <FormSection title={t("settings.poolsPanel.sectionCapabilities")}>
+          <HelperText>{t("settings.poolsPanel.capabilitiesHelper")}</HelperText>
+          <SelectionList
+            items={capabilityItems}
+            checked={capabilityChecked}
+            onToggle={(name, next) =>
+              updateAgent((b) =>
+                setCapabilityMode(b, name, next ? "on" : "off"),
+              )
+            }
+            ariaLabel={t("settings.poolsPanel.sectionCapabilities")}
+            searchLabel={
+              capabilityItems.length > 5
+                ? t("settings.poolsPanel.filterPlaceholder")
+                : undefined
+            }
+          />
+        </FormSection>
+      ) : null}
+
+      {/* Skills / MCP — instant-effect selectors, identity gated */}
+      {!isExternal && identityPersisted ? (
+        <FormSection title={t("settings.poolsPanel.sectionExtensions")}>
+          {persistedSkillsEnabled && capabilityMode(body, "skills") !== "off" ? (
+            <AgentSkillSelector pool={pool} agent={node.name} />
+          ) : (
+            <HelperText>{t("settings.poolsPanel.skillsDisabled")}</HelperText>
+          )}
+          <div>
+            <span className="mb-1 block text-base text-ink">
+              {t("settings.poolsPanel.mcp")}
+            </span>
+            {mcpNames.length === 0 ? (
+              <HelperText>{t("settings.poolsPanel.mcpEmpty")}</HelperText>
+            ) : (
+              <SelectionList
+                items={mcpNames.map((name) => ({ id: name, label: name }))}
+                checked={mcpChecked}
+                onToggle={(name, next) =>
+                  updateAgent((b) => toggleInListField(b, "mcp", name, next))
+                }
+                ariaLabel={t("settings.poolsPanel.mcp")}
+                searchLabel={
+                  mcpNames.length > 5
+                    ? t("settings.poolsPanel.filterPlaceholder")
+                    : undefined
+                }
+              />
+            )}
+          </div>
+        </FormSection>
+      ) : null}
+
+      {/* Memory & confirmation — effective values + explicit off/reset */}
+      {!isExternal && isRoot ? (
+        <FormSection title={t("settings.poolsPanel.memorySection")}>
+          <div className="space-y-3">
+            <MemoryToggle
+              label={t("settings.poolsPanel.memoryArchive")}
+              effective={memoryEffective?.archive_enabled ?? (memory?.archive_enabled === true)}
+              override={archiveOverride}
+              onSet={(on) => updateAgent((b) => setMemoryLayer(b, "archive_enabled", on))}
+              onReset={() => updateAgent((b) => resetMemoryLayer(b, "archive_enabled"))}
+            />
+            <MemoryToggle
+              label={t("settings.poolsPanel.memoryCore")}
+              helper={t("settings.poolsPanel.memoryCoreHelper")}
+              effective={memoryEffective?.core_enabled ?? (memory?.core_enabled === true)}
+              override={coreOverride}
+              onSet={(on) => updateAgent((b) => setMemoryLayer(b, "core_enabled", on))}
+              onReset={() => updateAgent((b) => resetMemoryLayer(b, "core_enabled"))}
+            />
+            <div className="rounded-md border border-hairline p-3">
+              <Checkbox
+                label={t("settings.poolsPanel.approvalRow")}
+                checked={approvalEffective?.enabled ?? approvalEnabled}
+                disabled={approvalEffective ? !approvalEffective.eligible : false}
+                onChange={(e) =>
+                  updateAgent((b) => setApprovalEnabled(b, e.target.checked))
+                }
+              />
+              {approvalEffective && !approvalEffective.eligible ? (
+                <HelperText>{t("settings.poolsPanel.approvalIneligible")}</HelperText>
+              ) : null}
+              {approvalOverride !== null ? (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-xs text-mute">
+                    {approvalOverride
+                      ? t("settings.poolsPanel.memoryOverrideOn")
+                      : t("settings.poolsPanel.memoryOverrideOff")}
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => updateAgent((b) => resetApproval(b))}
+                  >
+                    {t("settings.poolsPanel.resetToDefault")}
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </FormSection>
+      ) : null}
+    </div>
+  );
+}
+
+// ── Memory toggle with effective value + explicit off/reset ─────────────────
+
+function MemoryToggle({
+  label,
+  helper,
+  effective,
+  override,
+  onSet,
+  onReset,
+}: {
+  label: string;
+  helper?: string;
+  effective: boolean;
+  override: boolean | null;
+  onSet: (on: boolean) => void;
+  onReset: () => void;
+}) {
+  const t = useT();
+  return (
+    <div className="rounded-md border border-hairline p-3">
+      <Checkbox
+        label={label}
+        helper={helper}
+        checked={effective}
+        onChange={(e) => onSet(e.target.checked)}
+      />
+      <div className="mt-1.5 flex items-center gap-2">
+        <span className="text-xs text-mute">
+          {override === null
+            ? t("settings.poolsPanel.memoryFollowsDefault")
+            : override
+              ? t("settings.poolsPanel.memoryOverrideOn")
+              : t("settings.poolsPanel.memoryOverrideOff")}
+        </span>
+        {override !== null ? (
+          <Button variant="secondary" size="sm" onClick={onReset}>
+            {t("settings.poolsPanel.resetToDefault")}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+// ── Add-collaborator inline input ───────────────────────────────────────────
+
+const KEY_RE = /^[a-z][a-z0-9_-]*$/;
+
+function AddCollaboratorButton({
+  parentPath,
+  existingNames,
+  onAdd,
+}: {
+  parentPath: string[];
+  existingNames: string[];
+  onAdd: (name: string) => void;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string>("");
+
+  const submit = useCallback((): void => {
+    const trimmed = name.trim();
+    if (!KEY_RE.test(trimmed)) {
+      setError(t("settings.poolsPanel.newAgentInvalidKey"));
+      return;
+    }
+    if (existingNames.includes(trimmed)) {
+      setError(t("settings.poolsPanel.newAgentKeyTaken", { name: trimmed }));
+      return;
+    }
+    onAdd(trimmed);
+    setName("");
+    setError("");
+    setOpen(false);
+  }, [name, existingNames, onAdd, t]);
+
+  if (!open) {
+    return (
+      <Button variant="secondary" size="sm" onClick={() => setOpen(true)}>
+        {t("settings.poolsPanel.addCollaborator")}
+      </Button>
+    );
+  }
+  void parentPath;
+  return (
+    <div className="space-y-1.5" data-testid="add-collaborator">
+      <Input
+        label={t("settings.poolsPanel.newAgentHeading")}
+        value={name}
+        placeholder={t("settings.poolsPanel.newAgentKeyPlaceholder")}
+        autoFocus
+        onChange={(e) => {
+          setName(e.target.value);
+          setError("");
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            submit();
+          } else if (e.key === "Escape") {
+            setOpen(false);
+            setName("");
+            setError("");
+          }
+        }}
+      />
+      {error ? <p className="text-xs text-danger">{error}</p> : null}
+      <div className="flex gap-2">
+        <Button variant="primary" size="sm" onClick={submit}>
+          {t("common.add")}
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            setOpen(false);
+            setName("");
+            setError("");
+          }}
+        >
+          {t("common.cancel")}
+        </Button>
+      </div>
     </div>
   );
 }

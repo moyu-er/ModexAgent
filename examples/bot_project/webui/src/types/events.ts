@@ -256,6 +256,10 @@ export interface ConversationInfo {
   parent_session_id: string | null;
   created_at?: number;
   updated_at?: number;
+  /** Session metadata from the backend SessionInfo record. Carries the
+   *  PA-02 display title under `title` plus other business keys — consumers
+   *  read through sessionDisplayTitle, never a second mutable title store. */
+  metadata?: Record<string, unknown>;
 }
 
 export interface CreateConversationResponse {

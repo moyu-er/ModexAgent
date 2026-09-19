@@ -788,6 +788,32 @@
     color: var(--color-faint);
     font-size: var(--text-xs);
   }
+  .wsopen-item-row {
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+  }
+  .wsopen-item-row .wsopen-item {
+    flex: 1;
+    min-width: 0;
+  }
+  .wsopen-item-side {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    border-radius: var(--radius-sm);
+    color: var(--color-faint);
+    cursor: pointer;
+    transition:
+      background var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out);
+  }
+  .wsopen-item-side:hover,
+  .wsopen-item-side[aria-pressed="true"] {
+    background: var(--color-hairline-soft);
+    color: var(--color-brand);
+  }
   .wsopen-divider {
     height: 1px;
     background: var(--color-hairline);

@@ -14,13 +14,15 @@ import {
   type ReactNode,
 } from "react";
 import { en } from "./en";
+import { zh } from "./zh";
 
 export { en };
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
 /** Shape of a catalog: a nested record of string leaves. */
-export type Messages = typeof en;
+type CatalogShape<T> = { [K in keyof T]: T[K] extends string ? string : CatalogShape<T[K]> };
+export type Messages = CatalogShape<typeof en>;
 
 /**
  * Recursive dotted-key type. For every string leaf in `en`, produces the
@@ -42,7 +44,7 @@ export type MessageKey = Path<Messages>;
 
 // ── Catalog registry ─────────────────────────────────────────────────────────
 
-export const catalogs = { en } satisfies Record<string, Messages>;
+export const catalogs = { en, zh } satisfies Record<string, Messages>;
 
 // ── Translate ─────────────────────────────────────────────────────────────────
 
