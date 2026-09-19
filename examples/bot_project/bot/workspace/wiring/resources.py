@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from bot.kb.provider import KbProvider
     from bot.service.core import BotService
     from modex_agent.persistence.managers import WorkspacePersistenceManager
+    from modex_agent.providers.http.provider import HTTPStreamProvider
 
 from bot.config.webui_config import build_control_origin
 from bot.service.builders import (
@@ -305,6 +306,57 @@ async def _assemble_resources(
         store=session_index_store, on_register=_on_session_registered
     )
     await session_registry.load_all()
+    # Title ops: the single owner of metadata.title writes over THIS
+    # workspace's runtime registry (manual rename HTTP, the session_title
+    # hook's background naming, and GC cleanup all share this instance).
+    from bot.service.session_title import SessionTitleOps
+    from bot.service.session_title_task import SessionTitleNamingTask
+
+    title_ops = SessionTitleOps(
+        registry=session_registry,
+        on_changed=lambda: service.session_titles_changed(ctx.target),
+    )
+
+    def _naming_provider_source() -> HTTPStreamProvider:
+        # DESIGN §2.3: lazily construct ONE plain provider from the bot
+        # GLOBAL default model config via create_llm_provider — never the
+        # turn-scoped BotModelProvider (ContextVar-bound). Missing model
+        # configuration fails only the naming task; manual rename is independent.
+        from bot.service.model_config import _resolved_or_placeholder
+        from modex_agent.ioc.factories.llm import create_llm_provider
+        from modex_agent.providers.http.provider import HTTPStreamProvider
+
+        if service._bot_model_config is None:
+            raise ValueError("Configure a default model to enable automatic session titles")
+        cfg = _resolved_or_placeholder(service._bot_model_config)
+        provider = create_llm_provider(cfg.synthesize_llm_config())
+        if not isinstance(provider, HTTPStreamProvider):
+            raise TypeError("The configured title model must supply a closable HTTP provider")
+        return provider
+
+    async def _earliest_user_content(session_id: str) -> str | None:
+        # This existing store selects FILE/SQLite; the explicit directory
+        # pins the task to its workspace even after the caller switches.
+        store = service._transcript_store
+        if store is None:
+            return None
+        from bot.webui.events import UserMessageEvent
+
+        try:
+            events = await store.load(session_id, sessions_dir=ctx.paths.sessions_dir)
+        except Exception:
+            logger.debug("session_title transcript load failed", exc_info=True)
+            return None
+        for event in events:
+            if isinstance(event, UserMessageEvent) and event.content.strip():
+                return event.content
+        return None
+
+    title_naming = SessionTitleNamingTask(
+        ops=title_ops,
+        provider_source=_naming_provider_source,
+        transcript_reader=_earliest_user_content,
+    )
 
     # 2. Per-workspace broker (cross-process wakeup). The inbox/bus are now
     #    per-pool (Task 7) — built inside create_pool, one set per pool.
@@ -344,6 +396,10 @@ async def _assemble_resources(
         kb_provider=kb_provider,
         component_registry=service._component_registry,
         session_pool_index=session_pool_index,
+        session_registry=session_registry,
+        title_ops=title_ops,
+        title_naming=title_naming,
+        scope_declaration_path=declaration_path,
     )
     state.resources = resources
     # 3. Per-workspace interceptor chain, rooted at THIS workspace's overflow dir.
@@ -568,23 +624,30 @@ async def _assemble_resources(
     resources.graph_event_subscribers = graph_event_subscribers
     resources.graph_conn = graph_conn
 
-    default_pool = service._default_pool_name
-    if default_pool is None:
-        # No nominated default — derive from the runtime pools dict (first
-        # pool, or None when zero pools exist). The zero-pool case is
-        # expected (the user hasn't created any pool yet); PoolRouter and
-        # ResolvePoolStage guard it downstream, so stay silent.
-        default_pool = next(iter(pools), None)
-    elif default_pool not in pools:
-        fallback = next(iter(pools), default_pool)
-        if fallback != default_pool:
+    # PA-07: the workspace router's construction-time default is the unified
+    # preference-aware selection (declared = compiled pools in declaration
+    # order; runtime = this workspace's materialized pools). NO first-pool /
+    # main fallback (DESIGN §3.3): an unusable preference yields None and
+    # NEW-choice entries resolve dynamically through the service property /
+    # input-context provider instead of this static value. Existing stored
+    # routes are unaffected (the store is authoritative for them).
+    from bot.service.default_pool_selection import resolve_default_pool
+
+    prefs = getattr(service, "personal_preferences", None)
+    default_pool = None
+    if prefs is not None:
+        decision = resolve_default_pool(
+            preferred=prefs.preferred_pool(),
+            declared_pools=_declaration_road_pools(scope_boot),
+            runtime_pools=set(pools),
+        )
+        default_pool = decision.pool
+        if decision.pool is None and prefs.preferred_pool() is not None:
             logger.warning(
-                "[pool-routing] nominated default pool %r not found; falling back to %r (pools=%s)",
-                default_pool,
-                fallback,
-                list(pools),
+                "[pool-routing] preferred default pool unusable in workspace %s: %s",
+                ctx.target,
+                decision.reason,
             )
-            default_pool = fallback
 
     # 6. Background tasks (dream) — per workspace. The per-pool experience
     #    curator loops moved to the experience capability supply (SPEC
@@ -652,6 +715,12 @@ async def _stop_resources(resources: PoolWorkspaceResources) -> None:
         await _stop_pools(resources)
         pools_ok = True
     finally:
+        # Workspace teardown is the title naming owner's single release
+        # point (DESIGN §2.4): cancel every pending naming task and close
+        # the lazy provider AFTER pools stop (no hook can submit more).
+        title_naming = resources.title_naming
+        if title_naming is not None:
+            await title_naming.aclose()
         try:
             if resources.graph_orchestrator is not None:
                 try:

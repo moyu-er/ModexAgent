@@ -91,6 +91,55 @@ _REACT_POOLS = {"coder", "default", "review"}
 _MAX_CONTEXT_TOKENS = 200000
 
 
+def _workspace_resources_bundle(root: Path) -> Any:
+    """Minimal REAL workspace resource bundle for the production boot path.
+
+    The session_title hook factory fail-loudly requires the workspace's
+    title ops + naming owner (the production bundle in
+    ``bot/workspace/wiring/resources.py`` always carries them), so a bare
+    ``object()`` stub no longer boots the shipped declaration. This builds
+    the smallest real bundle: file-backed session index → runtime registry
+    → title ops + naming task. The naming task's provider/transcript
+    sources are never invoked here — naming only runs from the hook after
+    a completed turn with real history.
+    """
+    from bot.service.session_store import WorkspacePoolSessionStore
+    from bot.service.session_title import SessionTitleOps
+    from bot.service.session_title_task import SessionTitleNamingTask
+    from bot.workspace.handle import PoolWorkspaceResources
+
+    from modex_agent.persistence.session_registry import InMemorySessionRegistry
+    from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
+
+    ctx = WorkspaceContext(
+        target=root, paths=WorkspacePaths(root=root / ".modex"), is_home=True
+    )
+    overflow_store = LocalFileToolOverflowStore(workspace=ctx.paths.overflow_dir)
+    session_index_store = WorkspacePoolSessionStore(
+        ctx.paths.session_index_dir, pool_resolver=lambda _session: "default"
+    )
+    session_registry = InMemorySessionRegistry(store=session_index_store)
+
+    return PoolWorkspaceResources(
+        target=root,
+        ctx=ctx,
+        overflow_store=overflow_store,
+        session_index_store=session_index_store,
+        broker=InMemoryMessageBroker(),
+        session_registry=session_registry,
+        title_ops=SessionTitleOps(registry=session_registry),
+        title_naming=SessionTitleNamingTask(
+            ops=SessionTitleOps(registry=session_registry),
+            provider_source=_unused_provider,
+            transcript_reader=lambda _session_id: None,
+        ),
+    )
+
+
+def _unused_provider() -> Any:
+    raise AssertionError("naming provider must not run in the boot harness")
+
+
 def _hermetic_config(tmp_path: Path) -> Path:
     """Copy the real bot config, dropping the MCP selection (no npx)."""
     dst = tmp_path / "config"
@@ -153,9 +202,8 @@ async def _boot_pools(config_dir: Path) -> dict[str, Any]:
     boot = _boot_declaration(config_dir, component_registry)
     assert boot.spec.workspace is not None
     root = config_dir.parent
-    ctx = WorkspaceContext(
-        target=root, paths=WorkspacePaths(root=root / ".modex"), is_home=False
-    )
+    resources = _workspace_resources_bundle(root)
+    ctx = resources.ctx
 
     pools: dict[str, Any] = {}
     broker = InMemoryMessageBroker()
@@ -192,7 +240,7 @@ async def _boot_pools(config_dir: Path) -> dict[str, Any]:
             app_config=None,
             strategy_registry=strategy_registry,
             workspace_registry=object(),
-            workspace_resources=object(),
+            workspace_resources=resources,
             component_registry=component_registry,
             pool_data=pool_data,
         )

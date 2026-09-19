@@ -41,6 +41,7 @@ def test_eval_arm_schema_mirrors_framework_overlay_with_only_pool_sugar() -> Non
         *PoolOverlay.model_fields,
         "single_agent",
         "tools_remove",
+        "hooks_remove",
         "memory",
         "system_prompt",
         "strip_mcp",
@@ -63,6 +64,7 @@ def test_checked_in_arms_keep_default_and_benchmark_semantics_separate() -> None
                 agents={
                     "default": AgentOverlay(
                         tools=["-experience"],
+                        hooks=["-session_title"],
                         strip_mcp=True,
                     )
                 }
@@ -78,6 +80,7 @@ def test_checked_in_arms_keep_default_and_benchmark_semantics_separate() -> None
     # Shell-group companions are selected by the shell capability. The arm
     # leaves that capability untouched, so its persistent default applies.
     assert benchmark_root.tools == ["-experience"]
+    assert benchmark_root.hooks == ["-session_title"]
     assert benchmark_root.memory == MemoryDeclaration(core_enabled=False)
     assert benchmark_root.system_prompt_provider == "file_prompt"
     assert benchmark_root.system_prompt_provider_config == {"path": "agents/benchmark.md"}

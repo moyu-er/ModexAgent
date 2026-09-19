@@ -331,6 +331,13 @@ async def test_every_materialized_workspace_delivers_output(
         # Push one message per non-home workspace, each carrying its workspace.
         for i, ws in enumerate(ws_targets):
             session = session_factory.create(agent_name="main", external_id=f"ws{i}")
+            # This test starts AFTER input preparation. Establish the explicit
+            # pool choice as S5/WS attach do before enqueueing; an agent name
+            # alone is not a persisted conversation route. No implicit default
+            # is needed to verify per-workspace output delivery.
+            routes = service.pool_session_store
+            assert routes is not None
+            routes.set_pool(session.session_id_prefix, "main")
             msg = InputMessage(
                 content=marker[i],
                 session=session,

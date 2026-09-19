@@ -627,6 +627,14 @@ class TestGoldenSplitBrain:
             golden = GoldenFile.model_validate_json(
                 (_GOLDEN_DIR / f"{pool}.json").read_text(encoding="utf-8")
             ).root
+            if pool == "opencode":
+                # Host session naming is now explicitly shipped on external
+                # roots too. Keep an exact roster expectation: this is not a
+                # todo-contributed hook or a broad migration exemption.
+                golden = {
+                    name: facets.model_copy(update={"hook_roster": ("session_title",)})
+                    for name, facets in golden.items()
+                }
             # The assertor's unused-exemption check is per call: pools with
             # no todo-effective agent (opencode — external, no capabilities)
             # have no todo facet deltas, so the todo exemption table must

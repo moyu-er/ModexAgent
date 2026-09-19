@@ -38,12 +38,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger("bot.webui.server")
 
 
+def _available_pool_keys(server: WebUIServer) -> set[str]:
+    """The pool keys for session-create validation (PA-07).
+
+    ``_pool_agent_names`` carries root AGENT names (a pool's root may differ
+    from its key, e.g. coder→orchestrator) — never pool identities. The
+    authoritative pool-key source is the injected pool-key provider
+    (production: the service's RUNNING-pool provider over materialized
+    workspaces; explicit creates are additionally validated against the
+    running set by the selection rule). Falls back to the input context,
+    then to the empty set when neither is wired (minimal test wiring) —
+    every create then requires an explicit pool.
+    """
+    if server._available_pools_provider is not None:
+        return set(server._available_pools_provider())
+    return set(server._declared_pools_from_ctx())
+
+
 async def handle_create_session(request: web.Request) -> web.Response:
     """``POST /api/sessions`` -- create a new session.
 
     Optional JSON body: ``{"pool": "pool_name", "ws": "<workspace path>"}``.
     ``ws`` scopes the new session to a workspace's session index (home when
     absent) so it never leaks into another workspace's listing.
+
+    Pool selection (PA-07): an explicit body ``pool`` wins (validated
+    against the declared pool keys); absent body pool resolves through the
+    unified preference default (``server._new_conversation_default_pool``),
+    never a hardcoded pool name. When no valid default exists (unset
+    preference, deleted/unavailable preferred pool) the response is ``409``
+    with the reason — the client must prompt for a choice, the server never
+    substitutes.
     """
     server: WebUIServer = request.app["server"]
     pool_name: str | None = None
@@ -60,8 +85,21 @@ async def handle_create_session(request: web.Request) -> web.Response:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to parse /api/sessions JSON body: %s", exc)
     index_dir = server._index_dir_of_ws(ws_raw)
+    resources = await server._ensure_workspace_resources(ws_raw)
+    store = await session_store_for(server, index_dir)
 
-    effective_pool = pool_name or _DEFAULT_AGENT_NAME
+    available = _available_pool_keys(server)
+    if pool_name is not None:
+        if pool_name not in available:
+            return web.json_response(
+                {"error": f"unknown pool: {pool_name}"}, status=400
+            )
+        effective_pool = pool_name
+    else:
+        decision = server._new_conversation_default_pool(ws_raw)
+        if decision.pool is None:
+            return web.json_response({"error": decision.reason}, status=409)
+        effective_pool = decision.pool
     agent_name = (
         server._agent_resolver(effective_pool)
         if server._agent_resolver is not None
@@ -73,8 +111,9 @@ async def handle_create_session(request: web.Request) -> web.Response:
         session_prefix = session.session_id_prefix
         created_at = session.created_at
         updated_at = session.updated_at
-        store = await session_store_for(server, index_dir)
-        if store is not None:
+        if resources is not None and resources.session_registry is not None:
+            await resources.session_registry.register(session)
+        elif store is not None:
             await store.save(session)
     else:
         uuid_prefix = _new_uuid_prefix()
@@ -179,8 +218,14 @@ async def handle_delete_session(request: web.Request) -> web.Response:
     index_dir = server._index_dir_of_ws(ws_raw)
     sessions_dir = server._sessions_dir_of_ws(ws_raw)
     resolved = await resolve_session(server, session_id, index_dir=index_dir)
-    pool = await server._resolve_session_pool_for_request(
-        request.query.get("pool"), resolved.session_id, ws_raw
+    # GC placement is infrastructure partitioning: the caller owns an explicit
+    # legacy-partition fallback (per the routing contract) — never the
+    # product preference default.
+    pool = (
+        await server._resolve_session_pool_for_request(
+            request.query.get("pool"), resolved.session_id, ws_raw
+        )
+        or _DEFAULT_AGENT_NAME
     )
     deleted = await server._session_gc.delete_session_tree(
         session_id, ws_root=ws_root, pool=pool,

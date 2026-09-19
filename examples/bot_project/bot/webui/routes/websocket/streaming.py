@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from bot.webui.events import DeltaEnvelope
+from bot.webui.events import DeltaEnvelope, WebUIEventType
 from modex_agent.core.session_id import session_id_prefix_of
 
 if TYPE_CHECKING:
@@ -50,7 +50,12 @@ async def forward_deltas(
     try:
         while True:
             envelope: DeltaEnvelope = await queue.get()
-            await ws.send_json(envelope.to_dict())
+            if envelope.event_type == WebUIEventType.SESSIONS_CHANGED.value:
+                # Flat control message — dispatched by the client before
+                # the chat reducer; never part of the transcript stream.
+                await ws.send_json(envelope.to_control_dict())
+            else:
+                await ws.send_json(envelope.to_dict())
     except (asyncio.CancelledError, ConnectionError):
         pass
     except Exception:

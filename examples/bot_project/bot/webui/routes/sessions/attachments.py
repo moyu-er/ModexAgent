@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from aiohttp import web
 
-from bot.webui.types import _UPLOAD_CHUNK_BYTES
+from bot.webui.types import _DEFAULT_AGENT_NAME, _UPLOAD_CHUNK_BYTES
 from modex_agent.core.session_id import session_id_prefix_of
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("bot.webui.server")
 
 
-async def handle_download_attachment(request: web.Request) -> web.Response:
+async def handle_download_attachment(request: web.Request) -> web.StreamResponse:
     """``GET /api/sessions/{session_id}/attachments/{attachment_id}?ws=<ws>``.
 
     Attachment download — one endpoint, dispatch on the record's
@@ -71,7 +71,11 @@ async def handle_download_attachment(request: web.Request) -> web.Response:
     if att.locator is AttachmentLocator.MEDIA:
         server._index_dir_of_ws(ws_raw)
         session_prefix = session_id_prefix_of(session_id)
-        pool = server._resolve_pool_for_request(request.query.get("pool"), session_prefix)
+        # Storage-partition read: explicit legacy partition fallback owned HERE.
+        pool = (
+            server._resolve_pool_for_request(request.query.get("pool"), session_prefix)
+            or _DEFAULT_AGENT_NAME
+        )
         media_store = server._input_ctx.media_store if server._input_ctx is not None else None
         if media_store is None:
             # No media resolver wired — cannot serve inbound bytes.
@@ -173,11 +177,17 @@ async def handle_upload_attachment(request: web.Request) -> web.Response:
 
     server._index_dir_of_ws(ws_raw)
     session_prefix = session_id_prefix_of(session_id)
-    pool = server._resolve_pool_for_request(request.query.get("pool"), session_prefix)
+    # Storage-partition write: explicit legacy partition fallback owned HERE.
+    pool = (
+        server._resolve_pool_for_request(request.query.get("pool"), session_prefix)
+        or _DEFAULT_AGENT_NAME
+    )
 
     reader = await request.multipart()
     part = await reader.next()
-    if part is None or part.name != "file":
+    from aiohttp import BodyPartReader
+
+    if not isinstance(part, BodyPartReader) or part.name != "file":
         return web.json_response({"error": "missing 'file' part"}, status=400)
 
     config = (

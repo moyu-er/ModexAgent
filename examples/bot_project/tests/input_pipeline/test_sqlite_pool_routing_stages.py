@@ -84,16 +84,32 @@ class TestResolvePoolStageSqlite:
         assert sqlite_pool_store.get_pool(encode_snowflake("u1")) == "coding"
 
     @pytest.mark.asyncio
-    async def test_no_explicit_pool_reads_default_without_persisting_to_sqlite(
+    async def test_no_explicit_pool_pins_first_resolved_default_to_sqlite(
         self, sqlite_pool_store: SqlitePoolRoutingStore
     ) -> None:
+        """PA-07: a fresh conversation (no stored route) pins its first
+        resolved default ONCE — later preference changes re-route only NEW
+        conversations. Explicit-choice persistence is covered above."""
         ctx = _ctx(sqlite_pool_store)
         env = UserInputEnvelope(external_id="u1", content="hi", channel="qq", explicit_pool=None)
         result = await ResolvePoolStage().process(env, ctx)
         assert isinstance(result, Continue)
-        # No prior route → falls back to default_pool="main".
+        # No prior route → falls back to default_pool="main" and PINS it.
         assert env.metadata["resolved_pool"] == "main"
-        assert sqlite_pool_store.get_pool(encode_snowflake("u1")) is None
+        assert sqlite_pool_store.get_pool(encode_snowflake("u1")) == "main"
+
+    @pytest.mark.asyncio
+    async def test_established_route_is_never_rewritten(
+        self, sqlite_pool_store: SqlitePoolRoutingStore
+    ) -> None:
+        """A conversation with an established route keeps it even when the
+        context default changes (V12: defaults affect only new choices)."""
+        sqlite_pool_store.set_pool(encode_snowflake("u1"), "coding")
+        ctx = _ctx(sqlite_pool_store)
+        env = UserInputEnvelope(external_id="u1", content="hi", channel="qq", explicit_pool=None)
+        await ResolvePoolStage().process(env, ctx)
+        assert env.metadata["resolved_pool"] == "coding"
+        assert sqlite_pool_store.get_pool(encode_snowflake("u1")) == "coding"
 
 
 class TestEnvironmentControlStageSqlite:

@@ -44,6 +44,10 @@ if TYPE_CHECKING:
 
 SessionStoreResolver = Callable[[Path], Awaitable[SessionStore]]
 SessionPoolResolver = Callable[[SessionInfo], str]
+#: Runtime-registry cache cleanup for a deleted session: (ws_root, session_id).
+#: Wired by WebUIService to the workspace's actual SessionRegistry.cleanup —
+#: deleting the store does NOT clear the running registry (DESIGN §2.4).
+RegistryCleanup = Callable[[Path, str], Awaitable[None]]
 
 _MAX_RETRY_ATTEMPTS = 3
 _RETRY_DELAY_SECONDS = 30
@@ -270,6 +274,7 @@ class SessionGarbageCollector:
         session_store_resolver: SessionStoreResolver | None = None,
         session_pool_resolver: SessionPoolResolver | None = None,
         liveness_provider: LivenessProvider | None = None,
+        registry_cleanup: RegistryCleanup | None = None,
     ) -> None:
         self._roots_provider = workspace_roots_provider
         self._data_dir_name = data_dir_name
@@ -279,6 +284,7 @@ class SessionGarbageCollector:
         self._session_store_resolver = session_store_resolver
         self._session_pool_resolver = session_pool_resolver
         self._liveness_provider = liveness_provider
+        self._registry_cleanup = registry_cleanup
         self._queue: asyncio.Queue[_Job | None] = asyncio.Queue()
         self._inflight: set[tuple[Path, str]] = set()
         self._workers: list[asyncio.Task[None]] = []
@@ -471,6 +477,7 @@ class SessionGarbageCollector:
                 session_id,
                 scope.to_path_segment("pool"),
                 paths,
+                ws_root,
             )
             await self._enqueue_persisted_scopes(paths, scope, ws_root)
             return True
@@ -599,6 +606,7 @@ class SessionGarbageCollector:
                             child_session_id,
                             child_pool,
                             paths,
+                            job.ws_root,
                         )
                         await self._enqueue_persisted_scopes(
                             paths,
@@ -705,7 +713,12 @@ class SessionGarbageCollector:
         session_id: str,
         pool: str,
         paths: WorkspacePaths,
+        ws_root: Path | None = None,
     ) -> None:
+        # The deletion permit has already been acquired. Revoke background
+        # writes and clear the live cache before removing remaining artifacts.
+        if self._registry_cleanup is not None and ws_root is not None:
+            await self._registry_cleanup(ws_root, session_id)
         await DefaultSessionArtifactCleaner(paths=paths).clean_record_and_transcript(
             session_id, pool
         )

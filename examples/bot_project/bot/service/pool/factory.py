@@ -657,6 +657,14 @@ async def create_pool(
         root_provider = assembly.root_provider
         component_hook_specs = assembly.component_hook_specs
         if assembly.external_deps is not None:
+            # PA-04: the external main agent's declared-hook roster is
+            # dispatched by ExternalAwareFactory through the SAME
+            # ``_dispatch_hooks`` the native path uses. Thread the dispatch
+            # inputs (component registry + compiled spec + workspace
+            # resources) so the factory builds a real HookRunner.
+            assembly.external_deps["component_registry"] = resolved_registry
+            assembly.external_deps["assembly_spec"] = main_assembly_spec
+            assembly.external_deps["workspace_resources"] = workspace_resources
             external_deps = assembly.external_deps
     else:
         tool_manager = None

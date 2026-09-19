@@ -88,6 +88,7 @@ def _make_ctx(
 ) -> BotInputContext:
     pool_store = MagicMock()
     pool_store.get.return_value = "main"
+    pool_store.get_pool.return_value = "main"
     sink = enqueued if enqueued is not None else MagicMock()
     # S2 awaits command_adapter._try_intercept_control for every message, so
     # the default mock must be an AsyncMock returning False (not handled).
@@ -448,6 +449,7 @@ async def test_multi_channel_pool_isolation() -> None:
             # Shared pool_session_store with per-conversation keys
             pool_store = MagicMock()
             pool_store.get.return_value = "main"
+            pool_store.get_pool.return_value = "main"
             enqueued_im: list[InputMessage] = []
             enqueued_ws: list[InputMessage] = []
 

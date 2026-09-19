@@ -4,6 +4,7 @@ arms:
     pools:
       target_pool:
         strip_mcp: true
+        hooks_remove: [session_title]
         tools_remove:
           - experience
   benchmark:
@@ -15,6 +16,7 @@ arms:
         # memory off, tool removals). single_agent (keep_agents=[root]) stays
         # available for a dedicated ablation arm if ever needed.
         strip_mcp: true
+        hooks_remove: [session_title]
         tools_remove:
           - experience
         memory:

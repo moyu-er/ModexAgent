@@ -34,7 +34,12 @@ if TYPE_CHECKING:
     from modex_agent.runtime.codec import RuntimeStateCodecRegistry
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
+from bot.config.domains.personal_assistant import PersonalAssistantPreferences
 from bot.service._model_config_loader import _apply_bot_model_config, _load_app_config
+from bot.service.default_pool_selection import (
+    DefaultPoolStatus,
+    resolve_default_pool,
+)
 from bot.service.errors import BotServiceShutdownIncompleteError
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
@@ -181,6 +186,15 @@ class BotService(AgentBuilderMixin):
         # pool_router of whatever workspace ultimately dispatches the message.
         self._pool_session_store: PoolRoutingStore | None = None
 
+        # Personal-assistant preferences owner (PA-06/PA-07). Built from
+        # roots.config_dir in __init__ — the SAME object backs the REST
+        # config surface (domain registry) and every runtime default read.
+        self._personal_preferences: PersonalAssistantPreferences = (
+            PersonalAssistantPreferences(
+                self.roots.config_dir / "personal_assistant.yml"
+            )
+        )
+
         # Shared MCP connection registry (ADR-0017 Task 5a). Service-scoped,
         # concurrent, dedup-by-config-hash. Built in initialize() when the
         # ``sharedRegistry`` flag (config/mcp/registry.json, default ON) is set;
@@ -233,11 +247,107 @@ class BotService(AgentBuilderMixin):
 
     @property
     def _default_pool_name(self) -> str | None:
-        return None
+        """Effective default pool for NEW choices (PA-06/PA-07).
+
+        Reads the personal-assistant preference dynamically and validates it
+        against the declared pools and the genuinely RUNNING pools (the
+        materialized-workspace union — see :meth:`_running_pool_keys`) through
+        the unified selection rule
+        (:func:`bot.service.default_pool_selection.resolve_default_pool`).
+        Returns ``None`` when no valid default exists — callers must ask for
+        an explicit choice; there is NO first-pool/main fallback (DESIGN
+        §3.3). Static per-materialization routers are unaffected: they keep
+        their construction-time value for dispatch, while every NEW-choice
+        entry (S5 fresh conversation, REST create, WS attach bootstrap)
+        resolves through this property at call time.
+        """
+        return self._default_pool_name_for()
+
+    def _default_pool_name_for(self, ws_root: Path | None = None) -> str | None:
+        """Workspace-scoped variant of :attr:`_default_pool_name`.
+
+        ``ws_root`` selects which workspace's running pools validate the
+        preference (None/empty → home). Workspace-aware entries (REST create
+        with ``?ws=``, WS attach under a workspace) pass the request's
+        workspace so an external pool skipped in THAT workspace is correctly
+        reported unavailable.
+        """
+        prefs = self.personal_preferences
+        if prefs is None:
+            return None
+        decision = resolve_default_pool(
+            preferred=prefs.preferred_pool(),
+            declared_pools=self._declared_pool_names(),
+            runtime_pools=self._running_pool_keys(ws_root),
+        )
+        if decision.pool is None and decision.status is not DefaultPoolStatus.NONE_CONFIGURED:
+            logger.warning("Default pool unusable: %s", decision.reason)
+        return decision.pool
+
+    @property
+    def personal_preferences(self) -> PersonalAssistantPreferences | None:
+        """The assembly's personal-assistant preferences owner (PA-06).
+
+        Built once from ``roots.config_dir``; ``None`` only before
+        :meth:`initialize` (or when a test constructs the service without
+        preferences). The SAME object backs the REST config surface and every
+        runtime default read — one owner, no module-global fallback.
+        """
+        return self._personal_preferences
+
+    def _declared_pool_names(self) -> list[str]:
+        """Declared pool keys in declaration order (preference validation)."""
+        if self._scope_spec is None:
+            return []
+        if self._scope_spec.workspace is not None:
+            return [pool.name for pool in self._scope_spec.workspace.pools]
+        if self._scope_spec.pool is not None:
+            return [self._scope_spec.pool.name]
+        return []
+
+    def _available_pools_provider(self) -> set[str]:
+        """Runtime-available pool keys (re-read from the declaration)."""
+        from bot.config.scope_pools import declared_pool_names
+
+        return declared_pool_names(self.roots.scope_declaration_path)
+
+    def _running_pool_keys(self, ws_root: Path | None = None) -> set[str]:
+        """Genuinely RUNNING pool keys — the materialized pools of the
+        requested workspace's resources (PA-07 runtime-vs-declared split).
+
+        This is the runtime half of the selection inputs: a pool skipped at
+        assembly (e.g. an external pool whose CLI is missing, or a pool
+        deleted from the declaration before restart) is present in the
+        DECLARED set but absent here — the selection rule then reports the
+        preference unavailable instead of silently defaulting into it.
+        Reuses the existing materialized-resource owner
+        (``ScopeRegistry.iter_materialized_resources``) — no parallel
+        tracker. ``ws_root`` selects ONE workspace (empty/None → home);
+        with no selector the answer is the UNION over all materialized
+        workspaces (pool keys are declaration-global: dynamic workspaces
+        boot verbatim copies of the primary declaration's pools, so in
+        supported configurations the union equals home's set). A
+        not-yet-materialized non-home workspace contributes nothing
+        (first-use materialization is the existing owner's job).
+        """
+        target: Path | None = None
+        if ws_root is not None and str(ws_root).strip():
+            target = Path(ws_root).resolve()
+        keys: set[str] = set()
+        for resources in self._iter_workspace_resources():
+            if resources is None:
+                continue
+            if target is not None and Path(resources.target).resolve() != target:
+                continue
+            keys.update(resources.pools.keys())
+        return keys
 
     def _is_webui(self) -> bool:
         """Whether this service runs the WebUI (class attribute ``webui``)."""
         return self.webui
+
+    def session_titles_changed(self, workspace: Path) -> None:
+        """Presentation notification; headless assemblies have no subscribers."""
 
     def _build_default_provider(self) -> LLMProvider | None:
         """Build the default pool's LLM provider (memory/summarizer layer).
@@ -729,9 +839,10 @@ class BotService(AgentBuilderMixin):
         # client) AFTER evicting workspaces — order matters: pools and
         # background tasks stop inside evict_all and may still need them.
         # getattr guard: partial-init instances (tests build via __new__) skip.
-        if isinstance(getattr(self, "_default_provider", None), BotModelProvider):
+        provider = getattr(self, "_default_provider", None)
+        if isinstance(provider, BotModelProvider):
             with contextlib.suppress(BaseException):
-                await self._default_provider.aclose()
+                await provider.aclose()
         # Shut down the shared MCP registry AFTER evicting workspaces: evict_all
         # calls _stop_resources → McpBackend.release() per pool, which on the
         # shared path only DETACHES the facade (real connections are shared and

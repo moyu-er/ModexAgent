@@ -564,6 +564,9 @@ class TestGoldenSplitBrain:
             golden = GoldenFile.model_validate_json(
                 (_GOLDEN_DIR / f"{pool}.json").read_text(encoding="utf-8")
             ).root
+            if pool == "opencode":
+                # The shipped external root now opts into host session naming.
+                golden = {name: facets.model_copy(update={"hook_roster": ("session_title",)}) for name, facets in golden.items()}
             # The assertor's unused-exemption check is per call: pools with
             # no experience-effective agent (coder, opencode) have no
             # experience facet deltas, so the experience exemption table

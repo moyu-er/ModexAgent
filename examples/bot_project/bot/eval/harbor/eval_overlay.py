@@ -27,6 +27,7 @@ class EvalAgentOverlay(BaseModel):
 
     toolset: ToolPreset | None = None
     tools: list[str] | None = None
+    hooks: list[str] | None = None
     memory: MemoryDeclaration | None = None
     system_prompt_provider: str | None = None
     # Open heterogeneous payload mirroring AgentSpec; the named prompt factory
@@ -53,6 +54,7 @@ class EvalPoolOverlay(BaseModel):
     agents: dict[str, EvalAgentOverlay] = Field(default_factory=dict)
     single_agent: bool = False
     tools_remove: list[str] = Field(default_factory=list)
+    hooks_remove: list[str] = Field(default_factory=list)
     memory: MemoryDeclaration | None = None
     system_prompt: EvalSystemPromptOverlay | None = None
     strip_mcp: bool = False
@@ -82,6 +84,8 @@ class EvalPoolOverlay(BaseModel):
                 msg = "memory and root agents.<name>.memory are two spellings of the same field"
                 raise ValueError(msg)
             root_updates["memory"] = self.memory
+        if self.hooks_remove:
+            root_updates["hooks"] = [*(root_overlay.hooks or []), *(f"-{name}" for name in self.hooks_remove)]
         if self.system_prompt is not None:
             if (
                 root_overlay.system_prompt_provider is not None
@@ -130,6 +134,7 @@ class EvalArmOverlay(BaseModel):
             uses_sugar = (
                 pool.single_agent
                 or bool(pool.tools_remove)
+                or bool(pool.hooks_remove)
                 or pool.memory is not None
                 or pool.system_prompt is not None
                 or pool.strip_mcp

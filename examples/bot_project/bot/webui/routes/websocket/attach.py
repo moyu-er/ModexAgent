@@ -113,10 +113,28 @@ async def handle_attach(
     attach_ws_raw = str(data.get("ws", ""))
     attach_sessions_dir = server._sessions_dir_of_ws(attach_ws_raw)
     attach_index_dir = server._index_dir_of_ws(attach_ws_raw)
+    await server._ensure_workspace_resources(attach_ws_raw)
+    attach_store = await server._session_store_for(attach_index_dir)
 
     # ── New conversation path: frontend sends uuid_prefix + pool ──
     uuid_prefix_raw = str(data.get("uuid_prefix", ""))
     pool_from_client = str(data.get("pool", ""))
+    if uuid_prefix_raw and not pool_from_client:
+        # PA-07: a new-conversation attach WITHOUT an explicit pool resolves
+        # through the unified preference default (never main/first-pool).
+        decision = server._new_conversation_default_pool(attach_ws_raw)
+        if decision.pool is None:
+            await _safe_send_json(
+                ws,
+                DeltaEnvelope(
+                    session_id=session_id or "",
+                    agent_name=_DEFAULT_AGENT_NAME,
+                    event_type=WebUIEventType.ERROR.value,
+                    payload={"message": decision.reason},
+                ).to_dict(),
+            )
+            return
+        pool_from_client = decision.pool
     is_new_session_attach = bool(uuid_prefix_raw and pool_from_client)
 
     if is_new_session_attach:
@@ -192,7 +210,9 @@ async def handle_attach(
     # pool_from_client is the user's explicit choice from the UI dropdown;
     # use it directly as the pool name without going through agent_pool_map
     # (which may not yet be populated in every edge case).
-    pool_name = server._resolve_pool_for_request(pool_from_client or None, uuid_prefix)
+    pool_name = await server._resolve_session_pool_for_request(
+        pool_from_client or None, session_id, attach_ws_raw,
+    )
     routed_pool = server._resolve_pool_for_request(None, session_prefix)
     routed_main_agent = (
         server._agent_resolver(routed_pool)
@@ -244,7 +264,6 @@ async def handle_attach(
 
     # Also register subagent sessions from relation store -- these may have
     # been dispatched but not yet written to transcript.
-    attach_store = await server._session_store_for(attach_index_dir)
     if attach_store is not None:
         for parent_sid in list(state.attached_sessions):
             for child_session in await attach_store.get_children(parent_sid):

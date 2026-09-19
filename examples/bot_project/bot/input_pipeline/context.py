@@ -43,6 +43,12 @@ class BotInputContext(InputContext):
         uses that pool's ``PoolAssemblyDeps.media``. When None (e.g. tests, legacy
         callers), :meth:`media_config_for` falls back to the default
         ``media_config`` instance — existing behavior is preserved.
+    default_pool_provider: optional dynamic resolver for the effective
+        default pool (PA-07). When wired, :attr:`default_pool` reads through
+        it at call time so a saved personal-assistant preference applies to
+        NEW choices immediately without a restart. When None, the static
+        constructor value is used (existing behavior). The provider is the
+        authority when wired — it may return None (no selectable default).
     """
 
     def __init__(
@@ -61,8 +67,10 @@ class BotInputContext(InputContext):
         media_config_for_pool: Callable[[str], MediaConfig] | None = None,
         model_choice_registry: ModelChoiceRegistry | None = None,
         available_pools: Callable[[], set[str]] | None = None,
+        default_pool_provider: Callable[[], str | None] | None = None,
     ) -> None:
         self._default_pool = default_pool
+        self._default_pool_provider = default_pool_provider
         self._pool_session_store = pool_session_store
         self._agent_resolver = agent_resolver
         self._transcript_store = transcript_store
@@ -81,6 +89,8 @@ class BotInputContext(InputContext):
 
     @property
     def default_pool(self) -> str | None:
+        if self._default_pool_provider is not None:
+            return self._default_pool_provider()
         return self._default_pool
 
     def agent_for_pool(self, pool: str) -> str:

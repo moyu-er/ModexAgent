@@ -17,6 +17,7 @@ workspace:
             experience: {}
           hooks:
           - +reference_collector
+          - +session_title
           - +user_notice_cleanup
           - +model_choice_bind
           hook_configs:
@@ -58,6 +59,7 @@ workspace:
           hooks:
           - +user_notice_cleanup
           - +model_choice_bind
+          - +session_title
           interceptors:
           - +sandbox_guard
           interceptor_configs:
@@ -108,6 +110,7 @@ workspace:
           hooks:
           - +user_notice_cleanup
           - +model_choice_bind
+          - +session_title
           interceptors:
           - +sandbox_guard
           interceptor_configs:
@@ -149,3 +152,5 @@ workspace:
             benefits from a dedicated, self-directed coding context.
           execution_strategy: external
           provider_kind: opencode
+          hooks:
+          - +session_title

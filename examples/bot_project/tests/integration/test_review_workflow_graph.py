@@ -404,6 +404,7 @@ class TestE2EStepFun:
             RuntimeSafetyPolicy,
             TurnTimeoutPolicy,
         )
+        from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
         from modex_agent.ioc.configs.llm import LLMConfig
         from modex_agent.ioc.factories.descriptors import build_session_only_memory
         from modex_agent.ioc.factories.llm import create_llm_provider
@@ -481,7 +482,9 @@ class TestE2EStepFun:
                 tool_manager=None,
                 skill_resolver=None,
                 context_manager=memory_ctx,
-                hooks=[],
+                # Match the shipped native graph lifecycle: plain text is
+                # not graph delivery. Reuse its existing omission guard.
+                hooks=[DeliverRetryHook()],
             )
             instances[name] = instance
 

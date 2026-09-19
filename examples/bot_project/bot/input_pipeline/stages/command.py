@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta, resolve_session_routing
+from modex_agent.input_pipeline.context import InputContext
 from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
 from modex_agent.messaging.models import InputMessage
@@ -56,8 +57,9 @@ class CommandDispatchStage(InputStage):
         self._handlers = dict(handlers)
 
     async def process(
-        self, envelope: UserInputEnvelope, ctx: BotInputContext
+        self, envelope: UserInputEnvelope, ctx: InputContext
     ) -> StageResult:
+        assert isinstance(ctx, BotInputContext), "Bot input stages require BotInputContext"
         content = (envelope.content or "").strip()
         if not content.startswith("/"):
             return Continue(value=envelope)
@@ -67,7 +69,7 @@ class CommandDispatchStage(InputStage):
         if handler is None:
             return Continue(value=envelope)
 
-        _, _, full_sid = resolve_session_routing(envelope, ctx)
+        full_sid = resolve_session_routing(envelope, ctx).full_session_id
         message = handler(CommandContext(envelope=envelope, ctx=ctx, full_session_id=full_sid))
         envelope.metadata[RoutingMeta.PREPARED_MESSAGE] = message
         envelope.command_status = CommandStatus.HANDLED

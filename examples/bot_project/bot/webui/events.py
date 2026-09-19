@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import contextlib
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import ClassVar, get_origin, get_type_hints
+from typing import ClassVar, cast, get_origin, get_type_hints
 
 # ── Protocol enums ────────────────────────────────────────────────────────
 
@@ -33,6 +34,7 @@ class WebUIEventType(StrEnum):
     CONVERSATION_DELETED = "conversation_deleted"
     ERROR = "error"
     ATTACHMENT_CARD = "attachment_card"
+    SESSIONS_CHANGED = "sessions_changed"
 
 
 class WebSocketAction(StrEnum):
@@ -162,7 +164,9 @@ class ServerEvent:
         if isinstance(ts, float):
             kwargs["timestamp"] = int(ts * 1000)
 
-        return sub_cls(**kwargs)  # type: ignore[call-arg]
+        # Registry members have subtype-specific dataclass constructors.
+        constructor = cast(Callable[..., ServerEvent], sub_cls)
+        return constructor(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +434,18 @@ class DeltaEnvelope:
             "metadata": self.metadata,
             "payload": self.payload,
         }
+
+    def to_control_dict(self) -> dict[str, object]:
+        """Serialize as a FLAT control message (PA-02 ``sessions_changed``).
+
+        Control notifications never enter the chat transcript/reducer —
+        the frontend dispatches on the flat ``type`` key before envelope
+        handling, so they travel in their own shape rather than the
+        DeltaEnvelope wire form.
+        """
+        control: dict[str, object] = {"type": self.event_type}
+        control.update(self.payload)
+        return control
 
     def to_event(self) -> ServerEvent:
         """Reconstruct the source :class:`ServerEvent` from this envelope."""

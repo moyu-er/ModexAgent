@@ -207,6 +207,9 @@ from bot.webui.routes.sessions.messages import (  # noqa: E402
     handle_get_messages,
     handle_get_todos,
 )
+from bot.webui.routes.sessions.title import (  # noqa: E402
+    handle_patch_session_title,
+)
 
 # ── Registration ────────────────────────────────────────────────────────────
 
@@ -243,6 +246,7 @@ def register_sessions_routes(server: WebUIServer) -> None:
     )
     app.router.add_get(_API_MEDIA_CONFIG_PATH, handle_media_config)
     app.router.add_delete(_API_SESSIONS_SESSION_PATH, handle_delete_session)
+    app.router.add_patch(f"{_API_SESSIONS_SESSION_PATH}/title", handle_patch_session_title)
 
 
 __all__ = [
@@ -254,6 +258,7 @@ __all__ = [
     "handle_get_messages",
     "handle_get_todos",
     "handle_media_config",
+    "handle_patch_session_title",
     "handle_post_approval",
     "handle_sessions",
     "handle_upload_attachment",

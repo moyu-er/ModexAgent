@@ -139,6 +139,7 @@ async def test_qq_attachment_ref_flows_through_im_pipeline_to_persisted_record()
 
         pool_store = MagicMock()
         pool_store.get.return_value = "main"
+        pool_store.get_pool.return_value = "main"
         cmd = MagicMock()
         cmd._try_intercept_control = AsyncMock(return_value=False)
 

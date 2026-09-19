@@ -710,6 +710,9 @@ class TestGoldenSplitBrain:
             golden = GoldenFile.model_validate_json(
                 (_GOLDEN_DIR / f"{pool}.json").read_text(encoding="utf-8")
             ).root
+            if pool == "opencode":
+                # The shipped external root now opts into host session naming.
+                golden = {name: facets.model_copy(update={"hook_roster": ("session_title",)}) for name, facets in golden.items()}
             # The assertor's unused-exemption check is per call: the
             # external pool needs the C0-exclusion table; the native
             # pools need the declarative-channel table.

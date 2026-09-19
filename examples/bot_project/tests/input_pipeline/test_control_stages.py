@@ -29,6 +29,7 @@ def _ctx(
 ) -> BotInputContext:
     store = MagicMock()
     store.get.return_value = store_get
+    store.get_pool.return_value = store_get
 
     home_dir = home or Path("/project")
     ws = current_ws or home_dir

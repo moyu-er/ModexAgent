@@ -40,7 +40,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
 import yaml
 from aiohttp import web
@@ -52,6 +52,7 @@ from bot.service.scope_serialize import serialize_scope_declaration
 from bot.webui.routes.scope_models import (
     ScopeAgentBill,
     ScopeAgentNode,
+    ScopeApprovalEffective,
     ScopeBillResponse,
     ScopeCapabilityBill,
     ScopeCapabilityBundle,
@@ -64,6 +65,7 @@ from bot.webui.routes.scope_models import (
     ScopeFieldBill,
     ScopeFieldValue,
     ScopeHookBill,
+    ScopeMemoryEffective,
     ScopeModelResponse,
     ScopeModelUpdateRequest,
     ScopeOptionsResponse,
@@ -107,9 +109,9 @@ if TYPE_CHECKING:
 # remain attributable to the WebUI server (matches the other route modules).
 logger = logging.getLogger("bot.webui.server")
 
-_DECLARATION_RELATIVE_PATH: Final = Path("config") / "scopes" / "bot.yml"
-"""The declaration true source, anchored at the workspace target (same
-layout convention as ``config/graphs/`` in the graph routes)."""
+"""Legacy fallback anchor at the workspace target — ONLY used when the
+bundle carries no boot-selected declaration path (hand-built test
+stubs). Real bundles always resolve their actual booted file."""
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -134,6 +136,21 @@ def _resolve_scope_target(
     return resources
 
 
+def _declaration_path(resources: PoolWorkspaceResources) -> Path:
+    """The declaration file THIS workspace booted from — the single target
+    resolver for every scope read/options/preview/save road.
+
+    The bundle carries the boot-selected path (the service roots' primary
+    declaration, or a dynamic workspace's per-name file under
+    ``config/scopes/workspaces/``); using it guarantees the WebUI edits
+    the same declaration the running pools were assembled from. The
+    resolver never invents a per-cwd configuration target.
+    """
+    if resources.scope_declaration_path is None:
+        raise web.HTTPServiceUnavailable(text="Workspace declaration target is not configured")
+    return resources.scope_declaration_path
+
+
 def _load_declaration(path: Path) -> ScopeSpec | web.Response:
     """Load the on-disk declaration, mapping load failures to responses.
 
@@ -151,7 +168,7 @@ def _load_declaration(path: Path) -> ScopeSpec | web.Response:
         return web.json_response({"error": "invalid declaration", "detail": str(exc)}, status=409)
     except ValidationError as exc:
         return web.json_response(
-            {"error": "invalid declaration", "detail": exc.errors()}, status=409
+            {"error": "invalid declaration", "detail": _validation_detail(exc)}, status=409
         )
 
 
@@ -163,6 +180,15 @@ def _issues_response(issues: list[ScopeValidationIssue], *, status: int) -> web.
         },
         status=status,
     )
+
+
+def _validation_detail(exc: ValidationError) -> list[dict[str, object]]:
+    """``exc.errors()`` with non-JSON ctx values (e.g. the memory
+    AND-rule's ``ValueError``) dropped — the message carries the rule."""
+    return [
+        {key: value for key, value in error.items() if key != "ctx"}
+        for error in exc.errors()
+    ]
 
 
 def _compile_declaration(
@@ -252,10 +278,33 @@ def _agent_bill(spec: ScopeSpec, compiled: CompiledAgent) -> ScopeAgentBill:
     agent_spec = _find_agent(spec, prov.pool, prov.agent)
     group_anchors = {group.anchor for group in compiled.spec.tool_groups}
     tool_provenance = {tool.tool: tool for tool in prov.tools}
+    # Effective memory/approval for the friendly form: from the compiled
+    # position defaults (the single effective owner; an absent ``memory:``
+    # block is the position default, never "missing") and the resolved
+    # approval declaration with its position eligibility. External agents
+    # have no native approval channel — approval is reported NOT APPLICABLE
+    # (enabled/eligible false) even when the schema accepts a declared
+    # block, so the friendly form never claims support it cannot deliver.
+    defaults = compiled.defaults
+    is_external = agent_spec.provider_kind is not None
+    if is_external:
+        approval_enabled = False
+    else:
+        approval_enabled = agent_spec.approval.enabled if agent_spec.approval else False
     return ScopeAgentBill(
         pool=prov.pool,
         agent=prov.agent,
         root=agent_spec.parent is None,
+        external=is_external,
+        memory=ScopeMemoryEffective(
+            memory_preset=defaults.memory_preset.value,
+            archive_enabled=defaults.archive_enabled,
+            core_enabled=defaults.core_enabled,
+        ),
+        approval=ScopeApprovalEffective(
+            enabled=approval_enabled,
+            eligible=(not is_external) and defaults.approval_eligible,
+        ),
         fields=[
             ScopeFieldBill(
                 field=fp.field,
@@ -318,7 +367,7 @@ async def handle_get_declaration(request: web.Request) -> web.Response:
     r = _resolve_scope_target(request)
     if isinstance(r, web.Response):
         return r
-    path = Path(r.target) / _DECLARATION_RELATIVE_PATH
+    path = _declaration_path(r)
     if not path.is_file():
         return web.json_response(
             {"error": "scope declaration not found", "path": str(path)},
@@ -344,7 +393,7 @@ def _gate_staged_declaration(
         )
     except ValidationError as exc:
         return web.json_response(
-            {"error": "invalid declaration", "detail": exc.errors()},
+            {"error": "invalid declaration", "detail": _validation_detail(exc)},
             status=400,
         )
     issues = validate_declaration(spec, profiles=STANDARD_PROFILES.declarations())
@@ -408,7 +457,7 @@ async def handle_put_declaration(request: web.Request) -> web.Response:
     except ValidationError as exc:
         return web.json_response({"error": "validation", "detail": exc.errors()}, status=400)
 
-    path = Path(resources.target) / _DECLARATION_RELATIVE_PATH
+    path = _declaration_path(resources)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp")
     tmp.write_text(update.yaml, encoding="utf-8")
@@ -423,7 +472,7 @@ async def handle_get_model(request: web.Request) -> web.Response:
     r = _resolve_scope_target(request)
     if isinstance(r, web.Response):
         return r
-    path = Path(r.target) / _DECLARATION_RELATIVE_PATH
+    path = _declaration_path(r)
     if not path.is_file():
         return web.json_response(
             {"error": "scope declaration not found", "path": str(path)},
@@ -464,7 +513,7 @@ async def handle_put_model(request: web.Request) -> web.Response:
     except ValidationError as exc:
         return web.json_response({"error": "validation", "detail": exc.errors()}, status=400)
 
-    path = Path(resources.target) / _DECLARATION_RELATIVE_PATH
+    path = _declaration_path(resources)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp")
     tmp.write_text(
@@ -658,7 +707,7 @@ async def handle_post_preview(request: web.Request) -> web.Response:
     except ValidationError as exc:
         return web.json_response({"error": "validation", "detail": exc.errors()}, status=400)
 
-    path = Path(resources.target) / _DECLARATION_RELATIVE_PATH
+    path = _declaration_path(resources)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.preview.tmp")
     tmp.write_text(
@@ -727,7 +776,7 @@ async def handle_get_topology(request: web.Request) -> web.Response:
     r = _resolve_scope_target(request)
     if isinstance(r, web.Response):
         return r
-    spec = _load_declaration(Path(r.target) / _DECLARATION_RELATIVE_PATH)
+    spec = _load_declaration(_declaration_path(r))
     if isinstance(spec, web.Response):
         return spec
     return web.json_response(
@@ -761,7 +810,7 @@ async def handle_get_bill(request: web.Request) -> web.Response:
     if isinstance(r, web.Response):
         return r
     resources = r
-    spec = _load_declaration(Path(resources.target) / _DECLARATION_RELATIVE_PATH)
+    spec = _load_declaration(_declaration_path(resources))
     if isinstance(spec, web.Response):
         return spec
     issues = validate_declaration(spec, profiles=STANDARD_PROFILES.declarations())

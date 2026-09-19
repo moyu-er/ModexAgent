@@ -57,3 +57,38 @@ def test_bot_input_context_available_pools_defaults_to_empty() -> None:
         command_adapter=MagicMock(),
     )
     assert ctx.available_pools() == set()
+
+
+def test_bot_input_context_default_pool_provider_reads_dynamically() -> None:
+    """PA-07: when a provider is wired, ``default_pool`` is read at call time
+    so preference saves apply to NEW choices without a restart."""
+    current = {"pool": "coder"}
+    ctx = BotInputContext(
+        default_pool=None,
+        default_pool_provider=lambda: current["pool"],
+        available_pools=lambda: {"default", "coder"},
+        pool_session_store=MagicMock(),
+        agent_resolver=lambda p: p,
+        transcript_store=MagicMock(),
+        enqueue_message=MagicMock(),
+        command_adapter=MagicMock(),
+    )
+    assert ctx.default_pool == "coder"
+    current["pool"] = "default"
+    assert ctx.default_pool == "default"
+
+
+def test_bot_input_context_default_pool_provider_none_overrides_value() -> None:
+    """A provider may return None (no selectable default) even when a static
+    constructor value exists — the provider is the authority when wired."""
+    ctx = BotInputContext(
+        default_pool="main",
+        default_pool_provider=lambda: None,
+        available_pools=lambda: {"main"},
+        pool_session_store=MagicMock(),
+        agent_resolver=lambda p: p,
+        transcript_store=MagicMock(),
+        enqueue_message=MagicMock(),
+        command_adapter=MagicMock(),
+    )
+    assert ctx.default_pool is None

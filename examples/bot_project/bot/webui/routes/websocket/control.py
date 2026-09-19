@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from bot.webui.events import DeltaEnvelope, WebUIEventType
-from bot.webui.types import _safe_send_json
+from bot.webui.types import _DEFAULT_AGENT_NAME, _safe_send_json
 
 if TYPE_CHECKING:
     from bot.webui.server import WebUIServer
@@ -92,8 +92,16 @@ async def handle_delete_conversation(
     index_dir = server._index_dir_of_ws(ws_raw)
     resolved = await server._resolve_session(session_id, index_dir=index_dir)
     agent_name = resolved.agent_name
-    session_prefix = resolved.session_id_prefix
-    pool = server._resolve_pool_for_request(pool_from_payload or None, session_prefix)
+    # SAME partition owner as the REST delete handler: session attribution
+    # (tree-first, ws-scoped) — not the prefix store — plus the identical
+    # caller-owned legacy fallback (infra partitioning per the routing
+    # contract; never the product preference default).
+    pool = (
+        await server._resolve_session_pool_for_request(
+            pool_from_payload or None, session_id, ws_raw
+        )
+        or _DEFAULT_AGENT_NAME
+    )
     if server._session_gc is not None:
         await server._session_gc.delete_session_tree(
             session_id, ws_root=server._ws_root_of(ws_raw), pool=pool

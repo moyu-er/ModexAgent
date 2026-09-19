@@ -139,6 +139,37 @@ class ScopeCapabilityBill(BaseModel):
     contributions: list[ScopeCapabilityContributionBill] = Field(default_factory=list)
 
 
+class ScopeMemoryEffective(BaseModel):
+    """Effective memory layer toggles for the friendly form (DESIGN §5.2).
+
+    Values come from the compiled position defaults (``CompiledAgent.defaults``
+    — ``effective_defaults`` output), never from a raw declaration read: an
+    absent ``memory:`` block on a root is the position default (off), not a
+    missing value. ``memory_preset`` carries the position-derived family so
+    the UI can hide the toggles for session-only (non-root) agents.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    memory_preset: str
+    archive_enabled: bool
+    core_enabled: bool
+
+
+class ScopeApprovalEffective(BaseModel):
+    """Effective human-approval state for the friendly form.
+
+    ``enabled`` mirrors the resolved ``ApprovalConfig.enabled`` (declaration
+    default off); ``eligible`` is the position-derived root eligibility
+    (V9): non-roots cannot enable approval regardless of declaration.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool
+    eligible: bool
+
+
 class ScopeAgentBill(BaseModel):
     """One agent's provenance bill."""
 
@@ -147,11 +178,19 @@ class ScopeAgentBill(BaseModel):
     pool: str
     agent: str
     root: bool
+    external: bool = False
+    """Execution-strategy face: an external (Pi/OpenCode) agent. External
+    agents are structurally excluded from native memory/approval/capability
+    assembly — the friendly form hides those controls."""
     fields: list[ScopeFieldBill]
     tools: list[ScopeToolBill]
     tool_groups: list[ScopeToolGroupManifest] = Field(default_factory=list)
     hooks: list[ScopeHookBill] = Field(default_factory=list)
     capabilities: list[ScopeCapabilityBill] = Field(default_factory=list)
+    memory: ScopeMemoryEffective
+    """Effective memory toggles from the compiled defaults owner."""
+    approval: ScopeApprovalEffective
+    """Effective approval state (declaration + position eligibility)."""
 
 
 class ScopeBillResponse(BaseModel):
@@ -290,6 +329,9 @@ __all__ = [
     "ScopeDeclarationUpdateRequest",
     "ScopeFieldBill",
     "ScopeFieldValue",
+    "ScopeHookBill",
+    "ScopeMemoryEffective",
+    "ScopeApprovalEffective",
     "ScopeModelResponse",
     "ScopeModelUpdateRequest",
     "ScopeOptionsResponse",

@@ -263,6 +263,10 @@ class _Harness:
 
     async def send(self, *, content: str, external_id: str, workspace: Path) -> str:
         session = SessionIdFactory().create(agent_name=_MAIN_POOL, external_id=external_id)
+        # Enqueue is downstream of the explicit S5/WS pool selection.
+        routes = self.service.pool_session_store
+        assert routes is not None
+        routes.set_pool(session.session_id_prefix, _MAIN_POOL)
         self.input_adapter.put_input_message(
             InputMessage(content=content, session=session, workspace=workspace, channel="test")
         )
@@ -747,14 +751,8 @@ async def test_two_sessions_one_channel_route_to_their_workspaces(
         # Both conversations arrive through the SAME channel (the same
         # input adapter), each message carrying its conversation's
         # workspace — the per-conversation pointer.
-        session_a = SessionIdFactory().create(agent_name=_MAIN_POOL, external_id="conv-a")
-        session_b = SessionIdFactory().create(agent_name=_MAIN_POOL, external_id="conv-b")
-        harness.input_adapter.put_input_message(
-            InputMessage(content="route-a", session=session_a, workspace=ws_a, channel="test")
-        )
-        harness.input_adapter.put_input_message(
-            InputMessage(content="route-b", session=session_b, workspace=ws_b, channel="test")
-        )
+        session_a = await harness.send(content="route-a", external_id="conv-a", workspace=ws_a)
+        session_b = await harness.send(content="route-b", external_id="conv-b", workspace=ws_b)
 
         await harness.wait_for_reply("echo:route-a")
         await harness.wait_for_reply("echo:route-b")
@@ -762,8 +760,8 @@ async def test_two_sessions_one_channel_route_to_their_workspaces(
         # Each reply was delivered on its own conversation's session id —
         # routing never crossed the two conversations.
         session_replies = dict(harness.output_adapter.sent)
-        assert session_replies[session_a.session_id] == "echo:route-a"
-        assert session_replies[session_b.session_id] == "echo:route-b"
+        assert session_replies[session_a] == "echo:route-a"
+        assert session_replies[session_b] == "echo:route-b"
 
         # Each conversation's turn ran under its own workspace root.
         assert harness.script.turn_roots["route-a"] == ws_a.resolve()

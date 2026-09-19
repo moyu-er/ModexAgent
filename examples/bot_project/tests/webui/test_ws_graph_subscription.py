@@ -52,6 +52,8 @@ _GID_B = 7300000000000000002
 
 
 def _build_server(home: Path, resources: SimpleNamespace) -> WebUIServer:
+    resources.pools = {}
+    resources.scope_declaration_path = None
     inp = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
     server = WebUIServer(

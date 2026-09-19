@@ -21,6 +21,15 @@ Hooks registered:
   ``bot/service/pool/communication.py``. Pushes transient user-facing notices
   around memory compaction. The hook's ``notification_service`` dep is
   extracted from ``ctx.pool_runtime`` at ``create()`` time.
+
+- ``session_title`` (React) — :class:`SessionTitleHook` from
+  ``bot/service/session_title_hook.py``. Background session naming after
+  a COMPLETED user main turn (PA-03). The construction deps (the
+  workspace's ``SessionTitleOps`` + ``SessionTitleNamingTask`` owner)
+  ride the workspace layer of the context chain
+  (``ctx.workspace_resources``), built once per workspace in
+  ``bot/workspace/wiring/resources.py``. ``applies_to`` covers native and
+  external MAIN agents — subagents are excluded by the hook itself.
 """
 
 from __future__ import annotations
@@ -32,6 +41,7 @@ from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.pool.agent_factory import _cell_sessions_dir
 from bot.service.pool.communication import UserNoticeCleanupHook
+from bot.service.session_title_hook import SessionTitleHook
 from bot.tools.custom import SendFileToUserTool
 from bot.workspace.handle import PoolWorkspaceResources
 from pydantic import BaseModel, ConfigDict
@@ -50,6 +60,7 @@ if TYPE_CHECKING:
 
     from modex_agent.hook.notification import AgentNotificationService
     from modex_agent.plugins.assembly.context import (
+        AgentContext,
         AssemblyContext,
         PoolContext,
         WorkspaceContext,
@@ -61,6 +72,8 @@ __all__ = [
     "KbToolFactory",
     "ModelChoiceBindHookConfig",
     "ModelChoiceBindHookFactory",
+    "SessionTitleHookConfig",
+    "SessionTitleHookFactory",
     "UserNoticeCleanupHookConfig",
     "UserNoticeCleanupHookFactory",
 ]
@@ -96,6 +109,17 @@ class UserNoticeCleanupHookConfig(BaseModel):
 
     ``notification_service`` is extracted from ``ctx.pool_runtime`` at
     ``create()`` time, not carried by config.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class SessionTitleHookConfig(BaseModel):
+    """Config for :class:`SessionTitleHookFactory` — no settings.
+
+    Every construction dependency (the workspace ``SessionTitleOps`` and
+    the ``SessionTitleNamingTask`` owner) rides the workspace layer of the
+    context chain (``ctx.workspace_resources``), not config.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -308,6 +332,39 @@ class UserNoticeCleanupHookFactory(MemoryHookFactory):
         return UserNoticeCleanupHook(notification_service=notification_service)
 
 
+class SessionTitleHookFactory(ReactHookFactory):
+    """Factory for :class:`SessionTitleHook` — background session naming.
+
+    React hook (``hook_runner=react``): dispatched via the declared-roster
+    ``_dispatch_hooks`` onto the agent's ``HookRunner`` — the SAME
+    mechanism native and external main agents both use (PA-04 wires the
+    external side through the same dispatch helper).
+
+    ``create()`` reads the workspace's ``SessionTitleOps`` + naming-task
+    owner from ``ctx.workspace_resources`` (the workspace layer of the
+    context chain). A declared hook requires that workspace wiring; missing
+    dependencies fail assembly instead of silently disabling the feature.
+    """
+
+    config_model: ClassVar[type[BaseModel]] = SessionTitleHookConfig
+    applies_to: ClassVar[set[AgentType] | None] = {
+        AgentType.native_main,
+        AgentType.external_main,
+    }
+
+    async def create(  # type: ignore[override]
+        self, config: SessionTitleHookConfig, ctx: AgentContext
+    ) -> SessionTitleHook:
+        del config
+        resources = ctx.workspace_resources
+        if not isinstance(resources, PoolWorkspaceResources) or resources.title_naming is None:
+            raise ValueError("session_title requires the workspace title operations and naming owner")
+        spec = ctx.spec
+        if spec is None or not spec.pool_name:
+            raise ValueError("session_title requires a declared pool identity")
+        return SessionTitleHook(naming=resources.title_naming, pool=spec.pool_name)
+
+
 # ---------------------------------------------------------------------------
 # BotHooksPlugin — Plugin entry point
 # ---------------------------------------------------------------------------
@@ -320,8 +377,8 @@ class BotHooksConfig(BaseModel):
 
 
 class BotHooksPlugin(Plugin):
-    """Registers the ``model_choice_bind`` + ``user_notice_cleanup`` hooks
-    and the ``send_file_to_user`` tool.
+    """Registers the ``model_choice_bind`` + ``user_notice_cleanup`` +
+    ``session_title`` hooks and the ``send_file_to_user`` tool.
     """
 
     config_model = BotHooksConfig
@@ -329,5 +386,6 @@ class BotHooksPlugin(Plugin):
     def register(self, ctx: PluginRegistrationContext) -> None:
         ctx.register_hook("model_choice_bind", ModelChoiceBindHookFactory())
         ctx.register_hook("user_notice_cleanup", UserNoticeCleanupHookFactory())
+        ctx.register_hook("session_title", SessionTitleHookFactory())
         ctx.register_tool(SEND_FILE_TO_USER_TOOL_NAME, SendFileToUserToolFactory())
         ctx.register_tool(KB_TOOL_NAME, KbToolFactory())

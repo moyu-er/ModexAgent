@@ -48,6 +48,7 @@ async def attach_default_pipeline(
     if pool_session_store is None:
         pool_session_store = MagicMock()
         pool_session_store.get = lambda key, default=None: default
+        pool_session_store.get_pool = lambda key: None
         pool_session_store.set = MagicMock()
     transcript_store = MagicMock(wraps=store)
     transcript_store.append = AsyncMock(side_effect=store.append)

@@ -274,18 +274,56 @@ class ExternalAwareFactory(DefaultAgentFactory):
 
         # 2. Assemble pipeline via shared helper (converged with subagent path).
         safety: RuntimeSafetyPolicy = descriptor.safety_policy or RuntimeSafetyPolicy()
+        hook_runner = await self._assemble_roster_hooks()
         return ExternalAgentBuilder.assemble_pipeline(
             descriptor,
             agent,
             broker=broker,
             safety=safety,
-            hook_runner=None,  # main agents don't fire FINALLY_GRAPH
+            hook_runner=hook_runner,
             session_registry=self._session_registry,
             control_channel=self._control_channel,
             output_adapter=output_adapter if isinstance(output_adapter, OutputAdapter) else None,
             context_manager=context_manager,
             session_binding_store=self._session_binding_store,
         )
+
+    async def _assemble_roster_hooks(self) -> HookRunner | None:
+        """PA-04: consume the DECLARED hook roster through ``_dispatch_hooks``.
+
+        The external main agent previously passed ``hook_runner=None``
+        ("main agents don't fire FINALLY_GRAPH"). It now reuses the SAME
+        declared-roster dispatch the native path uses — one mechanism, no
+        hand-rolled session_title factory resolution. Requires the
+        strategy/create_pool to thread ``component_registry``,
+        ``assembly_spec`` and ``workspace_resources`` through
+        ``external_deps``; when they are absent (framework-style tests)
+        the runner stays ``None`` — behavior unchanged.
+
+        Only react-runner hooks are declared for this executor: the
+        external CLI owns memory/tools, so memory hooks are structurally
+        excluded (the native capability exclusions ride ``applies_to``).
+        """
+        deps = self._external_deps
+        registry = deps.get("component_registry")
+        spec = deps.get("assembly_spec")
+        workspace_resources = deps.get("workspace_resources")
+        if registry is None or spec is None or not spec.hooks:
+            return None
+        from modex_agent.plugins.assembly.context import AssemblyContext, agent_context_chain
+        from modex_agent.plugins.assembly.native_core import _dispatch_hooks
+
+        base = AssemblyContext(
+            registry=registry,
+            workspace_ctx=spec.workspace_ctx,
+            workspace_resources=workspace_resources,
+        )
+        chain = agent_context_chain(base, spec=spec)
+        hook_runner = HookRunner()
+        await _dispatch_hooks(spec, registry, chain, hook_runner, None)
+        if not hook_runner.hook_specs:
+            return None
+        return hook_runner
 
 
 # ═══════════════════════════════════════════════════════════════════════════

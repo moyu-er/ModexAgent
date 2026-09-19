@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from bot.webui.routes.sessions import resolve_agent
-from bot.webui.types import _materialize_partial_deltas
+from bot.webui.types import _DEFAULT_AGENT_NAME, _materialize_partial_deltas
 from modex_agent.core.session_id import session_id_prefix_of
 from modex_agent.runtime.todo import JsonFileTodoStore, TodoStatus
 from modex_agent.workspace.paths import WorkspacePaths
@@ -35,7 +35,14 @@ async def handle_get_messages(request: web.Request) -> web.Response:
     index_dir = server._index_dir_of_ws(ws_raw)
     agent_name: str = await resolve_agent(server, session_id, index_dir=index_dir)
     session_prefix = session_id_prefix_of(session_id)
-    pool: str = server._resolve_pool_for_request(request.query.get("pool"), session_id_prefix_of(session_id))
+    # Storage-partition read: explicit legacy partition fallback owned HERE
+    # (infra callers apply their own fallback per the routing contract).
+    pool: str = (
+        server._resolve_pool_for_request(
+            request.query.get("pool"), session_id_prefix_of(session_id)
+        )
+        or _DEFAULT_AGENT_NAME
+    )
 
     store = server._store
 
@@ -109,7 +116,12 @@ async def handle_get_todos(request: web.Request) -> web.Response:
     ws_raw = request.query.get("ws", "")
     sessions_dir = server._sessions_dir_of_ws(ws_raw)
     session_id_prefix_of(session_id)
-    pool: str = server._resolve_pool_for_request(request.query.get("pool"), session_id_prefix_of(session_id))
+    # Storage-partition read: client param → stored route → explicit legacy
+    # partition fallback (infra callers own their fallback per the routing
+    # contract; the product default never guesses here).
+    pool: str = server._resolve_pool_for_request(
+        request.query.get("pool"), session_id_prefix_of(session_id)
+    ) or _DEFAULT_AGENT_NAME
 
     store = None
     if server._store_resolver is not None:

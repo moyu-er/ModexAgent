@@ -81,6 +81,7 @@ def _make_ctx(
 ) -> BotInputContext:
     pool_store = MagicMock()
     pool_store.get.return_value = "main"
+    pool_store.get_pool.return_value = "main"
     cmd = MagicMock()
     cmd._try_intercept_control = AsyncMock(return_value=False)
     return BotInputContext(

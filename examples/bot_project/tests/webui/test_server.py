@@ -667,6 +667,68 @@ async def test_delete_session_delegates_to_collector() -> None:
 
 
 @pytest.mark.asyncio
+async def test_delete_session_and_ws_delete_conversation_share_the_partition_owner() -> None:
+    """REST DELETE and WS DELETE_CONVERSATION must agree on the storage partition.
+
+    Regression (split partition resolving): the WS path used the PREFIX store
+    while REST used session attribution (tree-first), and the WS path passed
+    the empty pool through when no route resolved — GC placement then fell to
+    a wrong directory level while REST fell back to the explicit legacy
+    partition. Both entry points must hand the SAME pool to the collector:
+    the resolved route when one exists, the explicit legacy fallback
+    (``main``) when nothing resolves.
+    """
+    from bot.service.session_gc import SessionGarbageCollector
+
+    class _GcSpy(SessionGarbageCollector):  # capture placement without deleting
+        def __init__(self) -> None:
+            self.calls: list[str | None] = []
+
+        async def delete_session_tree(self, root_session_id, ws_root=None, pool=None) -> bool:  # noqa: ANN001
+            self.calls.append(pool)
+            return True
+
+    async def _drive(ws_action: bool, routed_pool: str | None) -> str | None:
+        data_dir = Path(tempfile.mkdtemp())
+        input_adapter = WebSocketInputAdapter()
+        store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+        home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
+        server = WebUIServer(
+            input_adapter, store, static_dist=None, data_dir=data_dir, home_sessions_dir=home_sessions_dir
+        )
+        server.set_workspace_index(store)
+        server.set_pool_agent_names(["main", "coding"])
+        if routed_pool is not None:
+            server.set_pool_resolver(lambda prefix: routed_pool)
+        spy = _GcSpy()
+        server.set_session_gc(spy)
+        client = TestClient(TestServer(server.app))
+        await client.start_server()
+        try:
+            session_id = f"{_new_uuid_prefix()}.coding"
+            if ws_action:
+                ws = await client.ws_connect("/ws")
+                await ws.send_json({"action": "delete_conversation", "session_id": session_id})
+                deleted = _unwrap_envelope(await ws.receive_json())
+                assert deleted["event"] == "conversation_deleted"
+                await ws.close()
+            else:
+                resp = await client.delete(f"/api/sessions/{session_id}")
+                assert resp.status == 200
+            assert spy.calls, "collector was not invoked"
+            return spy.calls[0]
+        finally:
+            await client.close()
+
+    # Stored route exists: both entries hand the collector the ROUTED pool.
+    assert await _drive(ws_action=False, routed_pool="coding") == "coding"
+    assert await _drive(ws_action=True, routed_pool="coding") == "coding"
+    # Nothing resolves: both entries apply the SAME explicit legacy fallback.
+    assert await _drive(ws_action=False, routed_pool=None) == "main"
+    assert await _drive(ws_action=True, routed_pool=None) == "main"
+
+
+@pytest.mark.asyncio
 async def test_ws_send_message_uses_stored_pool() -> None:
     """WebSocket send_message uses pool from PoolRouter resolver, not client data."""
     data_dir = Path(tempfile.mkdtemp())
@@ -686,6 +748,7 @@ async def test_ws_send_message_uses_stored_pool() -> None:
     from tests.webui._pipeline_fixture import attach_default_pipeline
     pool_store = MagicMock()
     pool_store.get = lambda key, default=None: "coding"
+    pool_store.get_pool = lambda key: "coding"
     pool_store.set = MagicMock()
     await attach_default_pipeline(
         server, store, input_adapter, pool_session_store=pool_store, workspace_root=data_dir
@@ -2048,20 +2111,32 @@ async def test_workspace_cd_returns_400_on_malformed_json() -> None:
 
 @pytest.mark.asyncio
 async def test_create_session_graceful_on_malformed_json() -> None:
-    """Malformed JSON body must not crash session creation; it uses default pool."""
+    """Malformed JSON body must not crash session creation; PA-07: the body
+    is treated as pool-less and resolved through the unified preference
+    default (an explicit preferences fixture decides the pool — never a
+    hardcoded fallback)."""
     with tempfile.TemporaryDirectory() as tmp:
+        from bot.config.domains.personal_assistant import PersonalAssistantPreferences
+
         workspace_root = Path(tmp)
+        prefs = PersonalAssistantPreferences(
+            workspace_root / "personal_assistant.yml"
+        )
+        prefs.save(default_workspace=None, default_pool="default")
         input_adapter = WebSocketInputAdapter()
         store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
         home_sessions_dir = WorkspacePaths(root=workspace_root / ".modex").sessions_dir
         server = WebUIServer(input_adapter, store, static_dist=None, home_sessions_dir=home_sessions_dir)
         server.set_workspace_index(store)
+        server.set_available_pools_provider(lambda: {"default"})
+        server.set_personal_assistant_preferences(prefs)
         client = TestClient(TestServer(server.app))
         await client.start_server()
         try:
             resp = await client.post("/api/sessions", data="not-json")
             assert resp.status == 200
             data = await resp.json()
-            assert data["session_id"].endswith(".main")
+            assert data["session_id"].endswith(".default")
+            assert data["pool"] == "default"
         finally:
             await client.close()
