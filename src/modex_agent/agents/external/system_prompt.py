@@ -1,7 +1,7 @@
 """System-prompt renderer for the external coding agent harness.
 
 `render_system_prompt` builds the plain-text string the harness passes
-to the provider CLI via ``--append-system-prompt`` (Pi) or the
+to the provider CLI via ``--append-system-prompt`` or the
 equivalent flag (OpenCode). The content is provider-agnostic: it tells
 the external agent (a) it is running inside ModexAgent, (b) how to send
 a message to another agent via ``modexctl send``, (c) that raw stdout is

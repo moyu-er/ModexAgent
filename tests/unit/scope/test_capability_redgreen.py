@@ -770,7 +770,7 @@ class TestBootFailPaths:
         agent = AgentSpec(
             name="external",
             execution_strategy=ExecutionStrategyKind.EXTERNAL,
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             capabilities={"dummy_field": {}},
         )
 

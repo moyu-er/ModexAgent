@@ -172,7 +172,7 @@ def _make_pool_spec(
     if strategy == ExecutionStrategyKind.EXTERNAL:
         from modex_agent.core.agent import ProviderKind
 
-        kwargs["provider_kind"] = ProviderKind.PI
+        kwargs["provider_kind"] = ProviderKind.OPENCODE
     return PoolSpec(name=_POOL, agents=[AgentSpec(**kwargs)])
 
 

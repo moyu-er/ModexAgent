@@ -43,7 +43,6 @@ class ExecutionStrategyKind(StrEnum):
 class ProviderKind(StrEnum):
     """Coding-agent provider families supported by external agents."""
 
-    PI = "pi"
     OPENCODE = "opencode"
 
 
@@ -81,7 +80,7 @@ class AgentImplementation(StrEnum):
 
     Combinations are valid:
     - NORMAL + NATIVE = modex main agent (default/coder pool main)
-    - NORMAL + EXTERNAL = external coding CLI as pool main (opencode/pi)
+    - NORMAL + EXTERNAL = external coding CLI as pool main (opencode)
     - SUBAGENT + NATIVE = modex subagent (the only subagent shape today)
     - SUBAGENT + EXTERNAL = supported (external CLI as subagent, ADR-0027)
     """

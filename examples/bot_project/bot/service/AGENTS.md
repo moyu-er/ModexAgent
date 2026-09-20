@@ -116,8 +116,7 @@ Attribution and routing are distinct concerns with different authorities:
   `ExternalAgent.stop()` and then backend `close()`. Only successful
   owners are removed; failures remain available for retry.
 - A normal external-agent turn never closes the shared OpenCode server. It is
-  released only on `BotService.stop()` via `lifecycle()` exit, while Pi and
-  `opencode run` children are reaped per turn.
+  released only on `BotService.stop()` via `lifecycle()` exit.
 
 ## For AI Agents
 

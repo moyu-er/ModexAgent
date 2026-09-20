@@ -114,7 +114,7 @@ export interface ScopeAgentBill {
   pool: string;
   agent: string;
   root: boolean;
-  /** External (Pi/OpenCode) agent — structurally excluded from native
+  /** External (OpenCode) agent — structurally excluded from native
    *  memory/approval/capability assembly; the friendly form hides those. */
   external: boolean;
   fields: ScopeFieldBill[];

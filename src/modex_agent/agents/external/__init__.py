@@ -1,7 +1,7 @@
 """External coding agent integration — public API for T1 (foundation types).
 
-This sub-package admits industry-standard coding-agent CLIs (Pi,
-OpenCode, future Claude Code / Codex / Cursor) as NORMAL main agents of
+This sub-package admits industry-standard coding-agent CLIs
+(OpenCode, future Claude Code / Codex / Cursor) as NORMAL main agents of
 their own dedicated pools. T1 ships the pure-Pydantic type layer
 every subsequent ticket depends on; richer pieces (session store,
 provider backends, the `ExternalAgent` harness, ``modexbot``

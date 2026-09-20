@@ -1,7 +1,7 @@
 """AGENTS.md marker-block writer for the external coding agent runtime.
 
 The harness writes a marker-delimited block into ``<workdir>/AGENTS.md``
-so the external coding agent (Pi / OpenCode / etc.) sees static runtime
+so the external coding agent (OpenCode / etc.) sees static runtime
 notes — the communication contract, the modexbot CLI usage, the session
 layout — alongside any user-authored content in the same file.
 

@@ -86,7 +86,7 @@ def resolve_executable(
     Resolution priority (highest first):
 
     1. **Explicit override** — ``MODEX_<NAME>_EXECUTABLE`` environment
-      variable (e.g. ``MODEX_PI_EXECUTABLE=C:\\bin\\pi.exe``). Skips all
+      variable (e.g. ``MODEX_OPENCODE_EXECUTABLE=C:\\bin\\opencode.exe``). Skips all
       PATH lookup. Useful when the provider is installed in a non-PATH
       location or when the user wants to pin a specific binary.
 

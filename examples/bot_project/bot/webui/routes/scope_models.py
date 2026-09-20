@@ -179,7 +179,7 @@ class ScopeAgentBill(BaseModel):
     agent: str
     root: bool
     external: bool = False
-    """Execution-strategy face: an external (Pi/OpenCode) agent. External
+    """Execution-strategy face: an external (OpenCode) agent. External
     agents are structurally excluded from native memory/approval/capability
     assembly — the friendly form hides those controls."""
     fields: list[ScopeFieldBill]

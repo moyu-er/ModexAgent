@@ -402,7 +402,7 @@ def build_external_env_spec(
 
 
 class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
-    """Assemble external pools (Pi / OpenCode CLI harness).
+    """Assemble external pools (OpenCode CLI harness).
 
     Inherits the shared ``_build_*`` helpers from :class:`_PoolAssemblyMixin`
     so ``assemble()`` can build the placeholder provider/terminal/tools/skill
@@ -435,7 +435,7 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         * **No subagents** - external main agents have no tool surface
           and cannot dispatch subagent tasks. Subagent templates on an
           external pool are a configuration error.
-        * **``provider_kind`` required** - the CLI kind (``pi`` / ``opencode``)
+        * **``provider_kind`` required** - the CLI kind (``opencode``)
           must be set so the strategy knows which backend + parser to build.
 
         Raises :class:`ValueError` on violation. This runs at pool-assembly

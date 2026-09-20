@@ -7,7 +7,7 @@ frontend uses.
 Requires the graph workflow environment variables (``MODEX_WORKFLOW_ID``,
 ``MODEX_TASK_ID``, ``MODEX_NODE_ID``) — these are only set when the
 process is spawned by a graph-scheduled ``BotAgentNode``. Regular
-session agents (Pi/OpenCode subagents in non-graph contexts) do not have
+session agents (OpenCode subagents in non-graph contexts) do not have
 these variables and cannot call deliver.
 
 ``--graph-instance-id`` defaults to ``MODEX_TASK_ID`` from the environment.

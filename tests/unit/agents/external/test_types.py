@@ -102,11 +102,11 @@ class TestSessionMapEntry:
         e = SessionMapEntry(
             modex_session_id="ms1",
             provider_session_id="ps1",
-            provider_kind="pi",
+            provider_kind="opencode",
         )
         assert e.modex_session_id == "ms1"
         assert e.provider_session_id == "ps1"
-        assert e.provider_kind == "pi"
+        assert e.provider_kind == "opencode"
         # last_committed_at uses default_factory=datetime.now(UTC); just
         # assert it is recent.
         assert (datetime.now(UTC) - e.last_committed_at) < timedelta(minutes=1)
@@ -116,7 +116,7 @@ class TestSessionMapEntry:
         e = SessionMapEntry(
             modex_session_id="ms1",
             provider_session_id="ps1",
-            provider_kind="pi",
+            provider_kind="opencode",
         )
         with pytest.raises(ValidationError):
             e.invalidated = True  # type: ignore[misc]
@@ -126,7 +126,7 @@ class TestSessionMapEntry:
             SessionMapEntry(
                 modex_session_id="ms1",
                 provider_session_id="ps1",
-                provider_kind="pi",
+                provider_kind="opencode",
                 extra_field="nope",  # type: ignore[call-arg]
             )
 

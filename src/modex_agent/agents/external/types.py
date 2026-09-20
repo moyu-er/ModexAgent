@@ -94,7 +94,7 @@ class SessionMapEntry(BaseModel):
     modex_session_id: str
     provider_session_id: str
     provider_kind: ProviderKind = Field(
-        description="Provider kind discriminator (PI, OPENCODE, ...)."
+        description="Provider kind discriminator (OPENCODE, ...)."
     )
     last_committed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     invalidated: bool = False
@@ -220,8 +220,8 @@ class Emission(BaseModel):
     - ``ERROR``       → ``message``
 
     Parsers (`ProviderEventParser`) return zero or more ``Emission``
-    records per line so a single line carrying multiple updates (e.g. Pi
-    ``message_update`` with both thinking + text) fans out cleanly.
+    records per line so a single line carrying multiple updates fans
+    out cleanly.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

@@ -123,7 +123,7 @@ class LocalFileExternalSessionMapStore(ExternalSessionMapStore):
             modex_sid: The modex-side session identifier.
             provider_sid: The provider-side session id minted by the
                 provider on its first turn.
-            provider_kind: The provider family (``pi``, ``opencode``).
+            provider_kind: The provider family (``opencode``).
         """
         async with self._lock:
             data = self._load()

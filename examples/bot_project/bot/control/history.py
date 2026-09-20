@@ -12,7 +12,7 @@ Client Output Projection (T04 §3) so the two surfaces can diverge if the
 server adds fields later.
 
 ``project_transcript_history`` (T05) projects materialized transcript turns
-for external coding agent sessions (Pi, OpenCode). It follows Source
+for external coding agent sessions (OpenCode). It follows Source
 Fidelity (D21): ``message_id``, ``tool_call_id``, and ``tool_calls`` are
 never fabricated — transcript-derived records omit them entirely.
 """

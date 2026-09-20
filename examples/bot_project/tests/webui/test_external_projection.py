@@ -1,6 +1,6 @@
 """WebBotEmitter projection of ExternalEvent -> ServerEvent (Scheme C).
 
-External coding agents (OpenCode now, Pi-compatible) stream and persist
+External coding agents (OpenCode) stream and persist
 basic semantic events through the existing WebUI DeltaEnvelope / ServerEvent
 / transcript / materializer path. Provider parsers keep emitting the typed
 ``Emission`` (the provider-independent external semantic contract); the

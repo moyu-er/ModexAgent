@@ -1,1 +1,1 @@
-"""Per-provider `ProviderEventParser` implementations (Pi, OpenCode)."""
+"""Per-provider `ProviderEventParser` implementations (OpenCode)."""

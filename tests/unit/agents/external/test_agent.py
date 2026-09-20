@@ -359,7 +359,7 @@ class TestExternalAgentFullTurn:
             backend_provider=_pool_provider(adapter),
             session_store=store,
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=spec,
             base_env={"PATH": "/usr/bin"},
         )
@@ -433,7 +433,7 @@ class TestExternalAgentFullTurn:
             backend_provider=_pool_provider(adapter),
             session_store=store,
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=_make_spec(tmp_path),
             base_env={"PATH": "/usr/bin"},
         )
@@ -464,7 +464,7 @@ class TestAgentsMdIdempotency:
             backend_provider=_pool_provider(adapter),
             session_store=store,
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=spec,
             base_env={"PATH": "/usr/bin"},
         )
@@ -507,7 +507,7 @@ class TestExternalAgentStop:
             backend_provider=_pool_provider(backend),
             session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=_make_spec(tmp_path),
         )
         second_caller_started = asyncio.Event()
@@ -561,7 +561,7 @@ class TestExternalAgentStop:
             backend_provider=_pool_provider(backend),
             session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=_make_spec(tmp_path),
         )
         second_caller_started = asyncio.Event()
@@ -616,7 +616,7 @@ class TestExternalAgentStop:
             backend_provider=_pool_provider(backend),
             session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=_make_spec(tmp_path),
         )
 
@@ -656,7 +656,7 @@ class TestExternalAgentStop:
             backend_provider=_pool_provider(backend),
             session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=_make_spec(tmp_path),
         )
         first_stop = asyncio.create_task(agent.stop())
@@ -704,7 +704,7 @@ class TestCurrentAgentContextLifecycle:
             backend_provider=_pool_provider(adapter_with_fx),
             session_store=store,
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=spec,
             base_env={"PATH": "/usr/bin"},
         )
@@ -738,7 +738,7 @@ class TestCurrentAgentContextLifecycle:
             backend_provider=_pool_provider(_AlwaysFailing()),
             session_store=store,
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=spec,
             base_env={"PATH": "/usr/bin"},
         )
@@ -783,14 +783,14 @@ class TestStaleSessionRecovery:
         store = LocalFileExternalSessionMapStore(paths)
         modex_sid = "pool1.agent1"
         # Pre-seed a stale mapping.
-        await store.commit(modex_sid, "prov-old", ProviderKind.PI)
+        await store.commit(modex_sid, "prov-old", ProviderKind.OPENCODE)
 
         backend = _FlakyBackend()
         agent = ExternalAgent(
             backend_provider=_pool_provider(backend),
             session_store=store,
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=spec,
             base_env={"PATH": "/usr/bin"},
         )
@@ -825,7 +825,7 @@ class TestStaleSessionRecovery:
             backend_provider=_pool_provider(_AlwaysStale()),
             session_store=store,
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=spec,
             base_env={"PATH": "/usr/bin"},
         )
@@ -885,7 +885,7 @@ class TestOutboundSendViaRouting:
             backend_provider=_pool_provider(adapter),
             session_store=store,
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=spec,
             base_env={"PATH": "/usr/bin"},
         )
@@ -936,7 +936,7 @@ class TestExternalAgentBuilder:
             .with_backend_provider(_pool_provider(adapter))
             .with_session_store(store)
             .with_parser(_PiCompatibleParser())
-            .with_provider_kind(ProviderKind.PI)
+            .with_provider_kind(ProviderKind.OPENCODE)
             .with_spec(spec)
             .with_base_env({"PATH": "/usr/bin"})
             .build()
@@ -1040,7 +1040,7 @@ class TestRunTurnAcquireReleaseLifecycle:
             backend_provider=provider,
             session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=_make_spec(tmp_path),
             base_env={"PATH": "/usr/bin"},
         )
@@ -1051,7 +1051,7 @@ class TestRunTurnAcquireReleaseLifecycle:
         assert len(provider.acquire_calls) == 1
         modex_sid, turn_context = provider.acquire_calls[0]
         assert modex_sid == "pool1.agent1"
-        assert turn_context.provider_kind is ProviderKind.PI
+        assert turn_context.provider_kind is ProviderKind.OPENCODE
         assert turn_context.workdir == tmp_path
         # The backend was actually used (the adapter recorded the call).
         assert len(adapter.recorded_opts) == 1
@@ -1067,7 +1067,7 @@ class TestRunTurnAcquireReleaseLifecycle:
             backend_provider=provider,
             session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=_make_spec(tmp_path),
             base_env={"PATH": "/usr/bin"},
         )
@@ -1089,7 +1089,7 @@ class TestRunTurnAcquireReleaseLifecycle:
             backend_provider=provider,
             session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=_make_spec(tmp_path),
             base_env={"PATH": "/usr/bin"},
         )
@@ -1118,7 +1118,7 @@ class TestStopCallsCloseAll:
             backend_provider=provider,
             session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
             parser=_PiCompatibleParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=_make_spec(tmp_path),
         )
 
@@ -1138,7 +1138,7 @@ class TestPoolScopedBackendProvider:
     async def test_acquire_returns_same_backend_every_time(self, tmp_path: Path) -> None:
         backend = _CountingCloseBackend()
         provider = PoolScopedBackendProvider(backend)
-        ctx = TurnContext(provider_kind=ProviderKind.PI, workdir=tmp_path)
+        ctx = TurnContext(provider_kind=ProviderKind.OPENCODE, workdir=tmp_path)
 
         first = await provider.acquire("sid-1", ctx)
         second = await provider.acquire("sid-2", ctx)

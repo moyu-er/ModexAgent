@@ -216,7 +216,7 @@ def _external_tree(*, capabilities: dict[str, Any] | None = None) -> ScopeSpec:
                 AgentSpec(
                     name="root",
                     execution_strategy=ExecutionStrategyKind.EXTERNAL,
-                    provider_kind=ProviderKind.PI,
+                    provider_kind=ProviderKind.OPENCODE,
                     capabilities=capabilities,
                 )
             ],

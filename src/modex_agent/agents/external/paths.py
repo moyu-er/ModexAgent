@@ -98,9 +98,8 @@ class ExternalPaths:
         """Provider session file path.
 
         Returns ``<workdir>/.modex/external/<kind>-session.jsonl`` — the
-        single source of truth for the provider's own session file. Pi
-        stores its session there as a JSONL transcript; OpenCode uses the
-        same path but with its own on-disk shape.
+        single source of truth for the provider's own session file.
+        OpenCode uses this path with its own on-disk shape.
         """
         return self.external_root / f"{kind.value}-session.jsonl"
 

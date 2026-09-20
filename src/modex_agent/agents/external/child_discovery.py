@@ -1,6 +1,6 @@
 """Provider-neutral sink for runtime subagent session discovery.
 
-External coding providers (opencode, Pi, future Claude Code/Codex) discover
+External coding providers (opencode, future Claude Code/Codex) discover
 internal subagents at runtime — different from native subagents registered at
 pool materialization. :class:`ChildSessionDiscoverySink` isolates that
 discovery mechanism so the ``ExternalAgent`` harness and the persistence
@@ -42,7 +42,7 @@ __all__ = ["ChildSessionDiscoverySink", "ExternalChildSessionDiscoverySink"]
 class ChildSessionDiscoverySink(ABC):
     """Provider-neutral sink for runtime subagent session discovery.
 
-    External coding providers (opencode, Pi, future Claude Code/Codex)
+    External coding providers (opencode, future Claude Code/Codex)
     discover internal subagents at runtime — different from native
     subagents registered at pool materialization. This ABC isolates the
     discovery mechanism so the Agent harness and persistence layer stay

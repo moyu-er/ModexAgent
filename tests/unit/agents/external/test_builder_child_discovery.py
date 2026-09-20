@@ -86,7 +86,7 @@ class TestBuilderChildDiscoveryFluentApi:
             .with_backend_provider(backend_provider)
             .with_session_store(store)
             .with_parser(OpenCodeV2EventParser())
-            .with_provider_kind(ProviderKind.PI)
+            .with_provider_kind(ProviderKind.OPENCODE)
             .with_spec(spec)
             .with_child_discovery_sink(sink)
             .with_session_registry(registry)
@@ -109,7 +109,7 @@ class TestBuilderChildDiscoveryFluentApi:
             .with_backend_provider(backend_provider)
             .with_session_store(store)
             .with_parser(OpenCodeV2EventParser())
-            .with_provider_kind(ProviderKind.PI)
+            .with_provider_kind(ProviderKind.OPENCODE)
             .with_spec(spec)
             .build()
         )
@@ -126,7 +126,7 @@ class TestBuilderChildDiscoveryFluentApi:
             session_factory=SessionIdFactory(),
             session_registry=MagicMock(spec=SessionRegistry),
             session_map_store=store,
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
         )
         factory = SessionIdFactory()
         emitter_factory = _make_child_emitter_factory()
@@ -140,7 +140,7 @@ class TestBuilderChildDiscoveryFluentApi:
             backend_provider=backend_provider,
             session_store=store,
             parser=OpenCodeV2EventParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=spec,
             child_discovery_sink=sink,
             session_registry=sink._session_registry,
@@ -165,7 +165,7 @@ class TestBuilderChildDiscoveryFluentApi:
             backend_provider=backend_provider,
             session_store=store,
             parser=OpenCodeV2EventParser(),
-            provider_kind=ProviderKind.PI,
+            provider_kind=ProviderKind.OPENCODE,
             spec=spec,
         )
 

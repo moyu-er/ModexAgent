@@ -29,7 +29,7 @@ def _derive_agent_type(
 ) -> AgentType:
     """Derive AgentType from main/sub × provider_kind (SPEC §6.6).
 
-    provider_kind None → native; pi/opencode → external.
+    provider_kind None → native; opencode → external.
     is_main → main variant; else sub variant.
     """
     external = provider_kind is not None
