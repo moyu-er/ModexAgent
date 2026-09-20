@@ -63,6 +63,9 @@ def _make_server(
     server.set_agent_resolver(
         lambda pool_name: pool_to_main_agent.get(pool_name, pool_name)
     )
+    # PA-07: session-create validates pool keys / resolves the unified
+    # default against the declared pool keys (never root agent names).
+    server.set_available_pools_provider(lambda: set(pool_to_main_agent))
     routing_store = PoolSessionStore(data_dir=data_dir)
     server.set_pool_switch_callback(routing_store.set_pool)
     server.set_pool_resolver(routing_store.get_pool)

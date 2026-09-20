@@ -114,23 +114,14 @@ def _facets(text: str) -> dict[str, object]:
     for compiled in compilation.agents:
         prov = compiled.provenance
         agents[prov.agent] = {
-            "roster": list(compiled.spec.tools),
+            "roster": [entry.name for entry in compiled.spec.tools],
             "provenance_tools": [
                 {
                     "tool": e.tool,
                     "origin": e.origin.value,
-                    "replaces": e.replaces,
                     "targets": list(e.targets),
                 }
                 for e in prov.tools
-            ],
-            "replacements": [
-                {
-                    "default_tool": r.default_tool,
-                    "replacement_tool": r.replacement_tool,
-                    "capability": r.capability,
-                }
-                for r in prov.replacements
             ],
         }
     return agents
@@ -139,7 +130,7 @@ def _facets(text: str) -> dict[str, object]:
 def main() -> None:
     shapes = {name: _facets(text) for name, text in _DECLARATIONS.items()}
     payload = {
-        "captured_on": "T11 boundary (both ast_grep and todo ride the capabilities face)",
+        "captured_on": "T11 capability face after shell capability extraction",
         "shapes": shapes,
     }
     out = _DIR / "facets.json"

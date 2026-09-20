@@ -35,6 +35,9 @@ async def test_file_access_reconstructs_workspace_file_store(tmp_path: Path) -> 
     service = WebUIService.__new__(WebUIService)
     service._app_config = AppConfig.model_validate({"persistence": {"backend": "file"}})
     service._data_dir_name = ".modex"
+    service.workspace_stack = SimpleNamespace(registry=SimpleNamespace(
+        get_or_open=AsyncMock(side_effect=AssertionError("A FILE index read must not start pools")),
+    ))
 
     store = await service._session_store_for_index(tmp_path / "session_index")
 

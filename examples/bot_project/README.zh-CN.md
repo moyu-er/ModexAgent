@@ -1,4 +1,4 @@
-<p align="center"><img src="../../assets/logo-wordmark-dark.svg" alt="ModexAgent" width="300"></p>
+<p align="center"><img src="../../assets/mascot/still-dark.png" alt="ModexAgent" width="150"></p>
 
 <p align="center"><strong>ModexBot：ModexAgent 官方可定制参考应用</strong></p>
 

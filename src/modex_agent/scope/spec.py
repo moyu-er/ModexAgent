@@ -151,8 +151,6 @@ class AgentSpec(BaseModel):
 
     description: str = ""
     max_steps: int = 100
-    use_terminal: bool = False
-    terminal_visibility: bool = False
     toolset: ToolPreset | None = None
     """Node-level toolset profile override. ``None`` = position-derived
     default (root → ``full``, non-root → ``read_write``) — the landing

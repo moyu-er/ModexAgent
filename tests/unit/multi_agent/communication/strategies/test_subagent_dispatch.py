@@ -123,7 +123,8 @@ def _make_request(invocation_id: str | None = None) -> SendRequest:
 def _make_deps(
     bus: object | None = None,
 ) -> SendDeps:
-    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+    tree = MagicMock(spec=SessionTreeManager)
+    tree.sender_scope_id = AsyncMock(return_value=None)
     if bus is not None:
         async def _deliver(sid: str, env: object) -> None:
             await bus.send(sid, env)  # type: ignore[attr-defined]
@@ -275,7 +276,8 @@ class TestBuildResultExecutionStrategyBranch:
         manager.resolve_workspace.return_value.pool_data.get.return_value = _FakePoolData(
             context_manager=MagicMock(), turn_store=MagicMock(), runtime_dir=tmp_path
         )
-        mock_tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+        mock_tree = MagicMock(spec=SessionTreeManager)
+        mock_tree.sender_scope_id = AsyncMock(return_value=None)
         mock_tree.deliver = AsyncMock()
         deps = SendDeps(
             source=AgentAddress(name="main"),
@@ -302,7 +304,8 @@ class TestBuildResultExecutionStrategyBranch:
         manager.resolve_workspace.return_value.pool_data.get.return_value = _FakePoolData(
             context_manager=MagicMock(), turn_store=MagicMock(), runtime_dir=tmp_path
         )
-        mock_tree2: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+        mock_tree2 = MagicMock(spec=SessionTreeManager)
+        mock_tree2.sender_scope_id = AsyncMock(return_value=None)
         mock_tree2.deliver = AsyncMock()
         deps = SendDeps(
             source=AgentAddress(name="main"),

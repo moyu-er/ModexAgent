@@ -7,43 +7,36 @@
       {
         "name": "bash",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "edit",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "glob",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "grep",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "ls",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "read",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       },
       {
         "name": "send_to_peer",
         "origin": "derived_send_to_peer",
-        "replaces": null,
         "targets": [
           "default"
         ]
@@ -51,7 +44,6 @@
       {
         "name": "write",
         "origin": "preset",
-        "replaces": null,
         "targets": []
       }
     ],

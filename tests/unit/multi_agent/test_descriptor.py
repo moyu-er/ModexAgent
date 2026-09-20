@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from modex_agent.core.tool_group import ToolGroupResource
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import (
     AgentDescriptor,
@@ -142,3 +143,84 @@ class TestAgentInstance:
         assert AgentState.ERROR.value == "error"
         assert AgentState.SHUTTING_DOWN.value == "shutting_down"
         assert AgentState.SHUTDOWN.value == "shutdown"
+
+    async def test_no_pipeline_instance_closes_adopted_resources_once(self) -> None:
+        class Resource(ToolGroupResource):
+            def __init__(self) -> None:
+                self.close_count = 0
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        resource = Resource()
+        instance = AgentInstance(
+            descriptor=AgentDescriptor(address=AgentAddress(name="coder")),
+            context_manager=object(),  # type: ignore[arg-type]
+        )
+        instance.adopt_resources((resource,))
+
+        assert await instance.stop() is True
+        assert await instance.stop() is True
+        assert resource.close_count == 1
+
+    async def test_incomplete_pipeline_drain_retains_resources_for_retry(self) -> None:
+        class Resource(ToolGroupResource):
+            def __init__(self) -> None:
+                self.close_count = 0
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        class Pipeline:
+            def __init__(self) -> None:
+                self.drained = False
+
+            async def stop(self) -> bool:
+                return self.drained
+
+        resource = Resource()
+        pipeline = Pipeline()
+        instance = AgentInstance(
+            descriptor=AgentDescriptor(address=AgentAddress(name="coder")),
+            context_manager=object(),  # type: ignore[arg-type]
+            pipeline=pipeline,  # type: ignore[arg-type]
+        )
+        instance.adopt_resources((resource,))
+
+        assert await instance.stop() is False
+        assert instance.resources == (resource,)
+        assert resource.close_count == 0
+
+        pipeline.drained = True
+        assert await instance.stop() is True
+        assert instance.resources == ()
+        assert resource.close_count == 1
+
+    async def test_pre_drain_pipeline_error_propagates_and_retains_resources(self) -> None:
+        class Resource(ToolGroupResource):
+            def __init__(self) -> None:
+                self.close_count = 0
+
+            async def aclose(self) -> None:
+                self.close_count += 1
+
+        class Pipeline:
+            turns_drained = False
+
+            async def stop(self) -> bool:
+                raise RuntimeError("drain failed")
+
+        resource = Resource()
+        instance = AgentInstance(
+            descriptor=AgentDescriptor(address=AgentAddress(name="coder")),
+            context_manager=object(),  # type: ignore[arg-type]
+            pipeline=Pipeline(),  # type: ignore[arg-type]
+            resources=(resource,),
+        )
+
+        with pytest.raises(RuntimeError, match="drain failed"):
+            await instance.stop()
+
+        assert instance.drain_confirmed is False
+        assert instance.resources == (resource,)
+        assert resource.close_count == 0

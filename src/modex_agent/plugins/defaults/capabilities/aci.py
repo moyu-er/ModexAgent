@@ -2,19 +2,19 @@
 
 Bundles the ACI (Agent-Computer Interface) edit upgrade as a pure opt-in
 capability: declaring ``capabilities: {aci: {}}`` on an agent contributes
-the ``aci_edit`` registry name into the roster merge base and declares
-the O3 same-name replacement ``edit ← aci_edit``. The compiler applies
-the swap POST-merge (the pipeline position the retired aci supplement
-special case occupied): the plain ``edit``
-entry dies, ``aci_edit`` lands at the end of the final roster, and the
-provenance records the replacement.
+the ``aci_edit`` registry name into the roster merge base. There is no
+replacement declaration — the upgrade emerges from name-slot overwrite:
+``aci_edit`` resolves to a tool whose LLM-facing name is ``edit``
+(:class:`~modex_agent.tools.aci.edit_tool.AciEditTool`), so at assembly
+its CAPABILITY_DERIVED registration wins the ``edit`` name slot over the
+preset entry by :attr:`ToolOrigin.OVERRIDE_PRIORITY` rank (audited in the
+tool manager's override records). The compiler keeps BOTH roster entries
+and their origin classifications; a ``tools: [-aci_edit]`` veto leaves
+the plain preset ``edit`` in place.
 
-The tool itself (:class:`~modex_agent.tools.aci.edit_tool.AciEditTool` —
-an :class:`~modex_agent.tools.standard.file_tool.EditFileTool` with
-post-edit lint diagnostics, LLM-facing name still ``edit``) is a TOOL-slot
-registration owned by ``plugins/defaults/tools.py``; this module owns only
-the enablement + roster contribution (P2 — single component-resolution
-path).
+The tool itself is a TOOL-slot registration owned by
+``plugins/defaults/tools.py``; this module owns only the enablement +
+roster contribution (P2 — single component-resolution path).
 """
 
 from __future__ import annotations
@@ -28,7 +28,6 @@ from modex_agent.plugins.capability import (
     CapabilityBinding,
     CapabilityContribution,
     CapabilityWiring,
-    ToolReplacementSpec,
     TreePositionView,
 )
 
@@ -51,9 +50,10 @@ class AciCapability(Capability):
 
     Five-phase shape: ``applies`` defaults False (declaration-only
     enablement — equivalent to the historical "not declared, not
-    enabled" supplement semantics); ``contribute`` declares the tool +
-    the replacement; ``bind`` has no anchor (the contribution IS the
-    binding); ``supply`` has no pool-level need; ``assemble`` wires
+    enabled" supplement semantics); ``contribute`` declares the tool (the
+    ``edit`` slot swap is emergent name-slot overwrite at assembly, not a
+    declared replacement); ``bind`` has no anchor (the contribution IS
+    the binding); ``supply`` has no pool-level need; ``assemble`` wires
     nothing (the tool resolves through the regular TOOL slot).
     """
 
@@ -64,9 +64,6 @@ class AciCapability(Capability):
         del tree, config  # tree-independent, knob-free
         return CapabilityContribution(
             tools=("aci_edit",),
-            tool_replacements=(
-                ToolReplacementSpec(replaced_tool="edit", replacement_tool="aci_edit"),
-            ),
         )
 
     async def assemble(self, binding: CapabilityBinding, ctx: AgentContext) -> CapabilityWiring:

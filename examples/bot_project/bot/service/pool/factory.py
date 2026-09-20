@@ -29,6 +29,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
+from bot.config.webui_config import build_control_origin
 from bot.scope import BotRecordScope
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
@@ -65,6 +66,7 @@ from modex_agent.plugins.assembly.context import (
     AssemblyContext,
     PoolRuntimeDeps,
     SupplyInfra,
+    agent_context_chain,
     resolution_context,
 )
 from modex_agent.plugins.assembly.native_core import (
@@ -166,12 +168,15 @@ async def _resolve_llm_slot(
         workspace_ctx,
         PoolRuntimeDeps(pool_assembly_ctx=pool_assembly_ctx),
     )
+    spec = pool_assembly_ctx.assembly_spec
+    if spec is None:
+        raise ValueError("LLM slot resolution requires the pool's root assembly spec")
     return await _resolve_single(
         registry,
         ComponentSlot.LLM_PROVIDER,
         name,
         config,
-        component_ctx,
+        agent_context_chain(component_ctx, spec=spec),
     )
 
 
@@ -216,6 +221,7 @@ async def create_pool(
     shared_hooks: list[Hook],
     shared_hook_runner: HookRunner,
     shared_interceptor_chain: Any,
+    control_origin: str | None = None,
     control_channel: InMemoryControlChannel | None = None,
     command_processor: Any = None,
     pool_data: PoolDataSnapshot | None = None,
@@ -331,6 +337,9 @@ async def create_pool(
 
         _pool_bound_on_created = pool_bound_on_created
 
+    if control_origin is None:
+        control_origin = build_control_origin(project_dir / "config")
+
     ctx = _build_assembly_context(
         pool_name=pool_name,
         pool_spec=pool_spec,
@@ -352,6 +361,7 @@ async def create_pool(
         shared_hooks=shared_hooks,
         shared_hook_runner=shared_hook_runner,
         shared_interceptor_chain=shared_interceptor_chain,
+        control_origin=control_origin,
         session_registry=session_registry,
         session_store=session_store,
         bot_model_config=bot_model_config,
@@ -462,7 +472,7 @@ async def create_pool(
         bus=agent_bus,
         poller=poller,
         pool_name=pool_name,
-        workspace_root=str(project_dir),
+        workspace_root=str(scope_path.workspace_root),
         session_registry=session_registry or InMemorySessionRegistry(),
         binding_store=session_binding_store,
     )
@@ -641,16 +651,22 @@ async def create_pool(
         assembly = None
 
     if assembly is not None:
-        terminal_manager = assembly.terminal_manager
         tool_manager = assembly.tool_manager
         context_manager = assembly.context_manager
         cassette_recorder = assembly.cassette_recorder
         root_provider = assembly.root_provider
         component_hook_specs = assembly.component_hook_specs
         if assembly.external_deps is not None:
+            # PA-04: the external main agent's declared-hook roster is
+            # dispatched by ExternalAwareFactory through the SAME
+            # ``_dispatch_hooks`` the native path uses. Thread the dispatch
+            # inputs (component registry + compiled spec + workspace
+            # resources) so the factory builds a real HookRunner.
+            assembly.external_deps["component_registry"] = resolved_registry
+            assembly.external_deps["assembly_spec"] = main_assembly_spec
+            assembly.external_deps["workspace_resources"] = workspace_resources
             external_deps = assembly.external_deps
     else:
-        terminal_manager = None
         tool_manager = None
         context_manager = None
         cassette_recorder = None
@@ -699,7 +715,6 @@ async def create_pool(
         if ms is not None:
             subagent_store_registry = ms.store_registry
 
-    control_origin = ctx.control_origin
     # The lazy graph-context closure shared by the main pipeline AND the
     # subagent materialization deps (ticket 12 — one resolver, both paths).
     graph_context_resolver = (
@@ -754,7 +769,7 @@ async def create_pool(
         app_config=app_config,
         persistence=persistence,
         emitter_factory=_workspace_emitter_factory,
-        control_origin=control_origin,
+        control_origin=ctx.control_origin,
         default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
         memory_store_registry=subagent_store_registry,
         component_registry=resolved_registry,
@@ -925,7 +940,6 @@ async def create_pool(
         tool_manager=tool_manager,
         skill_resolver=skill_resolver,
         mcp_manager=mcp_manager,
-        terminal_manager=terminal_manager,
         root_agent_name=root_agent_name,
         main_execution_strategy=ExecutionStrategyKind(main_spec.execution_strategy),
         provider=main_provider,

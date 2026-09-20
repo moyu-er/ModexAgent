@@ -450,7 +450,24 @@ async def test_bash_still_rejected_on_password_prompt():
 # ── silence is NOT evidence: silent commands wait for the deadline ──
 
 
-async def test_silent_running_command_waits_for_deadline():
+@pytest.fixture
+def deadline_clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Advance only the session clock on empty reads, not the event-loop clock."""
+    advanced = [0.0]
+    read_chunk = PersistentShellSession._read_chunk
+
+    async def read_and_advance(session: PersistentShellSession) -> str | None:
+        chunk = await read_chunk(session)
+        if chunk == "":
+            advanced[0] += 4.0
+        return chunk
+
+    monkeypatch.setattr(session_mod, "monotonic", lambda: monotonic() + advanced[0])
+    monkeypatch.setattr(PersistentShellSession, "_read_chunk", read_and_advance)
+    return advanced
+
+
+async def test_silent_running_command_waits_for_deadline(deadline_clock: list[float]):
     """THE gpt2-codegolf kill chain, structurally: a silently-running
     foreground command (``curl -s`` / a big compile — the kernel probe is
     consulted and says not-waiting, output is quiet). Output silence is
@@ -465,14 +482,17 @@ async def test_silent_running_command_waits_for_deadline():
         elapsed = monotonic() - started
         assert "timed out after 16 seconds" in out
         assert "[hint:" not in out
-        assert elapsed >= 15.5  # silence alone never early-returns
+        assert deadline_clock[0] >= 16  # silence alone never early-returns
+        assert elapsed < 5
         # the deadline path terminated the session — no WAITING residue
         assert await tool.execute(command="echo fresh") == "fresh"
     finally:
         await tool.close()
 
 
-async def test_probeless_silence_waits_for_deadline(monkeypatch: pytest.MonkeyPatch):
+async def test_probeless_silence_waits_for_deadline(
+    monkeypatch: pytest.MonkeyPatch, deadline_clock: list[float]
+):
     """Same contract with the kernel probe UNAVAILABLE (the macOS
     content-fallback path): a fully silent ``read -s`` — zero output, no
     keywords, no probe. Silence is not evidence on ANY platform: the

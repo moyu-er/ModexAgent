@@ -57,10 +57,6 @@ export function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-export function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
 export function asStringList(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((v): v is string => typeof v === "string")
@@ -182,8 +178,8 @@ export function addPool(draft: ScopeModelTree, name: string): void {
   pools[name] = {
     agents: {
       // Every pool needs exactly one root (V3); create it named after the
-      // pool, terminal flags explicit per the declaration convention.
-      [name]: { description: "", use_terminal: false, terminal_visibility: false },
+      // pool. Capability defaults stay implicit until the user overrides one.
+      [name]: { description: "" },
     },
   };
 }
@@ -226,49 +222,6 @@ export function deleteAgent(draft: ScopeModelTree, pool: string, path: string[])
   delete children[path[path.length - 1]!];
 }
 
-/** Write both sides of a bidirectional peer edge (ADR-0019 V5 by construction). */
-export function setPeer(draft: ScopeModelTree, a: string, b: string, on: boolean): void {
-  const pools = poolsMapOf(draft);
-  if (!pools) return;
-  for (const [from, to] of [
-    [a, b],
-    [b, a],
-  ] as const) {
-    const body = pools[from];
-    if (!body) continue;
-    const peers = new Set(asStringList(body.peers));
-    if (on) peers.add(to);
-    else peers.delete(to);
-    if (peers.size > 0) body.peers = [...peers].sort();
-    else delete body.peers;
-  }
-}
-
-/** Copy the permissions block onto every other NATIVE pool root agent. */
-export function applyPermissionsToOtherPools(
-  draft: ScopeModelTree,
-  sourcePool: string,
-  sourcePath: string[],
-): void {
-  const source = agentBodyOf(draft, sourcePool, sourcePath);
-  if (!source) return;
-  const view = viewModel(draft);
-  for (const pool of view.pools) {
-    for (const top of pool.agents) {
-      if (pool.name === sourcePool && top.path.join("/") === sourcePath.join("/")) {
-        continue;
-      }
-      // External agents run in the provider CLI — the native permission
-      // face (interceptors/approval) is meaningless there.
-      if (asString(top.body.execution_strategy) === "external") continue;
-      for (const key of ["interceptors", "interceptor_configs", "approval"] as const) {
-        if (source[key] === undefined) delete top.body[key];
-        else top.body[key] = JSON.parse(JSON.stringify(source[key])) as unknown;
-      }
-    }
-  }
-}
-
 // ── Agent field helpers ──────────────────────────────────────────────────────
 
 /** Set a scalar field, omitting the key entirely when `value` is null. */
@@ -290,16 +243,31 @@ export function capabilityMode(body: AgentBody, name: string): CapabilityMode {
 export function setCapabilityMode(body: AgentBody, name: string, mode: CapabilityMode): void {
   const caps = { ...(asMap(body.capabilities) ?? {}) };
   if (mode === "auto") delete caps[name];
-  else if (mode === "on") caps[name] = {};
+  else if (mode === "on") caps[name] = asMap(caps[name]) ?? {};
   else caps[name] = false;
   setField(body, "capabilities", Object.keys(caps).length > 0 ? caps : null);
 }
 
-// Hooks: the declared list carries +/- merge prefixes verbatim. The form
-// edits ONLY deviations — a veto ("-name") applies to position defaults and
-// capability-bundle hooks alike; an add ("+name") is for free-standing roster
-// hooks only (bundle-carried hooks follow their capability and are never
-// emitted as "+name" — enforced by the combobox candidate list, C2).
+/** Update one package-owned config key while retaining every sibling key. */
+export function setCapabilityConfigField(
+  body: AgentBody,
+  name: string,
+  key: string,
+  value: unknown,
+): void {
+  const caps = { ...(asMap(body.capabilities) ?? {}) };
+  const config = { ...(asMap(caps[name]) ?? {}) };
+  if (value === null || value === undefined) delete config[key];
+  else config[key] = value;
+  caps[name] = config;
+  setField(body, "capabilities", caps);
+}
+
+// ── session_title hook toggle (PA-12 "auto naming") ──────────────────────────
+//
+// The friendly form's single switch for automatic conversation naming. It is
+// a plain roster mutation — on/off ride the same veto/add semantics as the
+// raw declaration; no separate boolean config exists.
 
 /** Names currently vetoed in the declaration (`-name` entries). */
 export function vetoedHooks(body: AgentBody): string[] {
@@ -347,60 +315,55 @@ export function removeDeclaredHook(body: AgentBody, name: string): void {
   setField(body, "hooks", entries.length > 0 ? entries : null);
 }
 
+/** Effective auto-naming state: declared entry wins, else the default roster. */
+export function sessionTitleOn(body: AgentBody, defaultHooks: string[]): boolean {
+  if (declaredHooks(body).includes("session_title")) return true;
+  if (vetoedHooks(body).includes("session_title")) return false;
+  return defaultHooks.includes("session_title");
+}
+
 /**
- * Combobox candidates for adding a hook: the backend roster MINUS every
- * bundle-carried hook (they ride their capability — never declarable) MINUS
- * the already-effective hooks.
+ * Turn auto naming on/off. On: a veto is removed (restoring the default)
+ * or an explicit + entry is written when the default roster lacks it. Off:
+ * over a default (or an existing veto) a -session_title veto is written —
+ * explicit off must survive a default being on; without any default, the
+ * explicit + entry is simply removed. Other entries always survive.
  */
-export function hookCandidates(
-  roster: string[],
-  bundleCarried: ReadonlySet<string>,
-  effective: ReadonlySet<string>,
-): string[] {
-  return roster.filter((h) => !bundleCarried.has(h) && !effective.has(h));
-}
-
-/** Union of every capability bundle's carried hooks. */
-export function bundleCarriedHooks(
-  bundles: Record<string, { tools: string[]; hooks: string[] }>,
-): Set<string> {
-  const out = new Set<string>();
-  for (const bundle of Object.values(bundles)) {
-    for (const hook of bundle.hooks) out.add(hook);
-  }
-  return out;
-}
-
-// Interceptors: no position defaults and no capability contributions — the
-// effective roster IS the declared list ("+name" shipped convention, plain
-// accepted). Chips + add-combobox over the registry roster.
-
-/** Declared interceptor names with the merge prefix stripped. */
-export function declaredInterceptors(body: AgentBody): string[] {
-  return asStringList(body.interceptors).map((e) =>
-    e.startsWith("+") ? e.slice(1) : e,
-  );
-}
-
-export function interceptorOn(body: AgentBody, name: string): boolean {
-  return declaredInterceptors(body).includes(name);
-}
-
-export function setInterceptor(body: AgentBody, name: string, on: boolean): void {
-  const entries = asStringList(body.interceptors).filter(
-    (e) => e !== `+${name}` && e !== name,
-  );
-  if (on) entries.push(`+${name}`);
-  setField(body, "interceptors", entries.length > 0 ? entries : null);
-  if (!on && name === "sandbox_guard") {
-    // Drop the orphaned config block with its interceptor.
-    const configs = asMap(body.interceptor_configs);
-    if (configs) {
-      delete configs[name];
-      if (Object.keys(configs).length === 0) delete body.interceptor_configs;
+export function setSessionTitle(body: AgentBody, on: boolean, defaultHooks: string[]): void {
+  if (on) {
+    if (defaultHooks.includes("session_title")) {
+      restoreHook(body, "session_title");
+    } else {
+      addDeclaredHook(body, "session_title");
     }
+    return;
   }
+  if (declaredHooks(body).includes("session_title") && !defaultHooks.includes("session_title")) {
+    removeDeclaredHook(body, "session_title");
+    return;
+  }
+  vetoHook(body, "session_title");
 }
+
+// ── Collaborators (PA-13) ────────────────────────────────────────────────────
+//
+// The friendly form edits ONE level: a root's direct subagents. Deeper
+// structures stay untouched (they render as "advanced structure" badges and
+// remain editable through the advanced tree).
+
+/** The root's direct collaborators (first level only). */
+export function directCollaborators(root: AgentTreeNode): AgentTreeNode[] {
+  return root.children;
+}
+
+/** True when the node carries its own subagents (an "advanced structure"). */
+export function hasNestedAgents(node: AgentTreeNode): boolean {
+  return node.children.length > 0;
+}
+
+// Interceptors and other advanced blocks have no friendly face — experts
+// edit them through the raw Scope editor (Settings → Advanced). Only the
+// generic list-field mutation below serves the friendly form (MCP).
 
 export function toggleInListField(body: AgentBody, key: string, name: string, on: boolean): void {
   const list = asStringList(body[key]);
@@ -408,28 +371,102 @@ export function toggleInListField(body: AgentBody, key: string, name: string, on
   setField(body, key, next.length > 0 ? next : null);
 }
 
-// ── Nested config accessors (sandbox_guard / approval / memory) ─────────────
+// ── Unified tri-state mutations (PA-10) ──────────────────────────────────────
+//
+// The friendly form's ONE mutation vocabulary for effective-value controls.
+// Design contract (DESIGN §5.4):
+//   - "off" writes an explicit value (never deletes — deleting would
+//     re-inherit the default, and the default may be on);
+//   - "reset" removes ONLY the local override (undoing an explicit off is
+//     exactly "follow the default again") and never touches sibling keys;
+//   - unrelated advanced fields always survive.
+//
+// memory: the declaration block is { archive_enabled, core_enabled,
+// session }. Turning archive off cascades core (the schema's AND rule —
+// core requires archive; the UI must not write an invalid combination).
+// Non-root agents keep only the session override; toggles there are no-ops.
+// approval: `enabled: false` stays explicit in the DRAFT; the backend's
+// canonical deviations-only writer may drop it on save (absence inherits
+// the off default), and the effective bill still reads off — semantic off
+// survives either way (V14).
+
+export type MemoryLayerKey = "archive_enabled" | "core_enabled";
+
+/** Read one declared memory toggle (null = no local override). */
+export function memoryOverride(body: AgentBody, key: MemoryLayerKey): boolean | null {
+  const memory = asMap(body.memory);
+  const value = memory?.[key];
+  return typeof value === "boolean" ? value : null;
+}
+
+/**
+ * Turn a memory layer on/off as an explicit override, preserving the rest
+ * of the memory block (session overrides, the sibling toggle). Turning
+ * archive off cascades core off (core requires archive).
+ */
+export function setMemoryLayer(body: AgentBody, key: MemoryLayerKey, on: boolean): void {
+  const memory = { ...(asMap(body.memory) ?? {}) };
+  memory[key] = on;
+  if (key === "archive_enabled" && !on) {
+    memory.core_enabled = false;
+  }
+  setField(body, "memory", memory);
+}
+
+/**
+ * Reset one memory layer to its default: removes ONLY that override key —
+ * the session block and every sibling key survive, and the memory block
+ * itself is removed only when it becomes empty. Resetting ARCHIVE also
+ * resets the dependent core override: archive's default (off) makes a
+ * surviving `core_enabled: true` invalid (core requires archive) and a
+ * surviving `core_enabled: false` meaningless (identical to the default
+ * it would now inherit) — either way the core override goes.
+ */
+export function resetMemoryLayer(body: AgentBody, key: MemoryLayerKey): void {
+  const memory = asMap(body.memory);
+  if (memory === null || !(key in memory)) return;
+  const next = { ...memory };
+  delete next[key];
+  if (key === "archive_enabled") {
+    delete next.core_enabled;
+  }
+  if (Object.keys(next).length > 0) body.memory = next;
+  else delete body.memory;
+}
+
+/**
+ * Turn human approval on/off. Off writes `enabled: false` explicitly in the
+ * draft and preserves the rest of the block (per-tool rules); on preserves
+ * every non-enabled key likewise. A missing block is created minimally.
+ */
+export function setApprovalEnabled(body: AgentBody, on: boolean): void {
+  const approval = { ...(asMap(body.approval) ?? {}) };
+  approval.enabled = on;
+  setField(body, "approval", approval);
+}
+
+/**
+ * Reset approval to its default: removes ONLY the ``enabled`` override and
+ * keeps the rest of the block (per-tool rules are unrelated advanced
+ * config — deleting them would destroy user work). The empty container is
+ * removed when nothing but ``enabled`` was configured. Absence of
+ * ``enabled`` inherits the off default, which IS the reset semantic.
+ */
+export function resetApproval(body: AgentBody): void {
+  const approval = asMap(body.approval);
+  if (approval === null || !("enabled" in approval)) return;
+  const next = { ...approval };
+  delete next.enabled;
+  if (Object.keys(next).length > 0) body.approval = next;
+  else delete body.approval;
+}
+
+// ── Nested config accessors (approval / memory) ─────────────────────────────
 
 export function nestedMap(body: Record<string, unknown>, ...keys: string[]): Record<string, unknown> | null {
   let cur: Record<string, unknown> | null = body;
   for (const key of keys) {
     cur = cur ? asMap(cur[key]) : null;
-  }
-  return cur;
-}
-
-/** Ensure a nested map path exists on a draft body and return it. */
-export function ensureNested(body: Record<string, unknown>, ...keys: string[]): Record<string, unknown> {
-  let cur = body;
-  for (const key of keys) {
-    const next = asMap(cur[key]);
-    if (next) {
-      cur = next;
-    } else {
-      const created: Record<string, unknown> = {};
-      cur[key] = created;
-      cur = created;
-    }
   }
   return cur;
 }

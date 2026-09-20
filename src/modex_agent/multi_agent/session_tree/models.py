@@ -40,6 +40,10 @@ class SessionTreeMetadata(StrEnum):
 
     BINDING = "session_tree_binding"
     PAUSED = "session_tree_paused"
+    REQUEST_SCOPED = "session_tree_request_scoped"
+    """Policy flag: the session admits prompts only via RequestScope."""
+    REQUEST_SCOPE = "session_tree_request_scope"
+    """Serialized ``RequestScopeRecord`` for the current/last request."""
 
 
 class MessageTrackStatus(StrEnum):

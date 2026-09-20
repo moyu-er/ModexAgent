@@ -165,6 +165,32 @@ export async function deleteConversation(
   return resp.json() as Promise<{ deleted: string }>;
 }
 
+// ── Session title (PA-02) ───────────────────────────────────────────────────
+
+/**
+ * Rename a persisted session via `PATCH /api/sessions/{id}/title?ws=&pool=`.
+ *
+ * Server-side validation (PA-01): trimmed non-empty, single line, ≤80 chars —
+ * violations reject with ApiError(400); a missing session rejects with
+ * ApiError(404). Saving the identical title is a no-op success. The caller
+ * refreshes the session list on success (same refresh as sessions_changed).
+ */
+export async function renameSessionTitle(
+  sessionId: string,
+  title: string,
+  ws?: string,
+  pool?: string,
+): Promise<{ updated: boolean }> {
+  const url = appendScopeParams(`${API_BASE}/sessions/${sessionId}/title`, ws, pool);
+  const resp = await fetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  await assertOk(resp);
+  return resp.json() as Promise<{ updated: boolean }>;
+}
+
 // ── Messages ────────────────────────────────────────────────────────────────
 
 async function fetchSessionResource<T>(

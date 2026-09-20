@@ -48,15 +48,16 @@ Approval `allowed_paths` creates no permission or mount. Concrete no-prompt root
 ```text
 scope roster/config -> SandboxGuardInterceptorFactory
   -> resolve_selection -> select_runtime -> resolve_available
-  -> ResolvedSandbox -> SandboxBinding -> shell_plan.build_bash_tool
-  -> selected persistent argv OR one-shot ShellExecutor
+  -> ResolvedSandbox -> SandboxBinding -> ShellCapability.assemble
+  -> ShellWiring -> ShellToolGroupFactory
+  -> one selected persistent argv OR one-shot ShellExecutor group
 ```
 
-The factory resolves the substrate before constructing bash. `ResolvedSandbox` carries effective backend/enforcement, persistent argv, one-shot prefix, mounts and fallback reason. A selected non-HOST substrate without either argv product is an error, never a silently reused HOST shell.
+The declared interceptor factory resolves the substrate before the shell capability's group factory runs. `ResolvedSandbox` carries effective backend/enforcement, persistent argv, one-shot prefix, mounts and fallback reason. A selected non-HOST substrate without either argv product is an error, never a silently reused HOST shell.
 
-All three bash implementations share the same tool-name judgment. The terminal trio is HOST; persistent PTY uses selected shell argv; one-shot subprocess uses the selected LOCAL/OCI prefix. HOST retains the existing terminal/persistent/subprocess choices. One-shot execution passes the complete command as one `bash --noprofile --norc -c` argument, preserving pipes and redirection inside the selected execution environment.
+All three shell variants share the same tool-name judgment. The `terminal` group is HOST-only; a terminal request under LOCAL/OCI downgrades to the selected substrate's persistent or subprocess group. Persistent PTY uses selected shell argv; one-shot subprocess uses the selected LOCAL/OCI prefix. HOST retains terminal/persistent/subprocess selection. One-shot execution passes the complete command as one `bash --noprofile --norc -c` argument, preserving pipes and redirection inside the selected execution environment.
 
-`SandboxBinding` is shared by execution and telemetry and tracks pre-command fallback per session. Other sessions retain their substrate, cwd, environment and pending input. `ensure_input_companion` binds `bash_input` to the final persistent manager/session. PTY cancellation waits for the reader to exit before reuse. `process` and `terminal` remain HOST controls, not companions of the sandbox shell.
+`SandboxBinding` is shared by execution and telemetry and tracks pre-command fallback per session. Other sessions retain their substrate, cwd, environment and pending input. `ShellToolGroupFactory` constructs the complete selected group: persistent mode creates `bash` and `bash_input` against one manager; terminal mode creates `bash`, `process`, and `terminal` against one terminal manager and watchdog. PTY cancellation waits for the reader to exit before reuse. `process` and `terminal` exist only in the effective HOST terminal variant and are never independently registered.
 
 ## Availability And Recovery
 
@@ -65,7 +66,7 @@ All three bash implementations share the same tool-name judgment. The terminal t
 - OCI uses selected-engine lifecycle/config hashing and a mount-consistency probe. Permission/configuration errors are not classified as a missing engine.
 - A possibly-submitted command is never automatically replayed, including after container death or uncertain partial execution. Report uncertainty and inspect side effects before restoring the container or shell.
 - Approval changes neither mounts/profiles nor the bound execution engine. An approved outside-envelope shell call may still fail at the OS boundary; that failure cannot trigger HOST replay.
-- Seatbelt profiles are cleaned up after bound shells close. Shared OCI containers are not destroyed by an individual agent runtime.
+- One ordered assembly owner adopts the sandbox guard before the dependent shell resource. Agent teardown closes shell first, then guard; a failed shell close retains both for retry. Seatbelt profiles are therefore cleaned up only after bound shells close. Shared OCI containers are not destroyed by an individual agent runtime.
 
 ## Environment And Limits
 

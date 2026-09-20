@@ -8,10 +8,8 @@ renders the spec back to canonical YAML:
 - deviations only — fields equal to spec field defaults or position-derived
   defaults are omitted (``model_dump(exclude_defaults=True)``, applied
   recursively to nested blocks);
-- exception (owner decision): ``use_terminal`` / ``terminal_visibility``
-  stay explicit on NATIVE pool roots — the permission-relevant terminal
-  face must be visible in the file, not implicit. External agents carry no
-  terminal face, so the keys stay off their entries.
+- capability overrides retain their three distinct declaration states:
+  absent (auto), an empty mapping (explicit on), or ``false`` (explicit off).
 
 The serializer trusts its input is already validated (the PUT gate chain
 runs load → validate → compile → validate-effective before serializing).
@@ -23,7 +21,6 @@ from typing import Any, Final
 
 import yaml
 
-from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 
 # Canonical agent field order — the shipped declaration's reading order.
@@ -32,8 +29,6 @@ from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 _AGENT_FIELD_ORDER: Final = (
     "description",
     "max_steps",
-    "use_terminal",
-    "terminal_visibility",
     "toolset",
     "tools",
     "tool_configs",
@@ -128,10 +123,6 @@ def _agents_body(agents: list[AgentSpec]) -> dict[str, Any]:
 
 def _agent_body(agent: AgentSpec) -> dict[str, Any]:
     dumped = agent.model_dump(mode="json", exclude_defaults=True)
-    if agent.parent is None and str(agent.execution_strategy) == ExecutionStrategyKind.REACT.value:
-        # Owner decision: the terminal face stays explicit on native roots.
-        dumped["use_terminal"] = agent.use_terminal
-        dumped["terminal_visibility"] = agent.terminal_visibility
     return {
         key: dumped[key]
         for key in _AGENT_FIELD_ORDER

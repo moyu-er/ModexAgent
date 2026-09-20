@@ -788,6 +788,32 @@
     color: var(--color-faint);
     font-size: var(--text-xs);
   }
+  .wsopen-item-row {
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+  }
+  .wsopen-item-row .wsopen-item {
+    flex: 1;
+    min-width: 0;
+  }
+  .wsopen-item-side {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    border-radius: var(--radius-sm);
+    color: var(--color-faint);
+    cursor: pointer;
+    transition:
+      background var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out);
+  }
+  .wsopen-item-side:hover,
+  .wsopen-item-side[aria-pressed="true"] {
+    background: var(--color-hairline-soft);
+    color: var(--color-brand);
+  }
   .wsopen-divider {
     height: 1px;
     background: var(--color-hairline);
@@ -1090,37 +1116,6 @@
     animation: newconv-icon-pulse var(--dur-fast) var(--ease-out);
   }
 
-  /* ModexBot wordmark — Inter 700 (a loaded weight; 800 falls back to system
-     and looks heavy). Three-stop gradient + 8s shimmer reads as ambient
-     light, not decoration. Dual-layer glow echoes both ends of the gradient. */
-  .hero-wordmark {
-    font-family: theme("fontFamily.display");
-    font-weight: 700;
-    font-size: 64px;
-    letter-spacing: -0.015em;
-    line-height: 1;
-    background: linear-gradient(
-      120deg,
-      var(--color-brand-bright) 0%,
-      var(--color-brand) 38%,
-      var(--color-ember) 100%
-    );
-    background-size: 200% 100%;
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-    text-shadow:
-      0 0.25rem 1.5rem color-mix(in oklab, var(--color-brand) 25%, transparent),
-      0 0.125rem 0.75rem color-mix(in oklab, var(--color-ember) 15%, transparent);
-    animation: hero-wordmark-shimmer 8s ease-in-out infinite;
-  }
-
-  @keyframes hero-wordmark-shimmer {
-    0%, 100% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-  }
-
   /* Hero view entry — 200ms (under the 0.3s spec ceiling). */
   @keyframes hero-view-in {
     from {
@@ -1135,11 +1130,21 @@
   .hero-view-enter {
     animation: hero-view-in 200ms var(--ease-out) both;
   }
+  /* Rotating hero hint — the span remounts on each index change (key) and
+     this fade-in replays. Zeroed by the global prefers-reduced-motion guard. */
+  @keyframes hero-hint-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  .hero-hint-in {
+    animation: hero-hint-in 180ms var(--ease-out) both;
+  }
   @media (prefers-reduced-motion: reduce) {
     .hero-view-enter {
-      animation: none;
-    }
-    .hero-wordmark {
       animation: none;
     }
   }

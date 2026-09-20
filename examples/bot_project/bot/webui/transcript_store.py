@@ -106,6 +106,56 @@ class TranscriptStore(ABC):
         return _materialize_events(events)
 
 
+class WorkspaceRoutedTranscriptStore(TranscriptStore):
+    """A transcript store that routes writes across workspaces.
+
+    Extension boundary for the two store shapes the emitters consume:
+
+    - A **workspace-routed** store (``WorkspaceScopedTranscriptStore``)
+      multiplexes many workspace backends and accepts an optional
+      ``sessions_dir=`` routing argument on ``append`` / the partial-buffer
+      methods — the emitter passes its resolver-cell dir so the write lands
+      in the owning workspace.
+    - A **fixed** store (``JSONLTranscriptStore`` et al.) is already bound
+      to one physical directory and takes no routing argument.
+
+    Callers that hold a ``TranscriptStore`` and need to forward a workspace
+    dir may ``isinstance``-check against this class — the one place the
+    store-shape distinction is a real extension boundary (rule 6).
+    """
+
+    @abstractmethod
+    async def append(
+        self,
+        session_id: str,
+        event: ServerEvent,
+        *,
+        pool: str = "main",
+        sessions_dir: Path | None = None,
+    ) -> None:
+        """Persist a single event, optionally routed to *sessions_dir*'s
+        workspace (``None`` = the store's own workspace resolution)."""
+        ...
+
+    @abstractmethod
+    async def append_partial(
+        self,
+        session_id: str,
+        event: ServerEvent,
+        *,
+        sessions_dir: Path | None = None,
+    ) -> None:
+        """Append a streaming delta to the in-memory partial buffer."""
+        ...
+
+    @abstractmethod
+    async def clear_partial(
+        self, session_id: str, sessions_dir: Path | None = None
+    ) -> None:
+        """Drop the in-memory partial buffer for *session_id*."""
+        ...
+
+
 class TranscriptPersistenceError(Exception):
     """A provider-specific persistence failure at the transcript seam."""
 

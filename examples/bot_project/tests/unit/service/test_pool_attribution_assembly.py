@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,16 +18,19 @@ pool:
       description: attribution test root
       toolset: none
 """
-from bot.workspace.handle import WorkspaceResolverCell
+from bot.workspace.handle import WorkspaceHandle, WorkspaceResolverCell
 
 from modex_agent.adapters.emitter import StreamingAwareEmitter
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.session_id import SessionInfo
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
+from modex_agent.multi_agent.session_tree.store_tree import LocalFileSessionTreeStore
 from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
 
 
@@ -140,6 +144,73 @@ async def test_create_pool_binds_pool_at_single_assembly_point(tmp_path: Path) -
 
         assert emitter_pools == [pool_name]
         assert created_subagents == [("child", "parent", pool_name)]
+    finally:
+        if pool_instance is not None:
+            await pool_instance.pool.shutdown_all()
+        await broker.stop()
+
+
+async def test_create_pool_tree_uses_runtime_workspace_not_resource_root(
+    tmp_path: Path,
+) -> None:
+    resource_root = tmp_path / "bot-assets"
+    workspace_root = tmp_path / "ide-workspace"
+    data_root = workspace_root / ".modex"
+    resource_root.mkdir()
+    workspace_root.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / ("modexctl.bat" if sys.platform == "win32" else "modexctl")).write_text(
+        "@exit /b 0\n", encoding="ascii",
+    )
+    broker = InMemoryMessageBroker()
+    await broker.start()
+
+    pool_instance = None
+    try:
+        with patch.dict("os.environ", {"MODEXBOT_BIN_DIR": str(bin_dir)}):
+            pool_instance = await create_pool(
+                pool_name="runtime-root",
+                declared=build_declared(
+                    _POOL_DECLARATION.format(pool_name="runtime-root"),
+                    project_dir=resource_root,
+                    data_dir=data_root,
+                    pool_name="runtime-root",
+                ),
+                assembly_deps=PoolAssemblyDeps(),
+                project_dir=resource_root,
+                workspace_registry=object(),
+                workspace_resources=object(),
+                data_dir=data_root,
+                broker=broker,
+                output_adapter=MagicMock(spec=OutputAdapter),
+                safety=RuntimeSafetyPolicy(),
+                retention=SessionRetentionPolicy(),
+                im_ui=MagicMock(),
+                shared_hooks=[],
+                shared_hook_runner=HookRunner(),
+                shared_interceptor_chain=InterceptorChain(),
+                workspace_handle=WorkspaceHandle(
+                    target=workspace_root, data_root=data_root,
+                ),
+                workspace_resolver=WorkspaceResolverCell(),
+                bot_model_config=None,
+                model_choice_registry=ModelChoiceRegistry(),
+            )
+
+        await pool_instance.pool.stop_poller()
+        session_id = "runtime.main"
+        await pool_instance.pool.submit_input(session_id, InputMessage(
+            content="create tree",
+            session=SessionInfo.from_str(session_id),
+            workspace=workspace_root,
+        ))
+        tree_store = LocalFileSessionTreeStore(
+            data_root / "session_tree" / "runtime-root" / "trees"
+        )
+        tree = await tree_store.get(session_id)
+        assert tree is not None
+        assert tree.workspace_root == str(workspace_root.resolve())
     finally:
         if pool_instance is not None:
             await pool_instance.pool.shutdown_all()

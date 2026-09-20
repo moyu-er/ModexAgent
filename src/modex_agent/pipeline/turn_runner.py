@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from modex_agent.runtime.store import TurnStateStore
     from modex_agent.workspace import WorkspaceManager
 
-from modex_agent.approval.views import view_from_request
+from modex_agent.approval.views import ApprovalRequestView, view_from_request
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
 from modex_agent.messaging.models import ApprovalAction
@@ -55,6 +55,7 @@ from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
+from modex_agent.pipeline.turn_outcome import TurnSuspension
 from modex_agent.pipeline.turn_runner_abc import TurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.dispatch import renew_dispatch_deadline
@@ -298,11 +299,12 @@ class ReActTurnRunner(TurnRunner):
         context_state: ContextState,
         input_metadata: dict[str, Any],
         ctx_mgr: ContextManager,
-    ) -> AgentResult | None:
+    ) -> AgentResult | TurnSuspension:
         """Execute a normal agent turn, including cleanup.
 
         Returns:
-            AgentResult on successful turn, None if GraphInterrupt for approval.
+            AgentResult on a successful turn; TurnSuspension when the turn
+            suspended on an approval batch (snapshot already persisted).
         """
         agent_name = agent_context.session.agent_name
         turn = self._safety.turn
@@ -327,18 +329,26 @@ class ReActTurnRunner(TurnRunner):
             except GraphInterrupt as interrupt_exc:
                 # ToolNode suspended for approval — snapshot persisted via TurnStateStore
                 # Send approval prompts to user via UI
-                if self._user_interface is not None:
-                    requests = interrupt_exc.value
-                    if isinstance(requests, list):
+                requests = interrupt_exc.value
+                suspension_requests: list[ApprovalRequestView] = []
+                if isinstance(requests, list):
+                    turn_uuid = self._registry.get_turn_uuid(session_id)
+                    suspension_requests = [
+                        view_from_request(req, turn_uuid=turn_uuid) for req in requests
+                    ]
+                    if self._user_interface is not None:
                         for req in requests:
                             await self._user_interface.render_approval_prompt(
                                 session_id,
-                                view_from_request(req),
+                                view_from_request(req, turn_uuid=turn_uuid),
                             )
                             break  # Only prompt the first one; user approves one at a time
 
                 # Don't save user message — approval state takes over
-                return None
+                return TurnSuspension(
+                    turn_uuid=self._registry.get_turn_uuid(session_id),
+                    requests=suspension_requests,
+                )
 
             # Inject attachments metadata into the last assistant message
             if result and result.attachments:
@@ -415,7 +425,8 @@ class ReActTurnRunner(TurnRunner):
         ctx_mgr: ContextManager,
         pool_data: PoolDataSnapshot | None = None,
         tool_call_id: str | None = None,
-    ) -> AgentResult | None:
+        approval_id: str | None = None,
+    ) -> AgentResult | TurnSuspension | None:
         turn_store = await self._resumer.apply_resume(
             snapshot,
             action=action,
@@ -423,9 +434,14 @@ class ReActTurnRunner(TurnRunner):
             pool_data=pool_data,
             agent_context=agent_context,
             tool_call_id=tool_call_id,
+            approval_id=approval_id,
         )
         if turn_store is None:
-            return None
+            # The resumer consumed nothing (stale identity, pure re-render,
+            # or partial decision). The persisted snapshot is the single
+            # authority for both its pending views and original turn UUID;
+            # the live registry was cleared when the suspended turn exited.
+            return self._resumer.pending_suspension(snapshot)
         result = await self.execute_turn(
             agent_context,
             emitter,
@@ -434,10 +450,29 @@ class ReActTurnRunner(TurnRunner):
             input_metadata,
             ctx_mgr,
         )
-        if result is not None:
+        if isinstance(result, AgentResult):
             await turn_store.delete_turn(snapshot.identity)
             await self._approval.drain(session_id)
         return result
+
+    async def terminate_pending_approval(
+        self,
+        session_id: str,
+        *,
+        pool_data: PoolDataSnapshot | None = None,
+    ) -> bool:
+        """Terminate the pending approval batch without executing any tool.
+
+        Request-scope cancellation: audited as REQUEST_CANCEL, snapshot
+        deleted, no decision continuation and no LLM run. Late decisions
+        afterwards find no snapshot and are stale.
+        """
+        if pool_data is None:
+            # The pool's cancel path has no snapshot at hand — resolve the
+            # owning pool data so the decision coordinator is available and
+            # the batch is actually audited, not silently skipped.
+            pool_data = self._resolve_pool_data(session_id)
+        return await self._resumer.terminate_pending(session_id, pool_data=pool_data)
 
     def _resolve_workspace_root(self) -> Path | None:
         """Active workspace root for the per-turn bind, or None when unavailable.
@@ -465,7 +500,7 @@ class ReActTurnRunner(TurnRunner):
         route_result: RouteResult | None = None,
         *,
         session: SessionInfo,
-    ) -> AgentResult | None:
+    ) -> AgentResult | TurnSuspension | None:
         """Process one message while holding the session lock.
 
         Binds the active workspace root for the turn so attachment resolution
@@ -492,7 +527,7 @@ class ReActTurnRunner(TurnRunner):
         route_result: RouteResult | None = None,
         *,
         session: SessionInfo,
-    ) -> AgentResult | None:
+    ) -> AgentResult | TurnSuspension | None:
         """Locked turn flow body (see :meth:`process_locked`)."""
         if self._on_session_start is not None:
             try:
@@ -608,6 +643,7 @@ class ReActTurnRunner(TurnRunner):
                 ctx_mgr=ctx_mgr,
                 pool_data=pool_data,
                 tool_call_id=turn_request.approval_tool_call_id,
+                approval_id=turn_request.approval_id,
             )
 
         if not turn_request.trigger_agent:

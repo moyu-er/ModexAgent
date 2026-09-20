@@ -34,6 +34,28 @@ export type GraphWsMessage =
 
 type GraphHandler = (msg: GraphWsMessage) => void;
 
+// ── Control-channel messages (PA-02) ────────────────────────────────────────
+
+/**
+ * Flat `sessions_changed` control notification. Carries the canonical
+ * workspace path the change belongs to ("" = home). A lightweight
+ * invalidation ping — NOT a chat event; it must never enter the chat
+ * reducer or transcript. Clients re-fetch the authoritative session list.
+ */
+export interface SessionsChangedMessage {
+  type: "sessions_changed";
+  workspace: string;
+}
+
+type ControlHandler = (msg: SessionsChangedMessage) => void;
+
+/** Check whether incoming JSON is a sessions_changed control message. */
+export function isSessionsChangedMessage(data: unknown): data is SessionsChangedMessage {
+  if (typeof data !== "object" || data === null) return false;
+  const d = data as Record<string, unknown>;
+  return d["type"] === "sessions_changed" && typeof d["workspace"] === "string";
+}
+
 const WS_PATH = "/ws";
 
 /** Reconnect policy for unexpected socket closures. */
@@ -75,6 +97,10 @@ export class WebSocketClient {
    *  ``graph_event`` / ``graph_error`` / ack messages. When null, graph
    *  messages fall through to ``onEvent`` (legacy passthrough). */
   private _graphHandler: GraphHandler | null = null;
+  /** Control-channel handler — receives ``sessions_changed`` invalidation
+   *  pings so they never enter the chat reducer (PA-02). When null, control
+   *  messages fall through to ``onEvent`` (legacy passthrough). */
+  private _controlHandler: ControlHandler | null = null;
   /** External connection-state listeners (e.g. useGraphExecution's
    *  WS-disconnect → polling fallback). */
   private _connectionListeners: Set<ConnectionListener> = new Set();
@@ -100,6 +126,14 @@ export class WebSocketClient {
    *  before ``onEvent`` and never enter the chat reducer. */
   setGraphHandler(handler: GraphHandler | null): void {
     this._graphHandler = handler;
+  }
+
+  /** Register a handler for control-channel messages (``sessions_changed``).
+   * Pass ``null`` to unregister. While a handler is set, control messages are
+   * intercepted before ``onEvent`` — they are not chat events and never enter
+   * the chat reducer or transcript. */
+  setControlHandler(handler: ControlHandler | null): void {
+    this._controlHandler = handler;
   }
 
   /** Register a connection-state listener. Called with ``true`` on open,
@@ -134,14 +168,14 @@ export class WebSocketClient {
       // close starts a fresh reconnect sequence.
       this._reconnectAttempts = 0;
       this.onOpen?.();
-      this._connectionListeners.forEach((l) => l(true));
+      for (const l of this._connectionListeners) l(true);
     };
 
     this.ws.onclose = (): void => {
       this._connected = false;
       this.ws = null;
       this.onClose?.();
-      this._connectionListeners.forEach((l) => l(false));
+      for (const l of this._connectionListeners) l(false);
       if (!this._manualClose) {
         this._scheduleReconnect();
       }
@@ -154,6 +188,14 @@ export class WebSocketClient {
     this.ws.onmessage = (msg: MessageEvent<string>): void => {
       try {
         const data: unknown = JSON.parse(msg.data);
+        // Control channel (PA-02) — sessions_changed invalidation pings are
+        // not chat events; intercept before the chat reducer when a control
+        // handler is registered (mirrors graph-channel semantics: no handler
+        // → legacy passthrough to onEvent).
+        if (isSessionsChangedMessage(data) && this._controlHandler !== null) {
+          this._controlHandler(data);
+          return;
+        }
         // Graph channel (G10/G11) — intercept before the chat reducer.
         if (isGraphMessage(data)) {
           this._graphHandler?.(data);

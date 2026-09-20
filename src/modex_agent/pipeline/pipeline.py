@@ -41,6 +41,7 @@ from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.pipeline.busy_input import BusyInputMode
 from modex_agent.pipeline.dream_scanner import DreamScanner
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.pipeline.turn_outcome import TurnOutcome, TurnSuspension
 from modex_agent.pipeline.turn_runner_abc import TurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.models import TurnSnapshot
@@ -102,6 +103,7 @@ class AgentPipeline:
         self._running = False
         self._dream_task: asyncio.Task | None = None
         self._dream_scanner: DreamScanner | None = None
+        self._turns_drained = False
 
     # ── Backward-compat read-only delegation properties ──────────────────
 
@@ -221,8 +223,30 @@ class AgentPipeline:
             await self.input_adapter.stop()
 
     async def process_message(self, input_msg: InputMessage) -> AgentResult | None:
-        """公共入口：处理单个消息"""
-        return await self._process_message(input_msg)
+        """公共入口：处理单个消息（``TurnOutcome`` → 公共合同映射）。"""
+        outcome = await self.process_message_outcome(input_msg)
+        return outcome.result
+
+    async def process_message_outcome(self, input_msg: InputMessage) -> TurnOutcome:
+        """Public typed entry: the SINGLE producer of turn outcome facts.
+
+        ``process_message`` maps this fact to the historical
+        ``AgentResult | None`` contract (FINISHED → result, otherwise None);
+        pool dispatch consumes the typed fact directly (DESIGN.md §6.3).
+        """
+        task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("pipeline request has no owning asyncio task")
+        await self._registry.admit(task)
+        try:
+            return await self._process_message_outcome(input_msg)
+        finally:
+            self._registry.release(task)
+
+    @property
+    def turns_drained(self) -> bool:
+        """Whether shutdown closed admission and confirmed all requests settled."""
+        return self._turns_drained
 
     def is_session_active(self, session_id: str) -> bool:
         """Check if a turn is currently executing for this session."""
@@ -241,7 +265,11 @@ class AgentPipeline:
         return self._registry.cancel_turn(session_id)
 
     async def _process_message(self, input_msg: InputMessage) -> AgentResult | None:
-        """处理单个消息（内部入口）"""
+        """处理单个消息（内部入口 — ``on_drain`` 兼同合同）。"""
+        return (await self.process_message_outcome(input_msg)).result
+
+    async def _process_message_outcome(self, input_msg: InputMessage) -> TurnOutcome:
+        """处理单个消息（内部 typed producer — 所有 return 点的单一事实源）。"""
         if self.router is not None:
             route_result = self.router.route(input_msg)
             session = route_result.session
@@ -275,10 +303,10 @@ class AgentPipeline:
                         "Control command /%s received — handled by adapter-level interception",
                         prelock_parse_result.invocation.command,
                     )
-                    return None
+                    return TurnOutcome.handled()
                 if prelock_dispatch_policy == CommandDispatchPolicy.DROP_IF_BUSY:
                     logger.info("Drop-if-busy slash-command received; dropping")
-                    return None
+                    return TurnOutcome.handled()
 
         if self.deduplicator is not None and input_msg.approval_decision is None:
             message_id = input_msg.metadata.get("message_id") if input_msg.metadata else None
@@ -290,7 +318,7 @@ class AgentPipeline:
                 ).hexdigest()[:32]
             if self.deduplicator.is_duplicate(message_id):
                 logger.info("Duplicate message skipped: %s", message_id)
-                return None
+                return TurnOutcome.handled()
 
         existing_task = self._registry.get_session_task(session_id)
         if existing_task is not None and not existing_task.done():
@@ -318,7 +346,7 @@ class AgentPipeline:
                             ),
                             session_id,
                         )
-                        return None
+                        return TurnOutcome.handled()
                 queue = self._registry.get_queue(session_id)
                 if queue:
                     await queue.put(input_msg.content or "")
@@ -326,7 +354,7 @@ class AgentPipeline:
                     logger.warning(
                         "No injection queue for session %s, dropping message", session_id
                     )
-                return None
+                return TurnOutcome.handled()
             elif self.busy_input_mode == BusyInputMode.STEER:
                 if self.control_channel is not None:
                     from modex_agent.control.types import (
@@ -343,7 +371,7 @@ class AgentPipeline:
                             payload={"text": input_msg.content or ""},
                         )
                     )
-                return None
+                return TurnOutcome.handled()
             else:
                 pass
 
@@ -355,12 +383,28 @@ class AgentPipeline:
                 logger.warning(
                     "Session lock wait: session=%s wait=%.0fms", session_id, lock_wait_ms
                 )
-            return await self._turn_runner.process_locked(input_msg, session_id, route_result, session=session)
+            locked = await self._turn_runner.process_locked(
+                input_msg, session_id, route_result, session=session,
+            )
+            if isinstance(locked, TurnSuspension):
+                return TurnOutcome.suspended(locked)
+            if locked is None:
+                return TurnOutcome.handled()
+            return TurnOutcome.finished(locked)
 
     async def _load_pending_approval_snapshot(
         self, session_id: str, *, pool_data: PoolDataSnapshot | None = None,
     ) -> TurnSnapshot | None:
         return await self._turn_runner.load_pending_approval(session_id, pool_data=pool_data)
+
+    async def terminate_pending_approval(self, session_id: str) -> bool:
+        """Terminate the session's pending approval batch without any tool run.
+
+        Request-scope cancellation seam: the pool (pipelines' owner) resolves
+        this delegate when the tree owner cancels a request scope; the turn
+        runner's resumer performs the audited, LLM-free termination.
+        """
+        return await self._turn_runner.terminate_pending_approval(session_id)
 
     async def cleanup_session_resources(self, session_id: str) -> None:
         """清理 per-session 资源（长时间运行避免内存泄漏）。
@@ -380,15 +424,38 @@ class AgentPipeline:
             except Exception:
                 logger.debug("cleanup_session failed for %s", session_id, exc_info=True)
 
-    async def stop(self) -> None:
+    async def stop(self) -> bool:
         """停止流水线"""
         self._running = False
-        for sid in self._registry.session_ids():
-            await self.cleanup_session_resources(sid)
+        if not await self._registry.close_admission_and_drain():
+            logger.warning(
+                "Pipeline stop retained resources because a current turn is still active"
+            )
+            return False
+        self._turns_drained = True
         logger.info("Pipeline stop requested, waiting for current message to complete...")
+        first_error: BaseException | None = None
+        for sid in self._registry.session_ids():
+            try:
+                await self.cleanup_session_resources(sid)
+            except BaseException as exc:
+                if first_error is None:
+                    first_error = exc
+                logger.exception("Session cleanup failed during pipeline stop: %s", sid)
         try:
             hook_runner = self.hook_runner
             if hook_runner is not None:
                 await hook_runner.aclose()
-        finally:
+        except BaseException as exc:
+            if first_error is None:
+                first_error = exc
+            logger.exception("Hook cleanup failed during pipeline stop")
+        try:
             await self.agent.stop()
+        except BaseException as exc:
+            if first_error is None:
+                first_error = exc
+            logger.exception("Agent cleanup failed during pipeline stop")
+        if first_error is not None:
+            raise first_error
+        return True

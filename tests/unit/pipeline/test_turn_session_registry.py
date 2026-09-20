@@ -93,3 +93,57 @@ async def test_get_turn_uuid_none_when_task_registered_without_uuid(reg):
     assert reg.is_active("s1") is True
     assert reg.get_turn_uuid("s1") is None  # NOT ""
     t.cancel()
+
+
+async def test_close_admission_and_drain_waits_for_registered_turn_cleanup(reg):
+    cleaned = asyncio.Event()
+
+    async def turn():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned.set()
+
+    task = asyncio.create_task(turn())
+    reg.register_task("s1", task)
+    await asyncio.sleep(0)
+
+    assert await reg.close_admission_and_drain() is True
+    assert task.done()
+    assert cleaned.is_set()
+
+
+async def test_closed_registry_rejects_late_task_registration(reg):
+    assert await reg.close_admission_and_drain() is True
+    task = asyncio.create_task(asyncio.sleep(0))
+    try:
+        with pytest.raises(RuntimeError, match="closed"):
+            reg.register_task("late", task)
+    finally:
+        await task
+
+
+async def test_nested_admission_stays_owned_until_outer_request_releases(reg):
+    nested_released = asyncio.Event()
+
+    async def request() -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        await reg.admit(task)
+        await reg.admit(task)
+        reg.release(task)
+        nested_released.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            reg.release(task)
+
+    task = asyncio.create_task(request())
+    await nested_released.wait()
+
+    try:
+        assert await reg.close_admission_and_drain() is True
+        assert task.done()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import ExecutionStrategyKind
+from modex_agent.core.tool_manager import ToolManager
 from modex_agent.hook import HookRunner
 from modex_agent.hook.builtin import InboxFlushHook
 from modex_agent.ioc.configs.llm import LLMConfig
@@ -47,7 +48,7 @@ class AgentFactory(ABC):
         session_id: str | None = None,
         context_manager: ContextManager | None = None,
         broker: Any | None = None,
-        tool_manager: InMemoryToolManager | None = None,
+        tool_manager: ToolManager | None = None,
         skill_resolver: SkillResolver | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
@@ -73,7 +74,7 @@ class DefaultAgentFactory(AgentFactory):
     def __init__(
         self,
         default_llm_provider: Any | None = None,
-        default_tool_manager: InMemoryToolManager | None = None,
+        default_tool_manager: ToolManager | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,
         subagent_service: Any | None = None,
@@ -262,7 +263,7 @@ class DefaultAgentFactory(AgentFactory):
         session_id: str | None = None,
         context_manager: ContextManager | None = None,
         broker: Any | None = None,
-        tool_manager: InMemoryToolManager | None = None,
+        tool_manager: ToolManager | None = None,
         skill_resolver: SkillResolver | None = None,
         sanitizer: Any | None = None,
         command_interceptor: Any | None = None,

@@ -34,7 +34,17 @@ from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeS
 from modex_agent.multi_agent.state import AgentState
 from modex_agent.multi_agent.tools import CommunicationTarget
 from modex_agent.persistence.session_registry import InMemorySessionRegistry
+from modex_agent.pipeline.turn_outcome import TurnOutcome
 from modex_agent.tools.manager import InMemoryToolManager
+
+
+def _as_outcome(process):
+    """Wrap a recording fake into the pool's typed outcome interface."""
+    async def _outcome(msg):
+        await process(msg)
+        return TurnOutcome.handled()
+    return _outcome
+
 
 
 class _StubPoller(InboxPoller):
@@ -122,7 +132,7 @@ def _make_fake_instance(name: str, comm_kind: AgentCommKind):
         pipeline_calls.append(msg)
         return AgentResult(content=f"{name} processed", stop_reason="completed")
 
-    instance.pipeline.process_message = AsyncMock(side_effect=_process)
+    instance.pipeline.process_message_outcome = AsyncMock(side_effect=_as_outcome(_process))
     instance.pipeline.hook_runner = None
     instance.pipeline.hooks = []
     instance.pipeline.interceptor_chain = None

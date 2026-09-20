@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useMemo, type FC, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { Bot, File, Menu, Paperclip, Pause, SendHorizonal, X } from "lucide-react";
+import { File, Menu, MoreHorizontal, Paperclip, Pause, Pencil, SendHorizonal, X } from "lucide-react";
 import type { ApprovalRequestView, TodoItemDTO, UIMessage } from "../types/events";
 import type { MediaConfigResponse, OutgoingAttachmentRef, UploadAttachmentResponse } from "../types/attachments";
 import { ApprovalCard } from "./ApprovalCard";
 import { ConversationSpine, type SpineAnchor } from "./ConversationSpine";
+import { Mascot } from "./Mascot";
 import { MessageBubble } from "./MessageBubble";
 import { ModelSelector } from "./ModelSelector";
 import { CommandSuggest, activeQuery, filterSuggestions, buildInsertion, handleSuggestKey } from "./CommandSuggest";
@@ -11,6 +12,7 @@ import { TodoPanel } from "./TodoPanel";
 import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
 import { fetchMediaConfig, fetchModels, uploadAttachment, type ModelChoice } from "../lib/api";
+import { sessionDisplayTitle } from "../lib/sessionTree";
 import { useCommandSuggestions } from "../hooks/useCommandSuggestions";
 import { formatBytes } from "../lib/format";
 import { useT } from "../i18n";
@@ -53,12 +55,24 @@ export interface ChatViewProps {
   onPause?: () => void;
   readOnly?: boolean;
   onOpenSidebar?: () => void;
-  /** Display name of the selected session's agent (shown in the chat header).
-   * Omitted/empty when no session is open → the header label is blank. */
+  /** Display name of the selected session's agent. Not rendered directly —
+   *  it feeds `useCommandSuggestions` (skill autocomplete); the header shows
+   *  the mascot mark instead. Omitted/empty when no session is open. */
   agentName?: string;
-  /** Pool of the selected session (existing session) or the active pool (hero).
-   *  Used to resolve the skill set for /skillName autocomplete. */
+  /** Pool of the selected session (existing session) or the sidebar's
+   *  selected pool (hero). Used to resolve the skill set for /skillName
+   *  autocomplete and to label the hero eyebrow. */
   pool?: string;
+  /** Hero gate: false when no valid pool is selected — the hero composer
+   *  cannot start a new conversation until the user picks one in the
+   *  sidebar's top-left selector (there is no hero pool picker). */
+  canStart?: boolean;
+  /** Persisted session title (PA-02). Rendered through the shared display
+   * rule: trimmed non-empty string → title, else the full sessionId. */
+  sessionTitle?: string;
+  /** Open the shared rename dialog for the selected session (PA-02 header
+   *  menu entry). Absent hides the menu. */
+  onRenameSession?: () => void;
   /** Monotonic counter from useSessions.handleNew. Each bump means the user
    *  clicked "New Conversation": focus the hero composer and replay the
    *  acknowledgment pulse (the click is otherwise invisible when the hero
@@ -74,6 +88,76 @@ const MIN_HERO_INPUT_HEIGHT = 96;
 // Chat column is capped at 1200px and centered; keep a reasonable floor
 // on desktop so the dialog doesn't collapse too narrowly.
 const CONTENT_WIDTH = "mx-auto w-full min-w-0 max-w-[1200px] md:min-w-[720px]";
+
+/** Hero rotating hints (PI-Desktop pattern): decorative copy cycled every 5s.
+ *  The span remounts on each index change (`key`) so the CSS fade-in replays;
+ *  the group is aria-hidden — the sr-only announcement below is the live copy. */
+const HERO_HINT_KEYS = [
+  "chat.heroHint1",
+  "chat.heroHint2",
+  "chat.heroHint3",
+] as const;
+
+const HeroHints: FC = () => {
+  const t = useT();
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(
+      () => setIndex((i) => (i + 1) % HERO_HINT_KEYS.length),
+      5000,
+    );
+    return (): void => clearInterval(timer);
+  }, []);
+  return (
+    <span key={index} aria-hidden="true" className="hero-hint-in text-sm text-mute">
+      {t(HERO_HINT_KEYS[index % HERO_HINT_KEYS.length]!)}
+    </span>
+  );
+};
+
+/** Chat-header `···` menu (PA-02). One entry — Rename — opening the shared
+ *  rename dialog. Closes on outside pointer-down or Esc. */
+const HeaderMenu: FC<{
+  onRename: () => void;
+  onClose: () => void;
+}> = ({ onRename, onClose }) => {
+  const t = useT();
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const onPointerDown = (e: PointerEvent): void => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: globalThis.KeyboardEvent): void => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKey);
+    return (): void => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      aria-label={t("sessions.headerMenu")}
+      className="dropdown-panel-enter absolute right-0 top-full z-50 mt-1 min-w-[10rem] rounded-md border border-hairline bg-canvas-popover p-1 shadow-popover"
+    >
+      <button
+        type="button"
+        role="menuitem"
+        onClick={onRename}
+        className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-sm px-3 text-left text-base text-ink transition-colors duration-fast ease-out hover:bg-accent"
+      >
+        <Pencil size={13} className="shrink-0 text-mute" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate">{t("sessions.headerRename")}</span>
+      </button>
+    </div>
+  );
+};
 
 export const ChatView: FC<ChatViewProps> = ({
   messages,
@@ -93,10 +177,14 @@ export const ChatView: FC<ChatViewProps> = ({
   onOpenSidebar,
   agentName,
   pool,
+  canStart = true,
+  sessionTitle,
+  onRenameSession,
   heroFocusNonce = 0,
 }) => {
   const t = useT();
   const [input, setInput] = useState("");
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
@@ -289,12 +377,13 @@ export const ChatView: FC<ChatViewProps> = ({
   }, [messages]);
 
   const isBusy = isStreaming || isPending;
+  const needsPool = isHero && !canStart;
   const canSend =
-    !isBusy && !readOnly && !isUploading &&
+    !isBusy && !readOnly && !isUploading && !needsPool &&
     (input.trim().length > 0 || pendingUploads.length > 0);
 
   const submit = (): void => {
-    if (readOnly || isBusy) return;
+    if (readOnly || isBusy || needsPool) return;
     const trimmed = input.trim();
     if (!trimmed && pendingUploads.length === 0) return;
     if (isHero) {
@@ -545,19 +634,19 @@ export const ChatView: FC<ChatViewProps> = ({
     return (
       <div
         key="hero"
-        className="hero-view-enter flex h-full flex-col items-center justify-center gap-8 bg-canvas px-4"
+        className="hero-view-enter relative flex h-full flex-col items-center justify-center gap-8 bg-canvas px-4"
       >
-        <div className="flex flex-col items-center gap-3">
-          <h1 className="hero-wordmark">ModexBot</h1>
-          <p className="font-mono text-[11px] font-semibold uppercase tracking-eyebrow text-faint">
-            {pool
-              ? t("chat.newConversationEyebrowPool", { pool })
-              : t("chat.newConversationEyebrow")}
-          </p>
+        {onOpenSidebar && <IconButton icon={<Menu size={18} />} label={t("chat.openSidebar")} variant="ghost" onClick={onOpenSidebar} className="absolute left-4 top-4 md:hidden" />}
+        {/* One keyed group replays the entry animation and resets the hint
+            rotation on pool changes. */}
+        <div key={pool || "brand"} className="hero-view-enter flex max-w-full flex-col items-center gap-4">
+          <Mascot size={180} animated />
+          <HeroHints />
         </div>
         <div className="w-full max-w-[720px]">
           {renderComposer(true)}
         </div>
+        {needsPool && <p role="status" className="text-sm text-mute">{t("chat.pickPoolPrompt")}</p>}
         <span aria-live="polite" className="sr-only">
           {announcement}
         </span>
@@ -569,7 +658,7 @@ export const ChatView: FC<ChatViewProps> = ({
     <div key="chat" className="hero-view-enter flex h-full flex-col bg-canvas">
       {/* Header */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-hairline px-4">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           {onOpenSidebar && (
             <IconButton
               icon={<Menu size={18} />}
@@ -580,16 +669,40 @@ export const ChatView: FC<ChatViewProps> = ({
               className="md:hidden"
             />
           )}
-          {agentName && (
+          {agentName && <Mascot size={26} />}
+          {sessionId && (
+            <span
+              className="ml-2 min-w-0 truncate font-mono text-sm text-mute"
+              data-testid="chat-header-title"
+            >
+              {sessionDisplayTitle(sessionId, sessionTitle === undefined ? undefined : { title: sessionTitle })}
+            </span>
+          )}
+        </div>
+        <div className="relative flex items-center gap-1">
+          {sessionId && onRenameSession && (
             <>
-              <Bot size={15} className="text-signal" aria-hidden="true" />
-              <span className="font-mono text-base font-semibold text-ink">
-                {agentName}
-              </span>
+              <IconButton
+                icon={<MoreHorizontal size={17} />}
+                label={t("sessions.headerMenu")}
+                variant="ghost"
+                size="md"
+                aria-haspopup="menu"
+                aria-expanded={headerMenuOpen}
+                onClick={(): void => setHeaderMenuOpen((o) => !o)}
+              />
+              {headerMenuOpen && (
+                <HeaderMenu
+                  onRename={(): void => {
+                    setHeaderMenuOpen(false);
+                    onRenameSession();
+                  }}
+                  onClose={(): void => setHeaderMenuOpen(false)}
+                />
+              )}
             </>
           )}
         </div>
-        <div />
       </header>
 
       {/* Message area — wrapped so the ConversationSpine can overlay the right

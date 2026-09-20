@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from bot.webui.routes.sessions import resolve_session
+from bot.webui.types import _DEFAULT_AGENT_NAME
 from modex_agent.core.session_id import session_id_prefix_of
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -52,7 +53,11 @@ async def handle_get_approvals(request: web.Request) -> web.Response:
     ws_raw = request.query.get("ws", "")
     sessions_dir = server._sessions_dir_of_ws(ws_raw)
     session_prefix = session_id_prefix_of(session_id)
-    pool: str = server._resolve_pool_for_request(request.query.get("pool"), session_prefix)
+    # Storage-partition read: explicit legacy partition fallback owned HERE.
+    pool: str = (
+        server._resolve_pool_for_request(request.query.get("pool"), session_prefix)
+        or _DEFAULT_AGENT_NAME
+    )
 
     turn_store = None
     if server._store_resolver is not None:

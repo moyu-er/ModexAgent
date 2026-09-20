@@ -15,9 +15,12 @@ from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.memory.cleanup_hooks import TodoReorientationHook
+from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
 from modex_agent.multi_agent.descriptor import AgentInstance
+from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
+from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.plugins.registry import ComponentRegistry
@@ -46,10 +49,31 @@ class _StaticRootProvider(WorkspaceRootProvider):
         return self._root
 
 
+def _pool_assembly_context(
+    pool_spec: PoolSpec,
+    *,
+    workspace_root: Path = Path("/ws"),
+    control_origin: str = "http://127.0.0.1:21800",
+) -> PoolAssemblyContext:
+    return PoolAssemblyContext(
+        pool_name=pool_spec.name,
+        pool_spec=pool_spec,
+        project_dir=workspace_root,
+        data_dir=workspace_root / ".modex",
+        broker=MagicMock(),
+        inbox_server=MagicMock(),
+        agent_bus=MagicMock(),
+        output_adapter=MagicMock(),
+        safety=RuntimeSafetyPolicy(),
+        retention=MagicMock(),
+        registry=MagicMock(),
+        scope_path=ScopePath(workspace_root=workspace_root, pool_name=pool_spec.name),
+        control_origin=control_origin,
+    )
+
+
 async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
     """Build deps with a mocked agent_factory + pool."""
-    from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
-
     fake_instance = MagicMock()
     fake_instance.pipeline = MagicMock()
     from modex_agent.runtime.services import AgentRuntimeServices
@@ -78,18 +102,14 @@ async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
     # The declared pool tree the subagent_auto_send factory derives the
     # parent name from (the roster-dispatched hook's chain read) — every
     # template materialized through these deps is the "scout" sub. The
-    # env-spec fields (project_dir / peer_links / control_origin) feed the
+    # env-spec fields (scope_path / data_dir / peer_links / control_origin) feed the
     # position-default native_env factory's chain derivation.
-    pool_assembly = MagicMock(spec=PoolAssemblyContext)
-    pool_assembly.pool_name = "main"
-    pool_assembly.pool_spec = PoolSpec(
-        name="main",
-        agents=[AgentSpec(name="main"), AgentSpec(name="scout", parent="main")],
+    pool_assembly = _pool_assembly_context(
+        PoolSpec(
+            name="main",
+            agents=[AgentSpec(name="main"), AgentSpec(name="scout", parent="main")],
+        )
     )
-    pool_assembly.pool_data = None
-    pool_assembly.project_dir = Path("/ws")
-    pool_assembly.peer_links = ()
-    pool_assembly.control_origin = "http://127.0.0.1:21800"
     # The pool's subagents supply — the materialized sub's compiled spec
     # carries the subagents capability (non-root ⇒ derived send_to_agent
     # + the auto-send hook + the consultation section), whose assemble
@@ -109,9 +129,11 @@ async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
         llm_model="gpt-4o",
         llm_provider=MagicMock(),
         project_dir=None,  # skip prompt file read + MCP + skills
+        data_dir=pool_assembly.data_dir,
         root_provider=_StaticRootProvider(Path("/ws")),
         component_registry=registry,
         pool_assembly_ctx=pool_assembly,
+        scope_path=pool_assembly.scope_path,
         capability_supply={
             "subagents": SubagentsSupply(service=MagicMock()),
             "skills": build_skills_supply(
@@ -120,7 +142,6 @@ async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
         },
     )
     deps.context_fork_builder = ContextForkBuilder()
-    deps.scope_path = ScopePath(workspace_root=Path("/ws"), pool_name="main")
     return deps, factory
 
 
@@ -826,10 +847,10 @@ async def test_materialize_subagent_bash_roster_gets_bash_input_companion():
     from modex_agent.tools.workspace_scoped import WorkspaceScopedTool
 
     deps, factory = await _make_deps()
-    template = _compiled_template("scout")
+    template = _compiled_template("scout", capabilities={"shell": {}})
     parent = SessionIdFactory().create(agent_name="main")
     with patch(
-        "modex_agent.plugins.defaults.tools.persistent_bash_supported",
+        "modex_agent.plugins.defaults.capabilities.shell.factory.persistent_bash_supported",
         return_value=True,
     ):
         await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
@@ -844,9 +865,7 @@ async def test_materialize_subagent_bash_roster_gets_bash_input_companion():
     assert isinstance(bash, PersistentBashTool)
     companion = tm.get_tool("bash_input")
     assert isinstance(companion, BashInputTool)
-    # v3 routing: both tools route per-conversation through ONE shared
-    # PersistentShellManager — the pairing identity production checks
-    # (ensure_input_companion).
+    # Both atomic group members route through one per-agent manager.
     assert companion.manager is bash.manager
 
 
@@ -859,10 +878,10 @@ async def test_materialize_subagent_bash_without_pty_host_gets_no_companion():
     from modex_agent.tools.workspace_scoped import WorkspaceScopedTool
 
     deps, factory = await _make_deps()
-    template = _compiled_template("scout")
+    template = _compiled_template("scout", capabilities={"shell": {}})
     parent = SessionIdFactory().create(agent_name="main")
     with patch(
-        "modex_agent.plugins.defaults.tools.persistent_bash_supported",
+        "modex_agent.plugins.defaults.capabilities.shell.factory.persistent_bash_supported",
         return_value=False,
     ):
         await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
@@ -883,11 +902,7 @@ async def test_materialize_subagent_roster_without_bash_gets_no_companion():
     deps, factory = await _make_deps()
     template = _compiled_template("scout", tools=[])
     parent = SessionIdFactory().create(agent_name="main")
-    with patch(
-        "modex_agent.plugins.defaults.tools.persistent_bash_supported",
-        return_value=True,
-    ):
-        await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
+    await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
 
     tm = factory.create_agent.call_args.kwargs["tool_manager"]
     assert tm.get_tool("bash") is None
@@ -1078,7 +1093,6 @@ async def test_materialize_pool_full_access_inherits_to_subagent():
     full-access pool yields a full-access subagent (equal, never wider
     than the caller). A DECLARED block still narrows: the second half
     pins a workspace declaration under the full caller."""
-    from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
     from modex_agent.sandbox.settings import ExclusiveConfig, SandboxSettings, WriteSurface
 
     deps, factory = await _make_deps()
@@ -1091,16 +1105,13 @@ async def test_materialize_pool_full_access_inherits_to_subagent():
             }
         },
     )
-    pool_assembly = MagicMock(spec=PoolAssemblyContext)
-    pool_assembly.pool_name = "main"
-    pool_assembly.pool_spec = PoolSpec(
-        name="main",
-        agents=[root, AgentSpec(name="scout", parent="main")],
+    pool_assembly = _pool_assembly_context(
+        PoolSpec(
+            name="main",
+            agents=[root, AgentSpec(name="scout", parent="main")],
+        ),
+        control_origin="",
     )
-    pool_assembly.pool_data = None
-    pool_assembly.project_dir = Path("/ws")
-    pool_assembly.peer_links = ()
-    pool_assembly.control_origin = ""
     deps.pool_assembly_ctx = pool_assembly
     template = _compiled_template("scout")
     parent = SessionIdFactory().create(agent_name="main")
@@ -1144,3 +1155,213 @@ async def test_materialize_pool_full_access_inherits_to_subagent():
     assert approval2 is not None
     assert approval2.classifier.classify(inside, ctx).tier is ApprovalTier.NORMAL
     assert approval2.classifier.classify(outside, ctx).tier is ApprovalTier.HARDLINE
+
+
+@pytest.mark.asyncio
+async def test_callback_failure_retries_transferred_shell_before_owned_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from modex_agent.sandbox.runtime import ResolvedSandbox, SandboxRuntime
+    from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
+    from modex_agent.sandbox.types import EnforcementLevel
+    from modex_agent.tools.terminal.persistent_bash import PersistentShellManager
+
+    events: list[str] = []
+
+    class Runtime(SandboxRuntime):
+        async def resolve(
+            self,
+            settings: SandboxSettings,
+            workspace_root: Path,
+        ) -> ResolvedSandbox:
+            del settings, workspace_root
+            events.append("sandbox_resolved")
+            return ResolvedSandbox(
+                backend=SandboxBackend.LOCAL,
+                enforcement=EnforcementLevel.FULL,
+                shell_argv=[
+                    "fake-sandbox",
+                    "/bin/bash",
+                    "--noprofile",
+                    "--norc",
+                    "-i",
+                ],
+                one_shot_command_argv_prefix=["fake-sandbox"],
+            )
+
+        async def close(self) -> None:
+            events.append("sandbox_closed")
+
+    async def resolve_selection(backend: SandboxBackend) -> object:
+        assert backend is SandboxBackend.LOCAL
+        return object()
+
+    monkeypatch.setattr(
+        "modex_agent.plugins.defaults.interceptors.resolve_selection",
+        resolve_selection,
+    )
+    monkeypatch.setattr(
+        "modex_agent.plugins.defaults.interceptors.select_runtime",
+        lambda selection: Runtime(),
+    )
+    monkeypatch.setattr(
+        "modex_agent.plugins.defaults.capabilities.shell.factory.persistent_bash_supported",
+        lambda: True,
+    )
+    original_close_all = PersistentShellManager.close_all
+    close_attempts = 0
+
+    async def close_all(manager: PersistentShellManager) -> None:
+        nonlocal close_attempts
+        close_attempts += 1
+        if close_attempts == 1:
+            events.append("shell_close_failed")
+            raise RuntimeError("shell still owns sandbox")
+        events.append("shell_closed")
+        await original_close_all(manager)
+
+    monkeypatch.setattr(PersistentShellManager, "close_all", close_all)
+
+    deps, factory = await _make_deps()
+    deps.pool_assembly_ctx = _pool_assembly_context(
+        PoolSpec(
+            name="main",
+            agents=[
+                AgentSpec(
+                    name="main",
+                    interceptors=["sandbox_guard"],
+                    interceptor_configs={
+                        "sandbox_guard": {"sandbox": {"backend": "local"}}
+                    },
+                ),
+                AgentSpec(name="scout", parent="main"),
+            ],
+        )
+    )
+    pool = AgentPool(broker=MagicMock(), agent_factory=MagicMock())
+    deps.pool = pool
+    created: AgentInstance | None = None
+    replacement: AgentInstance | None = None
+
+    async def create_instance(
+        descriptor: object,
+        **kwargs: object,
+    ) -> AgentInstance:
+        nonlocal created
+        created = AgentInstance(
+            descriptor=descriptor,  # type: ignore[arg-type]
+            context_manager=kwargs["context_manager"],  # type: ignore[arg-type]
+        )
+        return created
+
+    factory.create_agent.side_effect = create_instance
+    failure = ValueError("callback failed")
+
+    async def fail_after_replacement(child_id: str, parent_id: str) -> None:
+        nonlocal replacement
+        assert (child_id, parent_id) == ("inv1.scout", str(parent))
+        assert created is not None
+        assert pool.get("scout") is created
+        replacement = AgentInstance(
+            descriptor=created.descriptor,
+            context_manager=InMemoryContextManager(),
+        )
+        await pool.register_resident(replacement.descriptor, replacement)
+        raise failure
+
+    deps.on_subagent_created = fail_after_replacement
+    template = _compiled_template("scout", capabilities={"shell": {}})
+    parent = SessionIdFactory().create(agent_name="main")
+
+    try:
+        with pytest.raises(ValueError, match="callback failed") as raised:
+            await template.materialize(
+                parent_session=parent,
+                invocation_id="inv1",
+                deps=deps,
+            )
+
+        assert raised.value is failure
+        assert created is not None
+        assert created.resources == ()
+        assert pool.get("scout") is replacement
+        assert events == [
+            "sandbox_resolved",
+            "shell_close_failed",
+            "shell_closed",
+            "sandbox_closed",
+        ]
+    finally:
+        await pool.shutdown_all(timeout=0.1)
+
+
+@pytest.mark.asyncio
+async def test_post_materialize_wiring_failure_stops_owned_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from modex_agent.sandbox.runtime import ResolvedSandbox, SandboxRuntime
+    from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
+    from modex_agent.sandbox.types import EnforcementLevel
+
+    events: list[str] = []
+
+    class Runtime(SandboxRuntime):
+        async def resolve(
+            self,
+            settings: SandboxSettings,
+            workspace_root: Path,
+        ) -> ResolvedSandbox:
+            del settings, workspace_root
+            events.append("sandbox_resolved")
+            return ResolvedSandbox(
+                backend=SandboxBackend.HOST,
+                enforcement=EnforcementLevel.NONE,
+                shell_argv=[],
+                one_shot_command_argv_prefix=[],
+            )
+
+        async def close(self) -> None:
+            events.append("sandbox_closed")
+
+    async def resolve_selection(backend: SandboxBackend) -> object:
+        assert backend is SandboxBackend.HOST
+        return object()
+
+    monkeypatch.setattr(
+        "modex_agent.plugins.defaults.interceptors.resolve_selection",
+        resolve_selection,
+    )
+    monkeypatch.setattr(
+        "modex_agent.plugins.defaults.interceptors.select_runtime",
+        lambda selection: Runtime(),
+    )
+
+    deps, factory = await _make_deps()
+
+    async def create_instance(
+        descriptor: object,
+        **kwargs: object,
+    ) -> AgentInstance:
+        return AgentInstance(
+            descriptor=descriptor,  # type: ignore[arg-type]
+            context_manager=kwargs["context_manager"],  # type: ignore[arg-type]
+        )
+
+    factory.create_agent.side_effect = create_instance
+    template = _compiled_template("scout", tools=[])
+
+    async def fail_wiring(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise ValueError("delegation wiring failed")
+
+    monkeypatch.setattr(template, "_wire_delegation_boundary", fail_wiring)
+    parent = SessionIdFactory().create(agent_name="main")
+
+    with pytest.raises(ValueError, match="delegation wiring failed"):
+        await template.materialize(
+            parent_session=parent,
+            invocation_id="inv1",
+            deps=deps,
+        )
+
+    assert events == ["sandbox_resolved", "sandbox_closed"]

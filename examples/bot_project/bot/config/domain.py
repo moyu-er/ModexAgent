@@ -415,6 +415,7 @@ class ConfigDomain:
         root_schema: type[BaseModel] | None = None,
         loader: Callable[[Path], dict[str, Any]] | None = None,
         dumper: Callable[[Path, dict[str, Any]], None] | None = None,
+        marker: RestartMarker | None = None,
     ) -> None:
         self.name = name
         self.label = label
@@ -424,7 +425,12 @@ class ConfigDomain:
         self._loader = loader or _default_loader
         self._dumper = dumper or _default_dumper
         self._kinds: dict[str, KindEntry] = {}
-        self._marker = RestartMarker()
+        # The restart indicator is a constructor extension point: domains
+        # whose writes take effect WITHOUT a process restart inject a
+        # marker whose ``is_modified`` is always False (e.g. the PA-06
+        # personal-assistant preferences); the default mtime marker serves
+        # restart-required domains (model, im).
+        self._marker = marker or RestartMarker()
         self._marker.capture(yaml_path)
 
     # --- registry management --------------------------------------------

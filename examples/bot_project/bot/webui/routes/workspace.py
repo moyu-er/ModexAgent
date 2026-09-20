@@ -150,7 +150,14 @@ def sweep_media_tmp_orphans(server: WebUIServer) -> None:
 
 
 async def handle_workspace(request: web.Request) -> web.Response:
-    """``GET /api/workspace`` -- return home path, recent workspaces, and timezone."""
+    """``GET /api/workspace`` -- return home path, recent workspaces, and timezone.
+
+    PA-06: also returns the effective personal-assistant defaults
+    (``default_workspace`` canonical absolute path or null, ``default_pool``
+    preference or null) read through the injected preferences owner — the
+    same object backing ``GET/PUT /api/config/personal_assistant``, so the
+    two surfaces can never disagree.
+    """
     server: WebUIServer = request.app["server"]
     home = str(server._workspace_control.home) if server._workspace_control is not None else ""
     recent: list[dict[str, object]] = []
@@ -160,8 +167,21 @@ async def handle_workspace(request: web.Request) -> web.Response:
             for r in server._recent_workspaces.list_recent()
             if isinstance(r, dict) and "path" in r
         ]
+    prefs = server._personal_assistant_preferences
+    default_workspace: str | None = None
+    default_pool: str | None = None
+    if prefs is not None:
+        ws_pref = prefs.preferred_workspace()
+        default_workspace = str(ws_pref) if ws_pref is not None else None
+        default_pool = prefs.preferred_pool()
     return web.json_response(
-        {"home": home, "recent": recent, "timezone": str(get_user_timezone())}
+        {
+            "home": home,
+            "recent": recent,
+            "timezone": str(get_user_timezone()),
+            "default_workspace": default_workspace,
+            "default_pool": default_pool,
+        }
     )
 
 

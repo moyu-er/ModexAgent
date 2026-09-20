@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from modex_agent.pipeline.approval_renderer import ApprovalRenderer
     from modex_agent.pipeline.snapshot import PoolDataSnapshot
     from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
+    from modex_agent.pipeline.turn_outcome import TurnSuspension
     from modex_agent.runtime.context import RuntimeContextManager
     from modex_agent.runtime.models import TurnSnapshot
     from modex_agent.runtime.store import TurnStateStore
@@ -87,7 +88,7 @@ class TurnRunner(ABC):
         route_result: RouteResult | None = None,
         *,
         session: SessionInfo,
-    ) -> AgentResult | None:
+    ) -> AgentResult | TurnSuspension | None:
         """Process one message while holding the session lock.
 
         Args:
@@ -98,9 +99,11 @@ class TurnRunner(ABC):
             session: Typed session info (session_id, agent_name, etc.).
 
         Returns:
-            ``AgentResult`` on a completed turn, or ``None`` when the turn was
-            suspended (e.g. approval ``GraphInterrupt``) or short-circuited
-            (e.g. slash command handled without triggering the agent).
+            ``AgentResult`` on a completed turn; ``TurnSuspension`` when the
+            turn suspended on a pending approval batch (snapshot persisted,
+            still-pending batch reported honestly); ``None`` when the input
+            was short-circuited (e.g. slash command handled without
+            triggering the agent).
         """
         ...
 
@@ -129,6 +132,21 @@ class TurnRunner(ABC):
         ``ApprovalResumer.load_pending``.
         """
         return None
+
+    async def terminate_pending_approval(
+        self,
+        session_id: str,
+        *,
+        pool_data: PoolDataSnapshot | None = None,
+    ) -> bool:
+        """Terminate a pending approval batch WITHOUT executing any tool.
+
+        Request-scope cancellation contract: audited as REQUEST_CANCEL, no
+        decision continuation, no LLM. Returns whether a batch existed.
+        Default no-op (external has no approval flow); ReActTurnRunner
+        delegates to ``ApprovalResumer.terminate_pending``.
+        """
+        return False
 
     def bind_to_pipeline(self, pipeline: AgentPipeline) -> None:
         """Late-bind any cycle that requires the pipeline instance.

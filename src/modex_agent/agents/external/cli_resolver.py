@@ -1,6 +1,6 @@
 """``modexctl`` binary directory resolver — the single source of truth.
 
-External coding agent integration spawns Pi/OpenCode subprocesses whose
+External coding agent integration spawns OpenCode subprocesses whose
 LLM-driven bash tools call ``modexctl send`` / ``modexctl agents`` to
 communicate with peers. For that to work, the spawn ``PATH`` must contain
 the directory holding the ``modexctl`` executable.

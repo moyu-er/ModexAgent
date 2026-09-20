@@ -3,7 +3,7 @@
 Pydantic request/response models for :mod:`bot.webui.routes.scope_routes`,
 mirroring the graph routes' ``graph_models.py`` split. The bill models carry
 the compiler's provenance data (``modex_agent.scope.compiler``) verbatim —
-per-field source layers, per-tool origins, O3 replacements, and capability
+per-field source layers, per-tool origins, and capability
 enablement/contribution records — plus the effective values pulled from the
 compiled artifacts. Serialization is always ``model_dump(mode="json")`` at
 the handler boundary.
@@ -11,8 +11,11 @@ the handler boundary.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
+from modex_agent.core.tool_manager import ToolOrigin
 from modex_agent.plugins.abc import PluginSource
 from modex_agent.scope import (
     CapabilityContributionKind,
@@ -21,7 +24,6 @@ from modex_agent.scope import (
     HookOrigin,
     ProvenanceLayer,
     ScopeKind,
-    ToolOrigin,
 )
 
 # Effective-value union for one bill field: scalar (toolset / registration /
@@ -83,7 +85,6 @@ class ScopeToolBill(BaseModel):
     tool: str
     origin: ToolOrigin
     capability: str | None = None
-    replaces: str | None = None
     targets: list[str] = Field(default_factory=list)
 
 
@@ -95,6 +96,26 @@ class ScopeHookBill(BaseModel):
     hook: str
     origin: HookOrigin
     capability: str | None = None
+
+
+class ScopeToolGroupVariant(BaseModel):
+    """One candidate runtime variant and its exact ordered tool names."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    tools: list[str]
+
+
+class ScopeToolGroupManifest(BaseModel):
+    """Candidate variants plus the group anchor's compile-time attribution."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    anchor: str
+    origin: ToolOrigin
+    capability: str | None = None
+    variants: list[ScopeToolGroupVariant]
 
 
 class ScopeCapabilityContributionBill(BaseModel):
@@ -118,14 +139,35 @@ class ScopeCapabilityBill(BaseModel):
     contributions: list[ScopeCapabilityContributionBill] = Field(default_factory=list)
 
 
-class ScopeReplacementBill(BaseModel):
-    """One O3 same-name replacement record (``edit ← aci_edit``)."""
+class ScopeMemoryEffective(BaseModel):
+    """Effective memory layer toggles for the friendly form (DESIGN §5.2).
+
+    Values come from the compiled position defaults (``CompiledAgent.defaults``
+    — ``effective_defaults`` output), never from a raw declaration read: an
+    absent ``memory:`` block on a root is the position default (off), not a
+    missing value. ``memory_preset`` carries the position-derived family so
+    the UI can hide the toggles for session-only (non-root) agents.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    default_tool: str
-    replacement_tool: str
-    supplement: str
+    memory_preset: str
+    archive_enabled: bool
+    core_enabled: bool
+
+
+class ScopeApprovalEffective(BaseModel):
+    """Effective human-approval state for the friendly form.
+
+    ``enabled`` mirrors the resolved ``ApprovalConfig.enabled`` (declaration
+    default off); ``eligible`` is the position-derived root eligibility
+    (V9): non-roots cannot enable approval regardless of declaration.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool
+    eligible: bool
 
 
 class ScopeAgentBill(BaseModel):
@@ -136,11 +178,19 @@ class ScopeAgentBill(BaseModel):
     pool: str
     agent: str
     root: bool
+    external: bool = False
+    """Execution-strategy face: an external (OpenCode) agent. External
+    agents are structurally excluded from native memory/approval/capability
+    assembly — the friendly form hides those controls."""
     fields: list[ScopeFieldBill]
     tools: list[ScopeToolBill]
+    tool_groups: list[ScopeToolGroupManifest] = Field(default_factory=list)
     hooks: list[ScopeHookBill] = Field(default_factory=list)
-    replacements: list[ScopeReplacementBill]
     capabilities: list[ScopeCapabilityBill] = Field(default_factory=list)
+    memory: ScopeMemoryEffective
+    """Effective memory toggles from the compiled defaults owner."""
+    approval: ScopeApprovalEffective
+    """Effective approval state (declaration + position eligibility)."""
 
 
 class ScopeBillResponse(BaseModel):
@@ -207,6 +257,27 @@ class ScopePositionDefaultRow(BaseModel):
     registration: str
 
 
+class ScopeConfigValueType(StrEnum):
+    """JSON-schema scalar/container kinds exposed to form renderers."""
+
+    STRING = "string"
+    BOOLEAN = "boolean"
+    INTEGER = "integer"
+    NUMBER = "number"
+    ARRAY = "array"
+    OBJECT = "object"
+
+
+class ScopeCapabilityConfigField(BaseModel):
+    """One capability config field derived from its registered model schema."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    value_type: ScopeConfigValueType
+    default: JsonValue = None
+    choices: list[JsonValue] = Field(default_factory=list)
+
+
 class ScopeCapabilityBundle(BaseModel):
     """What a capability carries (ADR-0047) — these ride the bundle and are
     NOT independently declarable in the panel."""
@@ -214,7 +285,9 @@ class ScopeCapabilityBundle(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     tools: list[str]
+    tool_groups: list[ScopeToolGroupManifest] = Field(default_factory=list)
     hooks: list[str]
+    config_fields: dict[str, ScopeCapabilityConfigField] = Field(default_factory=dict)
 
 
 class ScopeOptionsResponse(BaseModel):
@@ -248,18 +321,24 @@ __all__ = [
     "ScopeBillResponse",
     "ScopeCapabilityBill",
     "ScopeCapabilityBundle",
+    "ScopeCapabilityConfigField",
     "ScopeCapabilityContributionBill",
+    "ScopeConfigValueType",
     "ScopeDeclarationResponse",
     "ScopeDeclarationSaveResponse",
     "ScopeDeclarationUpdateRequest",
     "ScopeFieldBill",
     "ScopeFieldValue",
+    "ScopeHookBill",
+    "ScopeMemoryEffective",
+    "ScopeApprovalEffective",
     "ScopeModelResponse",
     "ScopeModelUpdateRequest",
     "ScopeOptionsResponse",
     "ScopePoolTopology",
     "ScopePositionDefaultRow",
-    "ScopeReplacementBill",
     "ScopeToolBill",
+    "ScopeToolGroupManifest",
+    "ScopeToolGroupVariant",
     "ScopeTopologyResponse",
 ]

@@ -16,7 +16,8 @@ CLI subprocesses always run off the event loop via ``anyio.to_thread``
 window). ``bwrap`` additionally runs a real sandbox smoke after the version
 check — a version string proves the binary exists, not that user namespaces
 and mounts actually work on this host (AppArmor-restricted userns on Ubuntu
-24.04+ otherwise yields false FULL enforcement).
+24.04+ otherwise yields false FULL enforcement). ``sandbox-exec`` runs a
+constant no-op command because it has no version or dry-run flag.
 """
 
 from __future__ import annotations
@@ -32,8 +33,7 @@ from pydantic import BaseModel, ConfigDict
 # How long a version check may run before the engine counts as unavailable.
 _VERSION_CHECK_TIMEOUT_SECONDS: Final[float] = 10.0
 
-# How long the bwrap sandbox smoke may run before the engine counts as
-# unavailable (a working bwrap smoke completes in milliseconds).
+# How long a sandbox smoke may run before the engine counts as unavailable.
 _SMOKE_TIMEOUT_SECONDS: Final[float] = 10.0
 
 # Minimal sandbox smoke argv: the same mount primitives BwrapRuntime compiles
@@ -53,6 +53,13 @@ _BWRAP_SMOKE_ARGV: Final[list[str]] = [
     "--die-with-parent",
     "--",
     "/bin/true",
+]
+
+_SEATBELT_SMOKE_ARGV: Final[list[str]] = [
+    "sandbox-exec",
+    "-p",
+    "(version 1)(allow default)",
+    "/usr/bin/true",
 ]
 
 # stderr signatures of unprivileged-userns denial (Ubuntu 24.04+ AppArmor
@@ -190,6 +197,35 @@ async def _probe_bwrap_with_smoke() -> ProbeResult:
     return ProbeResult(available=False, detail=detail)
 
 
+async def _probe_seatbelt_with_smoke() -> ProbeResult:
+    """Probe sandbox-exec by running a fixed no-op command inside a profile."""
+    path = _which("sandbox-exec")
+    if path is None:
+        return ProbeResult(available=False, detail="sandbox-exec: not found on PATH")
+
+    try:
+        returncode, stderr = await _run_smoke(_SEATBELT_SMOKE_ARGV)
+    except subprocess.TimeoutExpired:
+        return ProbeResult(
+            available=False,
+            detail=f"sandbox-exec: sandbox smoke timed out (> {_SMOKE_TIMEOUT_SECONDS:.0f}s)",
+        )
+    except PermissionError:
+        raise
+    except OSError as exc:
+        return ProbeResult(
+            available=False,
+            detail=f"sandbox-exec: sandbox smoke failed: {exc}",
+        )
+
+    if returncode == 0:
+        return ProbeResult(available=True, detail=f"{path}: sandbox smoke ok")
+    return ProbeResult(
+        available=False,
+        detail=f"sandbox-exec: sandbox smoke exit {returncode}: {stderr or 'no stderr'}",
+    )
+
+
 async def _probe_cached(
     name: str,
     probe: Callable[[], Awaitable[ProbeResult]],
@@ -209,18 +245,8 @@ async def probe_bwrap() -> ProbeResult:
 
 
 async def probe_seatbelt() -> ProbeResult:
-    """Probe the macOS local-family engine (sandbox-exec).
-
-    ``sandbox-exec`` has no version flag; the smoke check compiles a trivial
-    no-op profile (``(version 1)(allow default)``) with ``-p`` and ``-n``
-    (dry-run) — exit 0 means the binary runs and accepts profiles.
-    """
-    return await _probe_cached(
-        "seatbelt",
-        lambda: _probe_cli(
-            "seatbelt", "sandbox-exec", ["sandbox-exec", "-n", "-p", "(version 1)(allow default)"]
-        ),
-    )
+    """Probe sandbox-exec by executing a constant no-op inside a trivial profile."""
+    return await _probe_cached("seatbelt", _probe_seatbelt_with_smoke)
 
 
 async def probe_docker() -> ProbeResult:

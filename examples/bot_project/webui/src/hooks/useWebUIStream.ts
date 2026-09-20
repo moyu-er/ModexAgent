@@ -5,6 +5,7 @@ import { eventsToMessages } from "../types/events";
 import { WebSocketClient, buildWsUrl } from "../lib/ws-client";
 import { fetchApprovals, fetchMessages, fetchTodos, submitApproval as apiSubmitApproval, uploadAttachment } from "../lib/api";
 import { applyServerEvent, clearPendingApproval, type StreamState } from "./useWebUIStream.reducer";
+import { sameWorkspacePath } from "./useWorkspaceTabs";
 import { useT } from "../i18n";
 
 /** Events that mark the start of an assistant turn (set isStreaming=true). */
@@ -67,6 +68,10 @@ export function useWebUIStream(
    *  inferring the pool from the agent name. Pending (uuid-prefix) sessions
    *  resolve their pool via ``getPoolForUuid`` instead. */
   currentPool?: string,
+  /** sessions_changed control callback (PA-02). Called with the ping's
+   *  workspace only when it matches ``currentWs`` ("" = home); the message
+   *  never enters the chat reducer. */
+  onSessionsChanged?: (workspace: string) => void,
 ): UseWebUIStreamResult {
   const t = useT();
   const [state, setState] = useState<StreamState>({
@@ -118,6 +123,8 @@ export function useWebUIStream(
   currentWsRef.current = currentWs;
   const currentPoolRef = useRef(currentPool);
   currentPoolRef.current = currentPool;
+  const onSessionsChangedRef = useRef(onSessionsChanged);
+  onSessionsChangedRef.current = onSessionsChanged;
 
   const handleEvent = useCallback(
     (event: ServerEventUnion): void => {
@@ -352,6 +359,18 @@ export function useWebUIStream(
     );
     clientRef.current = client;
     setWsClient(client);
+    // Control channel (PA-02): sessions_changed pings are invalidations, not
+    // chat events — forward only same-workspace pings to the host callback.
+    // The match is representation-tolerant (sameWorkspacePath): the ping
+    // carries the server-resolved canonical path while the pod's ws is the
+    // tab path; only string normalization happens here — true
+    // canonicalization stays with the server's open/validation seam.
+    if (onSessionsChangedRef.current) {
+      client.setControlHandler((msg): void => {
+        if (!sameWorkspacePath(msg.workspace, currentWsRef.current ?? "")) return;
+        onSessionsChangedRef.current?.(msg.workspace);
+      });
+    }
     client.connect();
   }, [wsHandleEvent]);
 

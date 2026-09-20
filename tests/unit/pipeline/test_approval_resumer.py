@@ -32,6 +32,7 @@ from modex_agent.approval.constants import (
     ApprovalStatus,
     ApprovalTier,
 )
+from modex_agent.approval.views import ApprovalRequestView
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.memory.history import ListMessageHistory
@@ -66,6 +67,7 @@ class _RecordingUI:
 
     def __init__(self) -> None:
         self.rendered: list[tuple[str, str]] = []
+        self.views: list[ApprovalRequestView] = []
 
     async def render_message(self, session_id, content, metadata=None) -> str:
         self.rendered.append((session_id, content))
@@ -75,6 +77,7 @@ class _RecordingUI:
         # Record the same way render_message does so existing assertions
         # (``assert user_interface.rendered``) stay valid.
         self.rendered.append((session_id, view.tool_name))
+        self.views.append(view)
 
 
 class _RecordingTurnStore(TurnStateStore):
@@ -293,6 +296,7 @@ async def test_apply_resume_partial_saves_and_returns_none(
     assert result is None
     assert turn_store.saved  # save_turn invoked with updated snapshot
     assert user_interface.rendered  # prompt rendered for the first PENDING req
+    assert user_interface.views[0].turn_uuid == "turn-uuid-1"
 
 
 async def test_apply_resume_complete_restores_state_and_returns_store(

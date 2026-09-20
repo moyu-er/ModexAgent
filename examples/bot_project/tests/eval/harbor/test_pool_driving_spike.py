@@ -13,6 +13,7 @@ from bot.workspace.handle import WorkspaceHandle
 from bot.workspace.pool_data import PoolData, build_pool_data
 from plugins.bot_strategies import BotDefaultLLMConfig
 
+from examples.bot_project.tests.service._title_support import title_workspace
 from modex_agent.adapters.output import NullOutputAdapter
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.emitter import AgentResult, ContentEmitter
@@ -179,6 +180,7 @@ async def _create_scripted_pool(
     )
     broker = InMemoryMessageBroker()
     await broker.start()
+    resources = title_workspace(data_dir, broker)
     child_created: asyncio.Future[tuple[str, str]] = asyncio.get_running_loop().create_future()
     child_emitter_ready = asyncio.Event()
 
@@ -220,7 +222,8 @@ async def _create_scripted_pool(
             target=_BOT_PROJECT, data_root=data_dir,
         ),
         workspace_registry=object(),
-        workspace_resources=object(),
+        workspace_resources=resources,
+        session_registry=resources.session_registry,
         component_registry=await _scripted_registry(provider),
     )
     return pool_instance, broker, pool_data, child_created, child_emitter_ready

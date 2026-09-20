@@ -43,6 +43,8 @@ class DecisionActor(StrEnum):
 
     USER = "user"
     SANDBOX_GUARD = "sandbox_guard"
+    REQUEST_CANCEL = "request_cancel"
+    """A request-scope cancellation terminated the batch (never an LLM run)."""
 
 
 class ApprovalAuditSource(StrEnum):

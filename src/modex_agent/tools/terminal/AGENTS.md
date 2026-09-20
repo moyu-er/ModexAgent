@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-25 -->
+<!-- Updated: 2026-09-10 | shell capability integration -->
 
 # Terminal System — Agent Guide
 
@@ -17,7 +17,8 @@ this system keeps a real terminal process alive across tool calls, preserving:
 Each session is backed by an OS-visible terminal window when available,
 allowing human users to observe or intervene in the same session.
 
-The agent-facing surface is a trio of tools (ADR-0044):
+The shell capability's effective `terminal` variant exposes a trio of tools
+(ADR-0044):
 
 - `bash` (CommandTool) — run a command in the selected tab; returns exactly
   `completed` / `waiting_input` (advisory) / `timed_out` / `rejected`
@@ -61,19 +62,19 @@ Every result is `<command_result>` XML with exactly four statuses:
 There is **no `^C` path in bash**: interrupting a running command is the
 process tool's job.
 
-When the pool has no terminal manager (`use_terminal=false`, or every backend
-is unavailable on this platform), the `bash` slot degrades to
-`PersistentBashTool` — one persistent interactive bash per conversation
-(stateful cwd/env, routed by the caller's session_id) — plus its
-`BashInputTool` companion on POSIX-pty hosts, or to the stateless
-`SubprocessTool` on hosts without a POSIX pty (see Bot Project Integration).
+When `capabilities.shell.mode` requests `persistent`, or a requested terminal
+variant cannot be reached, `ShellToolGroupFactory` selects
+`PersistentBashTool` plus `BashInputTool` on POSIX-pty hosts, or the stateless
+`SubprocessTool` where persistent bash is unavailable. This is one complete
+per-agent group, not a pool manager plus later companion mutation.
 
 ### Layer 1b: PersistentBashTool (fallback)
 
-Registered when no terminal backend is available (e.g. subagents or when
-`use_terminal=false`). One stateful bash per conversation (per-session_id
-routing via `_current_session_id`; `__default__` shell without a routing
-context); `bash_input` answers commands that block reading stdin.
+Selected by shell mode or as the documented terminal/unavailable downgrade.
+One stateful bash per conversation (per-session_id routing via
+`_current_session_id`; `__default__` shell without a routing context);
+`bash_input` is created in the same group against the same manager and answers
+commands that block reading stdin.
 POSIX-only (pexpect).
 
 ### Layer 2: TerminalSession (`modex_agent/tools/terminal/session.py`)
@@ -172,14 +173,12 @@ Every command gets a **480 s budget** (`command_deadline_seconds` in
   The next bash call lands on a fresh tab whose result carries the hint
   "Previous tab timed out after 480s and was closed."
 - **Post-advisory expiry** — if bash or process already returned a
-  `waiting_input` advisory, the pool-scoped `TerminalWatchdog` (`watchdog.py`)
+  `waiting_input` advisory, the terminal group's `TerminalWatchdog` (`watchdog.py`)
   closes the tab at the deadline before marking the process `TIMED_OUT`; close
-  failures leave it RUNNING for the next scan to retry. `PoolAssembleStage`
-  registers `watchdog.stop` BOTH on the assembly builder (failure-path
-  cleanup — `AssemblyPipeline` runs `builder.cleanup()` when a later stage
-  fails) AND on `AgentPool.attach_background_stop` (executed by
-  `AgentPool.shutdown_all()` at pool shutdown); `stop` is idempotent, so a
-  failed assembly whose pool is also torn down double-stops safely.
+  failures leave it RUNNING for the next scan to retry. The per-agent terminal
+  group resource owns the watchdog and terminal manager. Its idempotent
+  `aclose()` stops the watchdog, attempts every tab close, and remains on the
+  agent's ordered resource stack when cleanup fails so teardown can retry.
 - **Deadline refresh** — every successful process write and every `^C`
   interrupt call `ProcessRegistry.refresh_deadline()`, restarting the 480 s
   clock for the interaction.
@@ -430,51 +429,51 @@ re-exported in `backends/__init__.py` for the migration window.
 
 ### Fallback: PersistentBashTool
 
-When no terminal manager exists (`use_terminal=false` or every backend
-unavailable), the `bash` slot falls back to `PersistentBashTool` — one
-persistent interactive bash per conversation (stateful cwd/env/backgrounds,
-routed by session_id) plus its `bash_input` companion; hosts without a POSIX
-pty get the stateless `SubprocessTool` instead.
+The shell capability defaults to `mode: persistent`: one persistent interactive
+bash per conversation (stateful cwd/env/backgrounds, routed by session_id) plus
+its `bash_input` companion. Hosts without a POSIX pty select the stateless
+`SubprocessTool`. A HOST root requesting `terminal` also follows this ladder
+when no terminal backend is available; a subagent terminal request always
+downgrades to persistent/subprocess without rewriting its declaration.
 
 ---
 
-## Bot Project Integration
+## Shell Capability Integration
 
-Terminal wiring is declaration- and roster-driven (no hand registration in
-bot service code):
+Shell wiring is capability-, declaration-, and roster-driven with no hand
+registration in bot service code:
 
 ```yaml
-main:
-  use_terminal: true   # Enable CommandTool/ProcessTool/TerminalTool
-
-terminal:
-  close_on_exit: false  # Keep tabs open after bot shutdown
+capabilities:
+  shell:
+    mode: terminal
+    terminal_visibility: false
 ```
 
-`examples/bot_project/bot/service/react_strategy.py` (`ReactExecutionStrategy.assemble_main`):
-- Creates the pool's terminal manager via the framework factory
-  `create_terminal_manager_or_none()` (shell detection is framework
-  ladder logic; returns `None` when `use_terminal=false` or no backend
-  is available)
+`ShellCapability.assemble` produces typed per-agent `ShellWiring` from the
+compiled config, current sandbox binding, workspace cwd, and native position.
+The roster's `bash` anchor resolves once through `ShellToolGroupFactory`, which
+uses `create_terminal_manager_or_none()` only when a HOST native main actually
+requests terminal mode. It otherwise constructs the selected persistent or
+subprocess group directly. `process`, `terminal`, and `bash_input` are group
+companions, never independent TOOL-slot factories.
 
-Bash/process/terminal tools are not hand-registered in bot code: the
-compiled roster's `bash` / `process` / `terminal` entries resolve through
-the FW TOOL-slot factories (`modex_agent/plugins/defaults/tools.py`) —
-`CommandTool` bound to the pool terminal manager when one exists, else the
-pool's `PersistentBashTool` fallback (with the `bash_input` companion
-ensured by `native_core.assemble_native_agent`) — the same single road for
-main agents and subagents.
-- `PoolAssembleStage` enforces the manager↔registry invariant and wires the
-  `TerminalWatchdog` for every pool with a terminal manager.
+Each native agent receives its own group resource. Native assembly validates
+the exact group against the compile-time candidate manifest and transfers its
+resource to `AgentInstance`; `PoolInstance` has no terminal manager. LOCAL/OCI
+terminal requests downgrade within their selected substrate rather than
+building HOST terminal controls. See
+[`docs/design/shell-capability/SPEC.md`](../../../../docs/design/shell-capability/SPEC.md)
+for the complete matrix and lifecycle.
 
 ---
 
 ## Key Behaviors and Constraints
 
 1. **Windows shell ladder**: `detect_platform_shell()` prefers Git Bash →
-   WSL bash → PowerShell → cmd. Without a terminal manager the `bash` slot
-   degrades to `PersistentBashTool` (POSIX-pty hosts) or stateless
-   `SubprocessTool` (`plugins/defaults/tools.py`).
+   WSL bash → PowerShell → cmd. If a requested HOST terminal manager is
+   unavailable, the group selects `PersistentBashTool` where supported or
+   stateless `SubprocessTool`; the structured shell log records the reason.
 2. **Eager startup on open**: `TerminalTool.open` calls `ensure_started()`
    so visible windows appear immediately — no need to wait for the first
    command.
@@ -512,7 +511,7 @@ main agents and subagents.
 | `_foreground_probe.py` | Linux `/proc` stdin-wait evidence (tpgid foreground group + per-thread syscall scan), injectable internals for tests. Definitional on both axes: the read/poll target must be the session's own controlling terminal (tty device-number match on ANY fd, `/dev/tty` alias accepted, covering ssh/sudo password reads), and select/poll/epoll waits count only when indefinite (NULL timeout pointer or -1 timeout); bounded-timeout pollers (key checks, progress bars, event-loop ticks) are running commands, not input waits |
 | `guard.py` | Pre-flight input validation — `check_command_writable()` (CommandTool: IDLE/UNKNOWN/COMPLETED/TIMED_OUT) and `check_process_writable()` (ProcessTool: + WAITING_INPUT, silent-EXECUTING exception); returns `TerminalGuardResult` with diagnostic `TerminalSnapshot` |
 | `poll_loop.py` | Shared `poll_until_settled()` — reused by CommandTool and ProcessTool for post-write drain. `PollOutcome` enum (prompt_detected / process_exit / input_wait / timed_out); evidence-fused input-wait detection; `mark_exited_if_finished` |
-| `watchdog.py` | `TerminalWatchdog` — pool-scoped 5 s scanner closing tabs whose command deadline expired; wired in `PoolAssembleStage`, stopped via builder cleanup (assembly failure) and `AgentPool.shutdown_all` (pool shutdown) |
+| `watchdog.py` | `TerminalWatchdog` — per-terminal-group 5 s scanner closing tabs whose command deadline expired; owned with the manager by the group's `ToolGroupResource`, stopped during reverse agent-resource teardown |
 | `env.py` | `build_full_env()` — complete environment dict for child processes. On Windows, merges missing HKLM/HKCU PATH entries from registry |
 | `prompt.py` | Prompt detection, ANSI/DA1 stripping, pager detection, startup drain |
 | `types.py` | `ShellFamily`, `ShellInfo`, `Platform`, `detect_platform_shell`, status enums (`CommandResultStatus`, `TerminalCommandStatus`, `ProcessStatus`), terminal XML truncation metadata |

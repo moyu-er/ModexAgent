@@ -5,7 +5,7 @@ import contextlib
 import logging
 import sys
 import time
-from collections.abc import Awaitable, Callable, Coroutine, Iterator
+from collections.abc import Awaitable, Callable, Coroutine, Iterator, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -16,12 +16,22 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.multi_agent.template import AgentTemplate
     from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
+    from modex_agent.pipeline.turn_outcome import TurnOutcome
 
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo, session_id_prefix_of
 from modex_agent.messaging import AddressKind, BrokerInputPayload, InputMessage, MessageBroker
+from modex_agent.multi_agent.session_tree.request_scope import (
+    REQUEST_SCOPE_ID_KEY,
+    RequestReservation,
+    RequestResult,
+    RequestScopeError,
+    RequestTurnFact,
+    RequestTurnFactKind,
+)
 from modex_agent.persistence.session_registry import SessionRegistry
 from modex_agent.persistence.session_store import SessionStore
+from modex_agent.pipeline.turn_outcome import TurnOutcomeKind
 from modex_agent.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
 from modex_graph.exceptions import GraphInterrupt
 
@@ -112,7 +122,7 @@ class AgentPool(AgentRegistry):
         self._retention = retention or SessionRetentionPolicy()
         self._cleanup_task: asyncio.Task[None] | None = None
         self._shutdown_task: asyncio.Task[bool] | None = None
-        self._agent_shutdown_tasks: dict[str, asyncio.Task[None]] = {}
+        self._agent_shutdown_tasks: dict[str, asyncio.Task[bool]] = {}
         self._active_session_counts: dict[str, int] = {}
         self._error_counts: dict[str, int] = {}
         self._max_error_retries: int = 5
@@ -184,6 +194,21 @@ class AgentPool(AgentRegistry):
         self._transition(name, AgentState.IDLE, reason="register_resident_complete")
         return instance
 
+    def unregister_resident(
+        self,
+        descriptor: AgentDescriptor,
+        instance: AgentInstance,
+    ) -> bool:
+        """Remove a resident only while it is still the registered instance."""
+        name = descriptor.address.name
+        if self._agents.get(name) is not instance:
+            return False
+        self._agents.pop(name)
+        self._status.pop(name, None)
+        self._active_session_counts.pop(name, None)
+        self._error_counts.pop(name, None)
+        return True
+
     # Max envelopes consumed per drain cycle ( InboxPoller → consume_inbox ).
     _DRAIN_BATCH_LIMIT = 10
 
@@ -221,7 +246,7 @@ class AgentPool(AgentRegistry):
     def materialize_deps(self, value: AgentMaterializeDeps | None) -> None:
         self._materialize_deps = value
         if value is not None:
-            self._tree = value.tree
+            self.tree = value.tree
 
     @property
     def tree(self) -> SessionTreeManager | None:
@@ -230,6 +255,29 @@ class AgentPool(AgentRegistry):
     @tree.setter
     def tree(self, value: SessionTreeManager | None) -> None:
         self._tree = value
+        if value is not None:
+            # Every path that assigns the tree also attaches the pool-owned
+            # request-cancel approval terminator.
+            value.attach_approval_terminator(self._terminate_scope_approvals)
+
+    async def _terminate_scope_approvals(self, session_ids: Sequence[str]) -> None:
+        """Terminate each session's pending approval batch without any LLM run.
+
+        Each session is offered to every available pipeline in turn until one
+        terminates its batch (``True``); ``False`` — nothing pending for that
+        pipeline, or an external runner without an approval flow — moves on.
+        The workspace turn store is shared, so the traversal is idempotent,
+        and exhausting every pipeline simply means nothing was pending.
+        """
+        pipelines = [
+            instance.pipeline
+            for instance in self.iter_instances()
+            if instance.pipeline is not None
+        ]
+        for sid in session_ids:
+            for pipeline in pipelines:
+                if await pipeline.terminate_pending_approval(sid):
+                    break
 
     @property
     def template_registry(self) -> AgentTemplateRegistry | None:
@@ -309,6 +357,13 @@ class AgentPool(AgentRegistry):
             session_id=message.session.session_id_prefix,
             agent_session_id=session_id,
             parent_session_id=parent_sid,
+            # Scope attribution for the tree's deliver-time admission gate
+            # (run_input stamps it onto the message metadata).
+            metadata=(
+                {REQUEST_SCOPE_ID_KEY: message.metadata[REQUEST_SCOPE_ID_KEY]}
+                if REQUEST_SCOPE_ID_KEY in message.metadata
+                else {}
+            ),
         )
         if self._tree is None:
             raise RuntimeError(
@@ -316,6 +371,67 @@ class AgentPool(AgentRegistry):
                 "materialize_deps.tree before submit_input"
             )
         await self._tree.deliver(session_id, envelope)
+
+    # ── Awaitable request-scope surface (DESIGN.md §6, acp-adapter) ──
+
+    async def begin_request(self, session_id: str) -> RequestReservation:
+        """Two-phase admission token for one interactive request scope.
+
+        Delegates to the tree owner (the single request registry). Consumed
+        by :meth:`run_input`; released via the tree when prepare fails
+        before any user-visible write.
+        """
+        if self._tree is None:
+            raise RuntimeError(
+                "AgentPool.tree not wired: pool assembly must inject "
+                "materialize_deps.tree before begin_request"
+            )
+        return await self._tree.begin_request(session_id)
+
+    async def run_input(
+        self,
+        session_id: str,
+        message: InputMessage,
+        *,
+        reservation: RequestReservation,
+    ) -> RequestResult:
+        """Awaitable twin of ``submit_input`` over the SAME deliver/poller path.
+
+        Activates the reservation, stamps the prompt with its scope,
+        delivers through ``submit_input``, then waits on the tree owner's
+        single quiesce loop for the frozen outcome. A delivery failure after
+        activation settles the scope FAILED with the real reason.
+        """
+        if self._tree is None:
+            raise RuntimeError(
+                "AgentPool.tree not wired: pool assembly must inject "
+                "materialize_deps.tree before run_input"
+            )
+        if (
+            reservation.session_id != session_id
+            or message.session.session_id != session_id
+        ):
+            raise RequestScopeError(
+                f"Reservation {reservation.scope_id!r} targets "
+                f"{reservation.session_id!r} but run_input was called for "
+                f"{session_id!r} with message session "
+                f"{message.session.session_id!r}"
+            )
+        await self._tree.activate_reservation(reservation)
+        stamped = message.model_copy(update={
+            "metadata": {
+                **message.metadata,
+                REQUEST_SCOPE_ID_KEY: reservation.scope_id,
+            },
+        })
+        try:
+            await self.submit_input(session_id, stamped)
+        except Exception as exc:
+            await self._tree.fail_scope(
+                reservation, f"submission failed after activation: {exc}",
+            )
+            raise
+        return await self._tree.wait_request(session_id, scope_id=reservation.scope_id)
 
     async def sessions_with_pending(self) -> list[str]:
         """Session ids that currently have ≥1 pending inbox message."""
@@ -393,7 +509,9 @@ class AgentPool(AgentRegistry):
 
         Single reconstruction path: because ``submit_input`` writes a
         C2-compatible payload, this method handles BOTH ``external_input`` and
-        inter-agent messages via the same ``envelope.to_input_message``.
+        inter-agent messages via the same ``envelope.to_input_message``. The
+        typed turn outcome (or the real dispatch failure) is noted into the
+        request-scope owner from INSIDE the dispatch coroutine.
         """
         if instance.pipeline is None:
             return
@@ -402,10 +520,53 @@ class AgentPool(AgentRegistry):
         session = self._stamp_session_from_envelope(sid, agent_name, envelope)
         await self._run_dispatch(
             agent_name,
-            instance.pipeline.process_message(envelope.to_input_message(session=session)),
+            self._dispatch_turn(sid, instance, envelope, session),
         )
         if envelope.invocation_id:
             await self._enforce_session_cap(agent_name)
+
+    async def _dispatch_turn(
+        self,
+        sid: str,
+        instance: AgentInstance,
+        envelope: AgentMessageEnvelope,
+        session: SessionInfo,
+    ) -> None:
+        """One turn: run the pipeline's typed outcome producer and note the fact."""
+        try:
+            outcome = await instance.pipeline.process_message_outcome(
+                envelope.to_input_message(session=session),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await self._note_scope_turn(
+                sid,
+                RequestTurnFact(kind=RequestTurnFactKind.FAILED, fail_reason=str(exc)),
+            )
+            raise
+        await self._note_scope_turn(sid, self._scope_fact(outcome))
+
+    @staticmethod
+    def _scope_fact(outcome: TurnOutcome) -> RequestTurnFact:
+        """Map the pipeline's turn outcome onto the scope owner's fact record."""
+        if outcome.kind is TurnOutcomeKind.FINISHED:
+            return RequestTurnFact(
+                kind=RequestTurnFactKind.FINISHED, agent_result=outcome.result,
+            )
+        if outcome.kind is TurnOutcomeKind.SUSPENDED:
+            return RequestTurnFact(
+                kind=RequestTurnFactKind.SUSPENDED,
+                pending_approval_turn_uuid=(
+                    outcome.suspension.turn_uuid if outcome.suspension is not None else None
+                ),
+            )
+        return RequestTurnFact(kind=RequestTurnFactKind.HANDLED)
+
+    async def _note_scope_turn(self, sid: str, fact: RequestTurnFact) -> None:
+        if self._tree is None:
+            return
+        await self._tree.note_scope_turn(sid, fact)
 
     def _track_or_touch_session(
         self, sid: str, agent_name: str, envelope: AgentMessageEnvelope
@@ -819,7 +980,7 @@ class AgentPool(AgentRegistry):
             return None
         return self._make_profile(instance.descriptor)
 
-    async def _shutdown_agent(self, agent_name: str) -> None:
+    async def _shutdown_agent(self, agent_name: str) -> bool:
         """Shut down a single agent and release its resources."""
         self._transition(agent_name, AgentState.SHUTTING_DOWN, reason="idle_cleanup")
         instance = self._agents.get(agent_name)
@@ -829,7 +990,7 @@ class AgentPool(AgentRegistry):
                 shutdown_task = asyncio.create_task(instance.stop())
                 self._agent_shutdown_tasks[agent_name] = shutdown_task
             try:
-                await asyncio.shield(shutdown_task)
+                stopped = await asyncio.shield(shutdown_task)
             except asyncio.CancelledError:
                 if (
                     shutdown_task.done()
@@ -841,7 +1002,11 @@ class AgentPool(AgentRegistry):
             except Exception:
                 if self._agent_shutdown_tasks.get(agent_name) is shutdown_task:
                     self._agent_shutdown_tasks.pop(agent_name, None)
-                return
+                return False
+            if stopped is False:
+                if self._agent_shutdown_tasks.get(agent_name) is shutdown_task:
+                    self._agent_shutdown_tasks.pop(agent_name, None)
+                return False
             if self._agent_shutdown_tasks.get(agent_name) is shutdown_task:
                 self._agent_shutdown_tasks.pop(agent_name, None)
             if self._agents.get(agent_name) is instance:
@@ -849,9 +1014,10 @@ class AgentPool(AgentRegistry):
                 self._active_session_counts.pop(agent_name, None)
                 self._error_counts.pop(agent_name, None)
             else:
-                return
+                return False
         self._transition(agent_name, AgentState.SHUTDOWN, reason="shutdown")
         logger.info("Agent %s shut down", agent_name)
+        return True
 
     async def shutdown_all(self, timeout: float = 10.0) -> bool:
         shutdown_task = self._shutdown_task
@@ -886,7 +1052,7 @@ class AgentPool(AgentRegistry):
             self._transition(name, AgentState.SHUTTING_DOWN, reason="shutdown_all")
         deadline = asyncio.get_running_loop().time() + timeout
         shutdown_owners = dict(self._agents)
-        shutdown_tasks: dict[str, asyncio.Task[None]] = {}
+        shutdown_tasks: dict[str, asyncio.Task[bool]] = {}
         for name, instance in shutdown_owners.items():
             shutdown_task = self._agent_shutdown_tasks.get(name)
             if shutdown_task is None:
@@ -898,7 +1064,9 @@ class AgentPool(AgentRegistry):
         for name, shutdown_task in shutdown_tasks.items():
             remaining = max(0.0, deadline - asyncio.get_running_loop().time())
             try:
-                await asyncio.wait_for(asyncio.shield(shutdown_task), timeout=remaining)
+                stopped = await asyncio.wait_for(
+                    asyncio.shield(shutdown_task), timeout=remaining
+                )
             except TimeoutError:
                 completed = False
                 logger.warning("Agent %s shutdown timed out; retained for retry", name)
@@ -920,6 +1088,12 @@ class AgentPool(AgentRegistry):
             else:
                 if self._agent_shutdown_tasks.get(name) is shutdown_task:
                     self._agent_shutdown_tasks.pop(name, None)
+                if stopped is False:
+                    completed = False
+                    logger.warning(
+                        "Agent %s did not drain; retained for shutdown retry", name
+                    )
+                    continue
                 instance = shutdown_owners[name]
                 if self._agents.get(name) is instance:
                     self._agents.pop(name, None)

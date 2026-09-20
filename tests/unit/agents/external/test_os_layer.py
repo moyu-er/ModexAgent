@@ -423,12 +423,12 @@ class TestTerminateProcessGroupWindowsTree:
         result = subprocess.run(
             ["tasklist", "/FI", f"PID eq {grandchild_pid}"],
             capture_output=True,
-            text=True,
             check=False,
         )
-        # tasklist reports "INFO: No tasks are running..." for missing PIDs.
-        assert "INFO: No tasks" in result.stdout or str(grandchild_pid) not in result.stdout, (
-            f"Grandchild {grandchild_pid} still alive:\n{result.stdout}"
+        # PID digits are ASCII even when tasklist uses the local Windows code page.
+        assert result.returncode == 0, result.stderr
+        assert str(grandchild_pid).encode("ascii") not in result.stdout, (
+            f"Grandchild {grandchild_pid} still alive:\n{result.stdout!r}"
         )
 
 

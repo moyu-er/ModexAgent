@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bot.input_pipeline.stages.enqueue import EnqueueStage
+from bot.input_pipeline.prepare import BotInputPreparation
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
@@ -52,7 +52,7 @@ async def test_enqueue_registers_resolved_model(tmp_path: Path) -> None:
     env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
     env.metadata[RoutingMeta.RESOLVED_MODEL] = resolved
 
-    await EnqueueStage().process(env, _ctx(reg, captured))
+    await BotInputPreparation([]).handle(env, _ctx(reg, captured))
 
     # frozen pydantic value object: same instance written must be returned
     assert reg.get("sess.main") is resolved
@@ -65,5 +65,5 @@ async def test_enqueue_without_resolved_model_skips_registry(tmp_path: Path) -> 
     env = UserInputEnvelope(external_id="u", content="hi", channel="qq")
     env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
     # no RESOLVED_MODEL (IM path)
-    await EnqueueStage().process(env, _ctx(reg, captured))
+    await BotInputPreparation([]).handle(env, _ctx(reg, captured))
     assert len(reg) == 0

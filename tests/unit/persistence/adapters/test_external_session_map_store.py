@@ -21,7 +21,7 @@ class TestExternalSessionMapResolve:
         self, connection: ConnectionManager, scope: RecordScope
     ) -> None:
         store = SqliteExternalSessionMapStore(connection, scope)
-        await store.commit("modex-1", "provider-abc", ProviderKind.PI)
+        await store.commit("modex-1", "provider-abc", ProviderKind.OPENCODE)
         assert store.resolve("modex-1") == ("provider-abc", True)
 
 
@@ -30,14 +30,14 @@ class TestExternalSessionMapCommit:
         self, connection: ConnectionManager, scope: RecordScope
     ) -> None:
         store = SqliteExternalSessionMapStore(connection, scope)
-        await store.commit("modex-1", "provider-abc", ProviderKind.PI)
+        await store.commit("modex-1", "provider-abc", ProviderKind.OPENCODE)
         assert store.resolve("modex-1") == ("provider-abc", True)
 
     async def test_commit_upsert_replaces_provider_sid(
         self, connection: ConnectionManager, scope: RecordScope
     ) -> None:
         store = SqliteExternalSessionMapStore(connection, scope)
-        await store.commit("modex-1", "provider-old", ProviderKind.PI)
+        await store.commit("modex-1", "provider-old", ProviderKind.OPENCODE)
         await store.commit("modex-1", "provider-new", ProviderKind.OPENCODE)
         assert store.resolve("modex-1") == ("provider-new", True)
 
@@ -45,7 +45,7 @@ class TestExternalSessionMapCommit:
         self, connection: ConnectionManager, scope: RecordScope
     ) -> None:
         store = SqliteExternalSessionMapStore(connection, scope)
-        await store.commit("modex-1", "provider-a", ProviderKind.PI)
+        await store.commit("modex-1", "provider-a", ProviderKind.OPENCODE)
         await store.commit("modex-2", "provider-b", ProviderKind.OPENCODE)
         assert store.resolve("modex-1") == ("provider-a", True)
         assert store.resolve("modex-2") == ("provider-b", True)
@@ -54,7 +54,7 @@ class TestExternalSessionMapCommit:
         self, connection: ConnectionManager, scope: RecordScope
     ) -> None:
         store = SqliteExternalSessionMapStore(connection, scope)
-        await store.commit("modex-pi", "pi-sid", ProviderKind.PI)
+        await store.commit("modex-pi", "pi-sid", ProviderKind.OPENCODE)
         await store.commit("modex-oc", "oc-sid", ProviderKind.OPENCODE)
         assert store.resolve("modex-pi") == ("pi-sid", True)
         assert store.resolve("modex-oc") == ("oc-sid", True)
@@ -65,7 +65,7 @@ class TestExternalSessionMapInvalidate:
         self, connection: ConnectionManager, scope: RecordScope
     ) -> None:
         store = SqliteExternalSessionMapStore(connection, scope)
-        await store.commit("modex-1", "provider-abc", ProviderKind.PI)
+        await store.commit("modex-1", "provider-abc", ProviderKind.OPENCODE)
         assert store.resolve("modex-1") == ("provider-abc", True)
         await store.invalidate("modex-1")
         assert store.resolve("modex-1") == (None, False)
@@ -80,8 +80,8 @@ class TestExternalSessionMapInvalidate:
         self, connection: ConnectionManager, scope: RecordScope
     ) -> None:
         store = SqliteExternalSessionMapStore(connection, scope)
-        await store.commit("modex-1", "provider-a", ProviderKind.PI)
-        await store.commit("modex-2", "provider-b", ProviderKind.PI)
+        await store.commit("modex-1", "provider-a", ProviderKind.OPENCODE)
+        await store.commit("modex-2", "provider-b", ProviderKind.OPENCODE)
         await store.invalidate("modex-1")
         assert store.resolve("modex-1") == (None, False)
         assert store.resolve("modex-2") == ("provider-b", True)
@@ -90,7 +90,7 @@ class TestExternalSessionMapInvalidate:
         self, connection: ConnectionManager, scope: RecordScope
     ) -> None:
         store = SqliteExternalSessionMapStore(connection, scope)
-        await store.commit("modex-1", "provider-old", ProviderKind.PI)
+        await store.commit("modex-1", "provider-old", ProviderKind.OPENCODE)
         await store.invalidate("modex-1")
-        await store.commit("modex-1", "provider-new", ProviderKind.PI)
+        await store.commit("modex-1", "provider-new", ProviderKind.OPENCODE)
         assert store.resolve("modex-1") == ("provider-new", True)

@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-08 -->
+<!-- Updated: 2026-09-10 | Pools shell capability UI -->
 
 # webui
 
@@ -49,6 +49,9 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 | `components/settings/AgentMcpSelector.tsx` | Compact popover MCP checklist per agent |
 | `components/settings/AgentSkillSelector.tsx` | Compact popover skill checklist per agent |
 | `components/settings/ConfigForm.tsx` | Generic field renderer for singleton config domains |
+| `components/settings/pools/AgentForm.tsx` | Structured per-agent form. Native capability rows consume the effective bill and registry-derived options; external agents omit the native capability face. |
+| `components/settings/pools/CapabilityRow.tsx` | Capability tri-state/config row. The shell row renders candidate group variants, mode choices from `config_fields.mode`, root-terminal-only visibility, and the neutral loaded-subagent downgrade hint. |
+| `components/settings/pools/scopeModel.ts` | Mutations over the open declaration tree, including capability auto/on/off and nested config updates that preserve unknown keys. |
 | `components/ui/SectionLabel.tsx` | Shared section eyebrow (Geist Mono 10px uppercase) — used across all settings tabs |
 | `components/ui/KeyValueEditor.tsx` | Postman-style key/value row editor (controlled component) |
 | `components/graphs/GraphSpecListPage.tsx` | Graph spec list — MiniTopology thumbnail + metadata per row |
@@ -78,6 +81,7 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 | `lib/api.ts` | REST API client (fetchSessions, fetchPools, createConversation, etc.) |
 | `lib/ws-client.ts` | WebSocket client with action/attach protocol |
 | `lib/graphsApi.ts` | Graph REST API client — specs CRUD, instance lifecycle, events, deliver, topology |
+| `lib/scopeApi.ts` | Scope REST types/client. `ScopeToolGroupManifest.variants` are compile-time candidates, never an actual runtime selection report. |
 | `types/events.ts` | TypeScript event type definitions matching backend events.py |
 
 ## Scripts
@@ -101,6 +105,7 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 - **Message dedup**: The hook generates a `crypto.randomUUID()` as `request_id`, adds it to the WS payload and an optimistic message. When the server echoes the `user_message` event with matching `_metadata._request_id`, the reducer updates timestamps instead of adding a duplicate.
 - **Error display**: Backend errors (unsupported commands, rejected operations) arrive as `error` events. The reducer surfaces them as system-role messages with `⚠` prefix — visible in-chat, not persisted.
 - **Session isolation**: `useWebUIStream.reducer.ts` filters every incoming event by `conversation_id`. Events for a non-selected conversation are buffered in `sessionMessages`, preventing streaming output from leaking between conversations.
+- Shell configuration lives in Settings → Pools → agent → Capabilities → shell. Keep its modes schema-driven from `/api/scope/options`; do not restore `use_terminal`, a root-level terminal checkbox, or independent companion-tool controls.
 
 ### Common Patterns
 - Events from backend are typed in `types/events.ts` — must match `bot/webui/events.py`.

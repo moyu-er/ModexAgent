@@ -56,20 +56,20 @@ class TestExternalSessionMapStoreConformance:
     async def test_commit_then_resolve_returns_provider_sid(
         self, session_map_store: ExternalSessionMapStore
     ) -> None:
-        await session_map_store.commit("modex-1", "provider-abc", ProviderKind.PI)
+        await session_map_store.commit("modex-1", "provider-abc", ProviderKind.OPENCODE)
         assert session_map_store.resolve("modex-1") == ("provider-abc", True)
 
     async def test_commit_upsert_replaces_provider_sid(
         self, session_map_store: ExternalSessionMapStore
     ) -> None:
-        await session_map_store.commit("modex-1", "old-sid", ProviderKind.PI)
-        await session_map_store.commit("modex-1", "new-sid", ProviderKind.PI)
+        await session_map_store.commit("modex-1", "old-sid", ProviderKind.OPENCODE)
+        await session_map_store.commit("modex-1", "new-sid", ProviderKind.OPENCODE)
         assert session_map_store.resolve("modex-1") == ("new-sid", True)
 
     async def test_commit_different_sessions_are_independent(
         self, session_map_store: ExternalSessionMapStore
     ) -> None:
-        await session_map_store.commit("modex-1", "sid-1", ProviderKind.PI)
+        await session_map_store.commit("modex-1", "sid-1", ProviderKind.OPENCODE)
         await session_map_store.commit("modex-2", "sid-2", ProviderKind.OPENCODE)
         assert session_map_store.resolve("modex-1") == ("sid-1", True)
         assert session_map_store.resolve("modex-2") == ("sid-2", True)
@@ -77,7 +77,7 @@ class TestExternalSessionMapStoreConformance:
     async def test_invalidate_then_resolve_returns_none_false(
         self, session_map_store: ExternalSessionMapStore
     ) -> None:
-        await session_map_store.commit("modex-1", "sid-1", ProviderKind.PI)
+        await session_map_store.commit("modex-1", "sid-1", ProviderKind.OPENCODE)
         await session_map_store.invalidate("modex-1")
         assert session_map_store.resolve("modex-1") == (None, False)
 
@@ -89,8 +89,8 @@ class TestExternalSessionMapStoreConformance:
     async def test_invalidate_does_not_affect_other_sessions(
         self, session_map_store: ExternalSessionMapStore
     ) -> None:
-        await session_map_store.commit("modex-1", "sid-1", ProviderKind.PI)
-        await session_map_store.commit("modex-2", "sid-2", ProviderKind.PI)
+        await session_map_store.commit("modex-1", "sid-1", ProviderKind.OPENCODE)
+        await session_map_store.commit("modex-2", "sid-2", ProviderKind.OPENCODE)
         await session_map_store.invalidate("modex-1")
         assert session_map_store.resolve("modex-1") == (None, False)
         assert session_map_store.resolve("modex-2") == ("sid-2", True)
@@ -98,7 +98,7 @@ class TestExternalSessionMapStoreConformance:
     async def test_commit_after_invalidate_reactivates(
         self, session_map_store: ExternalSessionMapStore
     ) -> None:
-        await session_map_store.commit("modex-1", "sid-1", ProviderKind.PI)
+        await session_map_store.commit("modex-1", "sid-1", ProviderKind.OPENCODE)
         await session_map_store.invalidate("modex-1")
-        await session_map_store.commit("modex-1", "sid-2", ProviderKind.PI)
+        await session_map_store.commit("modex-1", "sid-2", ProviderKind.OPENCODE)
         assert session_map_store.resolve("modex-1") == ("sid-2", True)

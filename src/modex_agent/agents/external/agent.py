@@ -1,7 +1,7 @@
 """``ExternalAgent`` — the framework-side harness for external coding CLIs.
 
 This module owns the full per-turn lifecycle that wraps any provider
-backend (Pi, OpenCode, future Claude Code / Codex / Cursor):
+backend (OpenCode, future Claude Code / Codex / Cursor):
 
 1. Set ``current_agent_context`` (mirrors :class:`ReActAgent` — see the
    ``set``/``reset`` pair bracketing ``run``).
@@ -27,7 +27,7 @@ Design note — streaming contract
 streaming events to the emitter in real time. Rather than widen T1's
 frozen ABC, this module introduces :class:`StreamingProviderBackend`, a
 subclass that adds ``execute_streaming(opts, env, on_emission)``. Real
-backends (T7's ``PiBackend`` / ``OpenCodeBackend``) implement
+backends (T7's ``OpenCodeBackend``) implement
 ``execute_streaming`` directly, spawning the CLI via the T3 OS layer
 and invoking ``on_emission`` per parsed stdout line. The
 :class:`ScriptedStreamingAdapter` adapts T3's

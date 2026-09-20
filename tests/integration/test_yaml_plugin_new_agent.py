@@ -37,6 +37,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel, ConfigDict
 
+from modex_agent.core.tool_manager import Tool
 from modex_agent.hook import Hook, HookRunner
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.plugins.abc import (
@@ -94,8 +95,21 @@ pytestmark = [
 
 # ─── Sentinels ──────────────────────────────────────────────────────────────
 
-_CUSTOM_TOOL = MagicMock()
-_CUSTOM_TOOL.name = "custom_tool"
+
+class _CustomTool(Tool):
+    def __init__(self) -> None:
+        super().__init__(
+            name="custom_tool",
+            description="Integration fixture tool",
+            parameters={"type": "object", "properties": {}},
+        )
+
+    async def execute(self, **kwargs: object) -> str:
+        del kwargs
+        return "custom tool result"
+
+
+_CUSTOM_TOOL = _CustomTool()
 
 
 class _ProbeHook(Hook):
@@ -296,7 +310,7 @@ class TestYamlPluginNewAgent:
         spec = _compiled_sub_spec(_DECLARATION, tmp_path, "testagent", registry)
 
         # 5. Verify the spec references the custom components
-        assert "custom_tool" in spec.tools
+        assert "custom_tool" in [e.name for e in spec.tools]
         assert "custom_hook" in spec.hooks
 
         # 6. Run AgentAssembleStage — resolves all components from registry
@@ -338,7 +352,7 @@ class TestYamlPluginNewAgent:
         spec = _compiled_sub_spec(_PLAIN_DECLARATION, tmp_path, "plainagent", registry)
 
         # The plain agent does NOT reference custom components
-        assert "custom_tool" not in spec.tools
+        assert "custom_tool" not in [e.name for e in spec.tools]
         assert "custom_hook" not in spec.hooks
 
         ctx = AssemblyContext(
@@ -379,19 +393,20 @@ class TestNestedSubagentDemo:
 
         spec = _compiled_sub_spec(_NESTED_DECLARATION, tmp_path, "mid", registry)
         # Custom toolset: the declared +/- merge landed on the position default.
-        assert "custom_tool" in spec.tools
-        assert "bash" not in spec.tools
+        assert "custom_tool" in [e.name for e in spec.tools]
+        assert "bash" not in [e.name for e in spec.tools]
         # Tree derivation: mid has a declared child → task; non-root →
         # send_to_agent. No code anywhere names "mid" or "leaf".
-        assert "task" in spec.tools
-        assert "send_to_agent" in spec.tools
+        assert "task" in [e.name for e in spec.tools]
+        assert "send_to_agent" in [e.name for e in spec.tools]
         assert "custom_hook" in spec.hooks
 
         # The leaf two levels down derives its own face from the same YAML.
         leaf = _compiled_sub_spec(_NESTED_DECLARATION, tmp_path, "leaf", registry)
-        assert "send_to_agent" in leaf.tools
-        assert "task" not in leaf.tools
-        assert "custom_tool" not in leaf.tools
+        leaf_tool_names = [entry.name for entry in leaf.tools]
+        assert "send_to_agent" in leaf_tool_names
+        assert "task" not in leaf_tool_names
+        assert "custom_tool" not in leaf_tool_names
 
         # And the mid-level agent ASSEMBLES through the production stage —
         # the plugin's custom components resolve against the registry.

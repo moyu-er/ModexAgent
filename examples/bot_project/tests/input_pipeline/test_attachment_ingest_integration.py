@@ -62,6 +62,7 @@ async def test_pipeline_turns_attachment_ref_into_persisted_attachment() -> None
 
         pool_store = MagicMock()
         pool_store.get.return_value = "main"
+        pool_store.get_pool.return_value = "main"
         cmd = MagicMock()
         cmd._try_intercept_control = AsyncMock(return_value=False)
 
@@ -119,6 +120,7 @@ async def test_pipeline_noop_when_no_attachments() -> None:
 
         pool_store = MagicMock()
         pool_store.get.return_value = "main"
+        pool_store.get_pool.return_value = "main"
         cmd = MagicMock()
         cmd._try_intercept_control = AsyncMock(return_value=False)
 

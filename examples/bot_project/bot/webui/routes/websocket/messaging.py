@@ -105,11 +105,14 @@ async def handle_send_message(
         tree_resolved_pool = await session_pool_index.pool_of(session_id)
     routing_pool = explicit_pool or tree_resolved_pool
     if routing_pool is None:
+        # Storage-partition + envelope display fallback owned HERE (infra
+        # callers apply their own explicit fallback per the routing contract;
+        # the product preference default decides new selections elsewhere).
         routing_pool = (
             server._resolve_pool_for_request(None, uuid_prefix)
             if uuid_prefix
             else _DEFAULT_AGENT_NAME
-        )
+        ) or _DEFAULT_AGENT_NAME
 
     # The session was already established upstream (attach / create_session).
     # Pass it through so the pipeline reuses session.session_id verbatim
@@ -144,7 +147,7 @@ async def handle_send_message(
             # Resolve before the containment check so symlinks / ``..``
             # segments cannot escape the staging dir.
             try:
-                resolved = Path(local_path).resolve()
+                resolved_path = Path(local_path).resolve()
             except (OSError, ValueError) as exc:
                 logger.warning(
                     "Dropping WS attachment %r: path unresolvable (%s)",
@@ -152,7 +155,7 @@ async def handle_send_message(
                     exc,
                 )
                 continue
-            if not resolved.is_relative_to(staging_root):
+            if not resolved_path.is_relative_to(staging_root):
                 logger.warning(
                     "Dropping WS attachment %r: outside staging dir %s "
                     "(path-traversal rejection)",

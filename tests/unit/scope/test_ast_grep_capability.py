@@ -2,16 +2,14 @@
 
 Covers the three faces of the migration:
 
-- **Golden equality** — the declaration shapes captured on the
-  pre-migration HEAD (retired supplement face, fixture
-  ``ast_grep_goldens/facets.json``) recompiled through the NEW face
-  (``capabilities: {ast_grep: {}}``) must produce IDENTICAL facets: the
-  ordered final roster, the ordered provenance tool entries, and the
-  replacement records (always empty — ast_grep is tools-only), with the
-  explicit T21 capability-origin reclassification exemption.
+- **Golden equality** — the declaration shapes (fixture
+  ``ast_grep_goldens/facets.json``, regenerable via
+  ``ast_grep_goldens/capture_ast_grep_goldens.py``) must produce
+  IDENTICAL facets: the ordered final roster and the ordered provenance
+  tool entries.
 - **Protocol shape** — ``AstGrepCapability`` is a pure opt-in bundle
   contributing the two ast tool registry names into the roster merge
-  base; no replacements, no hooks, no sections.
+  base; no hooks, no sections.
 - **Old-face death** — the retired supplement declaration key is a
   LOUD loader rejection: the field is gone from the frozen
   extra-``forbid`` model, so any value under it surfaces as an
@@ -45,31 +43,6 @@ _DIR = Path(__file__).resolve().parent
 _GOLDEN_PATH = _DIR / "ast_grep_goldens" / "facets.json"
 
 AST_TOOLS = ("ast_grep_search", "ast_grep_replace")
-_ORIGIN_EXEMPTIONS = {
-    "ast_grep_search": (
-        "origin reclassified SUPPLEMENT→CAPABILITY_DERIVED — the channel's true name, SPEC §9"
-    ),
-    "ast_grep_replace": (
-        "origin reclassified SUPPLEMENT→CAPABILITY_DERIVED — the channel's true name, SPEC §9"
-    ),
-    "todo_read": (
-        "origin reclassified SUPPLEMENT→CAPABILITY_DERIVED — the channel's true name, SPEC §9"
-    ),
-    "todo_write": (
-        "origin reclassified SUPPLEMENT→CAPABILITY_DERIVED — the channel's true name, SPEC §9"
-    ),
-}
-
-
-def _golden_tools_with_origin_exemptions(
-    entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    return [
-        {**entry, "origin": "capability_derived"}
-        if entry["tool"] in _ORIGIN_EXEMPTIONS and entry["origin"] == "supplement"
-        else entry
-        for entry in entries
-    ]
 
 
 # The three captured shapes, on the capability face: the declaration's
@@ -145,18 +118,14 @@ def _compile(text: str) -> dict[str, dict[str, Any]]:
     for compiled in compilation.agents:
         prov = compiled.provenance
         agents[prov.agent] = {
-            "roster": list(compiled.spec.tools),
+            "roster": [entry.name for entry in compiled.spec.tools],
             "provenance_tools": [
                 {
                     "tool": e.tool,
                     "origin": e.origin.value,
-                    "replaces": e.replaces,
                     "targets": list(e.targets),
                 }
                 for e in prov.tools
-            ],
-            "replacements": [
-                (r.default_tool, r.replacement_tool, r.capability) for r in prov.replacements
             ],
         }
     return agents
@@ -171,7 +140,7 @@ class TestGoldenEquality:
     The golden was captured on the pre-migration HEAD by
     ``ast_grep_goldens/capture_ast_grep_goldens.py``; roster ORDER and
     provenance entry order are part of the facet (strict equality, no
-    fuzzy match), apart from the explicit T21 origin table above.
+    fuzzy match).
     """
 
     @pytest.mark.parametrize("shape", sorted(_NEW_FACE_DECLARATIONS))
@@ -185,15 +154,11 @@ class TestGoldenEquality:
             got = actual[agent]
             want = golden[agent]
             assert got["roster"] == want["roster"], (shape, agent, "roster")
-            assert got["provenance_tools"] == _golden_tools_with_origin_exemptions(
-                want["provenance_tools"]
-            ), (
+            assert got["provenance_tools"] == want["provenance_tools"], (
                 shape,
                 agent,
                 "provenance_tools",
             )
-            assert got["replacements"] == [], (shape, agent, "replacements")
-            assert want["replacements"] == [], (shape, agent, "golden replacements")
 
 
 # ─── Protocol shape ─────────────────────────────────────────────────────────
@@ -223,7 +188,6 @@ class TestAstGrepCapabilityProtocol:
         capability = AstGrepCapability()
         contribution = capability.contribute(_tree_view(), capability.config_model())
         assert contribution.tools == AST_TOOLS
-        assert contribution.tool_replacements == ()
         assert contribution.hooks == ()
         assert contribution.sections == ()
 
@@ -253,7 +217,6 @@ class TestDeclaredCompile:
         entries = {e["tool"]: e for e in self._root()["provenance_tools"]}
         for name in AST_TOOLS:
             assert entries[name]["origin"] == "capability_derived"
-            assert entries[name]["replaces"] is None
 
     def test_compiled_capability_block_shape(self) -> None:
         with TemporaryDirectory() as tmp:

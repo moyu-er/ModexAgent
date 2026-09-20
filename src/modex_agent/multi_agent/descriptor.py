@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +13,7 @@ from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.tool_group import ToolGroupResource
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.memory.context import ContextManager
 from modex_agent.multi_agent.address import AgentAddress
@@ -142,12 +145,63 @@ class AgentInstance:
     pipeline: AgentPipeline | None = None
     delegation: DelegationSnapshot | None = None
     """Spawn-time permissions and effective capability limits, including external runners."""
+    resources: tuple[ToolGroupResource, ...] = ()
+    _stopped: bool = dataclass_field(default=False, init=False, repr=False)
+    _drain_confirmed: bool = dataclass_field(default=False, init=False, repr=False)
+    _stop_lock: asyncio.Lock = dataclass_field(
+        default_factory=asyncio.Lock,
+        init=False,
+        repr=False,
+    )
 
-    async def stop(self) -> None:
+    def adopt_resources(self, resources: tuple[ToolGroupResource, ...]) -> None:
+        """Attach newly assembled resources to this instance's lifecycle."""
+        if self._stopped:
+            raise RuntimeError("cannot adopt resources after the agent instance stopped")
+        adopted = list(self.resources)
+        for resource in resources:
+            if all(existing is not resource for existing in adopted):
+                adopted.append(resource)
+        self.resources = tuple(adopted)
+
+    async def stop(self) -> bool:
         """优雅停止该实例并释放资源。"""
-        if self.pipeline is None:
-            return
-        try:
-            await self.pipeline.stop()
-        finally:
-            await self.pipeline.agent.stop()
+        async with self._stop_lock:
+            if self._stopped:
+                return True
+            pipeline_error: BaseException | None = None
+            if self.pipeline is not None:
+                try:
+                    drained = await self.pipeline.stop()
+                except BaseException as exc:
+                    pipeline_error = exc
+                    drained = self.pipeline.turns_drained
+                if not drained:
+                    if pipeline_error is not None:
+                        raise pipeline_error
+                    return False
+            self._drain_confirmed = True
+
+            first_error: BaseException | None = None
+            # Resources are adopted in dependency order (sandbox, then shell).
+            # A failed dependent retains its prerequisites for the next stop;
+            # closing the sandbox under a still-live shell is not cleanup.
+            while self.resources:
+                resource = self.resources[-1]
+                try:
+                    await resource.aclose()
+                except BaseException as exc:
+                    first_error = exc
+                    break
+                self.resources = self.resources[:-1]
+            if pipeline_error is not None:
+                raise pipeline_error
+            if first_error is not None:
+                raise first_error
+            self._stopped = True
+            return True
+
+    @property
+    def drain_confirmed(self) -> bool:
+        """Whether turn admission closed and all in-flight work settled."""
+        return self._drain_confirmed

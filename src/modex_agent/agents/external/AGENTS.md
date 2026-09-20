@@ -50,8 +50,6 @@ models, and owns provider resources through one lifecycle interface.
 | `providers/opencode_v2_client.py` | Typed HTTP client. V1 methods (`create_session_v1`, `prompt_async_v1`, `get_session_status_v1`, `get_messages_v1`, `abort_session_v1`) are live; V2 methods are kept for migration but unused. |
 | `providers/opencode_v2_parser.py` | SSE event parser for V1+V2 events. `_main_session_ids` set mutated via `add_main_session` / `remove_main_session`. |
 | `providers/opencode_v2_sse_reader.py` | Persistent `/event` SSE reader with per-session demux, child auto-discovery, stall reconnect, replay |
-| `providers/pi_backend.py` | Per-turn Pi backend |
-| `providers/pi_parser.py` | Pi JSONL stdout parser |
 
 ## Lifecycle Ownership
 
@@ -235,9 +233,8 @@ reader, which auto-discovers the child session. The parser tags
 `Emission.source_session_id` from the event's `data.sessionID` when it
 differs from the main session. The JSONL stdout parsers
 (`OpenCodeEventParser`) do not carry per-event session
-IDs, so child sessions are invisible under `opencode run --format json`
-and Pi's JSONL output. Only the shared `opencode serve` SSE path surfaces
-child events.
+IDs, so child sessions are invisible under `opencode run --format json`.
+Only the shared `opencode serve` SSE path surfaces child events.
 
 ### Routing in `_handle_emission`
 
@@ -381,9 +378,8 @@ turn ends. For external subagents:
   shared `opencode serve` process from `OpenCodeServerManager`. There is no
   fallback mechanism: the manager plus watchdog guarantee reliability, and the
   manager raises `RuntimeError` if the process cannot be brought up.
-- Pi is a per-turn subprocess adapter.
-- Session continuity is provider-specific but storage-neutral: Pi resumes a
-  workdir-contained JSONL path; OpenCode resumes a provider-minted id.
+- Session continuity is provider-specific but storage-neutral: OpenCode
+  resumes a provider-minted id.
 - Provider-native session data is the context source of truth. ModexAgent's
   transcript is a UI projection and is not fed back as provider memory.
 
@@ -401,7 +397,7 @@ turn ends. For external subagents:
 
 ## Testing
 
-- Unit tests never require real Pi/OpenCode APIs. Use scripted adapters or
+- Unit tests never require real OpenCode APIs. Use scripted adapters or
   mocked process/network boundaries.
 - Lifecycle tests cover readiness rollback, cancellation, final reap,
   spawn/close races, all-settled cleanup, close retry, concurrent agent/pool

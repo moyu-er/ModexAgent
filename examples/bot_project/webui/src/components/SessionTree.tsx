@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FC } from "react";
-import { MessageSquare } from "lucide-react";
+import { MessageSquare, Pencil } from "lucide-react";
 import { formatShort } from "../lib/timezone";
 import type { TreeNode } from "../lib/sessionTree";
+import { sessionDisplayTitle } from "../lib/sessionTree";
 import { ChevronToggleIcon, XIcon } from "./ui/icons";
 import { IconButton } from "./ui/IconButton";
 import { useT } from "../i18n";
@@ -21,6 +22,8 @@ export interface SessionTreeProps {
    * so the node appears in the tree — cascading through grandparents.
    */
   revealSessionId?: string | null;
+  /** Open the shared rename dialog for a session (PA-02). */
+  onRename?: (sessionId: string) => void;
 }
 
 /** Flatten the tree into a session_id → parent_session_id map. */
@@ -58,11 +61,15 @@ const SessionNode: FC<{
   onSelect: (sessionId: string) => void;
   onToggleExpand: (sessionId: string) => void;
   onDelete: (sessionId: string) => void;
-}> = ({ node, depth, expanded, selected, onSelect, onToggleExpand, onDelete }) => {
+  onRename?: (sessionId: string) => void;
+}> = ({ node, depth, expanded, selected, onSelect, onToggleExpand, onDelete, onRename }) => {
   const t = useT();
   const hasChildren = node.children.length > 0;
   const isSelected = node.session_id === selected;
   const isRoot = node.parent_session_id === null;
+  // Shared display title (PA-02): metadata.title when it trims non-empty,
+  // else the FULL session id — one function for sidebar + header alike.
+  const label = sessionDisplayTitle(node.session_id, node.metadata);
 
   return (
     <div>
@@ -124,7 +131,7 @@ const SessionNode: FC<{
               {isRoot && (
                 <MessageSquare size={13} className="shrink-0 text-faint" />
               )}
-              <span className="truncate">{node.displayName}</span>
+              <span className="truncate" title={label}>{label}</span>
             </span>
             {typeof node.updated_at === "number" && (
               <span className="block truncate text-xs font-sans text-faint">
@@ -132,6 +139,21 @@ const SessionNode: FC<{
               </span>
             )}
           </button>
+
+          {/* Rename — shared entry for every session (PA-02) */}
+          {onRename && (
+            <IconButton
+              label={t("sessions.renameConversation")}
+              size="sm"
+              variant="ghost"
+              onClick={(e): void => {
+                e.stopPropagation();
+                onRename(node.session_id);
+              }}
+              icon={<Pencil size={13} />}
+              className="text-faint hover:text-ink focus-visible:ring-brand"
+            />
+          )}
 
           {/* Delete — only for root sessions */}
           {isRoot && (
@@ -162,6 +184,7 @@ const SessionNode: FC<{
             onSelect={onSelect}
             onToggleExpand={onToggleExpand}
             onDelete={onDelete}
+            onRename={onRename}
           />
         ))}
     </div>
@@ -174,6 +197,7 @@ export const SessionTree: FC<SessionTreeProps> = ({
   onSelect,
   onDelete,
   revealSessionId = null,
+  onRename,
 }) => {
   // Expansion is owned here so a reveal can cascade-expand ancestor chains
   // without clobbering per-node toggle state.  All nodes start collapsed.
@@ -227,6 +251,7 @@ export const SessionTree: FC<SessionTreeProps> = ({
           onSelect={onSelect}
           onToggleExpand={toggle}
           onDelete={onDelete}
+          onRename={onRename}
         />
       ))}
     </>

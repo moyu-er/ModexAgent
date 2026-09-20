@@ -136,6 +136,35 @@ class TestRegisterResidentTakesInstance:
         assert pool.get_status("main") == AgentState.IDLE
         # Verify instance was stored (no consumer task — _consumers dict is deleted)
 
+    async def test_unregister_resident_removes_exact_instance(self, pool):
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
+
+        descriptor = AgentDescriptor(address=AgentAddress(name="main"))
+        instance = MagicMock()
+        instance.stop = AsyncMock(return_value=True)
+        await pool.register_resident(descriptor, instance)
+
+        assert pool.unregister_resident(descriptor, instance) is True
+        assert pool.get("main") is None
+        assert pool.get_status("main") is AgentState.SHUTDOWN
+
+    async def test_unregister_resident_preserves_replacement(self, pool):
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
+
+        descriptor = AgentDescriptor(address=AgentAddress(name="main"))
+        original = MagicMock()
+        original.stop = AsyncMock(return_value=True)
+        replacement = MagicMock()
+        replacement.stop = AsyncMock(return_value=True)
+        await pool.register_resident(descriptor, original)
+        await pool.register_resident(descriptor, replacement)
+
+        assert pool.unregister_resident(descriptor, original) is False
+        assert pool.get("main") is replacement
+        assert pool.get_status("main") is AgentState.IDLE
+
     async def test_track_session_registers_correct_session_id(self):
         """Regression: _track_session called factory.create with
         external_id=session_id (a full '{prefix}.{agent}' string), causing
@@ -323,6 +352,33 @@ class TestShutdownOwnership:
         # Then
         assert first_completed is False
         assert second_completed is True
+        assert stop.await_count == 2
+        assert pool.get("retryable") is None
+
+    @pytest.mark.asyncio
+    async def test_false_stop_result_retains_owner_for_shutdown_retry(self) -> None:
+        pool = AgentPool(broker=_FakeBroker(), agent_factory=MagicMock())
+        stop = AsyncMock(side_effect=[False, True])
+        await self._register(pool, "retryable", stop)
+        owner = pool.get("retryable")
+
+        assert await pool.shutdown_all(timeout=0.1) is False
+        assert pool.get("retryable") is owner
+        assert pool.get_status("retryable") is AgentState.SHUTTING_DOWN
+
+        assert await pool.shutdown_all(timeout=0.1) is True
+        assert stop.await_count == 2
+        assert pool.get("retryable") is None
+
+    @pytest.mark.asyncio
+    async def test_idle_shutdown_propagates_false_and_can_retry(self) -> None:
+        pool = AgentPool(broker=_FakeBroker(), agent_factory=MagicMock())
+        stop = AsyncMock(side_effect=[False, True])
+        await self._register(pool, "retryable", stop)
+
+        assert await pool._shutdown_agent("retryable") is False
+        assert pool.get("retryable") is not None
+        assert await pool._shutdown_agent("retryable") is True
         assert stop.await_count == 2
         assert pool.get("retryable") is None
 

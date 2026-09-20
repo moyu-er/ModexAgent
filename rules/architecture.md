@@ -60,3 +60,13 @@
     deprecation aliases, or "fall back to old behavior if X is None"
     guards for code you just wrote — if the old path is wrong, remove it;
     if it's right, converge to it.
+16. **Goal-scoped completeness, not minimum diff.** Bound the change by the
+    requested behavior, then follow that concern through all affected callers,
+    configuration, resource ownership and persistence adapters. Necessary
+    module extraction, typed dependencies and multi-file wiring are warranted
+    when they improve depth, locality and reuse for real callers. Complete a
+    replacement by removing its superseded production paths and orphaned state,
+    preserving behavioral test coverage through the new interface. Verify the
+    actual assembled call pattern and record evidence before declaring the
+    feature complete. Unrelated cleanup and hypothetical extension mechanisms
+    remain outside the task; preserve unfamiliar user work.

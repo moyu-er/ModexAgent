@@ -25,7 +25,8 @@ Design constraints:
 - C0/C1/C2 are deterministic pure functions (SPEC P1): no IO, no clocks,
   no registry reads — violations break the spec-hash byte-stability
   contract.
-- This module imports ONLY pydantic + abc + pathlib at runtime. The
+- This module imports only pydantic, stdlib, and the leaf ``core.tool_group``
+  value contract at runtime. The
   dependency direction is scope→plugins (``scope/compiler.py`` imports
   ``plugins.assembly.spec``); importing ``modex_agent.scope`` here would
   invert it. ``AgentContext`` and ``SystemPromptProvider`` are
@@ -42,6 +43,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from modex_agent.core.tool_group import ToolGroupSpec
 
 if TYPE_CHECKING:
     # Forward references only — this module stays import-light at
@@ -74,7 +77,6 @@ __all__ = [
     "PoolSupplyView",
     "PromptSectionSpec",
     "SectionPlacement",
-    "ToolReplacementSpec",
     "TreePositionView",
 ]
 
@@ -143,8 +145,7 @@ class Capability(ABC):
 
         Contributed tool/hook names enter the roster merge BASE (so the
         component-level veto ``tools: [-x]`` / ``hooks: [-y]`` still
-        applies to them), ``tool_replacements`` record O3 same-name
-        replacements, ``sections`` are collected for C2 gating, and
+        applies to them), ``sections`` are collected for C2 gating, and
         ``derived_tools`` carry tree-derived entries through the compiler's
         derived-entry machinery (origin + targets ride the spec — the
         provenance bill vocabulary, not the plain merge base). Default:
@@ -237,7 +238,6 @@ class AgentDeclaredFields(BaseModel):
     """Hook roster declaration (verbatim, merge prefixes included)."""
 
     mcp: list[str] = Field(default_factory=list)
-    use_terminal: bool = False
     execution_strategy: str = "react"
     """Mirrors ``AgentSpec``'s ``ExecutionStrategyKind.REACT`` default."""
 
@@ -305,31 +305,14 @@ class FinalRosterView(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ToolReplacementSpec(BaseModel):
-    """Contribution-level tool replacement declaration (SPEC §4, the O3
-    same-name replacement pattern).
-
-    Generalizes the compiler's historical ACI special case: when both
-    names survive the merge, ``replaced_tool`` is served by
-    ``replacement_tool``'s implementation. The compiler-side provenance
-    record is the scope layer's separate concern — this module never
-    imports it.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    replaced_tool: str
-    replacement_tool: str
-
-
 class DerivedToolOrigin(StrEnum):
     """Origin vocabulary for tree-derived tool entries (SPEC §8.4 / A3).
 
     The capability-channel face of the compile product's provenance
     vocabulary: the scope compiler maps each member onto the
-    identically-valued ``ToolOrigin`` member (``scope/compiler.py`` owns
-    the full classification enum — capability.py stays import-light, and
-    the dependency direction is scope→plugins). Values are the bill's
+    identically-valued ``ToolOrigin`` member (``core/tool_manager.py``
+    owns the full classification enum — capability.py stays import-light
+    and maps by value, no runtime import needed). Values are the bill's
     wire format; a member with no ``ToolOrigin`` counterpart fails the
     compile loudly.
     """
@@ -392,6 +375,9 @@ class CapabilityContribution(BaseModel):
     tools: tuple[str, ...] = ()
     """Tool names entering the roster merge base."""
 
+    tool_groups: tuple[ToolGroupSpec, ...] = ()
+    """Variant manifests for group anchors contributed through ``tools``."""
+
     derived_tools: tuple[DerivedToolSpec, ...] = ()
     """Tree-derived tool entries entering the merge base THROUGH the
     derived-entry machinery (origin + targets preserved — SPEC §8.4 A3).
@@ -399,7 +385,6 @@ class CapabilityContribution(BaseModel):
     tree derivation; a name listed here should not also appear in
     ``tools`` (the derived channel owns its classification)."""
 
-    tool_replacements: tuple[ToolReplacementSpec, ...] = ()
     hooks: tuple[str, ...] = ()
     """Hook names entering merged_hooks."""
 
@@ -439,9 +424,6 @@ class CompiledCapability(BaseModel):
     Carries only frozen data (name + validated config + binding): the
     capability OBJECT never enters the compile product (spec-hash
     byte-stability) — assembly re-resolves by name from the registry.
-    O3 tool-replacement declarations live ONLY in the scope layer's
-    ``ToolReplacement`` provenance records (applied by the compiler at
-    the post-merge application point) — no parallel copy here.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

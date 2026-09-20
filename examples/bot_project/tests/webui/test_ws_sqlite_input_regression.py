@@ -73,6 +73,7 @@ async def test_ws_sqlite_send_persists_user_before_enqueue(tmp_path: Path) -> No
     server.set_session_factory(SessionIdFactory())
     pool_store = MagicMock()
     pool_store.get.return_value = "main"
+    pool_store.get_pool.return_value = "main"
     server.set_input_pipeline(
         await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,
@@ -200,6 +201,7 @@ async def test_ws_sqlite_send_reaches_workspace_dispatcher(tmp_path: Path) -> No
     server.set_session_factory(SessionIdFactory())
     pool_store = MagicMock()
     pool_store.get.return_value = "main"
+    pool_store.get_pool.return_value = "main"
     server.set_input_pipeline(
         await build_webui_pipeline(
             registry=TEST_COMPONENT_REGISTRY,

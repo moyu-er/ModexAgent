@@ -10,7 +10,7 @@
 
 Write a **Capability** when your components bind together: enabling one should enable the set, and the set has an internal coherence your users should not have to re-assemble by hand (a tool whose hook reads the tool's store; a prompt section that documents the tool). A capability packages:
 
-- tool names (plus optional same-name tool replacements and tree-derived entries),
+- tool names (plus tree-derived entries; a same-name upgrade emerges from name-slot overwrite at assembly — both roster entries survive the compile with their origins),
 - hook names,
 - prompt sections,
 - a pool-level supply (stores/services/background workers),
@@ -20,7 +20,7 @@ behind one registration name that is also the declaration key.
 
 **Do not write one for a single component.** A lone hook (or lone tool) continues to be a plain slot registration — that is a legitimate, complete plugin shape. The reference walkthrough is `examples/bot_project/plugins/reference_collector.py`: a `Plugin` subclass registering one HOOK-slot factory under the name `reference_collector`, referenced from YAML with `hooks: [+reference_collector]`. No capability, no enablement predicate — nothing about it needs bundling. Promote to a capability only when the second bound element appears.
 
-The framework's own five bundled capabilities (`aci`, `ast_grep`, `todo`, `experience`, `subagents` — `src/modex_agent/plugins/defaults/capabilities/`) are worked examples of every shape: tools-only (`ast_grep`), tool+replacement (`aci`), full four-element (`todo`, `experience`), and tree-derived dynamic enablement (`subagents`).
+The framework's own five bundled capabilities (`aci`, `ast_grep`, `todo`, `experience`, `subagents` — `src/modex_agent/plugins/defaults/capabilities/`) are worked examples of every shape: tools-only (`ast_grep`), tools-with emergent same-name overwrite (`aci`), full four-element (`todo`, `experience`), and tree-derived dynamic enablement (`subagents`).
 
 ## 2. The five-phase protocol
 
@@ -250,7 +250,7 @@ Also cover your failure paths — they are contracts:
 |---|---|
 | `name` + `config_model` (frozen, `extra="forbid"`) | compile-time config validation; config travels in the compile product |
 | `applies(view)` (default `False`) | C0: effective set = auto ∆ `capabilities:` overrides; three-state bill entries |
-| `contribute(tree, config)` (default empty) | C1: names enter the roster merge base; replacements applied post-merge; derived entries carry origin+targets |
+| `contribute(tree, config)` (default empty) | C1: names enter the roster merge base (a same-name upgrade is settled at assembly by `ToolOrigin` rank, not here); derived entries carry origin+targets |
 | `bind(tree, config, final)` (default pass-through) | C2: anchors + `binding.hooks` vouching; `CapabilityError` = boot fail |
 | `supply(view)` (default `None`) | once per pool, iff effective somewhere; start/stop lifecycle; indexed in `capability_supply` |
 | `assemble(binding, ctx)` (abstract) | per capability-effective agent; sections → prompt anchor; artifacts → factories via the context chain |

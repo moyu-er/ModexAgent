@@ -21,7 +21,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.pool import create_pool
 from bot.service.pool.declaration import (
@@ -34,6 +33,7 @@ from bot.workspace.handle import WorkspaceHandle
 from bot.workspace.pool_data import build_pool_data
 from bot.workspace.wiring.stack import declared_assembly_deps
 
+from examples.bot_project.tests.service._title_support import title_workspace
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
@@ -54,6 +54,7 @@ from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import (
     ComponentRegistryLoader,
     PluginDiscoveryConfig,
+    PluginSource,
 )
 from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.tools.terminal.persistent_bash import persistent_bash_supported
@@ -102,14 +103,18 @@ async def _load_registry() -> ComponentRegistry:
 
 
 def _compile_registry() -> ComponentRegistry:
-    """DefaultPlugin-only registry for the compile step (the shipped
-    declaration's ``capabilities:`` blocks resolve against it)."""
+    """Production-priority capability registry for the compile step."""
+    from plugins.bot_shell import BotShellPlugin
+
     from modex_agent.plugins.loader import PluginRegistrationContext
 
     registry = ComponentRegistry()
-    ctx = PluginRegistrationContext(registry)
-    DefaultPlugin().register(ctx)
-    ctx.flush()
+    bundled = PluginRegistrationContext(registry, source=PluginSource.BUNDLED)
+    DefaultPlugin().register(bundled)
+    bundled.flush()
+    project = PluginRegistrationContext(registry, source=PluginSource.PROJECT)
+    BotShellPlugin().register(project)
+    project.flush()
     return registry
 
 
@@ -205,6 +210,7 @@ async def _create_declared_pool(
     )
     broker = InMemoryMessageBroker()
     await broker.start()
+    resources = title_workspace(tmp_path, broker)
     instance = None
     try:
         with patch(
@@ -220,7 +226,8 @@ async def _create_declared_pool(
                     target=tmp_path, data_root=tmp_path / '.modex',
                 ),
                 workspace_registry=object(),
-                workspace_resources=object(),
+                workspace_resources=resources,
+                session_registry=resources.session_registry,
                 data_dir=tmp_path / ".modex",
                 broker=broker,
                 output_adapter=MagicMock(spec=OutputAdapter),
@@ -328,9 +335,8 @@ async def test_lazy_materialization_from_compiled_spec(tmp_path: Path) -> None:
         tool_manager = materialized.pipeline.tool_manager
         assert tool_manager is not None
         # The manager lists LLM-facing names — the aci_edit spec entry's
-        # product is the AciEditTool named "edit". POSIX adds the
-        # bash_input companion post-roster (structural pair with the
-        # roster's bash slot).
+        # product is the AciEditTool named "edit". The persistent shell
+        # group adds its structural bash_input member on supported hosts.
         assert sorted(tool_manager.list_tools()) == sorted(
             [n if n != "aci_edit" else "edit" for n in _LAZY_TOOLS_NEW]
             + (["bash_input"] if persistent_bash_supported() else [])
@@ -370,16 +376,26 @@ async def test_restart_round_trip(tmp_path: Path) -> None:
             AgentManifest(
                 agent_name=sub.provenance.agent,
                 materialized=False,
-                effective_spec_tools=list(sub.spec.tools),
+                effective_spec_tools=[entry.name for entry in sub.spec.tools],
             )
             for sub in declared.subagents
         ]
         first_manifest = dump_assembly_manifest(
             instance,
             data_dir=data_dir,
-            source_of=roster_source_map(registry, list(declared.root.spec.tools)),
+            source_of=roster_source_map(registry, [e.name for e in declared.root.spec.tools]),
             lazy_agents=lazy_agents,
         )
+        root_manifest = next(
+            agent for agent in first_manifest.agents if agent.agent_name == "default"
+        )
+        tool_sources = {tool.name: tool.source for tool in root_manifest.tools}
+        shell_group = instance.tool_manager.get_tool_group("bash")
+        assert shell_group is not None
+        assert {
+            tool_sources[tool.name] for tool in shell_group.tools
+        } == {tool_sources["bash"]}
+        assert tool_sources["bash"] != "glue"
         # Exercise state past the boot: the poller's first-dispatch half
         # (lazy materialization) mutates pool + session state before the
         # restart below.
@@ -404,14 +420,14 @@ async def test_restart_round_trip(tmp_path: Path) -> None:
             AgentManifest(
                 agent_name=sub.provenance.agent,
                 materialized=False,
-                effective_spec_tools=list(sub.spec.tools),
+                effective_spec_tools=[entry.name for entry in sub.spec.tools],
             )
             for sub in declared2.subagents
         ]
         second_manifest = dump_assembly_manifest(
             instance2,
             data_dir=data_dir,
-            source_of=roster_source_map(registry2, list(declared2.root.spec.tools)),
+            source_of=roster_source_map(registry2, [e.name for e in declared2.root.spec.tools]),
             lazy_agents=lazy_agents,
         )
         assert second_manifest == first_manifest

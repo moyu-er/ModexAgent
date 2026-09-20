@@ -41,7 +41,7 @@ def _make_sink() -> tuple[ExternalChildSessionDiscoverySink, MagicMock, MagicMoc
         session_factory=factory,
         session_registry=registry,
         session_map_store=store,
-        provider_kind=ProviderKind.PI,
+        provider_kind=ProviderKind.OPENCODE,
     )
     return sink, registry, store
 
@@ -65,7 +65,7 @@ class TestExternalChildSessionDiscoverySink:
         store.commit.assert_awaited_once_with(
             expected_id,
             "child1",
-            ProviderKind.PI,
+            ProviderKind.OPENCODE,
         )
 
     async def test_resolve_has_no_side_effects(self) -> None:

@@ -17,7 +17,6 @@ from modex_agent.messaging.broker import AddressKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.multi_agent.tools import CommunicationTargetStore
-from modex_agent.tools.terminal.managers import TerminalManagerBase
 
 if TYPE_CHECKING:
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
@@ -47,7 +46,6 @@ class PoolInstance:
     resource for the Bot input pipeline's skill stage, NOT a second
     catalog. Subagent resolvers stay bound to their own pipelines."""
     mcp_manager: Any | None
-    terminal_manager: TerminalManagerBase | None
     root_agent_name: str
     main_execution_strategy: ExecutionStrategyKind
     provider: Any

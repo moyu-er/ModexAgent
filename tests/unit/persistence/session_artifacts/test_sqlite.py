@@ -148,7 +148,7 @@ async def _seed_exact_scope_rows(
         await connection.execute(
             "INSERT INTO external_session_map "
             "(modex_session_id, scope_key, provider_session_id, provider_kind, last_committed_at) "
-            "VALUES (?, ?, ?, 'pi', 1)",
+            "VALUES (?, ?, ?, 'opencode', 1)",
             (session_id, scope_key, f"provider-{session_id}"),
         )
 

@@ -139,7 +139,7 @@ def _make_agent(
         backend_provider=PoolScopedBackendProvider(adapter),
         session_store=store,
         parser=_PiCompatibleParser(),
-        provider_kind=ProviderKind.PI,
+        provider_kind=ProviderKind.OPENCODE,
         spec=spec,
         base_env={"PATH": "/usr/bin"},
     )

@@ -1,6 +1,6 @@
 import { AbsoluteFill, interpolate, useCurrentFrame } from "remotion";
 import { Background } from "../components/Background";
-import { Hub } from "../components/Hub";
+import { Mascot } from "../components/Mascot";
 import { C, MONO, SORA, easeExpo } from "../theme";
 
 export const Outro: React.FC = () => {
@@ -35,7 +35,7 @@ export const Outro: React.FC = () => {
         }}
       >
         <div style={{ width: 300, height: 300, opacity: hubOpacity, scale: `${hubScale} ${hubScale}` }}>
-          <Hub size={300} />
+          <Mascot size={300} />
         </div>
         <div
           style={{

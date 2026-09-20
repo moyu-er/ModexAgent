@@ -15,7 +15,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.pool import create_pool
 from bot.service.pool.declaration import (
@@ -27,6 +26,7 @@ from bot.workspace.handle import WorkspaceHandle
 from bot.workspace.pool_data import build_pool_data
 from bot.workspace.wiring.stack import declared_assembly_deps
 
+from examples.bot_project.tests.service._title_support import title_workspace
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
@@ -135,6 +135,7 @@ async def _declared_boot(tmp_path: Path):
     pool_data = await _build_pool_data(tmp_path, declared.pool.root_agent, deps)
     broker = InMemoryMessageBroker()
     await broker.start()
+    resources = title_workspace(tmp_path, broker)
     with patch(
         "modex_agent.tools.mcp_loader.load_per_agent_mcp",
         new=AsyncMock(return_value=None),
@@ -148,7 +149,8 @@ async def _declared_boot(tmp_path: Path):
                 target=tmp_path / '.modex', data_root=tmp_path / '.modex',
             ),
             workspace_registry=object(),
-            workspace_resources=object(),
+            workspace_resources=resources,
+            session_registry=resources.session_registry,
             data_dir=tmp_path / ".modex",
             broker=broker,
             output_adapter=MagicMock(spec=OutputAdapter),

@@ -33,6 +33,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel, ConfigDict
 
+from modex_agent.core.tool_manager import Tool
 from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy,
     PoolAssemblyContext,
@@ -566,7 +567,9 @@ class _CapturingToolFactory(ComponentFactory):
 
     async def create(self, config: BaseModel, ctx: Any) -> Any:
         self.captured.append(ctx)
-        return MagicMock(name="probe_tool")
+        tool = MagicMock(spec=Tool)
+        tool.name = "probe_tool"
+        return tool
 
 
 class TestSubagentMaterializeThreading:

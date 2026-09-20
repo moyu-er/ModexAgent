@@ -19,6 +19,7 @@ from modex_agent.plugins.abc import ComponentSlot, PrototypeFactory
 from modex_agent.plugins.defaults.capabilities.experience.tool_factory import (
     ExperienceToolConfig,
 )
+from modex_agent.plugins.defaults.capabilities.shell import ShellToolFactoryConfig
 from modex_agent.plugins.defaults.tools import (
     ToolConfig,
     register_default_tools,
@@ -52,16 +53,13 @@ def _expected_preset_union() -> set[str]:
 
 
 def _expected_production_union() -> set[str]:
-    # "bash"/"process"/"terminal" are the terminal-trio runtime factories
-    # (process/terminal explicit roster opt-in, not preset-expanded);
+    # "bash" is the shell capability's atomic group factory;
     # "ast_grep_search"/"ast_grep_replace", "todo_write"/"todo_read", and
     # "experience" are the ast_grep / todo / experience capabilities'
     # direct registrations (experience rides the package's own entry);
     # "aci_edit" is the aci capability's.
     return _expected_preset_union() | {
         "bash",
-        "process",
-        "terminal",
         "aci_edit",
         "ast_grep_search",
         "ast_grep_replace",
@@ -156,7 +154,7 @@ class TestCommunicationTrioExcluded:
 # from the registry name.
 # "experience": pool-data-fed ExperienceToolFactory (moved from the bot plugin).
 _RUNTIME_TOOL_NAMES = frozenset(
-    {"todo_read", "todo_write", "bash", "process", "terminal", "experience"}
+    {"todo_read", "todo_write", "bash", "experience"}
 )
 # Registry name → tool name mismatch: the ACI upgrade is registered under
 # "aci_edit" but yields a tool named "edit" (drop-in upgrade contract).
@@ -218,6 +216,9 @@ class TestFactoryContract:
         for name, factory in slot_map.items():
             if name == "experience":
                 assert factory.config_model is ExperienceToolConfig
+                continue
+            if name == "bash":
+                assert factory.config_model is ShellToolFactoryConfig
                 continue
             assert factory.config_model is ToolConfig, (
                 f"factory for {name!r} has config_model "

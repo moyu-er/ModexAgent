@@ -71,8 +71,10 @@ class _FlakyTerminateBackend(_FakeBackend):
     def __init__(self) -> None:
         super().__init__()
         self.fail_terminate = False
+        self.terminate_calls = 0
 
     async def terminate(self) -> None:
+        self.terminate_calls += 1
         if self.fail_terminate:
             raise RuntimeError("terminate failed")
         self._alive = False
@@ -185,14 +187,6 @@ async def test_close_failure_isolated_from_other_expired_tabs() -> None:
 
 
 async def test_close_failure_retried_next_tick_through_real_manager() -> None:
-    """Production close-failure semantics: the REAL BaseTerminalManager
-    pops the session before terminating the backend, so a backend
-    ``terminate()`` that raises escapes ``close()`` AFTER the pop.
-
-    Tick 1: close raises → the session stays RUNNING, no finished entry
-    (the tab is already gone from the manager). Tick 2: close returns
-    False (tab already popped) — SUCCESS for the converged contract —
-    and the session is marked TIMED_OUT."""
     created: list[_FlakyTerminateBackend] = []
 
     def _factory() -> _FlakyTerminateBackend:
@@ -209,7 +203,8 @@ async def test_close_failure_retried_next_tick_through_real_manager() -> None:
         visibility=TerminalVisibility.HIDDEN,
         backend_factory=_factory,
     )
-    await manager.get_or_create("expired")
+    other = await manager.get_or_create("other")
+    expired = await manager.get_or_create("expired")
     broken_backend = created[-1]
     broken_backend.fail_terminate = True
     registry = ProcessRegistry()
@@ -218,18 +213,22 @@ async def test_close_failure_retried_next_tick_through_real_manager() -> None:
     watchdog = TerminalWatchdog(manager, registry, interval_s=0.25)
 
     watchdog.start()
-    # Tick 1: the tab is popped, then terminate() raises out of close().
-    await _wait_until(lambda: manager.get("expired") is None)
+    await _wait_until(lambda: broken_backend.terminate_calls == 1)
+    assert manager.get("expired") is expired
+    assert await manager.get_default_session() is expired
     assert registry.get_running(session.id) is session
     assert registry.get_finished(session.id) is None
 
     broken_backend.fail_terminate = False
-    # Tick 2: close finds no session (already popped) → False → mark TIMED_OUT.
     await _wait_until(lambda: registry.get_finished(session.id) is not None)
     await watchdog.stop()
 
+    assert broken_backend.terminate_calls == 2
+    assert manager.get("expired") is None
+    assert await manager.get_default_session() is other
     finished = registry.get_finished(session.id)
     assert finished is session
+    assert finished is not None
     assert finished.status is ProcessStatus.TIMED_OUT
     assert finished.timed_out is True
 

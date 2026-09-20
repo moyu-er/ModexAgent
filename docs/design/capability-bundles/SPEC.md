@@ -225,7 +225,6 @@ class AgentDeclarationView:
 @dataclass(frozen=True)
 class CapabilityContribution:
     tools: tuple[str, ...] = ()                       # 进入名册合并基
-    tool_replacements: tuple[ToolReplacement, ...] = ()  # O3 编译期替换记账（aci 模式泛化）
     hooks: tuple[str, ...] = ()                       # 进入 merged_hooks
     sections: tuple[PromptSectionSpec, ...] = ()      # (section_id, order, config)
 
@@ -319,7 +318,7 @@ _compile_agent:
        cap = registry.resolve(CAPABILITY, cap_name)      # 未注册 → ComponentNotFoundError（boot fail, V13）
        config = cap.config_model 校验（拒绝 unknown key）
        contrib = cap.contribute(tree_view, config)        # 纯函数
-       base_tools += contrib.tools；应用 tool_replacements（O3 记账）
+       base_tools += contrib.tools
        pending_hooks += contrib.hooks
        pending_sections += contrib.sections
   4. tools: ± 合并（现状不动——能力包贡献名进入合并基）
@@ -400,8 +399,8 @@ for compiled_cap in spec.capabilities:
 |---|---|---|
 | `applies` | — | `False`（纯 opt-in，等价今日"不声明即无"） |
 | 启用 | `tool_supplements: [ast_grep]` / `[aci]` | `capabilities: {ast_grep: {}}` / `{aci: {}}` |
-| 工具 | `ToolSupplement` 枚举展开 | contribute: tools / tool_replacements=[(edit, aci_edit)] |
-| 替换记账 | `_apply_supplements` ACI 分支 | O3 记账泛化（ToolReplacement 进 contribution） |
+| 工具 | `ToolSupplement` 枚举展开 | contribute: tools（`aci_edit` 入合并基） |
+| 同名替换 | `_apply_supplements` ACI 分支编译期折叠名册 | 涌现式 name-slot overwrite：编译器保留 `edit`(PRESET)+`aci_edit`(CAPABILITY_DERIVED) 双条目，装配期 `ToolOrigin` 优先级仲裁 `edit` 槽位（审计在 `ToolManager.override_records`） |
 | 删除 | `ToolSupplement` 枚举成员、`tool_supplements` 字段、`_apply_supplements` | — |
 
 ### 8.2 `todo`（全要素范本：工具 + 双 runner hook + 提示段 + 池供给）

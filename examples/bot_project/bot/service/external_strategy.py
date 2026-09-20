@@ -37,7 +37,6 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from bot.config.webui_config import build_control_origin
 from modex_agent.agents.external.agent import StreamingProviderBackend
 from modex_agent.agents.external.backend_provider import PoolScopedBackendProvider
 from modex_agent.agents.external.builder import ExternalAgentBuilder
@@ -275,18 +274,56 @@ class ExternalAwareFactory(DefaultAgentFactory):
 
         # 2. Assemble pipeline via shared helper (converged with subagent path).
         safety: RuntimeSafetyPolicy = descriptor.safety_policy or RuntimeSafetyPolicy()
+        hook_runner = await self._assemble_roster_hooks()
         return ExternalAgentBuilder.assemble_pipeline(
             descriptor,
             agent,
             broker=broker,
             safety=safety,
-            hook_runner=None,  # main agents don't fire FINALLY_GRAPH
+            hook_runner=hook_runner,
             session_registry=self._session_registry,
             control_channel=self._control_channel,
             output_adapter=output_adapter if isinstance(output_adapter, OutputAdapter) else None,
             context_manager=context_manager,
             session_binding_store=self._session_binding_store,
         )
+
+    async def _assemble_roster_hooks(self) -> HookRunner | None:
+        """PA-04: consume the DECLARED hook roster through ``_dispatch_hooks``.
+
+        The external main agent previously passed ``hook_runner=None``
+        ("main agents don't fire FINALLY_GRAPH"). It now reuses the SAME
+        declared-roster dispatch the native path uses — one mechanism, no
+        hand-rolled session_title factory resolution. Requires the
+        strategy/create_pool to thread ``component_registry``,
+        ``assembly_spec`` and ``workspace_resources`` through
+        ``external_deps``; when they are absent (framework-style tests)
+        the runner stays ``None`` — behavior unchanged.
+
+        Only react-runner hooks are declared for this executor: the
+        external CLI owns memory/tools, so memory hooks are structurally
+        excluded (the native capability exclusions ride ``applies_to``).
+        """
+        deps = self._external_deps
+        registry = deps.get("component_registry")
+        spec = deps.get("assembly_spec")
+        workspace_resources = deps.get("workspace_resources")
+        if registry is None or spec is None or not spec.hooks:
+            return None
+        from modex_agent.plugins.assembly.context import AssemblyContext, agent_context_chain
+        from modex_agent.plugins.assembly.native_core import _dispatch_hooks
+
+        base = AssemblyContext(
+            registry=registry,
+            workspace_ctx=spec.workspace_ctx,
+            workspace_resources=workspace_resources,
+        )
+        chain = agent_context_chain(base, spec=spec)
+        hook_runner = HookRunner()
+        await _dispatch_hooks(spec, registry, chain, hook_runner, None)
+        if not hook_runner.hook_specs:
+            return None
+        return hook_runner
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -318,10 +355,10 @@ def build_external_env_spec(
     pool_name: str,
     pool_spec: PoolSpec,
     peer_links: Sequence[PeerLink],
-    project_dir: Path,
     inbox_dir: Path,
     workspace_dir: Path,
     root_agent_name: str,
+    control_origin: str,
 ) -> ExternalEnvSpec:
     """Build the ``ExternalEnvSpec`` for an external pool.
 
@@ -355,7 +392,7 @@ def build_external_env_spec(
         agent_pool_map=build_agent_pool_map(pool_name, pool_spec, peer_links),
         targets=build_routable_targets(pool_spec, peer_links),
         modexctl_bin_dir=_modexctl_bin_dir(),
-        control_origin=build_control_origin(project_dir / "config"),
+        control_origin=control_origin,
     )
 
 
@@ -365,7 +402,7 @@ def build_external_env_spec(
 
 
 class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
-    """Assemble external pools (Pi / OpenCode CLI harness).
+    """Assemble external pools (OpenCode CLI harness).
 
     Inherits the shared ``_build_*`` helpers from :class:`_PoolAssemblyMixin`
     so ``assemble()`` can build the placeholder provider/terminal/tools/skill
@@ -398,7 +435,7 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         * **No subagents** - external main agents have no tool surface
           and cannot dispatch subagent tasks. Subagent templates on an
           external pool are a configuration error.
-        * **``provider_kind`` required** - the CLI kind (``pi`` / ``opencode``)
+        * **``provider_kind`` required** - the CLI kind (``opencode``)
           must be set so the strategy knows which backend + parser to build.
 
         Raises :class:`ValueError` on violation. This runs at pool-assembly
@@ -454,10 +491,10 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         pool_name: str,
         pool_spec: PoolSpec,
         peer_links: Sequence[PeerLink],
-        project_dir: Path,
         inbox_dir: Path,
         workspace_dir: Path,
         root_agent_name: str,
+        control_origin: str,
         base_env: dict[str, str] | None = None,
         app_config: Any | None = None,
         persistence: Any | None = None,
@@ -478,10 +515,10 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
             pool_name,
             pool_spec,
             peer_links,
-            project_dir,
             inbox_dir,
             workspace_dir,
             root_agent_name,
+            control_origin,
         )
         return {
             "backend": backend,
@@ -513,7 +550,6 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         pool_name = ctx.pool_name
         pool_spec = ctx.pool_spec
         peer_links = ctx.peer_links
-        project_dir: Path = ctx.project_dir
         data_dir: Path = ctx.data_dir
         workspace_handle = ctx.workspace_handle
 
@@ -528,16 +564,21 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         #    computes (``data_dir / "inbox" / pool_name``) — the
         #    external env spec resolves inbox-relative paths from
         #    ``inbox_dir.parent``.
-        workspace_dir = workspace_handle.current if workspace_handle is not None else project_dir
+        scope_path = ctx.scope_path
+        workspace_dir = ctx.project_dir
+        if workspace_handle is not None:
+            workspace_dir = workspace_handle.current
+        if scope_path is not None:
+            workspace_dir = scope_path.workspace_root
         inbox_dir = data_dir / "inbox" / pool_name
         external_deps = self._build_external_deps(
             pool_name=pool_name,
             pool_spec=pool_spec,
             peer_links=peer_links,
-            project_dir=project_dir,
             inbox_dir=inbox_dir,
             workspace_dir=workspace_dir,
             root_agent_name=pool_spec.root_agent.name,
+            control_origin=ctx.control_origin,
             base_env=dict(os.environ),
             app_config=ctx.app_config,
             persistence=ctx.persistence,
@@ -598,8 +639,10 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         scope_path = deps.scope_path
         pool_name = scope_path.pool_name if scope_path is not None and scope_path.pool_name else "main"
         project_dir = deps.project_dir or Path(".")
-        data_dir = deps.data_dir or project_dir / ".modex"
-        workspace_dir = project_dir
+        workspace_dir = (
+            scope_path.workspace_root if scope_path is not None else project_dir
+        )
+        data_dir = deps.data_dir or workspace_dir / ".modex"
         inbox_root = data_dir / "inbox"
 
         descriptor = AgentDescriptor(
@@ -629,8 +672,7 @@ class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
             comm_kind=AgentCommKind.SUBAGENT,
             parent_session_id=parent_session_str or None,
             modexctl_bin_dir=resolve_modexctl_bin_dir(),
-            control_origin=deps.control_origin
-            or build_control_origin(project_dir / "config"),
+            control_origin=deps.control_origin,
         )
 
         session_store = build_external_session_map_store(

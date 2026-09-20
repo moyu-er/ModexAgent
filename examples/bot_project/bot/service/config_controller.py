@@ -15,6 +15,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from bot.config.domain import (
+    ConfigDomain,
     DomainFlavor,
     FieldDescriptor,
     SectionRead,
@@ -55,11 +56,12 @@ class ConfigController:
     restarter callback), so it is a plain class rather than a frozen model.
     """
 
-    def __init__(self, *, restarter: Callable[[], None] | None = None) -> None:
+    def __init__(self, *, restarter: Callable[[], None] | None = None, domains: tuple[ConfigDomain, ...] = ()) -> None:
         self._restarter = restarter
+        self._domains = {domain.name: domain for domain in domains}
 
     def read(self, domain_name: str) -> ConfigReadPayload:
-        dom = get_domain(domain_name)
+        dom = self._domains.get(domain_name) or get_domain(domain_name)
         if dom is None:
             raise KeyError(domain_name)
         if dom.flavor is DomainFlavor.REGISTRY:
@@ -82,7 +84,7 @@ class ConfigController:
         )
 
     def write(self, domain_name: str, payload: dict[str, Any]) -> ConfigReadPayload:
-        dom = get_domain(domain_name)
+        dom = self._domains.get(domain_name) or get_domain(domain_name)
         if dom is None:
             raise KeyError(domain_name)
         try:

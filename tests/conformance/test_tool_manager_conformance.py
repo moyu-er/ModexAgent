@@ -25,6 +25,7 @@ import pytest
 
 from modex_agent.core.capabilities import Modality, ModelCapabilities
 from modex_agent.core.message import ContentFormat
+from modex_agent.core.tool_group import ToolGroup
 from modex_agent.core.tool_manager import (
     ExecutionMode,
     ParallelTool,
@@ -32,6 +33,7 @@ from modex_agent.core.tool_manager import (
     ToolConfig,
     ToolExecutionContext,
     ToolManager,
+    ToolOrigin,
     ToolResult,
     get_tool_execution_context,
 )
@@ -94,11 +96,22 @@ class _CountingBase(ToolManager):
         super().__init__()
         self.executed: list[str] = []
 
-    def register(self, tool: Tool, config: ToolConfig | None = None) -> None:
+    def register(
+        self,
+        tool: Tool,
+        config: ToolConfig | None = None,
+        *,
+        origin: ToolOrigin | None = None,
+    ) -> None:
         raise AssertionError("not used in this suite")
 
     def unregister(self, tool_name: str) -> bool:
         return False
+
+    def register_group(
+        self, group: ToolGroup, *, origin: ToolOrigin | None = None
+    ) -> None:
+        raise AssertionError("not used in this suite")
 
     def get_tool(self, tool_name: str) -> Tool | None:
         return None
@@ -108,6 +121,16 @@ class _CountingBase(ToolManager):
 
     def is_registered(self, tool_name: str) -> bool:
         return False
+
+    @property
+    def tool_groups(self) -> tuple[ToolGroup, ...]:
+        return ()
+
+    def get_tool_group(self, tool_name: str) -> ToolGroup | None:
+        return None
+
+    def origin_of(self, tool_name: str) -> ToolOrigin | None:
+        return None
 
     async def execute(
         self,

@@ -24,6 +24,7 @@ from pydantic import ValidationError
 
 if TYPE_CHECKING:
     from bot.service.media_store import WorkspaceScopedMediaStore
+    from bot.workspace.handle import PoolWorkspaceResources
     from modex_agent.commands.processor import SlashCommandProcessor
     from modex_agent.persistence.managers import (
         RegistryPersistenceManager,
@@ -33,7 +34,12 @@ if TYPE_CHECKING:
     from modex_agent.runtime.codec import RuntimeStateCodecRegistry
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
+from bot.config.domains.personal_assistant import PersonalAssistantPreferences
 from bot.service._model_config_loader import _apply_bot_model_config, _load_app_config
+from bot.service.default_pool_selection import (
+    DefaultPoolStatus,
+    resolve_default_pool,
+)
 from bot.service.errors import BotServiceShutdownIncompleteError
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
@@ -44,6 +50,7 @@ from bot.service.pool.declaration import (
     validate_agent_mcp_sets,
     workspace_layer_present,
 )
+from bot.service.roots import BotAssemblyRoots
 from bot.utils.config_loader import ConfigLoader
 from bot.workspace.wiring import build_workspace_stack
 from modex_agent import (
@@ -68,7 +75,7 @@ from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.session_registry import SessionRegistry
 from modex_agent.persistence.session_store import SessionStore
 from modex_agent.pipeline.adapters import InputAdapter
-from modex_agent.workspace.paths import RESERVED_GLOBAL_DIR, WORKSPACE_STATE_DB
+from modex_agent.workspace.paths import WORKSPACE_STATE_DB
 
 from .builders import (
     AgentBuilderMixin,
@@ -101,6 +108,16 @@ class BotService(AgentBuilderMixin):
         emitter_factory: Callable[[str, str], ContentEmitter[Any]],
         *,
         app_config: AppConfig | None = None,
+        # ── Assembly roots (DESIGN §3.2): explicit config/resource/runtime ──
+        # None → resident identity (workspace home == resource root, every
+        # derived path identical to the historical literals). A single-
+        # project entry passes BotAssemblyRoots(config_dir, resource_root,
+        # workspace_home) with workspace_home = the bound project root.
+        roots: BotAssemblyRoots | None = None,
+        # False → single-project assembly: the /cd switch entry is disabled
+        # and dynamic workspaces are not re-registered at boot. A business
+        # assembly input — no provider/channel special-casing anywhere.
+        enable_dynamic_workspaces: bool = True,
         # ── Injection points for pool creation ──
         output_adapter_factory: Callable[[], OutputAdapter] | None = None,
         on_subagent_created: Callable[[str, str, str], Awaitable[None]] | None = None,
@@ -108,8 +125,17 @@ class BotService(AgentBuilderMixin):
         session_store: SessionStore | None = None,
         media_store: WorkspaceScopedMediaStore | None = None,
     ) -> None:
-        self.config_dir = config_dir
-        self.config_loader = ConfigLoader(config_dir)
+        if roots is not None and roots.config_dir != config_dir.resolve():
+            raise ValueError(
+                f"roots.config_dir ({roots.config_dir}) does not match the "
+                f"config_dir argument ({config_dir.resolve()})"
+            )
+        self.roots = roots or BotAssemblyRoots.resident(
+            config_dir=config_dir, resource_root=self._project_dir
+        )
+        self._enable_dynamic_workspaces = enable_dynamic_workspaces
+        self.config_dir = self.roots.config_dir
+        self.config_loader = ConfigLoader(self.config_dir)
         self.input_adapter = input_adapter
         self.output_adapter = output_adapter
         self.emitter_factory = emitter_factory
@@ -159,6 +185,15 @@ class BotService(AgentBuilderMixin):
         # a mapping written by the WebUI (or ResolvePoolStage) is visible to the
         # pool_router of whatever workspace ultimately dispatches the message.
         self._pool_session_store: PoolRoutingStore | None = None
+
+        # Personal-assistant preferences owner (PA-06/PA-07). Built from
+        # roots.config_dir in __init__ — the SAME object backs the REST
+        # config surface (domain registry) and every runtime default read.
+        self._personal_preferences: PersonalAssistantPreferences = (
+            PersonalAssistantPreferences(
+                self.roots.config_dir / "personal_assistant.yml"
+            )
+        )
 
         # Shared MCP connection registry (ADR-0017 Task 5a). Service-scoped,
         # concurrent, dedup-by-config-hash. Built in initialize() when the
@@ -212,11 +247,107 @@ class BotService(AgentBuilderMixin):
 
     @property
     def _default_pool_name(self) -> str | None:
-        return None
+        """Effective default pool for NEW choices (PA-06/PA-07).
+
+        Reads the personal-assistant preference dynamically and validates it
+        against the declared pools and the genuinely RUNNING pools (the
+        materialized-workspace union — see :meth:`_running_pool_keys`) through
+        the unified selection rule
+        (:func:`bot.service.default_pool_selection.resolve_default_pool`).
+        Returns ``None`` when no valid default exists — callers must ask for
+        an explicit choice; there is NO first-pool/main fallback (DESIGN
+        §3.3). Static per-materialization routers are unaffected: they keep
+        their construction-time value for dispatch, while every NEW-choice
+        entry (S5 fresh conversation, REST create, WS attach bootstrap)
+        resolves through this property at call time.
+        """
+        return self._default_pool_name_for()
+
+    def _default_pool_name_for(self, ws_root: Path | None = None) -> str | None:
+        """Workspace-scoped variant of :attr:`_default_pool_name`.
+
+        ``ws_root`` selects which workspace's running pools validate the
+        preference (None/empty → home). Workspace-aware entries (REST create
+        with ``?ws=``, WS attach under a workspace) pass the request's
+        workspace so an external pool skipped in THAT workspace is correctly
+        reported unavailable.
+        """
+        prefs = self.personal_preferences
+        if prefs is None:
+            return None
+        decision = resolve_default_pool(
+            preferred=prefs.preferred_pool(),
+            declared_pools=self._declared_pool_names(),
+            runtime_pools=self._running_pool_keys(ws_root),
+        )
+        if decision.pool is None and decision.status is not DefaultPoolStatus.NONE_CONFIGURED:
+            logger.warning("Default pool unusable: %s", decision.reason)
+        return decision.pool
+
+    @property
+    def personal_preferences(self) -> PersonalAssistantPreferences | None:
+        """The assembly's personal-assistant preferences owner (PA-06).
+
+        Built once from ``roots.config_dir``; ``None`` only before
+        :meth:`initialize` (or when a test constructs the service without
+        preferences). The SAME object backs the REST config surface and every
+        runtime default read — one owner, no module-global fallback.
+        """
+        return self._personal_preferences
+
+    def _declared_pool_names(self) -> list[str]:
+        """Declared pool keys in declaration order (preference validation)."""
+        if self._scope_spec is None:
+            return []
+        if self._scope_spec.workspace is not None:
+            return [pool.name for pool in self._scope_spec.workspace.pools]
+        if self._scope_spec.pool is not None:
+            return [self._scope_spec.pool.name]
+        return []
+
+    def _available_pools_provider(self) -> set[str]:
+        """Runtime-available pool keys (re-read from the declaration)."""
+        from bot.config.scope_pools import declared_pool_names
+
+        return declared_pool_names(self.roots.scope_declaration_path)
+
+    def _running_pool_keys(self, ws_root: Path | None = None) -> set[str]:
+        """Genuinely RUNNING pool keys — the materialized pools of the
+        requested workspace's resources (PA-07 runtime-vs-declared split).
+
+        This is the runtime half of the selection inputs: a pool skipped at
+        assembly (e.g. an external pool whose CLI is missing, or a pool
+        deleted from the declaration before restart) is present in the
+        DECLARED set but absent here — the selection rule then reports the
+        preference unavailable instead of silently defaulting into it.
+        Reuses the existing materialized-resource owner
+        (``ScopeRegistry.iter_materialized_resources``) — no parallel
+        tracker. ``ws_root`` selects ONE workspace (empty/None → home);
+        with no selector the answer is the UNION over all materialized
+        workspaces (pool keys are declaration-global: dynamic workspaces
+        boot verbatim copies of the primary declaration's pools, so in
+        supported configurations the union equals home's set). A
+        not-yet-materialized non-home workspace contributes nothing
+        (first-use materialization is the existing owner's job).
+        """
+        target: Path | None = None
+        if ws_root is not None and str(ws_root).strip():
+            target = Path(ws_root).resolve()
+        keys: set[str] = set()
+        for resources in self._iter_workspace_resources():
+            if resources is None:
+                continue
+            if target is not None and Path(resources.target).resolve() != target:
+                continue
+            keys.update(resources.pools.keys())
+        return keys
 
     def _is_webui(self) -> bool:
         """Whether this service runs the WebUI (class attribute ``webui``)."""
         return self.webui
+
+    def session_titles_changed(self, workspace: Path) -> None:
+        """Presentation notification; headless assemblies have no subscribers."""
 
     def _build_default_provider(self) -> LLMProvider | None:
         """Build the default pool's LLM provider (memory/summarizer layer).
@@ -276,6 +407,23 @@ class BotService(AgentBuilderMixin):
         """Public accessor for the project root directory."""
         return self._project_dir
 
+    @property
+    def home_resources(self) -> PoolWorkspaceResources | None:
+        """The eagerly materialized home workspace resources (pools, router,
+        stores) — ``None`` before :meth:`initialize` materializes home."""
+        return self._home_resources
+
+    @property
+    def assembly_context(self) -> AssemblyContext | None:
+        """The service-level assembly context (registry + home workspace
+        layer) — ``None`` before :meth:`initialize` builds it."""
+        return self._service_assembly_ctx
+
+    @property
+    def pool_session_store(self) -> PoolRoutingStore | None:
+        """The shared session→pool routing store (service-wide singleton)."""
+        return self._pool_session_store
+
     def _resolve_path(self, config_key: str, default_relative: str) -> Path:
         """Resolve a path from AppConfig paths, falling back to a relative default."""
         assert self._app_config is not None, "AppConfig not loaded"
@@ -318,9 +466,7 @@ class BotService(AgentBuilderMixin):
         # overrides (memory backend, path layout) resolved onto the config
         # view every workspace-scoped consumer reads. Malformed
         # declarations fail the boot loudly.
-        self._scope_spec = load_scope_declaration_opt(
-            self._project_dir / "config" / "scopes" / "bot.yml"
-        )
+        self._scope_spec = load_scope_declaration_opt(self.roots.scope_declaration_path)
         self._app_config = apply_workspace_resource_selection(
             self._app_config, self._scope_spec
         )
@@ -345,7 +491,7 @@ class BotService(AgentBuilderMixin):
         from modex_agent.tools.mcp.injector import JsonFileMCPTransportInjector
         from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
-        mcp_registry_path = self._project_dir / "config" / "mcp" / "registry.json"
+        mcp_registry_path = self.roots.mcp_registry_path
         if read_shared_registry_flag(mcp_registry_path):
             raw_servers = read_registry(mcp_registry_path)
             # The per-agent mcp selections (what actually attaches tools)
@@ -428,13 +574,13 @@ class BotService(AgentBuilderMixin):
                 self._component_registry,
                 PluginDiscoveryConfig(
                     bundled_factories=(DefaultPlugin(),),
-                    project_plugin_paths=(self._project_dir / "plugins",),
+                    project_plugin_paths=(self.roots.plugins_dir,),
                 ),
             )
             self._strategy_registry = strategy_registry_from_components(
                 self._component_registry
             )
-            logger.info("Component registry: %s", self._project_dir / "plugins")
+            logger.info("Component registry: %s", self.roots.plugins_dir)
 
             # T26: open the registry DB BEFORE workspace materialization so the
             # registry store is ready when workspaces start using it. The
@@ -445,24 +591,19 @@ class BotService(AgentBuilderMixin):
                     WorkspacePersistenceManager,
                 )
 
-                registry_db_path = (
-                    self._project_dir
-                    / self._app_config.paths.data_dir_name
-                    / RESERVED_GLOBAL_DIR
-                    / WORKSPACE_STATE_DB
+                registry_db_path = self.roots.registry_db_path(
+                    self._app_config.paths.data_dir_name
                 )
                 self._registry_persistence = RegistryPersistenceManager(registry_db_path)
                 await self._registry_persistence.open()
 
-                home_db_path = (
-                    self._project_dir / self._app_config.paths.data_dir_name / WORKSPACE_STATE_DB
-                )
+                home_db_path = self.roots.home_db_path(self._app_config.paths.data_dir_name)
                 self._home_persistence = WorkspacePersistenceManager(home_db_path)
                 await self._home_persistence.open()
 
             from bot.service.builders import build_pool_routing_store
 
-            home_data_dir = self._project_dir / self._app_config.paths.data_dir_name
+            home_data_dir = self.roots.home_data_dir(self._app_config.paths.data_dir_name)
             self._pool_session_store = build_pool_routing_store(
                 self._app_config,
                 self._home_persistence,
@@ -473,7 +614,8 @@ class BotService(AgentBuilderMixin):
             self.workspace_stack = build_workspace_stack(
                 self,
                 data_dir_name=self._app_config.paths.data_dir_name,
-                enabled=workspace_layer_present(self._scope_spec),
+                enabled=workspace_layer_present(self._scope_spec)
+                and self._enable_dynamic_workspaces,
             )
             self.workspace_context = self.workspace_stack.controller
             from modex_agent.plugins.assembly.context import AssemblyContext
@@ -488,10 +630,13 @@ class BotService(AgentBuilderMixin):
             # Ticket 17: runtime-created workspaces persist as declaration
             # files under config/scopes/workspaces/. Re-register each at
             # boot (lazily materialized on the first turn that targets
-            # them — the same road a /cd-switched workspace takes).
-            from bot.workspace.dynamic_workspaces import register_dynamic_workspaces
+            # them — the same road a /cd-switched workspace takes). A
+            # single-project assembly (enable_dynamic_workspaces=False)
+            # registers no dynamic workspace switch entries.
+            if self._enable_dynamic_workspaces:
+                from bot.workspace.dynamic_workspaces import register_dynamic_workspaces
 
-            await register_dynamic_workspaces(self)
+                await register_dynamic_workspaces(self)
 
             # Eagerly materialize the HOME workspace so its pools/router are live
             # for BotService.start/stop (v1 = home-only materialization). The
@@ -694,9 +839,10 @@ class BotService(AgentBuilderMixin):
         # client) AFTER evicting workspaces — order matters: pools and
         # background tasks stop inside evict_all and may still need them.
         # getattr guard: partial-init instances (tests build via __new__) skip.
-        if isinstance(getattr(self, "_default_provider", None), BotModelProvider):
+        provider = getattr(self, "_default_provider", None)
+        if isinstance(provider, BotModelProvider):
             with contextlib.suppress(BaseException):
-                await self._default_provider.aclose()
+                await provider.aclose()
         # Shut down the shared MCP registry AFTER evicting workspaces: evict_all
         # calls _stop_resources → McpBackend.release() per pool, which on the
         # shared path only DETACHES the facade (real connections are shared and

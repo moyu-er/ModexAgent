@@ -1,4 +1,4 @@
-<p align="center"><img src="../../assets/logo-wordmark-dark.svg" alt="ModexAgent" width="300"></p>
+<p align="center"><img src="../../assets/mascot/still-dark.png" alt="ModexAgent" width="150"></p>
 
 <p align="center"><strong>ModexBot: the official customizable reference application for ModexAgent</strong></p>
 

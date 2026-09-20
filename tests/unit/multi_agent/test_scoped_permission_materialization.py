@@ -42,7 +42,11 @@ async def materialize(
     deps.approval_audit = approval_audit
     # The subagent declares NOTHING — it inherits the caller's face
     # (workspace + ../shared) through resolve_agent_sandbox.
-    template = _compiled_template("scout", tools=["+ast_grep_replace"] if ast else None)
+    template = _compiled_template(
+        "scout",
+        tools=["+ast_grep_replace"] if ast else None,
+        capabilities={"shell": {}},
+    )
     with patch("modex_agent.plugins.defaults.hooks.resolve_modexctl_bin_dir", return_value=tmp_path):
         return await template.materialize(None, "inv", deps)
 

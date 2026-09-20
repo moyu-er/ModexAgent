@@ -13,7 +13,6 @@ import sys
 
 import pytest
 
-from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.terminal._persistent_session import (
     PersistentShellSession,
     PersistentShellUnsupportedError,
@@ -21,7 +20,6 @@ from modex_agent.tools.terminal._persistent_session import (
 from modex_agent.tools.terminal.persistent_bash import (
     BashInputTool,
     PersistentBashTool,
-    ensure_input_companion,
     persistent_bash_supported,
 )
 from modex_agent.tools.terminal.types import (
@@ -194,60 +192,6 @@ async def test_run_command_raises_typed_error_on_win32_host() -> None:
     tool = PersistentBashTool()
     with pytest.raises(PersistentShellUnsupportedError, match="SubprocessTool fallback"):
         await tool.execute(command="echo hi")
-
-
-# ── ensure_input_companion (structural bash + bash_input pair) ──
-
-
-def test_ensure_input_companion_registers_bash_input_sharing_session() -> None:
-
-    manager = InMemoryToolManager()
-    bash = PersistentBashTool()
-    ensure_input_companion(manager, bash)
-    companion = manager.get_tool("bash_input")
-    assert isinstance(companion, BashInputTool)
-    assert companion._manager is bash._manager  # noqa: SLF001
-
-
-def test_ensure_input_companion_noop_for_non_persistent_bash() -> None:
-    from modex_agent.tools.terminal.subprocess_tool import (
-        SubprocessTool,
-        create_subprocess_executor,
-    )
-
-    manager = InMemoryToolManager()
-    ensure_input_companion(manager, None)
-    ensure_input_companion(manager, SubprocessTool(executor=create_subprocess_executor()))
-    assert manager.get_tool("bash_input") is None
-
-
-def test_ensure_input_companion_is_idempotent() -> None:
-
-    manager = InMemoryToolManager()
-    bash = PersistentBashTool()
-    ensure_input_companion(manager, bash)
-    first = manager.get_tool("bash_input")
-    ensure_input_companion(manager, bash)
-    assert manager.get_tool("bash_input") is first
-
-
-def test_ensure_input_companion_replaces_stale_session_companion() -> None:
-    """A pre-registered bash_input bound to a DIFFERENT session is replaced.
-
-    The benchmark-roster regression: the roster swap unregistered ``bash``
-    but left the pool's companion (bound to a never-started session), and
-    the idempotency guard preserved it — every bash_input call then hit a
-    dead session while the live shell waited for answers.
-    """
-
-    manager = InMemoryToolManager()
-    stale_bash = PersistentBashTool()
-    manager.register(BashInputTool(manager=stale_bash.manager))
-    fresh_bash = PersistentBashTool()
-    ensure_input_companion(manager, fresh_bash)
-    companion = manager.get_tool("bash_input")
-    assert isinstance(companion, BashInputTool)
-    assert companion._manager is fresh_bash._manager
 
 
 # ── tool descriptions: terminal-takeover semantics ──

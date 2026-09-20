@@ -214,7 +214,7 @@ class TestScopingParity:
         compiled = _compile_todo_agent(capabilities={})
 
         assert compiled.spec.capabilities == ()
-        assert "todo_write" not in compiled.spec.tools
+        assert "todo_write" not in [entry.name for entry in compiled.spec.tools]
 
 
 # ---- (d) KV-cache version contract (SPEC §7.3 / E10) ---------------------------

@@ -86,6 +86,7 @@ def _make_pipeline_ctx(store: JSONLTranscriptStore, enqueued: list[InputMessage]
     """Build a BotInputContext wired to the IM pipeline."""
     pool_store = MagicMock()
     pool_store.get.return_value = "main"
+    pool_store.get_pool.return_value = "main"
     cmd_adapter = MagicMock()
     cmd_adapter._try_intercept_control = AsyncMock(return_value=False)
     sink = enqueued if enqueued is not None else MagicMock()
@@ -322,6 +323,7 @@ async def test_im_pipeline_skips_control_commands() -> None:
     enqueued: list[InputMessage] = []
     pool_store = MagicMock()
     pool_store.get.return_value = "main"
+    pool_store.get_pool.return_value = "main"
     ctx = BotInputContext(
         default_pool="main",
         available_pools=lambda: {"main", "coding"},

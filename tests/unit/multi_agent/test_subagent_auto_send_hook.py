@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -53,6 +53,8 @@ def _make_hook(
     tree: SessionTreeManager | None = None
     if bus is not None:
         tree = MagicMock(spec=SessionTreeManager)
+        # Ordinary (non-request-scoped) sends: no source scope to stamp.
+        tree.sender_scope_id = AsyncMock(return_value=None)
 
         async def _deliver(sid: str, env: object) -> None:
             await bus.send(sid, env)  # type: ignore[arg-type]

@@ -694,7 +694,7 @@ def _derive_native_env_spec(ctx: AgentContext) -> ExternalEnvSpec:
     ``AgentTemplate.materialize`` for subagents) passed these exact
     values from these exact sources:
 
-    - Pooled agents read the pool assembly context: ``project_dir`` /
+    - Pooled agents read the pool assembly context: ``scope_path`` /
       ``pool_name`` / ``pool_spec`` / ``peer_links`` /
       ``control_origin``. A native MAIN maps the whole declared tree +
       peer roots (``build_agent_pool_map`` / ``build_routable_targets``
@@ -713,6 +713,12 @@ def _derive_native_env_spec(ctx: AgentContext) -> ExternalEnvSpec:
     pool_runtime = ctx.pool_runtime
     pool_assembly = pool_runtime.pool_assembly_ctx if pool_runtime is not None else None
     if pool_assembly is not None:
+        scope_path = pool_assembly.scope_path
+        workspace_root = (
+            scope_path.workspace_root
+            if scope_path is not None
+            else pool_assembly.project_dir
+        )
         if ctx.spec is not None and ctx.spec.agent_type is AgentType.native_sub:
             pool_map: dict[str, str] = {ctx.agent_name: pool_assembly.pool_name}
             targets: list[tuple[str, str]] = []
@@ -735,9 +741,9 @@ def _derive_native_env_spec(ctx: AgentContext) -> ExternalEnvSpec:
             targets = build_routable_targets(pool_assembly.pool_spec, pool_assembly.peer_links)
             comm_kind = AgentCommKind.NORMAL
         return ExternalEnvSpec(
-            workspace_root=pool_assembly.project_dir,
-            inbox_root=pool_assembly.project_dir / ".modex" / "inbox",
-            workdir=pool_assembly.project_dir,
+            workspace_root=workspace_root,
+            inbox_root=pool_assembly.data_dir / "inbox",
+            workdir=workspace_root,
             session_id=f"__pending__.{ctx.agent_name}",
             agent_name=ctx.agent_name,
             provider_session_id="",

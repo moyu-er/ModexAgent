@@ -39,7 +39,7 @@ only one uses the OTel SDK directly:
 | Path | Mechanism | Used by | Needs OTel SDK? |
 |------|-----------|---------|:---:|
 | **A. JSON OTLP** (main) | `_emit_span_via_json_otlp` — direct `httpx.Client.post` of hand-built OTLP JSON | All ReActAgent spans (invoke_agent, chat, tool, iteration, handoff, approval, training_tag) | No |
-| **B. SDK Tracer** | `tracer.start_as_current_span` via `BatchSpanProcessor` → `OTLPSpanExporter` | `ExternalAgent` (Pi/OpenCode CLI harness) `invoke_agent` CLIENT span only | Yes |
+| **B. SDK Tracer** | `tracer.start_as_current_span` via `BatchSpanProcessor` → `OTLPSpanExporter` | `ExternalAgent` (OpenCode CLI harness) `invoke_agent` CLIENT span only | Yes |
 | **C. Langfuse SDK OTel** | Langfuse SDK v4 auto-initializes OTel internally | `dataset.run_experiment()` traces in eval CLI | Yes (transitively) |
 
 **Path A is the framework's primary span export.** `OtelSpanTraceStore.save_span`

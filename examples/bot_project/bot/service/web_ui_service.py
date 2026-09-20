@@ -47,6 +47,7 @@ from modex_agent.pipeline.adapters import InputAdapter
 if TYPE_CHECKING:
     from bot.input_pipeline.context import BotInputContext
     from bot.scope import BotRecordScope
+    from bot.service.session_gc import SessionGarbageCollector
     from bot.webui.transcript_store import TranscriptStore
     from bot.workspace.handle import PoolWorkspaceResources
     from modex_agent.commands import SkillResolver
@@ -355,7 +356,7 @@ class WebUIService(BotService):
         self._port = port
         self._host = host
         self._static_dist = static_dist
-        self._session_gc = None
+        self._session_gc: SessionGarbageCollector | None = None
         self._web_runner: web.AppRunner | None = None
         self._server = WebUIServer(
             _ws_in(),
@@ -369,8 +370,20 @@ class WebUIService(BotService):
         self._server.set_model_config_loader(self._load_bot_model_config_for_listing)
         from bot.service.config_controller import ConfigController
 
-        self._server.set_config_controller(ConfigController(restarter=_trigger_restart))
+        assert self.personal_preferences is not None
+        self._server.set_config_controller(ConfigController(
+            restarter=_trigger_restart, domains=(self.personal_preferences.domain,),
+        ))
         self._server.set_data_dir_name(_data_dir_name)
+        # PA-06/PA-07: ONE preferences object (built by BotService from
+        # roots.config_dir) backs BOTH the REST config surface
+        # (GET/PUT /api/config/personal_assistant — the injected domain)
+        # and every runtime default read (session create, WS
+        # attach, input-pipeline S5). Saves are immediate for new choices.
+        self._server.set_personal_assistant_preferences(self.personal_preferences)
+        # New-conversation selection validates against RUNNING pools (home),
+        # refreshed per call through the materialized-resource owner.
+        self._server.set_available_pools_provider(self._running_pools_provider)
         # MCP/skills/prompt REST API + the declaration-backed pool listing.
         # The stores share the same base dir (the bot project root) and the
         # MCP registry path under ``config/mcp/registry.json``; pool trees
@@ -443,7 +456,7 @@ class WebUIService(BotService):
         if app_config.persistence.backend is PersistenceBackend.FILE:
             return await session_store_for_index(
                 app_config=app_config,
-                workspace_stack=None,
+                workspace_stack=self.workspace_stack,
                 index_dir=index_dir,
                 data_dir_name=self._data_dir_name,
                 # Same partition semantics as the boot-time index store:
@@ -471,6 +484,38 @@ class WebUIService(BotService):
         if self._pool_session_store is None:
             return None
         return self._pool_session_store.get(session_prefix, "") or None
+
+    async def _registry_cleanup_for_gc(self, ws_root: Path, session_id: str) -> None:
+        """GC title-coordination entry: clean the workspace's runtime registry.
+
+        Resolves the SAME ``PoolWorkspaceResources`` the HTTP title route
+        and pool turns use, cancels any pending naming task for the
+        session (revoking write-back eligibility inside the title lock),
+        then calls ``registry.cleanup`` — the deleted record cannot be
+        resurrected from the in-memory cache. No-op when the workspace has
+        no materialized resources.
+        """
+        resources = None
+        if (
+            self._home_resources is not None
+            and Path(self._home_resources.target).resolve() == Path(ws_root).resolve()
+        ):
+            resources = self._home_resources
+        elif self.workspace_stack is not None:
+            for candidate in self.workspace_stack.registry.iter_materialized_resources():
+                if Path(candidate.target).resolve() == Path(ws_root).resolve():
+                    resources = candidate
+                    break
+        if resources is None:
+            return
+        title_ops = resources.title_ops
+        if title_ops is not None:
+            await title_ops.cleanup(session_id)
+        elif resources.session_registry is not None:
+            await resources.session_registry.cleanup(session_id)
+
+    def session_titles_changed(self, workspace: Path) -> None:
+        self._server.notify_sessions_changed(str(workspace))
 
     async def start(self) -> None:
         """Start aiohttp server, then BotService (pools, router).
@@ -553,9 +598,15 @@ class WebUIService(BotService):
                 self._routing_pool_for_prefix(session.session_id_prefix) or _DEFAULT_AGENT_NAME
             ),
             liveness_provider=liveness_provider,
+            registry_cleanup=self._registry_cleanup_for_gc,
         )
         self._server.set_session_gc(self._session_gc)
         await self._session_gc.start()
+
+        # PA-02: sessions_changed control notifications ride the existing
+        # WS connection layer (per-connection delta queues), flat control
+        # shape, never the chat transcript.
+        self._server.set_sessions_changed_notifier(self._server._broadcast_sessions_changed)
 
         # The shared transcript store physically partitions sessions by
         # (workspace, pool) and serves as the WebUI's partition index.
@@ -694,10 +745,13 @@ class WebUIService(BotService):
         for inp in self._channel_inputs:
             if inp.name == "websocket":
                 continue  # WebSocket is configured via server.set_input_context above
+            def current_ws_provider(adapter: InputAdapter = inp) -> Path:
+                return adapter.current_ws
+
             im_ctx = self._build_input_context(
                 inp,
                 agent_resolver=_agent_resolver,
-                current_ws_provider=lambda inp=inp: inp.current_ws,
+                current_ws_provider=current_ws_provider,
             )
             raw_out = self._channel_outputs_by_name.get(inp.name)
             inp.configure_input_pipeline(im_pipeline, im_ctx, raw_out)
@@ -720,54 +774,29 @@ class WebUIService(BotService):
         # None and the control routes return 503.
         from bot.control.facade import BotControlFacade, ControlFacadeError
         from bot.control.models import ControlError
-        from modex_agent.memory.scope import MemoryContext, MemoryLayerName, SessionScope
 
-        async def _resolve_workspace_for_control(
+        async def _resolve_workspace_resources(
             root: Path,
         ) -> PoolWorkspaceResources:
             return await materialize_workspace(self.workspace_stack, root)
+
+        self._server.set_workspace_resources_provider(_resolve_workspace_resources)
 
         async def _provide_message_store(
             scope: BotRecordScope,
             resources: PoolWorkspaceResources,
         ) -> MessageStore:
-            pool_name = scope.pool
-            if pool_name is None:
-                raise ControlFacadeError(
-                    400,
-                    ControlError(
-                        code="invalid_scope",
-                        message="BotRecordScope.pool is None",
-                    ),
+            from bot.control.history import MessageStoreResolutionError, resolve_pool_message_store
+
+            assert scope.session_id is not None  # validated by the control-history facade
+            try:
+                return await resolve_pool_message_store(
+                    resources, pool=scope.pool, session_id=scope.session_id,
                 )
-            pool_data = resources.pool_data.get(pool_name)
-            if pool_data is None:
+            except MessageStoreResolutionError as exc:
                 raise ControlFacadeError(
-                    404,
-                    ControlError(
-                        code="pool_not_found",
-                        message=(
-                            f"Pool {pool_name!r} is not materialized in "
-                            f"workspace {resources.target!s}"
-                        ),
-                    ),
-                )
-            memory_system = pool_data.context_manager.memory_system
-            if memory_system is None:
-                raise ControlFacadeError(
-                    500,
-                    ControlError(
-                        code="memory_system_unavailable",
-                        message=(f"Memory system is not configured for pool {pool_name!r}"),
-                    ),
-                )
-            ctx = MemoryContext(session_id=scope.session_id)
-            bundle = await memory_system.store_registry.resolve(
-                layer=MemoryLayerName.SESSION,
-                scope=SessionScope(),
-                context=ctx,
-            )
-            return bundle.messages
+                    exc.status, ControlError(code=exc.code, message=str(exc)),
+                ) from exc
 
         async def _provide_transcript_store(
             resources: PoolWorkspaceResources,
@@ -804,7 +833,7 @@ class WebUIService(BotService):
             return pool_instance.communication_service
 
         control_facade = BotControlFacade(
-            workspace_resolver=_resolve_workspace_for_control,
+            workspace_resolver=_resolve_workspace_resources,
             message_store_provider=_provide_message_store,
             transcript_store_provider=_provide_transcript_store,
             communication_service_provider=_provide_communication_service,
@@ -868,7 +897,11 @@ class WebUIService(BotService):
         transcript_store = self._transcript_store
         assert transcript_store is not None
         return BotInputContext(
-            default_pool=self._default_pool_name,
+            # PA-07: dynamic default — read at call time so a preference PUT
+            # applies to NEW selections immediately (no restart, no router
+            # rebuild). Static constructor default stays None.
+            default_pool=None,
+            default_pool_provider=lambda: self._default_pool_name,
             pool_session_store=pool_store,
             agent_resolver=agent_resolver,
             transcript_store=transcript_store,
@@ -895,6 +928,18 @@ class WebUIService(BotService):
         return declared_pool_names(
             self._project_dir / "config" / "scopes" / "bot.yml"
         )
+
+    def _running_pools_provider(self) -> set[str]:
+        """Genuinely running pool keys for new-conversation selection (PA-07).
+
+        The server's new-conversation selection validates the preference
+        against RUNNING pools (the materialized-workspace union — external
+        pools skipped for a missing CLI are absent even though still
+        declared), while S5's availability guard keeps the declared provider
+        above. Delegates to the BotService helper over the existing
+        materialized-resource owner — no separate tracker.
+        """
+        return self._running_pool_keys()
 
     async def stop(self) -> None:
         if self._session_gc is not None:

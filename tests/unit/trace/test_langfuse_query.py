@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
-import os
-import time
+import sys
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
@@ -13,7 +11,6 @@ from typing import Any
 
 import httpx
 import pytest
-from dotenv import load_dotenv
 
 from modex_agent.core.message import MessageRole
 from modex_agent.trace import langfuse_query
@@ -24,7 +21,6 @@ from modex_agent.trace.langfuse_query import (
     ObservationData,
     observation_to_span,
 )
-from modex_agent.trace.otel_store import _emit_span_via_json_otlp
 from modex_agent.trace.semconv import (
     GenAiAttr,
     LangfuseObservationType,
@@ -36,11 +32,19 @@ from modex_agent.trace.store import SpanModel, SpanStatus
 from modex_agent.trace.training_exporter import TrainingDataExporter
 
 TRACE_ID = "0123456789abcdef0123456789abc003"
-_LIVE_LANGFUSE_CONFIGURED = bool(
-    os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")
-)
-_LIVE_COLLECTOR_ENDPOINT = os.environ.get("OTEL_TRACES_ENDPOINT", "http://localhost:4318/v1/traces")
-_LIVE_INGEST_TIMEOUT_S = 30.0
+
+
+@pytest.fixture(autouse=True)
+def no_real_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A missing MockTransport must fail locally, never contact a service."""
+    def reject_sync(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("Langfuse tests require MockTransport")
+
+    async def reject_async(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("Langfuse tests require MockTransport")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", reject_sync)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", reject_async)
 
 
 def _observation(
@@ -92,12 +96,6 @@ def _install_transport(
     monkeypatch.setattr(httpx, "AsyncClient", build_client)
 
 
-def _live_client() -> LangfuseClient:
-    return LangfuseClient(
-        os.environ.get("LANGFUSE_HOST", "http://localhost:3000"),
-        os.environ["LANGFUSE_PUBLIC_KEY"],
-        os.environ["LANGFUSE_SECRET_KEY"],
-    )
 
 
 async def test_get_observations_sends_projection_auth_and_filters(
@@ -356,35 +354,31 @@ def test_scores_parse_provenance_returns_none_for_invalid_comment(
     assert provenance is None
 
 
-@pytest.mark.live
-class TestLiveScoresReadBack:
-    async def test_live_scores_closure_probe_comment_round_trip(self) -> None:
-        # Given
-        load_dotenv(
-            Path(__file__).resolve().parents[3] / "examples" / "bot_project" / ".env"
-        )
-        host = os.environ.get("LANGFUSE_HOST")
-        public_key = os.environ.get("LANGFUSE_PUBLIC_KEY")
-        secret_key = os.environ.get("LANGFUSE_SECRET_KEY")
-        if not host or not public_key or not secret_key:
-            pytest.skip("examples/bot_project/.env has no Langfuse credentials")
-        client = LangfuseClient(host, public_key, secret_key)
+async def test_scores_closure_probe_comment_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
+    comment = json.dumps({
+        "scorer": "trajectory", "version": "closure-test-v1",
+        "report_source": "counters", "run_ref": "closure-probe",
+    })
 
-        # When
-        try:
-            scores, _ = await client.get_scores(name="closure_probe_test")
-        finally:
-            await client.close()
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["name"] == "closure_probe_test"
+        return httpx.Response(200, json={
+            "data": [{"name": "closure_probe_test", "value": 1.0,
+                      "dataType": "NUMERIC", "comment": comment}],
+            "meta": {"page": {}},
+        })
 
-        # Then
-        score = next(score for score in scores if score.name == "closure_probe_test")
-        assert score.name == "closure_probe_test"
-        assert langfuse_query.parse_provenance(score.comment) == langfuse_query.Provenance(
-            scorer="trajectory",
-            version="closure-test-v1",
-            report_source="counters",
-            run_ref="closure-probe",
-        )
+    _install_transport(monkeypatch, handler)
+    client = LangfuseClient("http://langfuse.invalid", "public", "secret")
+    try:
+        scores, _ = await client.get_scores(name="closure_probe_test")
+    finally:
+        await client.close()
+    assert len(scores) == 1
+    assert langfuse_query.parse_provenance(scores[0].comment) == langfuse_query.Provenance(
+        scorer="trajectory", version="closure-test-v1",
+        report_source="counters", run_ref="closure-probe",
+    )
 
 
 async def test_trace_query_paginates_and_sorts_by_start_time(
@@ -641,15 +635,10 @@ def test_observation_to_span_matches_verified_live_mapping() -> None:
     )
 
 
-def _seed_live_trace() -> str:
-    """Seed a fresh two-span trace through the live OTLP collector.
-
-    Current timestamps keep the data clear of the 180-day ClickHouse TTL
-    (which organically expired the previously hard-coded 2025-dated trace),
-    and the per-run trace id keeps assertions off stale data.
-    """
+def _seed_fixture_trace() -> str:
+    """Build two observations for the isolated query response fixture."""
     trace_id = uuid.uuid4().hex
-    now = time.time()
+    now = 1_800_000_000.0
     root_span = SpanModel(
         trace_id=trace_id,
         span_id=uuid.uuid4().hex[:16],
@@ -657,7 +646,7 @@ def _seed_live_trace() -> str:
         kind=SpanKind.INTERNAL.value,
         start_time=now,
         end_time=now + 2.0,
-        attributes={GenAiAttr.CONVERSATION_ID: "live-round-trip"},
+        attributes={GenAiAttr.CONVERSATION_ID: "mock-round-trip"},
         status=SpanStatus(code=SpanStatusCode.OK),
     )
     chat_span = SpanModel(
@@ -677,48 +666,46 @@ def _seed_live_trace() -> str:
         },
         status=SpanStatus(code=SpanStatusCode.OK),
     )
-    _emit_live_spans((root_span, chat_span))
+    _emit_fixture_spans((root_span, chat_span))
     return trace_id
 
 
-def _emit_live_spans(spans: Sequence[SpanModel]) -> None:
-    """Push spans through the live collector endpoint (round-trip path)."""
-    with httpx.Client(timeout=httpx.Timeout(10.0)) as client:
+@pytest.fixture
+def mock_langfuse(monkeypatch: pytest.MonkeyPatch) -> None:
+    observations: list[dict[str, Any]] = []
+
+    def capture(spans: Sequence[SpanModel]) -> None:
         for span in spans:
-            _emit_span_via_json_otlp(client, _LIVE_COLLECTOR_ENDPOINT, {}, "modex_agent", span)
+            attributes = dict(span.attributes)
+            observations.append({
+                "id": span.span_id, "traceId": span.trace_id,
+                "parentObservationId": span.parent_span_id, "name": span.name,
+                "type": attributes.get(GenAiAttr.LANGFUSE_OBSERVATION_TYPE.value, "SPAN"),
+                "startTime": datetime.fromtimestamp(span.start_time, UTC).isoformat(),
+                "endTime": datetime.fromtimestamp(span.end_time, UTC).isoformat(),
+                "input": attributes.get(GenAiAttr.GEN_AI_PROMPT.value),
+                "metadata": {f"attributes.{key}": value for key, value in attributes.items()},
+                "level": "DEFAULT",
+                "usageDetails": {"input": 56},
+            })
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "langfuse.invalid"
+        return httpx.Response(200, json={"data": observations, "meta": {"cursor": None}})
+
+    monkeypatch.setattr(sys.modules[__name__], "_emit_fixture_spans", capture)
+    _install_transport(monkeypatch, handler)
 
 
-async def _await_live_ingest(client: LangfuseClient, trace_id: str, expected: int) -> None:
-    """Poll until the trace's observations are queryable (v4 async ingest)."""
-    deadline = time.monotonic() + _LIVE_INGEST_TIMEOUT_S
-    while time.monotonic() < deadline:
-        observations, _ = await client.get_observations(trace_id=trace_id)
-        if len(observations) >= expected:
-            return
-        await asyncio.sleep(1.0)
-    pytest.fail(
-        f"live ingest timeout: {expected} observations for trace {trace_id} "
-        f"not queryable within {_LIVE_INGEST_TIMEOUT_S}s"
-    )
+def _emit_fixture_spans(spans: Sequence[SpanModel]) -> None:
+    raise AssertionError("mock_langfuse fixture is required")
 
 
-@pytest.mark.skipif(
-    not _LIVE_LANGFUSE_CONFIGURED,
-    reason="Langfuse credentials are not configured",
-)
-@pytest.mark.live
-async def test_live_langfuse_trace_round_trip() -> None:
-    trace_id = _seed_live_trace()
-    client = _live_client()
+async def test_langfuse_trace_readback(mock_langfuse: None) -> None:
+    trace_id = _seed_fixture_trace()
+    client = LangfuseClient("http://langfuse.invalid", "public", "secret")
     try:
-        deadline = time.monotonic() + _LIVE_INGEST_TIMEOUT_S
-        observations: list[ObservationData] = []
-        cursor: str | None = None
-        while time.monotonic() < deadline:
-            observations, cursor = await client.get_observations(trace_id=trace_id)
-            if len(observations) >= 2:
-                break
-            await asyncio.sleep(1.0)
+        observations, cursor = await client.get_observations(trace_id=trace_id)
     finally:
         await client.close()
 
@@ -740,7 +727,7 @@ def _seed_fidelity_mapping_session() -> tuple[str, str]:
     """
     trace_id = uuid.uuid4().hex
     session_id = f"fidelity-mapping-{uuid.uuid4().hex[:8]}"
-    now = time.time()
+    now = 1_800_000_000.0
     root = SpanModel(
         trace_id=trace_id,
         span_id=uuid.uuid4().hex[:16],
@@ -793,20 +780,14 @@ def _seed_fidelity_mapping_session() -> tuple[str, str]:
         },
         status=SpanStatus(code=SpanStatusCode.OK),
     )
-    _emit_live_spans((root, tool, chat))
+    _emit_fixture_spans((root, tool, chat))
     return session_id, trace_id
 
 
-@pytest.mark.skipif(
-    not _LIVE_LANGFUSE_CONFIGURED,
-    reason="Langfuse credentials are not configured",
-)
-@pytest.mark.live
-async def test_live_fidelity_session_reverse_normalizes_exporter_fields() -> None:
+async def test_fidelity_session_reverse_normalizes_exporter_fields(mock_langfuse: None) -> None:
     session_id, trace_id = _seed_fidelity_mapping_session()
-    client = _live_client()
+    client = LangfuseClient("http://langfuse.invalid", "public", "secret")
     try:
-        await _await_live_ingest(client, trace_id, expected=3)
         spans = await LangfuseTraceQuery(client).list_by_session(session_id)
     finally:
         await client.close()
@@ -828,7 +809,7 @@ def _seed_fidelity_export_session() -> tuple[str, str]:
     """
     trace_id = uuid.uuid4().hex
     session_id = f"fidelity-export-{uuid.uuid4().hex[:8]}"
-    now = time.time()
+    now = 1_800_000_000.0
     root = SpanModel(
         trace_id=trace_id,
         span_id=uuid.uuid4().hex[:16],
@@ -909,24 +890,18 @@ def _seed_fidelity_export_session() -> tuple[str, str]:
         },
         status=SpanStatus(code=SpanStatusCode.OK),
     )
-    _emit_live_spans((root, tool_chat, tool, final_chat, training_tag))
+    _emit_fixture_spans((root, tool_chat, tool, final_chat, training_tag))
     return session_id, trace_id
 
 
-@pytest.mark.skipif(
-    not _LIVE_LANGFUSE_CONFIGURED,
-    reason="Langfuse credentials are not configured",
-)
-@pytest.mark.live
-async def test_live_training_exporter_over_langfuse(
-    tmp_path: Path,
+async def test_training_exporter_over_mock_langfuse(
+    tmp_path: Path, mock_langfuse: None,
 ) -> None:
     session_id, trace_id = _seed_fidelity_export_session()
-    client = _live_client()
+    client = LangfuseClient("http://langfuse.invalid", "public", "secret")
     query = LangfuseTraceQuery(client)
     exporter = TrainingDataExporter(query, output_dir=tmp_path)
     try:
-        await _await_live_ingest(client, trace_id, expected=5)
         spans = await query.list_by_session(session_id)
         assert any(span.name == SpanName.TRAINING_TAG.value for span in spans)
         assert any(

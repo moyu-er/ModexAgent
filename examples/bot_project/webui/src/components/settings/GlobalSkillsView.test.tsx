@@ -33,17 +33,19 @@ function renderViewWithRestartIndicator(): void {
     <ToastProvider>
       <GlobalSkillsView />
       <WorkspaceTabBar
-        tabs={[{ id: "__home__", path: "/home" }]}
-        activeId="__home__"
+        tabs={[{ id: "t1", path: "/home" }]}
+        activeId="t1"
         statuses={{}}
         home="/home"
         recentWorkspaces={[]}
+        defaultWorkspace={null}
         onOpenWorkspace={noop}
         onOpenRecent={noop}
         onActivate={noop}
         onClose={noop}
         onReorder={noop}
         onOpenSettings={noop}
+        onSetDefaultWorkspace={noop}
       />
     </ToastProvider>,
   );
@@ -132,8 +134,14 @@ describe("GlobalSkillsView", () => {
     expect(
       (within(assignments).getByLabelText("lint") as HTMLInputElement).checked,
     ).toBe(false);
-    expect(within(assignments).queryByLabelText("scratchpad")).toBeNull();
-    expect(within(assignments).getByText("scratchpad")).toBeTruthy();
+    // Local installed rows render as checked + disabled (no restorable
+    // library source), tagged "local".
+    const scratchpad = within(assignments).getByLabelText(
+      "scratchpad",
+    ) as HTMLInputElement;
+    expect(scratchpad.checked).toBe(true);
+    expect(scratchpad.disabled).toBe(true);
+    expect(within(assignments).getByText("local")).toBeTruthy();
     expect(within(library).getByText("fmt")).toBeTruthy();
     expect(within(library).getByText("lint")).toBeTruthy();
 

@@ -63,6 +63,8 @@ function formatSaveError(e: unknown, t: TFn): string {
   return t("settings.scope.saveFailed", { detail: String(e) });
 }
 
+import { useRegisterSettingsEditor } from "./editorNavigation";
+
 export function ScopeView() {
   const toast = useToast();
   const t = useT();
@@ -99,8 +101,8 @@ export function ScopeView() {
   );
   const dirty = yaml !== null && yaml !== original;
 
-  const save = async (): Promise<void> => {
-    if (yaml === null) return;
+  const save = async (): Promise<boolean> => {
+    if (yaml === null || saving) return false;
     setSaving(true);
     setSaveError("");
     try {
@@ -111,8 +113,10 @@ export function ScopeView() {
       setTopology(topo);
       setBill(agents);
       restartToast(toast, t);
+      return true;
     } catch (e) {
       setSaveError(formatSaveError(e, t));
+      return false;
     } finally {
       setSaving(false);
     }
@@ -122,6 +126,7 @@ export function ScopeView() {
     setYaml(original);
     setSaveError("");
   };
+  useRegisterSettingsEditor(() => ({ isDirty: () => dirty, save, discard: cancel }));
 
   const meta = CATEGORY.scope;
   const PageHeadIcon = meta.icon;

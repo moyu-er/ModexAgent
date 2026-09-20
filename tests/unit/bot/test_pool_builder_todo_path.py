@@ -82,7 +82,7 @@ def _compiled_tools(*agents: AgentSpec) -> dict[str, list[str]]:
     """Compile a single-pool declaration and return agent_name → tools."""
     spec = ScopeSpec(kind=ScopeKind.POOL, pool=PoolSpec(name="p", agents=list(agents)))
     compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(Path(".")), registry=_registry())
-    return {a.provenance.agent: a.spec.tools for a in compilation.agents}
+    return {a.provenance.agent: [e.name for e in a.spec.tools] for a in compilation.agents}
 
 
 def test_todo_capability_contributes_compiled_tool_names_for_main_agent() -> None:

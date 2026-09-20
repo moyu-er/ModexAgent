@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteConversation,
   fetchSessions,
+  renameSessionTitle,
   type PoolInfo,
 } from "../lib/api";
 import { storageGet, storageSet } from "../lib/storage";
+import { sameWorkspacePath } from "./useWorkspaceTabs";
 import type { ConversationInfo } from "../types/events";
 
 /**
@@ -30,11 +32,12 @@ function poolStorageKey(ws: string): string {
 
 function loadActivePool(ws: string): string {
   // Fall back to the legacy global key so the upgrade preserves the user's
-  // last pool choice for the first pod that opens.
-  return (
-    storageGet(localStorage, poolStorageKey(ws), "") ||
-    storageGet(localStorage, "modexbot_active_pool", "main")
-  );
+  // last pool choice for the first pod that opens. No forced "main" default:
+  // an absent choice stays unselected ("") until the preferred pool (PA-07)
+  // or the user supplies one.
+  const scoped = storageGet(localStorage, poolStorageKey(ws), "");
+  if (scoped) return scoped;
+  return storageGet(localStorage, "modexbot_active_pool", "");
 }
 
 function saveActivePool(ws: string, pool: string): void {
@@ -46,6 +49,12 @@ export interface UseSessionsOptions {
   ws: string;
   /** Global pool list (fetched once at the app level and passed down). */
   pools: PoolInfo[];
+  /**
+   * Preferred pool (PA-07) when there is no valid persisted choice. The
+   * selected pool owns BOTH the history filter and the new-conversation
+   * assistant (single selection — the hero composer has no pool picker).
+   */
+  preferredPool?: string | null;
 }
 
 export interface UseSessionsResult {
@@ -75,14 +84,37 @@ export interface UseSessionsResult {
   handlePoolChange: (pool: string) => void;
   /** Clear draft tracking + bump updated_at once the user sends a message. */
   onSent: (sessionId: string | null) => void;
+  /**
+   * Rename a persisted session (PA-02). PATCHes metadata.title through the
+   * same registry write path, then refreshes via the shared fetchSessions
+   * path (identical to a sessions_changed notification). Rejects (400/404/
+   * network) so the dialog can preserve the user's input; rejects for
+   * unpersisted uuid-prefix drafts (no server record to rename).
+   * Resolves with the trimmed saved title.
+   */
+  renameSession: (sessionId: string, title: string) => Promise<string>;
+  /**
+   * sessions_changed control notification (PA-02). Refreshes the list only
+   * when the ping's canonical workspace matches this pod's scope ("" = home);
+   * cross-workspace pings are ignored.
+   */
+  onSessionsChanged: (workspace: string) => void;
   /** Bumped on every "New Conversation" click; ChatView replays the hero
    *  focus + pulse feedback on change. */
   newConvNonce: number;
 }
 
-export function useSessions({ ws, pools }: UseSessionsOptions): UseSessionsResult {
+export function useSessions({
+  ws,
+  pools,
+  preferredPool,
+}: UseSessionsOptions): UseSessionsResult {
   const [sessions, setSessions] = useState<ConversationInfo[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The single pool selection: drives the sidebar history filter AND the
+  // hero composer's new-conversation assistant. The canonical session list
+  // covers this workspace; filtering must never erase the active chat's
+  // pool, title or stream.
   const [activePool, setActivePool] = useState<string>(() => loadActivePool(ws));
   const [isLoadingSessions, setIsLoadingSessions] = useState<boolean>(false);
   // Monotonic counter bumped on every "New Conversation" click. ChatView
@@ -90,11 +122,7 @@ export function useSessions({ ws, pools }: UseSessionsOptions): UseSessionsResul
   // when selectedId was already null (a bare setSelectedId(null) is a React
   // no-op in that case, so without the nonce the click would feel dead).
   const [newConvNonce, setNewConvNonce] = useState<number>(0);
-  // Monotonic counter incremented on every pool switch. Each fetchSessions
-  // call captures the current value; its .then() compares it to the latest —
-  // if they differ, the response is stale (the user has since switched pools)
-  // and is discarded. Without this guard, a slow fetch from the OLD pool can
-  // resolve after the NEW pool's fetch and overwrite the sidebar.
+  // Discard late responses from older workspace-list refreshes.
   const fetchEpochRef = useRef<number>(0);
 
   // uuidPrefix → pool, for client-side empty session generation.
@@ -121,8 +149,8 @@ export function useSessions({ ws, pools }: UseSessionsOptions): UseSessionsResul
       // The backend responded with a stable session id; track it so
       // subsequent "New" clicks reuse this still-empty draft rather than
       // creating a fresh one.
-      draftIdsRef.current.delete(uuidPrefix);
-      draftIdsRef.current.set(fullSessionId, pool || "main");
+      const stillEmpty = draftIdsRef.current.delete(uuidPrefix);
+      if (stillEmpty && pool) draftIdsRef.current.set(fullSessionId, pool);
       setSelectedId(fullSessionId);
       // The backend emits conversation_created only for subagents, not for
       // main-agent sessions — so we must insert the new session into the
@@ -207,61 +235,58 @@ export function useSessions({ ws, pools }: UseSessionsOptions): UseSessionsResul
     saveActivePool(ws, activePool);
   }, [ws, activePool]);
 
-  // Load sessions on mount and re-fetch on pool change. The ws scope is
-  // constant for this pod's lifetime, so no workspace race handling remains.
-  useEffect(() => {
-    const epoch = fetchEpochRef.current;
-    fetchSessions(ws || undefined, activePool)
-      .then((loaded) => {
-        if (fetchEpochRef.current !== epoch) return;
-        setSessions((prev) => {
-          const draftEntries = prev.filter(
-            (s) => draftIdsRef.current.has(s.session_id),
-          );
-          const nonDraft = loaded.filter(
-            (s) => !draftIdsRef.current.has(s.session_id),
-          );
-          return [...draftEntries, ...nonDraft];
-        });
-      })
-      .catch((err) => {
-        console.error("Failed to load sessions:", err);
-      });
-  }, [ws, activePool]);
+  const acceptSessions = useCallback((loaded: ConversationInfo[]): void => {
+    // An authoritative record is persisted even if the attach acknowledgement
+    // raced the first send. Never let a local draft shadow its title/metadata.
+    for (const session of loaded) draftIdsRef.current.delete(session.session_id);
+    setSessions((prev) => [
+      ...prev.filter((session) => draftIdsRef.current.has(session.session_id)),
+      ...loaded,
+    ]);
+  }, []);
 
-  // Validate the restored/persisted pool against the global pool list.
+  // Validate the restored/persisted pool against the global pool list. When
+  // there is no valid choice, adopt the user's preferred pool (PA-07) — never
+  // a silent "first item"/"main" guess: with no preference either, the
+  // selection stays empty ("") and the hero send is disabled until the user
+  // picks a pool in the sidebar selector.
   useEffect(() => {
     if (pools.length > 0 && !pools.some((p) => p.name === activePool)) {
-      const first = pools[0];
-      if (first) {
-        setActivePool(first.name);
+      const next =
+        preferredPool && pools.some((p) => p.name === preferredPool)
+          ? preferredPool
+          : "";
+      if (next !== activePool) {
+        setActivePool(next);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pools]);
+  }, [pools, preferredPool, activePool]);
 
   const refreshSessions = useCallback((): void => {
+    // Each refresh claims a fresh epoch so out-of-order responses within the
+    // same pool are discarded too (PA-02: rapid sessions_changed pings /
+    // rename-then-notify must never let a slower earlier fetch overwrite a
+    // newer one). History filtering is local and does not affect this fetch.
+    fetchEpochRef.current += 1;
     const epoch = fetchEpochRef.current;
-    fetchSessions(ws || undefined, activePool)
+    setIsLoadingSessions(true);
+    fetchSessions(ws || undefined)
       .then((loaded) => {
         if (fetchEpochRef.current !== epoch) return;
-        setSessions((prev) => {
-          const draftEntries = prev.filter(
-            (s) => draftIdsRef.current.has(s.session_id),
-          );
-          const nonDraft = loaded.filter(
-            (s) => !draftIdsRef.current.has(s.session_id),
-          );
-          return [...draftEntries, ...nonDraft];
-        });
+        acceptSessions(loaded);
       })
       .catch((err) => {
         console.error("Failed to refresh sessions:", err);
+      })
+      .finally(() => {
+        if (fetchEpochRef.current === epoch) setIsLoadingSessions(false);
       });
-  }, [ws, activePool]);
+  }, [ws, acceptSessions]);
 
   useEffect(() => {
     refreshSessionsRef.current = refreshSessions;
+    refreshSessions();
+    return () => { fetchEpochRef.current += 1; };
   }, [refreshSessions]);
 
   // Clear the debounced tree-refresh timer on unmount.
@@ -273,6 +298,40 @@ export function useSessions({ ws, pools }: UseSessionsOptions): UseSessionsResul
       }
     };
   }, []);
+
+  // sessions_changed control notification (PA-02): the ping carries the
+  // canonical workspace path; refresh only when it matches this pod's scope
+  // ("" = home), compared representation-tolerantly (sameWorkspacePath —
+  // string normalization only; canonicalization belongs to the server's
+  // open seam). Cross-workspace pings never touch this pod's list.
+  const onSessionsChanged = useCallback(
+    (workspace: string): void => {
+      if (!sameWorkspacePath(workspace, ws)) return;
+      refreshSessionsRef.current?.();
+    },
+    [ws],
+  );
+
+  // Rename a persisted session (PA-02). The server validates and writes
+  // metadata.title (same-title save = no-op success); the shared refresh
+  // re-reads the authoritative list. Drafts (uuid-prefix, no server record)
+  // reject without a PATCH.
+  const renameSession = useCallback(
+    (sessionId: string, title: string): Promise<string> => {
+      if (pendingRef.current.has(sessionId) || draftIdsRef.current.has(sessionId)) {
+        return Promise.reject(new Error("session not persisted yet"));
+      }
+      const pool =
+        sessions.find((s) => s.session_id === sessionId)?.pool ?? activePool;
+      return renameSessionTitle(sessionId, title, ws || undefined, pool).then(
+        () => {
+          refreshSessionsRef.current?.();
+          return title.trim();
+        },
+      );
+    },
+    [sessions, activePool, ws],
+  );
 
   const selectSession = useCallback(
     (sessionId: string): void => {
@@ -347,33 +406,9 @@ export function useSessions({ ws, pools }: UseSessionsOptions): UseSessionsResul
 
   const handlePoolChange = useCallback(
     (pool: string): void => {
-      if (treeRefreshTimerRef.current) {
-        clearTimeout(treeRefreshTimerRef.current);
-        treeRefreshTimerRef.current = null;
-      }
-      fetchEpochRef.current += 1;
-      const epoch = fetchEpochRef.current;
       setActivePool(pool);
-      setSelectedId(null);
-      pendingRef.current.clear();
-      draftIdsRef.current.clear();
-      setSessions([]);
-      setIsLoadingSessions(true);
-      fetchSessions(ws || undefined, pool)
-        .then((loaded) => {
-          if (fetchEpochRef.current !== epoch) return;
-          setSessions(loaded);
-        })
-        .catch((err) => {
-          console.error("Failed to load sessions after pool change:", err);
-        })
-        .finally(() => {
-          if (fetchEpochRef.current === epoch) {
-            setIsLoadingSessions(false);
-          }
-        });
     },
-    [ws],
+    [],
   );
 
   const onSent = useCallback((sessionId: string | null): void => {
@@ -408,6 +443,8 @@ export function useSessions({ ws, pools }: UseSessionsOptions): UseSessionsResul
     handleDelete,
     handlePoolChange,
     onSent,
+    renameSession,
+    onSessionsChanged,
     newConvNonce,
   };
 }

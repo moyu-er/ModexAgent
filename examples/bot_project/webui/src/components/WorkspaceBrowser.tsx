@@ -32,6 +32,8 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
   const [picking, setPicking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
+  const [serverPath, setServerPath] = useState("");
+  const [opening, setOpening] = useState(false);
   const [newBackend, setNewBackend] = useState<string>("");
   const [creating, setCreating] = useState(false);
   const cancelledRef = useRef(false);
@@ -76,15 +78,20 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
 
   const handleRecentClick = useCallback(
     async (path: string): Promise<void> => {
+      if (opening) return;
+      cancelledRef.current = false;
+      setOpening(true);
       setError(null);
       try {
         const result = await changeWorkspace(path);
-        applySwitchResult(result);
+        if (!cancelledRef.current) applySwitchResult(result);
       } catch {
-        setError(t("workspace.networkError"));
+        if (!cancelledRef.current) setError(t("workspace.networkError"));
+      } finally {
+        setOpening(false);
       }
     },
-    [applySwitchResult, t],
+    [applySwitchResult, opening, t],
   );
 
   const handleCreate = useCallback(async (): Promise<void> => {
@@ -151,6 +158,17 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
               {t("workspace.openFolderHint")}
             </span>
           </button>
+
+          <form className="flex items-end gap-2" onSubmit={(event) => {
+            event.preventDefault();
+            if (serverPath.trim()) void handleRecentClick(serverPath.trim());
+          }}>
+            <label className="min-w-0 flex-1 text-sm text-body">
+              {t("workspace.serverPath")}
+              <input className="mt-1 w-full rounded-sm border border-hairline bg-canvas px-2 py-2 font-mono text-sm text-ink" value={serverPath} onChange={(event) => setServerPath(event.target.value)} disabled={opening || picking || creating} />
+            </label>
+            <Button type="submit" size="sm" disabled={!serverPath.trim() || opening || picking || creating} loading={opening}>{t("workspace.openPath")}</Button>
+          </form>
 
           <div className="flex flex-col gap-1.5">
             <p className="text-xs font-semibold uppercase tracking-wide text-mute">

@@ -20,10 +20,8 @@ feeds both the agent factory and the Stage-4 assembly inputs (C1).
 
 The ``_build_*`` helpers live on the shared :class:`_PoolAssemblyMixin`
 (in :mod:`bot.service.builders`). ``ReactExecutionStrategy`` inherits the
-mixin, so the helpers are private methods of this class
-(``self._build_tools``, etc.). The terminal manager ladder itself is
-framework logic (:func:`create_terminal_manager_or_none`); the strategy
-only supplies the pool's config axes and workspace cwd.
+mixin, so the helpers are private methods of this class. Shell construction
+is capability-owned and does not pass through the strategy result.
 """
 
 from __future__ import annotations
@@ -37,7 +35,6 @@ from modex_agent.multi_agent.execution_strategy import (
     StrategyAssembly,
 )
 from modex_agent.scope.spec import PoolSpec
-from modex_agent.tools.terminal.managers import create_terminal_manager_or_none
 from modex_agent.trace.cassette import CassetteRecorder
 
 from .builders import _PoolAssemblyMixin
@@ -84,12 +81,6 @@ class ReactExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategy):
         app_config = ctx.app_config
         pool_data = ctx.pool_data
 
-        terminal_manager = create_terminal_manager_or_none(
-            use_terminal=main_spec.use_terminal,
-            terminal_visibility=main_spec.terminal_visibility,
-            pool_name=pool_name,
-            default_cwd=(str(workspace_handle.current) if workspace_handle is not None else None),
-        )
         # The pool's todo store is NOT built here anymore: the ``todo``
         # capability's supply() owns its construction (Stage 3 aggregation
         # → capability_supply['todo'] → the roster's TodoToolFactory).
@@ -118,12 +109,8 @@ class ReactExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategy):
         )
 
         tool_manager: ToolManager = await self._build_tools(pool_name)
-        # The bash slot is NOT built or registered here: the roster owns it.
-        # Stage 4 resolves the compiled ``bash`` entry through the FW
-        # BashToolFactory (CommandTool with a terminal manager / the pool's
-        # PersistentBashTool fallback / SubprocessTool on no-pty hosts), and
-        # native_core ensures the bash_input companion after roster
-        # registration — the same single road the subagent template uses.
+        # The shell capability contributes the ``bash`` anchor. Stage 4's
+        # single TOOL factory returns and owns the complete effective group.
 
         # Cassette recording wraps the strategy's own products (tool manager);
         # the provider (resolved in create_pool) is wrapped with the same
@@ -147,8 +134,6 @@ class ReactExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategy):
             system_prompt_provider=prompt_provider,
             tool_manager=tool_manager,
             mcp_manager=None,
-            terminal_manager=terminal_manager,
-            persistent_bash=None,
             context_manager=context_manager,
             notification_service=None,
             communication_service=None,

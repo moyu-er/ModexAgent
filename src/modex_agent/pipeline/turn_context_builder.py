@@ -119,6 +119,7 @@ class TurnRequest:
     trigger_agent: bool
     approval_action: ApprovalAction | None = None
     approval_tool_call_id: str | None = None
+    approval_id: str | None = None
     command_result: CommandHandlingResult | None = None
 
 
@@ -275,6 +276,7 @@ class TurnContextBuilder:
                 trigger_agent=False,
                 approval_action=decision.action,
                 approval_tool_call_id=decision.tool_call_id,
+                approval_id=decision.approval_id,
             )
         if self._command_processor is None:
             parsed_command = parse_input_command(input_msg.content or "")

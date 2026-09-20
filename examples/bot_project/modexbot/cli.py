@@ -830,6 +830,26 @@ def _run(
     _run_bot(str(config), port, no_webui)
 
 
+@app.command("acp")
+def acp(
+    config: Path = typer.Option(  # noqa: B008
+        Path("config"), "--config", "-c", file_okay=False, dir_okay=True,
+        help="Bot configuration directory (separate from the editor project).",
+    ),
+    pool: str | None = typer.Option(  # noqa: B008
+        None, "--pool", help="Fixed pool for this editor process.",
+    ),
+) -> None:
+    """Serve ACP over stdio without starting IM or WebUI services."""
+    config = _resolve_config(config)
+    if not config.is_dir():
+        typer.echo(f"ERROR: config directory not found: {config}", err=True)
+        raise typer.Exit(1)
+    from bot.acp.runtime import run_acp_entry
+
+    run_acp_entry(config, pool_override=pool)
+
+
 @app.command("stop")
 def stop(
     port: int = typer.Option(  # noqa: B008

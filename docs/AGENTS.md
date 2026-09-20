@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-28 -->
+<!-- Updated: 2026-09-10 | shell capability convergence -->
 
 # docs
 
@@ -16,6 +16,7 @@ docs/
 ├── design/                ← Feature design docs (PRD per feature; completed tickets in _archive/)
 │   ├── _archive/                      ← Superseded PRDs + completed tickets
 │   ├── capability-bundles/            (ADR-0047, implemented 2026-08-28) capability bundles — SPEC, author guide
+│   ├── shell-capability/               (ADR-0047 refinement) atomic shell group, selection/lifecycle SPEC, coordinator tasks
 │   ├── sandbox-integration/           (ADR-0007) execution substrate, per-session HOST fallback and validation evidence - PRD, tickets
 │   ├── unified-security/              shared verdicts, independent human approval and delegation limits - PRD, tickets
 │   ├── llm-provider/                  (ADR-0046) LLM provider protocol engines — PRD
@@ -63,6 +64,7 @@ Each feature has a directory under `design/<feature-slug>/` containing:
 | Feature | ADR | Key files |
 |---------|-----|-----------|
 | Capability bundles (11th slot, five-phase protocol, five bundled packages migrated split-brain; implemented 2026-08-28) | ADR-0047 | SPEC.md, AUTHOR-GUIDE.md |
+| Shell capability convergence (atomic tool group, substrate/mode matrix, one lifecycle owner) | ADR-0047 | [SPEC](design/shell-capability/SPEC.md), [tasks](design/shell-capability/tasks.md) |
 | Sandbox integration (DEFAULT dormant; selected engine/per-session HOST fallback; no replay) | ADR-0007 | [PRD](design/sandbox-integration/PRD.md), [tickets and validation evidence](design/sandbox-integration/tickets.md#validation-evidence) |
 | Unified security (canonical targets, independent human approval, native delegation/audit; HOST/external limits) | sandbox-integration | [PRD](design/unified-security/PRD.md), [tickets and security coverage](design/unified-security/tickets.md#validation-scope) |
 | LLM provider protocol engines (ADR-0046) | 0046 | PRD.md |

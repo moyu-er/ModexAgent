@@ -63,14 +63,29 @@ const BILL = {
         { field: "max_steps", value: 50, layer: "local", profile: null },
       ],
       tools: [
-        { tool: "read", origin: "preset", replaces: null, targets: [] },
-        { tool: "edit", origin: "preset", replaces: null, targets: [] },
-        { tool: "aci_edit", origin: "supplement", replaces: "edit", targets: [] },
-        { tool: "task", origin: "derived_task", replaces: null, targets: ["worker"] },
+        { tool: "read", origin: "preset", capability: null, targets: [] },
+        { tool: "edit", origin: "preset", capability: null, targets: [] },
+        {
+          tool: "aci_edit",
+          origin: "capability_derived",
+          capability: "aci",
+          targets: [],
+        },
+        { tool: "task", origin: "derived_task", capability: null, targets: ["worker"] },
       ],
-      replacements: [
-        { default_tool: "edit", replacement_tool: "aci_edit", supplement: "aci" },
+      tool_groups: [
+        {
+          anchor: "bash",
+          origin: "capability_derived",
+          capability: "shell",
+          variants: [
+            { name: "subprocess", tools: ["bash"] },
+            { name: "persistent", tools: ["bash", "bash_input"] },
+          ],
+        },
       ],
+      hooks: [],
+      capabilities: [],
     },
     {
       pool: "main",
@@ -81,15 +96,17 @@ const BILL = {
         { field: "max_steps", value: 60, layer: "local", profile: null },
       ],
       tools: [
-        { tool: "read", origin: "preset", replaces: null, targets: [] },
+        { tool: "read", origin: "preset", capability: null, targets: [] },
         {
           tool: "send_to_agent",
           origin: "derived_send_to_agent",
-          replaces: null,
+          capability: null,
           targets: ["main"],
         },
       ],
-      replacements: [],
+      tool_groups: [],
+      hooks: [],
+      capabilities: [],
     },
     {
       pool: "helper",
@@ -102,11 +119,13 @@ const BILL = {
         {
           tool: "send_to_peer",
           origin: "derived_send_to_peer",
-          replaces: null,
+          capability: null,
           targets: ["main"],
         },
       ],
-      replacements: [],
+      tool_groups: [],
+      hooks: [],
+      capabilities: [],
     },
   ],
 };
@@ -195,20 +214,28 @@ describe("ScopeView — provenance bill", () => {
     expect(workerToolset.textContent).toContain("read_write");
   });
 
-  it("shows component implementation sources (O2/O3 audit surface)", async () => {
+  it("shows component implementation sources (O2 audit surface)", async () => {
     await renderView();
     const card = screen.getByTestId("scope-bill-agent-main-main");
+    // Name-slot overwrite face: BOTH entries of the upgrade render with
+    // their origins — the edit slot is settled at assembly by ToolOrigin
+    // rank, so the bill keeps no replacement record.
+    const presetEdit = within(card).getByTestId("scope-bill-tool-edit");
+    expect(presetEdit.getAttribute("data-origin")).toBe("preset");
     const aciEdit = within(card).getByTestId("scope-bill-tool-aci_edit");
-    expect(aciEdit.getAttribute("data-origin")).toBe("supplement");
-    expect(aciEdit.textContent).toContain("← edit");
+    expect(aciEdit.getAttribute("data-origin")).toBe("capability_derived");
     const presetRead = within(card).getByTestId("scope-bill-tool-read");
     expect(presetRead.getAttribute("data-origin")).toBe("preset");
-    expect(
-      within(card).getByTestId("scope-bill-replacement-edit").textContent,
-    ).toBe("edit ← aci_edit (aci)");
     const task = within(card).getByTestId("scope-bill-tool-task");
     expect(task.getAttribute("data-origin")).toBe("derived_task");
     expect(task.textContent).toContain("→ worker");
+    const shellGroup = within(card).getByTestId("scope-bill-tool-group-bash");
+    expect(shellGroup.getAttribute("data-origin")).toBe("capability_derived");
+    expect(shellGroup.getAttribute("data-capability")).toBe("shell");
+    expect(shellGroup.textContent).toContain("capability_derived");
+    expect(shellGroup.textContent).toContain("shell");
+    expect(shellGroup.textContent).toContain("subprocess: bash");
+    expect(shellGroup.textContent).toContain("persistent: bash, bash_input");
   });
 });
 

@@ -90,6 +90,7 @@ from modex_agent.core.emitter import StopReason
 from modex_agent.core.message_utils import sanitize_reminder_content
 from modex_agent.hook.abc import OutcomeFinallyHook
 from modex_agent.messaging.models import ReminderKind
+from modex_agent.multi_agent.session_tree.request_scope import REQUEST_SCOPE_ID_KEY
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -447,6 +448,13 @@ class SubagentAutoSendHook(OutcomeFinallyHook):
         gid = ctx.graph_instance_id
         if gid is not None:
             metadata["graph_instance_id"] = gid
+        # Source-time request-scope attribution — the SAME mechanism as
+        # SendStrategy.send: the SENDER's running scope stamps this causal
+        # AGENT_RESULT, otherwise the scoped deliver gate archives it and
+        # the parent never sees the subagent result.
+        sender_scope_id = await self._tree.sender_scope_id(session_id)
+        if sender_scope_id is not None:
+            metadata[REQUEST_SCOPE_ID_KEY] = sender_scope_id
 
         envelope = AgentMessageEnvelope(
             payload={

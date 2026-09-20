@@ -1,34 +1,41 @@
 import { useEffect, useRef, useState, type FC } from "react";
 import { createPortal } from "react-dom";
-import { Folder, FolderSearch, Search } from "lucide-react";
+import { Folder, FolderSearch, Pin, Search } from "lucide-react";
 import { WorkspaceBrowser, type RecentWorkspace } from "./WorkspaceBrowser";
-import { pathBasename } from "../hooks/useWorkspaceTabs";
+import { pathBasename, sameWorkspacePath } from "../hooks/useWorkspaceTabs";
 import { useT } from "../i18n";
 
 export interface OpenWorkspaceMenuProps {
   open: boolean;
   onClose: () => void;
   recentWorkspaces: RecentWorkspace[];
+  /** The user's saved default workspace path (null = no default). */
+  defaultWorkspace: string | null;
   /** Recent entry picked — the host runs cd (register) then opens a tab. */
   onOpenRecent: (path: string) => void;
   /** Directory picked via the browse modal — the browser already ran cd. */
   onBrowsePicked: (path: string) => void;
-  /** Browse modal's "home" shortcut — activates the pinned home tab. */
+  /** Save `path` as the default workspace preference (PA-08). */
+  onSetDefault: (path: string) => void;
+  /** Browse modal's "home" shortcut — opens the home workspace tab. */
   onGoHome: () => void;
   /** Anchor the popover to the right edge (overflow mode's pinned "+"). */
   anchorRight?: boolean;
 }
 
 /**
- * The "+" menu: the single workspace-opening entry point. Opening ALWAYS
- * appends a new tab — this menu deliberately shows no "already open" state.
+ * The "+" menu: the single workspace-opening entry point. Opening a path
+ * dedupes to an existing tab (PA-08); each recent entry also offers
+ * "Set as default workspace" (a preference write, not a switch).
  */
 export const OpenWorkspaceMenu: FC<OpenWorkspaceMenuProps> = ({
   open,
   onClose,
   recentWorkspaces,
+  defaultWorkspace,
   onOpenRecent,
   onBrowsePicked,
+  onSetDefault,
   onGoHome,
   anchorRight = false,
 }) => {
@@ -84,23 +91,38 @@ export const OpenWorkspaceMenu: FC<OpenWorkspaceMenuProps> = ({
           const path = String(entry.path);
           const base = pathBasename(path);
           const dir = path.slice(0, path.length - base.length);
+          const isDefault =
+            defaultWorkspace !== null && sameWorkspacePath(path, defaultWorkspace);
           return (
-            <button
-              key={path}
-              type="button"
-              className="wsopen-item"
-              title={path}
-              onClick={() => {
-                onClose();
-                onOpenRecent(path);
-              }}
-            >
-              <Folder size={14} aria-hidden="true" />
-              <span className="wsopen-path">
-                <span className="dir">{dir}</span>
-                <span className="base">{base}</span>
-              </span>
-            </button>
+            <div key={path} className="wsopen-item-row">
+              <button
+                type="button"
+                className="wsopen-item"
+                title={path}
+                onClick={() => {
+                  onClose();
+                  onOpenRecent(path);
+                }}
+              >
+                <Folder size={14} aria-hidden="true" />
+                <span className="wsopen-path">
+                  <span className="dir">{dir}</span>
+                  <span className="base">{base}</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="wsopen-item-side"
+                title={t("tabs.setDefault")}
+                aria-label={t("tabs.setDefault")}
+                aria-pressed={isDefault}
+                onClick={() => {
+                  onSetDefault(path);
+                }}
+              >
+                <Pin size={13} aria-hidden="true" />
+              </button>
+            </div>
           );
         })}
         <div className="wsopen-divider" />

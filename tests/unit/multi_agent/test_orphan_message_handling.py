@@ -40,6 +40,16 @@ from modex_agent.multi_agent.pool_router import (
 )
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.inbox_mq import SqliteInboxMQ
+from modex_agent.pipeline.turn_outcome import TurnOutcome
+
+
+def _as_outcome(process):
+    """Wrap a recording fake into the pool's typed outcome interface."""
+    async def _outcome(msg):
+        await process(msg)
+        return TurnOutcome.handled()
+    return _outcome
+
 
 
 class _DefaultPoolScope(RecordScope):
@@ -105,7 +115,7 @@ class TestInboxPollerHandlesOrphanWithoutDataLoss:
 
             default_inst = MagicMock()
             default_inst.pipeline = MagicMock()
-            default_inst.pipeline.process_message = AsyncMock()
+            default_inst.pipeline.process_message_outcome = AsyncMock(return_value=TurnOutcome.handled())
 
             class _DefaultPool:
                 def __init__(self):
@@ -160,7 +170,7 @@ class TestInboxPollerHandlesOrphanWithoutDataLoss:
             )
 
             # default agent's pipeline must NOT have been called (wrong agent)
-            assert not default_inst.pipeline.process_message.called
+            assert not default_inst.pipeline.process_message_outcome.called
         finally:
             await manager.close()
 
@@ -256,7 +266,6 @@ def _pool_instance(name: str, root_agent_name: str) -> PoolInstance:
         tool_manager=MagicMock(),
         skill_resolver=None,
         mcp_manager=None,
-        terminal_manager=None,
         root_agent_name=root_agent_name,
         main_execution_strategy=ExecutionStrategyKind.REACT,
         provider=MagicMock(),

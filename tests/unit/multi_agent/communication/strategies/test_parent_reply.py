@@ -118,7 +118,8 @@ def _make_request(
 def _make_deps(
     bus: object | None = None,
 ) -> SendDeps:
-    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
+    tree = MagicMock(spec=SessionTreeManager)
+    tree.sender_scope_id = AsyncMock(return_value=None)
     if bus is not None:
         async def _deliver(sid: str, env: object) -> None:
             await bus.send(sid, env)  # type: ignore[attr-defined]

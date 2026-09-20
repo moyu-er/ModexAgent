@@ -14,7 +14,9 @@ if TYPE_CHECKING:
     from bot.kb.provider import KbProvider
     from bot.service.core import BotService
     from modex_agent.persistence.managers import WorkspacePersistenceManager
+    from modex_agent.providers.http.provider import HTTPStreamProvider
 
+from bot.config.webui_config import build_control_origin
 from bot.service.builders import (
     _build_hook_runner,
     _build_main_command_processor,
@@ -62,8 +64,6 @@ from modex_agent.tools.overflow.cleaner import OverflowCleaner
 from modex_agent.tools.overflow.handler import ToolResultOverflowHandler
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 from modex_agent.tools.overflow.store import ToolOverflowStore
-from modex_agent.tools.terminal.managers import TerminalManagerBase
-from modex_agent.tools.terminal.persistent_bash import PersistentBashTool
 from modex_agent.workspace.context import WorkspaceContext
 
 logger = logging.getLogger(__name__)
@@ -173,17 +173,28 @@ async def _assemble_resources(
     # Ticket 17 — a runtime-created workspace boots ITS OWN declaration
     # (config/scopes/workspaces/<name>.yml); every other target (home,
     # /cd'd directories) boots the primary declaration as before.
+    # DESIGN §3.2 roots: the declaration is a CONFIG-root file (explicit
+    # roots) at the legacy install location for resident; project_dir
+    # stays the RESOURCE root — declaration-referenced assets (prompts,
+    # skills, memory templates) always resolve against the bot side,
+    # never against a bound IDE workspace. Tool/terminal/sandbox roots
+    # are workspace-target driven via WorkspaceHandle (ctx.target below).
+    roots = service.roots
     workspace_graphs_dir = ctx.target / "config" / "graphs"
-    global_graphs_dir = service._project_dir / "config" / "graphs"
-    declaration_path = service._project_dir / "config" / "scopes" / "bot.yml"
+    global_graphs_dir = roots.graphs_dir
+    declaration_path = roots.scope_declaration_path
     if not declaration_path.exists():
-        raise ScopeBootRequiredError(declaration_path, service._project_dir)
-    dynamic_declaration = dynamic_workspace_declaration_path(service._project_dir, ctx.target)
+        raise ScopeBootRequiredError(declaration_path, roots.resource_root)
+    dynamic_declaration = (
+        dynamic_workspace_declaration_path(roots.resource_root, ctx.target)
+        if service._enable_dynamic_workspaces
+        else None
+    )
     if dynamic_declaration is not None:
         declaration_path = dynamic_declaration
     scope_boot = boot_scope_declaration(
         declaration_path=declaration_path,
-        project_dir=service._project_dir,
+        project_dir=roots.resource_root,
         data_dir=ctx.paths.root,
         graphs_dirs=(workspace_graphs_dir, global_graphs_dir),
         default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
@@ -225,7 +236,10 @@ async def _assemble_resources(
     if app_config is not None and app_config.persistence.backend is PersistenceBackend.SQLITE:
         from modex_agent.persistence.managers import WorkspacePersistenceManager
 
-        if ctx.target == service._project_dir.resolve():
+        # Home workspace reuses the service-opened home DB. The comparison
+        # object is the RUNTIME workspace home (registry home), not the
+        # resource root — the two only coincide for resident deployments.
+        if ctx.target == roots.workspace_home:
             persistence = service._home_persistence
             assert persistence is not None, "Home persistence must open before materialization"
         else:
@@ -292,6 +306,57 @@ async def _assemble_resources(
         store=session_index_store, on_register=_on_session_registered
     )
     await session_registry.load_all()
+    # Title ops: the single owner of metadata.title writes over THIS
+    # workspace's runtime registry (manual rename HTTP, the session_title
+    # hook's background naming, and GC cleanup all share this instance).
+    from bot.service.session_title import SessionTitleOps
+    from bot.service.session_title_task import SessionTitleNamingTask
+
+    title_ops = SessionTitleOps(
+        registry=session_registry,
+        on_changed=lambda: service.session_titles_changed(ctx.target),
+    )
+
+    def _naming_provider_source() -> HTTPStreamProvider:
+        # DESIGN §2.3: lazily construct ONE plain provider from the bot
+        # GLOBAL default model config via create_llm_provider — never the
+        # turn-scoped BotModelProvider (ContextVar-bound). Missing model
+        # configuration fails only the naming task; manual rename is independent.
+        from bot.service.model_config import _resolved_or_placeholder
+        from modex_agent.ioc.factories.llm import create_llm_provider
+        from modex_agent.providers.http.provider import HTTPStreamProvider
+
+        if service._bot_model_config is None:
+            raise ValueError("Configure a default model to enable automatic session titles")
+        cfg = _resolved_or_placeholder(service._bot_model_config)
+        provider = create_llm_provider(cfg.synthesize_llm_config())
+        if not isinstance(provider, HTTPStreamProvider):
+            raise TypeError("The configured title model must supply a closable HTTP provider")
+        return provider
+
+    async def _earliest_user_content(session_id: str) -> str | None:
+        # This existing store selects FILE/SQLite; the explicit directory
+        # pins the task to its workspace even after the caller switches.
+        store = service._transcript_store
+        if store is None:
+            return None
+        from bot.webui.events import UserMessageEvent
+
+        try:
+            events = await store.load(session_id, sessions_dir=ctx.paths.sessions_dir)
+        except Exception:
+            logger.debug("session_title transcript load failed", exc_info=True)
+            return None
+        for event in events:
+            if isinstance(event, UserMessageEvent) and event.content.strip():
+                return event.content
+        return None
+
+    title_naming = SessionTitleNamingTask(
+        ops=title_ops,
+        provider_source=_naming_provider_source,
+        transcript_reader=_earliest_user_content,
+    )
 
     # 2. Per-workspace broker (cross-process wakeup). The inbox/bus are now
     #    per-pool (Task 7) — built inside create_pool, one set per pool.
@@ -331,6 +396,10 @@ async def _assemble_resources(
         kb_provider=kb_provider,
         component_registry=service._component_registry,
         session_pool_index=session_pool_index,
+        session_registry=session_registry,
+        title_ops=title_ops,
+        title_naming=title_naming,
+        scope_declaration_path=declaration_path,
     )
     state.resources = resources
     # 3. Per-workspace interceptor chain, rooted at THIS workspace's overflow dir.
@@ -386,7 +455,7 @@ async def _assemble_resources(
             assembly_deps[name],
             await resolve_declared_root_prompt(
                 declared_builds[name],
-                service._project_dir,
+                roots.resource_root,
                 service._component_registry,
             ),
             app_config=app_config,
@@ -399,12 +468,13 @@ async def _assemble_resources(
     #    R after assembly so per-turn pool_data resolution lands back here.
     #    Every pool boots from the scope declaration (ticket 11).
     resolver_cell = WorkspaceResolverCell()
+    control_origin = build_control_origin(roots.config_dir)
     for name in pool_names:
         pools[name] = await create_pool(
             pool_name=name,
             declared=declared_builds[name],
             assembly_deps=assembly_deps[name],
-            project_dir=service._project_dir,
+            project_dir=roots.resource_root,
             data_dir=ctx.paths.root,
             broker=broker,
             output_adapter=service.output_adapter,
@@ -414,6 +484,7 @@ async def _assemble_resources(
             shared_hooks=shared_hooks,
             shared_hook_runner=shared_hook_runner,
             shared_interceptor_chain=shared_interceptor_chain,
+            control_origin=control_origin,
             control_channel=service.control_channel,
             command_processor=command_processor,
             pool_data=pool_data[name],
@@ -553,23 +624,30 @@ async def _assemble_resources(
     resources.graph_event_subscribers = graph_event_subscribers
     resources.graph_conn = graph_conn
 
-    default_pool = service._default_pool_name
-    if default_pool is None:
-        # No nominated default — derive from the runtime pools dict (first
-        # pool, or None when zero pools exist). The zero-pool case is
-        # expected (the user hasn't created any pool yet); PoolRouter and
-        # ResolvePoolStage guard it downstream, so stay silent.
-        default_pool = next(iter(pools), None)
-    elif default_pool not in pools:
-        fallback = next(iter(pools), default_pool)
-        if fallback != default_pool:
+    # PA-07: the workspace router's construction-time default is the unified
+    # preference-aware selection (declared = compiled pools in declaration
+    # order; runtime = this workspace's materialized pools). NO first-pool /
+    # main fallback (DESIGN §3.3): an unusable preference yields None and
+    # NEW-choice entries resolve dynamically through the service property /
+    # input-context provider instead of this static value. Existing stored
+    # routes are unaffected (the store is authoritative for them).
+    from bot.service.default_pool_selection import resolve_default_pool
+
+    prefs = getattr(service, "personal_preferences", None)
+    default_pool = None
+    if prefs is not None:
+        decision = resolve_default_pool(
+            preferred=prefs.preferred_pool(),
+            declared_pools=_declaration_road_pools(scope_boot),
+            runtime_pools=set(pools),
+        )
+        default_pool = decision.pool
+        if decision.pool is None and prefs.preferred_pool() is not None:
             logger.warning(
-                "[pool-routing] nominated default pool %r not found; falling back to %r (pools=%s)",
-                default_pool,
-                fallback,
-                list(pools),
+                "[pool-routing] preferred default pool unusable in workspace %s: %s",
+                ctx.target,
+                decision.reason,
             )
-            default_pool = fallback
 
     # 6. Background tasks (dream) — per workspace. The per-pool experience
     #    curator loops moved to the experience capability supply (SPEC
@@ -626,7 +704,7 @@ async def _assemble_resources(
 async def _stop_resources(resources: PoolWorkspaceResources) -> None:
     """Tear down one workspace's resources (re-home of _on_workspace_deactivate).
 
-    Stop order: background tasks → terminals → pools (MCP release + shutdown +
+    Stop order: background tasks → pools (agent resources + MCP release + shutdown +
     broker bridges) → broker → per-pool trace stores (bounded OTLP flush) →
     graph orchestrator → graph connection. The workspace DB closes LAST
     (after all DB-writing producers have stopped and final flushes complete)
@@ -637,6 +715,12 @@ async def _stop_resources(resources: PoolWorkspaceResources) -> None:
         await _stop_pools(resources)
         pools_ok = True
     finally:
+        # Workspace teardown is the title naming owner's single release
+        # point (DESIGN §2.4): cancel every pending naming task and close
+        # the lazy provider AFTER pools stop (no hook can submit more).
+        title_naming = resources.title_naming
+        if title_naming is not None:
+            await title_naming.aclose()
         try:
             if resources.graph_orchestrator is not None:
                 try:
@@ -656,21 +740,6 @@ async def _stop_pools(resources: PoolWorkspaceResources) -> None:
     if resources.background is not None:
         with contextlib.suppress(BaseException):
             await resources.background.stop()
-    tasks: list[asyncio.Task[None]] = []
-    for pi in resources.pools.values():
-        mgr = pi.terminal_manager
-        if mgr is not None:
-            for term_name in list(mgr.list_names()):
-                tasks.append(asyncio.create_task(_close_terminal(mgr, term_name)))
-        # Fallback persistent bash (no terminal manager): the registered
-        # "bash" tool IS the shell owner — close it so the PTY child is
-        # reaped at pool shutdown. Idempotent (safe with the eval roster's
-        # own trial-teardown close).
-        bash_tool = pi.tool_manager.get_tool("bash")
-        if isinstance(bash_tool, PersistentBashTool):
-            tasks.append(asyncio.create_task(_close_persistent_bash(bash_tool)))
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
     pools_stopped = True
     cancellation: asyncio.CancelledError | None = None
     for pi in resources.pools.values():
@@ -702,20 +771,6 @@ async def _stop_pools(resources: PoolWorkspaceResources) -> None:
     if resources.owned_pool_routing_store is not None:
         with contextlib.suppress(BaseException):
             resources.owned_pool_routing_store.close()
-
-
-async def _close_terminal(mgr: TerminalManagerBase, name: str) -> None:
-    try:
-        await mgr.close(name)
-    except BaseException:
-        logger.debug("terminal close failed for %s", name, exc_info=True)
-
-
-async def _close_persistent_bash(bash: PersistentBashTool) -> None:
-    try:
-        await bash.close()
-    except BaseException:
-        logger.debug("persistent bash close failed", exc_info=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────

@@ -29,6 +29,7 @@ def _ctx(
 ) -> BotInputContext:
     store = MagicMock()
     store.get.return_value = store_get
+    store.get_pool.return_value = store_get
 
     home_dir = home or Path("/project")
     ws = current_ws or home_dir
@@ -141,7 +142,8 @@ async def test_stop_command_handled_by_session_stage() -> None:
 
 @pytest.mark.asyncio
 async def test_continue_command_enqueues_continue_signal() -> None:
-    """CommandDispatchStage: /continue enqueues a continue InputMessage and marks HANDLED."""
+    """A prepared /continue is delivered once by the shared handle."""
+    from bot.input_pipeline.prepare import BotInputPreparation
     from bot.input_pipeline.stages.command import CommandDispatchStage
     from bot.input_pipeline.stages.commands import SHARED_COMMANDS
 
@@ -152,8 +154,8 @@ async def test_continue_command_enqueues_continue_signal() -> None:
     ctx._enqueue_message = MagicMock(side_effect=enqueued.append)
     ctx.enqueue_message = MagicMock(side_effect=enqueued.append)  # type: ignore[method-assign]
     env = UserInputEnvelope(external_id="u1", content="/continue", channel="qq")
-    stage = CommandDispatchStage(handlers=SHARED_COMMANDS)
-    result = await stage.process(env, ctx)
+    pipeline = BotInputPreparation([CommandDispatchStage(handlers=SHARED_COMMANDS)])
+    result = await pipeline.handle(env, ctx)
 
     assert result.should_continue() is True
     assert env.command_status is CommandStatus.HANDLED

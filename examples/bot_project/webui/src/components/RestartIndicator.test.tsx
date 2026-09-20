@@ -24,17 +24,19 @@ function Harness() {
         arm
       </button>
       <WorkspaceTabBar
-        tabs={[{ id: "__home__", path: "/home" }]}
-        activeId="__home__"
+        tabs={[{ id: "t1", path: "/home" }]}
+        activeId="t1"
         statuses={{}}
         home="/home"
         recentWorkspaces={[]}
+        defaultWorkspace={null}
         onOpenWorkspace={noop}
         onOpenRecent={noop}
         onActivate={noop}
         onClose={noop}
         onReorder={noop}
         onOpenSettings={noop}
+        onSetDefaultWorkspace={noop}
       />
     </div>
   );

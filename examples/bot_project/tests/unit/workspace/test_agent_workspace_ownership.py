@@ -39,6 +39,7 @@ from modex_agent.tools.workspace_scoped import (
     WorkspaceScopedFileTool,
     WorkspaceScopedShellTool,
     WorkspaceScopedTool,
+    wrap_standard_tools,
 )
 from modex_agent.workspace.context import WorkspaceContext
 
@@ -96,7 +97,7 @@ def test_get_preset_tools_with_provider_wraps_file_tools(tmp_path: Path) -> None
         assert isinstance(t, WorkspaceScopedFileTool)
 
 
-def test_get_preset_tools_with_provider_wraps_bash_tool() -> None:
+def test_workspace_wrapper_wraps_subprocess_bash_tool() -> None:
     from modex_agent.tools.terminal import SubprocessTool
 
     provider = _StaticRootProvider(Path("/tmp/fake_ws"))
@@ -104,9 +105,7 @@ def test_get_preset_tools_with_provider_wraps_bash_tool() -> None:
     def _make_bash() -> SubprocessTool:
         return SubprocessTool(timeout=300)
 
-    tools = get_preset_tools(
-        ToolPreset.FULL, subprocess_tool_factory=_make_bash, root_provider=provider
-    )
+    tools = wrap_standard_tools([_make_bash()], provider)
     bash_tools = [t for t in tools if t.name == "bash"]
     assert len(bash_tools) == 1
     assert isinstance(bash_tools[0], WorkspaceScopedShellTool)
@@ -480,4 +479,7 @@ def test_workspace_scoped_tool_leaves_absolute_path_alone(tmp_path: Path) -> Non
     # logic correctly treats it as relative there — use a platform-absolute path.
     absolute = "C:/Windows/System32" if os.name == "nt" else "/etc/passwd"
     args = scoped._scoped_args({"path": absolute})
-    assert args["path"] == absolute
+    # "Untouched" means anchored at itself (never prefixed with the workspace
+    # root); the wrapper routes through the canonical resolver, whose spelling
+    # is platform-canonical — compare as paths, not raw strings.
+    assert Path(args["path"]) == Path(absolute).resolve()

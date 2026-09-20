@@ -102,9 +102,13 @@ class InMemorySessionRegistry(SessionRegistry):
                     update["metadata"] = merged_meta
                 if update:
                     merged = existing.model_copy(update=update)
-                    self._cache[session.session_id] = merged
+                    # Durable save BEFORE the cache mutation: a failed store
+                    # write must not leave a ghost cache entry (the scope
+                    # owner's rollback relies on the cache still holding the
+                    # prior durable fact).
                     if self._store is not None:
                         await self._store.save(merged)
+                    self._cache[session.session_id] = merged
             else:
                 # New record: ensure timestamps are initialized so callers that
                 # reconstruct a SessionInfo from its id (e.g. AgentPool._track_session
@@ -115,9 +119,9 @@ class InMemorySessionRegistry(SessionRegistry):
                         "created_at": session.created_at or now,
                         "updated_at": session.updated_at or now,
                     })
-                self._cache[session.session_id] = session
                 if self._store is not None:
                     await self._store.save(session)
+                self._cache[session.session_id] = session
                 if self._on_register is not None:
                     try:
                         await self._on_register(session)

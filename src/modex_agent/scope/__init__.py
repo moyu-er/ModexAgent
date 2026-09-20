@@ -19,8 +19,6 @@ from modex_agent.scope.compiler import (
     ProvenanceLayer,
     ScopeCompilation,
     ToolEntryProvenance,
-    ToolOrigin,
-    ToolReplacement,
     compile_scope,
 )
 from modex_agent.scope.defaults import (
@@ -109,8 +107,6 @@ __all__ = [
     "ScopeValidationIssue",
     "SessionMemoryOverride",
     "ToolEntryProvenance",
-    "ToolOrigin",
-    "ToolReplacement",
     "WorkspacePathsSpec",
     "WorkspacePersistenceSpec",
     "WorkspaceSpec",

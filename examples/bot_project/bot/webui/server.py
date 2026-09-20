@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from bot.adapters.web_socket import WebSocketInputAdapter
+from bot.config.domains.personal_assistant import PersonalAssistantPreferences
 from bot.control.routes import (
     CONTROL_HISTORY_PATH,
     CONTROL_SEND_PATH,
@@ -27,6 +28,7 @@ from bot.control.routes import (
     handle_send,
 )
 from bot.service.config_controller import ConfigController
+from bot.service.default_pool_selection import DefaultPoolDecision
 from bot.service.model_config import BotModelConfig
 from bot.service.pool_config_controller import PoolConfigController
 from bot.webui.model_fetch import (
@@ -40,7 +42,6 @@ from bot.webui.routes.scope_routes import register_scope_routes
 from bot.webui.routes.sessions import register_sessions_routes
 from bot.webui.routes.websocket import register_websocket_routes
 from bot.webui.routes.workspace import register_workspace_routes
-from bot.webui.transcript_store import TranscriptStore
 from bot.workspace.request_resolver import WorkspaceResolution, resolve_ws_request
 from modex_agent.core.session_id import (
     SessionIdFactory,
@@ -56,6 +57,7 @@ if TYPE_CHECKING:
 
     from bot.service.session_gc import SessionGarbageCollector
     from bot.service.session_pool_index import SessionPoolIndex
+    from bot.service.workspace_store import WorkspaceScopedTranscriptStore
     from bot.workspace.dynamic_workspaces import WorkspaceCreationResult
     from bot.workspace.handle import PoolWorkspaceResources
 
@@ -77,6 +79,25 @@ from bot.webui.types import (  # noqa: F401 — re-exports for backward compatib
 # ── Server ─────────────────────────────────────────────────────────────────
 
 
+@web.middleware
+async def _static_no_cache_middleware(
+    request: web.Request,
+    handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+) -> web.StreamResponse:
+    """Force revalidation for WebUI static assets.
+
+    ``public/`` files (mascot frames, favicon) keep stable URLs across
+    releases; without an explicit Cache-Control the browser heuristically
+    caches them from Last-Modified and stale artwork lingers after an
+    upgrade. ``no-cache`` keeps Last-Modified/304 revalidation cheap while
+    guaranteeing freshness.
+    """
+    response = await handler(request)
+    if request.path.startswith(_WEBUI_STATIC_PREFIX):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 class WebUIServer:
     """HTTP + WebSocket server for the bot WebUI.
 
@@ -90,7 +111,7 @@ class WebUIServer:
     def __init__(
         self,
         input_adapter: WebSocketInputAdapter,
-        transcript_store: TranscriptStore,
+        transcript_store: WorkspaceScopedTranscriptStore,
         static_dist: Path | None = None,
         data_dir: Path | None = None,
         home_sessions_dir: Path | None = None,
@@ -98,7 +119,7 @@ class WebUIServer:
         self._input: WebSocketInputAdapter = input_adapter
         # Shared flat transcript store -- same store the agent emitter and IM
         # FanIn write to.  All transcript I/O (read + write) goes through it.
-        self._store: TranscriptStore = transcript_store
+        self._store = transcript_store
         self._static_dist: Path | None = static_dist
         self._data_dir: Path | None = data_dir
         self._home_sessions_dir: Path = (
@@ -150,7 +171,7 @@ class WebUIServer:
         self._pool_config_controller: PoolConfigController | None = None
         # SessionGarbageCollector -- injected by WebUIService for cascade
         # session deletion. None until wired (handler delegation is separate).
-        self._session_gc = None
+        self._session_gc: SessionGarbageCollector | None = None
         # Backend-aware runtime store resolver: ``async callback(ws_root, pool)
         # -> RuntimeStores``. Injected by WebUIService so the todos/approvals
         # endpoints read from the same backend the agent writes to.
@@ -160,11 +181,24 @@ class WebUIServer:
         # returns the PoolWorkspaceResources for that workspace. When
         # ``None``, graph REST handlers return 503.
         self._graph_workspace_resolver: Callable[[str], PoolWorkspaceResources | None] | None = None
+        self._workspace_resources_provider: Callable[[Path], Awaitable[PoolWorkspaceResources | None]] | None = None
         # Lazy-shared aiohttp ClientSession for outbound provider model-list
         # fetches. Lifecycle owned by :mod:`bot.webui.routes.models`.
         self._http_session: ClientSession | None = None
+        # sessions_changed control-notification sender (PA-02). Injected by
+        # WebUIService to broadcast {type: sessions_changed, workspace} on
+        # the existing WS connection layer.  ``None`` disables the notify
+        # (tests / minimal wiring) — the rename route still succeeds.
+        self._sessions_changed_notifier: Callable[[str], None] | None = None
+        # Personal-assistant preferences owner (PA-06/PA-07). Injected by
+        # WebUIService; consumed by the session-create entry for the unified
+        # default-pool selection. No preferences means an explicit choice
+        # is required; it never substitutes a first pool.
+        self._personal_assistant_preferences: PersonalAssistantPreferences | None = None
+        # Running pool keys, separate from the saved declaration.
+        self._available_pools_provider: Callable[[], set[str]] | None = None
 
-        self.app = web.Application()
+        self.app = web.Application(middlewares=[_static_no_cache_middleware])
         # Control facade slot — injected by WebUIService via
         # :meth:`set_control_facade`. ``None`` degrades the control routes
         # to 503 (matches ConfigController / PoolConfigController convention).
@@ -292,20 +326,62 @@ class WebUIServer:
             return self._pool_resolver(session_prefix)
         return None
 
+    def _new_conversation_default_pool(self, ws_raw: str = "") -> DefaultPoolDecision:
+        """Unified default-pool decision for NEW conversations (PA-07).
+
+        Single convergence point over the injected preferences owner +
+        declared-pool list + running-pool provider: preference (validated
+        declared AND running) or NO default — never a silent
+        ``main``/first-pool substitute. Entries that must create/route a
+        brand-new conversation call this and surface ``decision.reason``
+        when ``pool is None``. Existing conversations keep their stored
+        route / attribution and never pass through here.
+
+        Production reads the selected workspace's declaration and running
+        pools. An unbound server uses its injected availability set.
+        """
+        from bot.service.default_pool_selection import resolve_default_pool
+
+        prefs = self._personal_assistant_preferences
+        running: set[str] = (
+            set(self._available_pools_provider())
+            if self._available_pools_provider is not None
+            else set(self._declared_pools_from_ctx())
+        )
+        declared = sorted(running)
+        resources = self._graph_workspace_resolver(ws_raw) if self._graph_workspace_resolver is not None else None
+        if resources is not None:
+            running = set(resources.pools)
+            if resources.scope_declaration_path is not None:
+                from bot.config.scope_pools import declared_pool_names
+                declared = list(declared_pool_names(resources.scope_declaration_path))
+        return resolve_default_pool(
+            preferred=prefs.preferred_pool() if prefs is not None else None,
+            declared_pools=declared,
+            runtime_pools=running,
+        )
+
+    def _declared_pools_from_ctx(self) -> list[str]:
+        """Declared pool keys via the input context availability provider."""
+        ctx = self._input_ctx
+        if ctx is None:
+            return []
+        return sorted(ctx.available_pools())
+
     def _resolve_pool_for_request(
         self, client_pool: str | None, session_prefix: str
     ) -> str:
-        """Resolve pool for a request: client-provided → store fallback → default.
+        """Existing request routing: explicit pool → stored route → unknown.
 
-        Single convergence point for REST/WS handlers. ``client_pool`` comes
-        from the query param or WS payload; when absent, falls back to the
-        authoritative PoolSessionStore; when that also misses, returns the
-        default pool name.
+        New-selection preferences never invent ownership for legacy history.
+        Storage callers retain their explicit legacy-partition rule.
         """
         if client_pool:
             return client_pool
         resolved = self._resolve_pool_by_prefix(session_prefix)
-        return resolved if resolved else _DEFAULT_AGENT_NAME
+        if resolved:
+            return resolved
+        return ""
 
     def _session_pool_index_of_ws(self, ws_raw: str) -> SessionPoolIndex | None:
         if self._graph_workspace_resolver is not None:
@@ -328,10 +404,13 @@ class WebUIServer:
     async def _resolve_session_pool_for_request(
         self, client_pool: str | None, session_id: str, ws_raw: str
     ) -> str:
+        """Existing session: explicit pool → attribution/legacy route → unknown."""
         if client_pool:
             return client_pool
         resolved = await self._resolve_session_pool(session_id, ws_raw)
-        return resolved if resolved else _DEFAULT_AGENT_NAME
+        if resolved:
+            return resolved
+        return ""
 
     # ------------------------------------------------------------------
     # Late-binding configuration (called by WebUIService after init)
@@ -352,6 +431,29 @@ class WebUIServer:
     def set_agent_resolver(self, callback: Callable[[str], str]) -> None:
         """Set callback for resolving pool_name -> root_agent_name."""
         self._agent_resolver = callback
+
+    def set_personal_assistant_preferences(
+        self, prefs: PersonalAssistantPreferences | None
+    ) -> None:
+        """Inject the personal-assistant preferences owner (PA-06/PA-07).
+
+        Consumed by the session-create entry for the unified default-pool
+        selection. ``None`` requires the client to choose explicitly.
+        """
+        self._personal_assistant_preferences = prefs
+
+    def set_available_pools_provider(
+        self, provider: Callable[[], set[str]] | None
+    ) -> None:
+        """Inject running pool keys for new-conversation selection.
+
+        The session-create entry validates explicit pool keys and resolves
+        the unified default against this set (pool keys, NOT root agent
+        names). Production supplies the materialized runtime's pool keys.
+        ``None`` falls back to the
+        input context's provider, then to the empty set.
+        """
+        self._available_pools_provider = provider
 
     def set_data_dir_name(self, data_dir_name: str) -> None:
         """Set the data directory name (e.g. '.modex') for workspace path resolution."""
@@ -416,6 +518,17 @@ class WebUIServer:
         workspace gets a fresh store rooted at its own session-index dir.
         """
         self._session_store = store
+
+    def set_workspace_resources_provider(
+        self, provider: Callable[[Path], Awaitable[PoolWorkspaceResources | None]],
+    ) -> None:
+        """Reuse the assembly's materialization owner for active session operations."""
+        self._workspace_resources_provider = provider
+
+    async def _ensure_workspace_resources(self, ws_raw: str) -> PoolWorkspaceResources | None:
+        if self._workspace_resources_provider is None:
+            return None
+        return await self._workspace_resources_provider(self._index_dir_of_ws(ws_raw).parent.parent)
 
     def set_session_store_factory(self, factory: Callable[[Path], Awaitable[SessionStore]]) -> None:
         """Inject a factory that builds a per-workspace session store.
@@ -482,6 +595,64 @@ class WebUIServer:
         the runtime check).
         """
         self.app["control_facade"] = facade
+
+    def set_sessions_changed_notifier(
+        self, notifier: Callable[[str], None] | None
+    ) -> None:
+        """Inject the ``sessions_changed`` control-notification sender.
+
+        The notifier receives a raw ``ws`` value, resolves it to the
+        canonical workspace path, and broadcasts
+        ``{type: "sessions_changed", workspace: <path>}`` through the
+        existing WS connection layer. ``None`` disables notifications.
+        """
+        self._sessions_changed_notifier = notifier
+
+    def notify_sessions_changed(self, ws_raw: str) -> None:
+        """Fire the ``sessions_changed`` notification for a workspace.
+
+        Non-fatal by contract (DESIGN §2.6): a failed notification never
+        fails the save — the frontend re-reads the authoritative list on
+        next open/refresh.
+        """
+        notifier = self._sessions_changed_notifier
+        if notifier is None:
+            return
+        try:
+            notifier(ws_raw)
+        except Exception:
+            logger.warning(
+                "sessions_changed notification failed for ws=%r", ws_raw, exc_info=True
+            )
+
+    def _broadcast_sessions_changed(self, ws_raw: str) -> None:
+        """Default notifier: fan the control message out over live WS connections.
+
+        Uses the WebSocket input adapter's queue registry — the same
+        per-connection queues chat deltas travel — as a control frame
+        (never a transcript event). Connections attached to ANY session of
+        this workspace receive it; the client filters by ``workspace``.
+        """
+        from bot.adapters.web_socket import _ANONYMOUS_CONN_KEY
+        from bot.webui.events import DeltaEnvelope, WebUIEventType
+
+        workspace = str(self._ws_root_of(ws_raw).resolve())
+        envelope = DeltaEnvelope(
+            session_id="",
+            agent_name="",
+            event_type=WebUIEventType.SESSIONS_CHANGED.value,
+            payload={"workspace": workspace},
+        )
+        seen: set[object] = set()
+        for queues in list(self._input._delta_queues.values()):
+            for key, queue in list(queues.items()):
+                if key is _ANONYMOUS_CONN_KEY or key in seen:
+                    continue
+                seen.add(key)
+                try:
+                    queue.put_nowait(envelope)
+                except Exception:  # noqa: BLE001 - notification is best-effort
+                    logger.warning("sessions_changed queue delivery failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # SessionInfo resolution helpers

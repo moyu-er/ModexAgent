@@ -12,13 +12,12 @@ workspace:
             shell, and browser tools. Use as the default for ambiguous or cross-domain
             requests.
           max_steps: 50
-          use_terminal: false
-          terminal_visibility: false
           capabilities:
             aci: {}
             experience: {}
           hooks:
           - +reference_collector
+          - +session_title
           - +user_notice_cleanup
           - +model_choice_bind
           hook_configs:
@@ -54,14 +53,13 @@ workspace:
             Use when a task needs investigation, planning, review, or design analysis
             of a codebase.
           max_steps: 200
-          use_terminal: false
-          terminal_visibility: false
           capabilities:
             aci: {}
             todo: {}
           hooks:
           - +user_notice_cleanup
           - +model_choice_bind
+          - +session_title
           interceptors:
           - +sandbox_guard
           interceptor_configs:
@@ -105,8 +103,6 @@ workspace:
             the upstream implementation team. Carries full tools for reading code,
             running tests, and executing verification commands.
           max_steps: 80
-          use_terminal: false
-          terminal_visibility: false
           capabilities:
             ast_grep: {}
             experience: {}
@@ -114,6 +110,7 @@ workspace:
           hooks:
           - +user_notice_cleanup
           - +model_choice_bind
+          - +session_title
           interceptors:
           - +sandbox_guard
           interceptor_configs:
@@ -155,3 +152,5 @@ workspace:
             benefits from a dedicated, self-directed coding context.
           execution_strategy: external
           provider_kind: opencode
+          hooks:
+          - +session_title

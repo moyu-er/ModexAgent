@@ -436,6 +436,7 @@ class TestTopologyGateFaces:
         from modex_agent.multi_agent.communication.service import AgentCommunicationService
 
         tree = MagicMock()
+        tree.sender_scope_id = AsyncMock(return_value=None)
         tree.deliver = AsyncMock(return_value=None)
         service = AgentCommunicationService(
             source=AgentAddress(name="main"),

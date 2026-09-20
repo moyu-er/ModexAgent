@@ -3,24 +3,25 @@ import type { SkillEntry } from "../../types/pool";
 import {
   assignSkill,
   listAgentSkills,
+  listSkills,
   unassignSkill,
 } from "../../lib/skillsApi";
 import { ApiError } from "../../lib/api";
 import { useToast } from "../ToastContext";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
-import { Checkbox } from "../ui/Checkbox";
+import { SelectionList } from "../ui/SelectionList";
 import { useT } from "../../i18n";
 
 interface Props {
   pool: string;
   agent: string;
-  globalSkills: SkillEntry[];
 }
 
-export function AgentSkillSelector({ pool, agent, globalSkills }: Props) {
+export function AgentSkillSelector({ pool, agent }: Props) {
   const toast = useToast();
   const t = useT();
+  const [library, setLibrary] = useState<SkillEntry[] | null>(null);
   const [agentSkills, setAgentSkills] = useState<SkillEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
@@ -30,8 +31,14 @@ export function AgentSkillSelector({ pool, agent, globalSkills }: Props) {
     setLoading(true);
     setLoadError("");
     try {
-      setAgentSkills(await listAgentSkills(pool, agent));
+      const [lib, assigned] = await Promise.all([
+        listSkills(),
+        listAgentSkills(pool, agent),
+      ]);
+      setLibrary(lib);
+      setAgentSkills(assigned);
     } catch (e) {
+      // Surface the failure — a failed load must not read as "no skills".
       setLoadError(String(e));
     } finally {
       setLoading(false);
@@ -39,35 +46,64 @@ export function AgentSkillSelector({ pool, agent, globalSkills }: Props) {
   }, [pool, agent]);
 
   useEffect(() => {
+    setLibrary(null);
     setAgentSkills(null);
     void refresh();
-  }, [refresh, globalSkills]);
+  }, [refresh]);
 
-  const globalNames = useMemo(
-    () => new Set(globalSkills.map((skill) => skill.name)),
-    [globalSkills],
-  );
   const assignedNames = useMemo(
+    () => new Set((agentSkills ?? []).map((skill) => skill.name)),
+    [agentSkills],
+  );
+  const libraryNames = useMemo(
+    () => new Set((library ?? []).map((skill) => skill.name)),
+    [library],
+  );
+  const items = useMemo(() => {
+    const global = [...(library ?? [])].sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
+    // Local installed dirs have no restorable global-library source —
+    // they render checked + disabled with a "local" note; removing them
+    // means deleting the agent dir on disk.
+    const local = (agentSkills ?? []).filter(
+      (skill) => !libraryNames.has(skill.name),
+    );
+    return [
+      ...global.map((skill) => ({
+        id: `global-${skill.name}`,
+        label: skill.name,
+        description: skill.description,
+      })),
+      ...local.map((skill) => ({
+        id: `local-${skill.name}`,
+        label: skill.name,
+        description: skill.description,
+        disabled: true,
+        note: t("settings.agentSkill.local"),
+        title: t("settings.agentSkill.localSkillTitle"),
+      })),
+    ];
+  }, [library, agentSkills, libraryNames, t]);
+  const checkedIds = useMemo(
     () =>
       new Set(
-        (agentSkills ?? [])
-          .filter((skill) => globalNames.has(skill.name))
-          .map((skill) => skill.name),
+        [...assignedNames].map((name) =>
+          libraryNames.has(name) ? `global-${name}` : `local-${name}`,
+        ),
       ),
-    [agentSkills, globalNames],
+    [assignedNames, libraryNames],
   );
-  const localSkills = useMemo(
-    () =>
-      (agentSkills ?? []).filter(
-        (skill) => !globalNames.has(skill.name),
-      ),
-    [agentSkills, globalNames],
+  const busyIds = useMemo(
+    () => (busySkill ? new Set([busySkill]) : undefined),
+    [busySkill],
   );
 
-  const toggle = async (name: string): Promise<void> => {
-    if (busySkill) return;
+  const toggle = async (id: string): Promise<void> => {
+    if (busySkill || !id.startsWith("global-")) return;
+    const name = id.slice("global-".length);
     const assigned = assignedNames.has(name);
-    setBusySkill(name);
+    setBusySkill(id);
     try {
       if (assigned) {
         await unassignSkill(pool, agent, name);
@@ -132,49 +168,23 @@ export function AgentSkillSelector({ pool, agent, globalSkills }: Props) {
         <p role="alert" className="text-base text-error">
           {t("settings.agentSkill.failedToLoad", { error: loadError })}
         </p>
-      ) : agentSkills === null ? (
+      ) : agentSkills === null || library === null ? (
         <p className="text-base text-mute">
           {t("settings.agentSkill.loading")}
         </p>
-      ) : globalSkills.length === 0 && localSkills.length === 0 ? (
+      ) : items.length === 0 ? (
         <p className="text-base text-mute">
           {t("settings.agentSkill.noSkills")}
         </p>
       ) : (
-        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {[...globalSkills]
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map((skill) => (
-              <li
-                key={`global-${skill.name}`}
-                className="rounded-sm border border-hairline bg-hairline-soft px-3 py-2"
-              >
-                <Checkbox
-                  label={skill.name}
-                  checked={assignedNames.has(skill.name)}
-                  disabled={busySkill !== null || loading}
-                  onChange={() => void toggle(skill.name)}
-                  aria-label={skill.name}
-                />
-              </li>
-            ))}
-          {localSkills.map((skill) => (
-            <li
-              key={`local-${skill.name}`}
-              title={t("settings.agentSkill.localSkillTitle")}
-              className="flex items-center gap-2 rounded-sm border border-hairline bg-hairline-soft px-3 py-2 text-base text-ink"
-            >
-              <span
-                aria-hidden="true"
-                className="inline-block h-4 w-4 shrink-0 rounded-xs border border-hairline bg-canvas-elevated"
-              />
-              <span className="min-w-0 flex-1 truncate">{skill.name}</span>
-              <span className="rounded-full border border-hairline px-1.5 py-0.5 text-xs text-mute">
-                {t("settings.agentSkill.local")}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <SelectionList
+          items={items}
+          checked={checkedIds}
+          onToggle={(id) => void toggle(id)}
+          ariaLabel={t("settings.agentSkill.skillsSelected", { count: assignedNames.size })}
+          searchLabel={t("settings.poolsPanel.filterPlaceholder")}
+          busyIds={busyIds}
+        />
       )}
     </Card>
   );

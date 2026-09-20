@@ -12,11 +12,14 @@ from modex_agent.memory.history import ListMessageHistory
 
 
 class FakeToolManager(ToolManager):
-    def register(self, tool, config=None):
+    def register(self, tool, config=None, *, origin=None):
         pass
 
     def unregister(self, tool_name):
         return False
+
+    def register_group(self, group, *, origin=None):
+        pass
 
     def get_tool(self, tool_name):
         return None
@@ -26,6 +29,16 @@ class FakeToolManager(ToolManager):
 
     def is_registered(self, tool_name):
         return False
+
+    @property
+    def tool_groups(self):
+        return ()
+
+    def get_tool_group(self, tool_name):
+        return None
+
+    def origin_of(self, tool_name):
+        return None
 
 
 @pytest.fixture

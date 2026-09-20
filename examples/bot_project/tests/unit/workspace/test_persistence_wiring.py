@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from bot.service.roots import BotAssemblyRoots
 from bot.workspace.wiring.resources import _build_resources, _stop_resources
 
 from modex_agent.ioc.configs.app import AppConfig
@@ -23,6 +24,10 @@ def _service(home: Path, app_config: AppConfig) -> MagicMock:
     service = MagicMock()
     service._project_dir = home
     service.project_dir = home
+    # Resource assembly reads the explicit assembly roots (DESIGN §3.2), not
+    # _project_dir — give the mock the real resident identity for `home`.
+    service.roots = BotAssemblyRoots.resident(config_dir=home / "config", resource_root=home)
+    service._enable_dynamic_workspaces = True
     service._app_config = app_config
     service._home_persistence = None
     service._mcp_registry = None
@@ -129,7 +134,6 @@ async def test_incomplete_pool_stop_keeps_owned_workspace_manager_open(
     )
     resources = await _build_resources(service, ctx)
     pool_instance = MagicMock()
-    pool_instance.terminal_manager = None
     pool_instance.mcp_manager = None
     pool_instance.pool.shutdown_all = AsyncMock(return_value=False)
     pool_instance.broker_bridge.stop = AsyncMock()
@@ -172,7 +176,6 @@ async def test_cancelled_pool_stop_cleans_non_persistence_and_propagates(
     )
     resources = await _build_resources(service, ctx)
     pool_instance = MagicMock()
-    pool_instance.terminal_manager = None
     pool_instance.mcp_manager = None
     pool_instance.pool.shutdown_all = AsyncMock(side_effect=asyncio.CancelledError)
     pool_instance.broker_bridge.stop = AsyncMock()

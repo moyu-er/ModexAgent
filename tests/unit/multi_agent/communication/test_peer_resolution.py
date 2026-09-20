@@ -81,7 +81,6 @@ def _instance(name: str) -> tuple[PoolInstance, MagicMock]:
         tool_manager=MagicMock(),
         skill_resolver=None,
         mcp_manager=None,
-        terminal_manager=None,
         root_agent_name=name,
         main_execution_strategy=ExecutionStrategyKind.REACT,
         provider=None,

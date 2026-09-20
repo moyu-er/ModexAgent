@@ -14,16 +14,15 @@ class TestProviderKind:
     """Discriminator used by provider backends and the path accessor."""
 
     def test_day_one_values(self) -> None:
-        assert ProviderKind.PI.value == "pi"
         assert ProviderKind.OPENCODE.value == "opencode"
 
     def test_extensible_via_subclass_or_extra_value(self) -> None:
-        # The ticket explicitly notes this is extensible; the day-one
+        # The ticket explicitly notes this is extensible; the current
         # set is closed but does not preclude future entries.
-        assert set(ProviderKind) >= {ProviderKind.PI, ProviderKind.OPENCODE}
+        assert set(ProviderKind) >= {ProviderKind.OPENCODE}
 
     def test_str_compare(self) -> None:
-        assert ProviderKind.PI == "pi"
+        assert ProviderKind.OPENCODE == "opencode"
 
 
 class TestExternalPaths:
@@ -61,11 +60,6 @@ class TestExternalPaths:
     def test_agents_md_anchors_at_workdir_root(self, tmp_path: Path) -> None:
         paths = ExternalPaths(tmp_path)
         assert paths.agents_md == paths.workdir / "AGENTS.md"
-
-    def test_provider_session_pi_suffix(self, tmp_path: Path) -> None:
-        paths = ExternalPaths(tmp_path)
-        # Spec: <workdir>/.modex/external/<kind>-session.jsonl
-        assert paths.provider_session(ProviderKind.PI) == paths.external_root / "pi-session.jsonl"
 
     def test_provider_session_opencode_suffix(self, tmp_path: Path) -> None:
         paths = ExternalPaths(tmp_path)

@@ -20,6 +20,7 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.hook.abc import HookPayload, HookPoint
 from modex_agent.messaging.models import ApprovalAction
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.pipeline.turn_outcome import TurnSuspension
 from modex_agent.runtime.approval_decision import (
     ApprovalAuditDecision,
     ApprovalAuditEntry,
@@ -117,6 +118,83 @@ class ApprovalResumer:
         snapshots.sort(key=lambda snapshot: snapshot.created_at)
         return snapshots[-1]
 
+    @staticmethod
+    def pending_suspension(snapshot: TurnSnapshot) -> TurnSuspension | None:
+        """Build the still-pending approval view from its persisted snapshot.
+
+        The snapshot is the authority after the original turn leaves the live
+        registry. Legacy snapshots may omit ``TURN_UUID``; that remains a
+        valid optional identity rather than making suspension reconstruction
+        fail.
+        """
+        state = ReActTurnState.from_checkpoint(dict(snapshot.state_payload))
+        approval = state.approval
+        if approval is None:
+            return None
+        raw_turn_uuid = state.custom.get(TurnCustomKey.TURN_UUID)
+        turn_uuid = raw_turn_uuid if isinstance(raw_turn_uuid, str) else None
+        requests = [
+            view_from_request(req, turn_uuid=turn_uuid)
+            for req in approval.requests
+            if approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
+            is ApprovalDecision.PENDING
+        ]
+        if not requests:
+            return None
+        return TurnSuspension(turn_uuid=turn_uuid, requests=requests)
+
+    async def terminate_pending(
+        self,
+        session_id: str,
+        *,
+        pool_data: PoolDataSnapshot | None = None,
+    ) -> bool:
+        """Terminate a pending approval batch WITHOUT executing any tool.
+
+        Request-scope cancellation contract (DESIGN.md §6.5): audit still
+        pending requests as DENIED by ``DecisionActor.REQUEST_CANCEL`` and
+        delete the suspended snapshot. No decision continuation runs, no LLM
+        is called; a late decision afterwards finds no snapshot and is stale.
+
+        Returns whether a pending batch existed and was terminated.
+        """
+        snapshot = await self.load_pending(session_id, pool_data=pool_data)
+        if snapshot is None:
+            return False
+        approval = ReActTurnState.from_checkpoint(dict(snapshot.state_payload)).approval
+        turn_store = self._resolve_turn_store(pool_data)
+        if approval is not None and turn_store is not None:
+            custom = snapshot.state_payload.get("custom", {})
+            turn_uuid = custom.get(TurnCustomKey.TURN_UUID.value) if isinstance(custom, dict) else None
+            coordinator = (
+                pool_data.decision_coordinator if pool_data is not None else None
+            )
+            for req in approval.requests:
+                if approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING) != (
+                    ApprovalDecision.PENDING
+                ):
+                    continue
+                if coordinator is None or not isinstance(turn_uuid, str):
+                    continue
+                await coordinator.apply_decision(
+                    snapshot,
+                    ApprovalAuditEntry(
+                        turn_uuid=turn_uuid,
+                        session_id=str(snapshot.identity.session),
+                        agent_id=snapshot.identity.agent_id,
+                        turn_id=snapshot.identity.turn_id,
+                        tool_name=req.tool_name,
+                        tool_call_id=req.tool_call_id,
+                        decision=ApprovalAuditDecision.DENIED,
+                        deny_reason="request_cancelled",
+                        decided_at=datetime.now(UTC).isoformat(),
+                        decided_by=DecisionActor.REQUEST_CANCEL,
+                    ),
+                )
+        if turn_store is not None:
+            await turn_store.delete_turn(snapshot.identity)
+        return True
+
     async def apply_resume(
         self,
         snapshot: TurnSnapshot,
@@ -126,6 +204,7 @@ class ApprovalResumer:
         pool_data: PoolDataSnapshot | None,
         agent_context: AgentContext,
         tool_call_id: str | None = None,
+        approval_id: str | None = None,
     ) -> TurnStateStore | None:
         """Apply a resume decision and restore state if every tool is decided.
 
@@ -141,9 +220,12 @@ class ApprovalResumer:
         yields a result, ``turn_store.delete_turn(snapshot.identity)`` and
         ``drain(session_id)`` using the returned store.
 
-        When ``tool_call_id`` is given, only that request is decided (webui
-        precision); ``None`` keeps the legacy decide-next-PENDING behaviour
-        for IM ``/approve``.
+        When ``approval_id`` is given (request-scoped channels), only the
+        request with that exact owner-minted identity is decided; a decision
+        naming an unknown/already-decided ``approval_id`` is stale and is
+        dropped without saving or re-rendering. When ``tool_call_id`` is
+        given, only that request is decided (webui precision); ``None``
+        keeps the legacy decide-next-PENDING behaviour for IM ``/approve``.
         """
         approval = ReActTurnState.from_checkpoint(dict(snapshot.state_payload)).approval
         if approval is None:
@@ -160,13 +242,26 @@ class ApprovalResumer:
                 current = approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
                 if current != ApprovalDecision.PENDING:
                     continue
-                if tool_call_id is not None and req.tool_call_id != tool_call_id:
+                if approval_id is not None:
+                    if req.approval_id != approval_id:
+                        continue  # leave other identities pending
+                elif tool_call_id is not None and req.tool_call_id != tool_call_id:
                     continue  # leave non-target requests pending
                 approval.apply_decision(req.tool_call_id, decision)
                 decided_request = req
                 if decision is ApprovalDecision.ALLOWED:
                     _mark_human_approved(snapshot, req)
                 break
+            if decided_request is None and approval_id is not None:
+                # Stale decision: the named approval is gone (already decided,
+                # superseded, or the request was cancelled). Drop it — no
+                # snapshot save, no prompt re-render, no continuation.
+                logger.info(
+                    "Stale approval decision dropped session=%s approval_id=%s",
+                    session_id,
+                    approval_id,
+                )
+                return None
 
         snapshot = ReActSnapshotPolicy.replace_approval(snapshot, approval)
         turn_store = self._resolve_turn_store(pool_data)
@@ -214,15 +309,12 @@ class ApprovalResumer:
         if not approval.every_tool_decided:
             if decided_request is None or coordinator is None:
                 await turn_store.save_turn(snapshot)
-            if self._user_interface is not None:
-                for req in approval.requests:
-                    current = approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
-                    if current == ApprovalDecision.PENDING:
-                        await self._user_interface.render_approval_prompt(
-                            session_id,
-                            view_from_request(req),
-                        )
-                        break
+            suspension = self.pending_suspension(snapshot)
+            if self._user_interface is not None and suspension is not None:
+                await self._user_interface.render_approval_prompt(
+                    session_id,
+                    suspension.requests[0],
+                )
             return None
 
         if agent_context.runtime is None:

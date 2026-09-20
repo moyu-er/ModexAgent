@@ -18,6 +18,7 @@ def _ctx(
 ) -> BotInputContext:
     pool_store = store if store is not None else MagicMock()
     pool_store.get.return_value = store_get
+    pool_store.get_pool.return_value = store_get
     return BotInputContext(
         default_pool="main",
         available_pools=lambda: {"main", "coding"},
@@ -74,8 +75,87 @@ async def test_resolve_pool_tree_attribution_precedes_session_store_without_pers
     await ResolvePoolStage().process(env, ctx)
 
     assert env.metadata[RoutingMeta.RESOLVED_POOL] == "coding"
-    store.get.assert_not_called()
+    store.get_pool.assert_called_once_with(encode_snowflake("u1"))
     store.set.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_tree_resolved_peer_session_never_pins_generic_prefix_route() -> None:
+    """PA-07 regression (attribution invariant, ADR-0019): a peer session
+    reuses the SENDER's conversation prefix while living in ANOTHER pool's
+    tree. Its tree attribution must never land in the routing table —
+    pinning would contaminate the owning conversation's generic prefix
+    route. Same-prefix peer lookup leaves the route exactly as it was."""
+    store = MagicMock()
+    prefix = encode_snowflake("convA")
+    # sender's conversation already routed to 'main' (stored earlier)
+    store.get_pool.side_effect = lambda p: "main" if p == prefix else None
+    ctx = BotInputContext(
+        default_pool="main",
+        available_pools=lambda: {"main", "coding"},
+        pool_session_store=store,
+        agent_resolver=lambda p: p,
+        transcript_store=MagicMock(),
+        enqueue_message=MagicMock(),
+        command_adapter=MagicMock(),
+    )
+    env = UserInputEnvelope(
+        external_id="convA", content="hi", channel="websocket", explicit_pool=None
+    )
+    # peer session convA.mainB lives in the 'coding' pool's tree
+    env.metadata[RoutingMeta.TREE_RESOLVED_POOL] = "coding"
+
+    await ResolvePoolStage().process(env, ctx)
+
+    assert env.metadata[RoutingMeta.RESOLVED_POOL] == "coding"
+    # NEVER wrote: the generic prefix route keeps the sender's 'main'
+    store.set.assert_not_called()
+    assert store.get_pool(prefix) == "main"
+
+
+@pytest.mark.asyncio
+async def test_implicit_default_pins_only_fresh_conversation_once() -> None:
+    """The first implicit-default resolution of a conversation with NO
+    stored route pins once (PA-07); a STORED route is never rewritten."""
+    import tempfile
+    from pathlib import Path
+
+    from modex_agent.multi_agent.pool_router import LocalFilePoolRoutingStore
+
+    store = LocalFilePoolRoutingStore(Path(tempfile.mkdtemp()))
+    ctx = BotInputContext(
+        default_pool="coder",
+        available_pools=lambda: {"default", "coder"},
+        pool_session_store=store,
+        agent_resolver=lambda p: p,
+        transcript_store=MagicMock(),
+        enqueue_message=MagicMock(),
+        command_adapter=MagicMock(),
+    )
+    env = UserInputEnvelope(
+        external_id="u2", content="hi", channel="qq", explicit_pool=None
+    )
+    await ResolvePoolStage().process(env, ctx)
+    assert env.metadata[RoutingMeta.RESOLVED_POOL] == "coder"
+    prefix = encode_snowflake("u2")
+    assert store.get_pool(prefix) == "coder"  # pinned once
+
+    # default changes later → the STORED route wins, no rewrite
+    ctx2 = BotInputContext(
+        default_pool="default",
+        available_pools=lambda: {"default", "coder"},
+        pool_session_store=store,
+        agent_resolver=lambda p: p,
+        transcript_store=MagicMock(),
+        enqueue_message=MagicMock(),
+        command_adapter=MagicMock(),
+    )
+    env2 = UserInputEnvelope(
+        external_id="u2", content="again", channel="qq", explicit_pool=None
+    )
+    await ResolvePoolStage().process(env2, ctx2)
+    assert env2.metadata[RoutingMeta.RESOLVED_POOL] == "coder"
+    assert store.get_pool(prefix) == "coder"
 
 
 @pytest.mark.asyncio
@@ -89,7 +169,7 @@ async def test_resolve_pool_im_without_tree_attribution_reads_session_store() ->
     await ResolvePoolStage().process(env, ctx)
 
     assert env.metadata[RoutingMeta.RESOLVED_POOL] == "coding"
-    store.get.assert_called_once_with(encode_snowflake("u1"), "main")
+    store.get_pool.assert_called_once_with(encode_snowflake("u1"))
     store.set.assert_not_called()
 
 
@@ -107,6 +187,7 @@ async def test_resolve_pool_default_when_store_empty() -> None:
 async def test_resolve_pool_persists_explicit_pool_choice() -> None:
     store = MagicMock()
     store.get.return_value = "main"
+    store.get_pool.return_value = "main"
     ctx = BotInputContext(
         default_pool="main",
         available_pools=lambda: {"main", "coding"},
@@ -127,6 +208,7 @@ async def test_resolve_pool_persists_explicit_pool_choice() -> None:
 async def test_resolve_pool_does_not_persist_session_store_fallback() -> None:
     store = MagicMock()
     store.get.return_value = "coding"
+    store.get_pool.return_value = "coding"
     ctx = BotInputContext(
         default_pool="main",
         available_pools=lambda: {"main", "coding"},
@@ -169,6 +251,7 @@ async def test_resolve_pool_terminates_when_no_pool_configured() -> None:
 async def test_resolve_pool_terminates_when_resolved_pool_unavailable() -> None:
     store = MagicMock()
     store.get.return_value = "ghost"
+    store.get_pool.return_value = "ghost"
     ctx = BotInputContext(
         default_pool="main",
         available_pools=lambda: {"main"},

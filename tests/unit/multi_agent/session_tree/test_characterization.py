@@ -51,6 +51,13 @@ from modex_agent.tools.manager import InMemoryToolManager
 # -- Shared fixtures -------------------------------------------------------
 
 
+def _scopeless_tree() -> MagicMock:
+    """SessionTreeManager test double: request-scope queries return None."""
+    tree = MagicMock(spec=SessionTreeManager)
+    tree.sender_scope_id = AsyncMock(return_value=None)
+    return tree
+
+
 def _make_bus() -> LocalAgentMessageBus:
     """Real LocalAgentMessageBus backed by InMemoryInboxServer."""
     server = InMemoryInboxServer()
@@ -67,7 +74,7 @@ def _make_tree(bus: LocalAgentMessageBus) -> SessionTreeManager:
     requiring the full SessionTreeManager construction (tree/node/track stores).
     """
     tree = MagicMock(spec=SessionTreeManager)
-
+    tree.sender_scope_id = AsyncMock(return_value=None)
     async def _deliver(sid: str, env: AgentMessageEnvelope) -> None:
         await bus.send(sid, env)
 
@@ -237,7 +244,7 @@ class TestPeerNormalStrategyDeliver:
         deps = SendDeps(
             source=AgentAddress(name="mainA"),
             session_factory=SessionIdFactory(),
-            tree=MagicMock(spec=SessionTreeManager),
+            tree=_scopeless_tree(),
         )
         strategy = PeerNormalStrategy(deps)
         env = _envelope(sid="conv.mainB", msg_type=AgentMessageType.AGENT_MESSAGE)
@@ -390,7 +397,11 @@ class TestInboxPollerDispatchCycle:
         assert poller._wakeup_event.is_set()
         assert len(pool.dispatched) == 1
 
-    async def test_materialize_failure_keeps_message_in_inbox_and_signals(self) -> None:
+    async def test_materialize_failure_keeps_message_in_inbox_without_self_wake(self) -> None:
+        """A failed materialize makes NO progress: the message stays in the
+        inbox and the dispatch round does not self-wake the poller (the
+        interval tick or the next real signal retries it — never a hot
+        materialize-failure loop)."""
         bus = _make_bus()
         pool = _FakePool(bus, has_template=True, materialize_raises=True)
         poller = InboxPoller(pool, interval=99)
@@ -403,7 +414,7 @@ class TestInboxPollerDispatchCycle:
         await poller._materialize_then_turn("inv1.scout", MagicMock())
 
         assert "inv1.scout" not in poller._inflight
-        assert poller._wakeup_event.is_set()
+        assert not poller._wakeup_event.is_set()
         assert len(pool.dispatched) == 0
         assert "inv1.scout" in await bus.sessions_with_pending()
 

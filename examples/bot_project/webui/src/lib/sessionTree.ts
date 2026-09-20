@@ -10,6 +10,8 @@ export interface SessionNodeData {
   parent_session_id: string | null;
   created_at?: number;
   updated_at?: number;
+  /** Session metadata from the list API (title lives under `title`). */
+  metadata?: Record<string, unknown>;
 }
 
 /** A session node with its resolved child subtree. */
@@ -33,6 +35,23 @@ export function computeDisplayName(sessionId: string, parentId?: string): string
     return sessionId.slice(i) || sessionId;
   }
   return sessionId;
+}
+
+/**
+ * The one shared session display title (PA-02 DESIGN §2.1).
+ *
+ * `metadata.title` renders when it is a string that trims to non-empty;
+ * anything else (missing metadata, non-string, whitespace-only) falls back
+ * to the FULL session id. Never generates a preview or placeholder title.
+ */
+export function sessionDisplayTitle(
+  sessionId: string,
+  metadata: Record<string, unknown> | undefined,
+): string {
+  const title = metadata?.["title"];
+  if (typeof title !== "string") return sessionId;
+  const trimmed = title.trim();
+  return trimmed.length > 0 ? trimmed : sessionId;
 }
 
 /** Build a parent→children tree from a flat conversation list, newest-first per group. */

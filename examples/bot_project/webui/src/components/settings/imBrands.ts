@@ -12,7 +12,7 @@ export interface ImBrand {
  *
  * The key MUST match the backend's IM config section key (e.g. "qq",
  * "telegram") as returned in `ConfigPayload.sections`. Sections whose key is
- * not listed here render with the default {@link SectionLabel} (no logo).
+ * not listed here render with a plain-text heading (no logo).
  *
  * To add a new IM platform:
  *   1. Create its icon component in `ui/brand-icons/`

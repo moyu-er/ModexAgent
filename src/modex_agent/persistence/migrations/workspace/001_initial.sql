@@ -350,7 +350,7 @@ CREATE TABLE IF NOT EXISTS external_session_map (
     modex_session_id       TEXT    PRIMARY KEY,
     scope_key              TEXT    NOT NULL,
     provider_session_id    TEXT    NOT NULL,
-    provider_kind          TEXT    NOT NULL CHECK (provider_kind IN ('pi', 'opencode')),
+    provider_kind          TEXT    NOT NULL CHECK (provider_kind IN ('opencode')),
     last_committed_at      INTEGER NOT NULL,
     invalidated            INTEGER NOT NULL DEFAULT 0 CHECK (invalidated IN (0, 1)),
     created_at             INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),

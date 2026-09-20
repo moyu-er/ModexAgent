@@ -56,6 +56,9 @@ class _FakeTree:
     async def deliver(self, key: str, envelope: object) -> None:
         self.delivered.append((key, envelope))
 
+    async def sender_scope_id(self, session_id: str) -> str | None:
+        return None  # ordinary (non-request-scoped) send
+
 
 class _ScriptedProvider(CallbackStreamProvider):
     """chat-only scripted mock riding the callback→event bridge."""

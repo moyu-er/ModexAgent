@@ -28,6 +28,7 @@ from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.models import TurnSnapshot
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager
+from modex_graph.context import GraphContext
 from modex_graph.exceptions import GraphInterrupt
 
 # ---------------------------------------------------------------------------
@@ -66,13 +67,21 @@ class _InterruptingAgent:
     name = "interrupting-agent"
 
     async def run(self, context: AgentContext, emitter: Any) -> AgentResult:
-        # GraphInterrupt.value is a list of ApprovalRequestState-like objects;
-        # execute_turn reads req.tool_name / tool_call_id / tier / arguments.
-        req = MagicMock()
-        req.tool_name = "dangerous_tool"
-        req.tool_call_id = "call_1"
-        req.tier = "high"
-        req.arguments = MagicMock(values={"x": 1})
+        # GraphInterrupt.value is a list of ApprovalRequestState — the runner
+        # serializes them into wire views, so the payload must be the real
+        # typed request, not a mock.
+        from modex_agent.approval.constants import ApprovalTier
+        from modex_agent.runtime.models import ApprovalRequestState, ToolArguments
+
+        req = ApprovalRequestState(
+            request_id="r1",
+            approval_id="ap1",
+            tool_call_id="call_1",
+            tool_name="dangerous_tool",
+            arguments=ToolArguments(values={"x": 1}),
+            tier=ApprovalTier.DANGEROUS,
+            iteration=0,
+        )
         raise GraphInterrupt(value=[req])
 
 
@@ -171,8 +180,10 @@ def _make_graph_context(graph_instance_id: int = 1) -> GraphContext:
 # ---------------------------------------------------------------------------
 
 
-async def test_execute_turn_swallows_graph_interrupt_renders_prompt() -> None:
-    """agent.run raises GraphInterrupt -> execute_turn renders prompt, returns None."""
+async def test_execute_turn_suspends_with_typed_fact_and_renders_prompt() -> None:
+    """agent.run raises GraphInterrupt -> execute_turn renders prompt and returns the typed suspension."""
+    from modex_agent.pipeline.turn_outcome import TurnSuspension
+
     ui = _RecordingUI()
     runner = _make_runner(agent=_InterruptingAgent(), user_interface=ui)
     agent_context = _make_agent_context()
@@ -187,7 +198,10 @@ async def test_execute_turn_swallows_graph_interrupt_renders_prompt() -> None:
         ctx_mgr,
     )
 
-    assert result is None
+    # The internal typed contract: a real suspension identity, never None.
+    assert isinstance(result, TurnSuspension)
+    assert result.requests and result.requests[0].tool_name == "dangerous_tool"
+    assert result.requests[0].approval_id == "ap1"
     assert ui.rendered_prompt is not None
 
 
@@ -260,13 +274,48 @@ async def test_execute_turn_finally_runs_on_session_end() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_handle_snapshot_approval_returns_none_when_resume_not_applied() -> None:
-    """When apply_resume returns None the driver returns None without executing."""
-    resumer = MagicMock(spec=ApprovalResumer)
+async def test_handle_snapshot_approval_reports_pending_batch_when_resume_not_applied() -> None:
+    """apply_resume None + a still-pending batch → the driver reports the
+    pending batch as a TurnSuspension (never a None/handled that would
+    settle a live request-scope)."""
+    from modex_agent.agents.react.constants import ReActNode
+    from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
+    from modex_agent.approval.constants import ApprovalTier
+    from modex_agent.pipeline.turn_outcome import TurnSuspension
+    from modex_agent.runtime.enums import (
+        AgentKind,
+        ApprovalSubjectType,
+        SnapshotReason,
+        TurnPhase,
+    )
+    from modex_agent.runtime.models import (
+        ApprovalRequestState,
+        ApprovalTransaction,
+        ToolArguments,
+        TurnIdentity,
+    )
+
+    resumer = ApprovalResumer(agent=MagicMock(), turn_store=None, user_interface=None)
     resumer.apply_resume = AsyncMock(return_value=None)
     runner = _make_runner(resumer=resumer)
 
-    snapshot = MagicMock(spec=TurnSnapshot)
+    # A snapshot WITHOUT approval state: nothing pending → honest None.
+    def _snap(payload: dict) -> TurnSnapshot:
+        return TurnSnapshot(
+            identity=TurnIdentity(
+                agent_id="agent",
+                session=SessionInfo.from_str("s1.main"),
+                turn_id="t1",
+            ),
+            agent_kind=AgentKind.REACT,
+            phase=TurnPhase.SUSPENDED,
+            resume_point=ReActNode.TOOL,
+            message_delta=None,
+            reason="approval",
+            state_payload=payload,
+        )
+
+    snapshot = _snap({})
 
     result = await runner._handle_snapshot_approval(
         action=ApprovalAction.ALLOW,
@@ -279,8 +328,57 @@ async def test_handle_snapshot_approval_returns_none_when_resume_not_applied() -
         ctx_mgr=_FlushingCtxMgr(),
     )
 
-    assert result is None
+    assert result is None  # nothing pending → nothing to keep waiting on
     resumer.apply_resume.assert_awaited_once()
+
+    # A snapshot WITH a still-pending batch: report it as a TurnSuspension.
+    identity = TurnIdentity(
+        agent_id="agent",
+        session=SessionInfo.from_str("s1.main"),
+        turn_id="t1",
+    )
+    state = ReActTurnState(
+        identity=identity,
+        agent_kind=AgentKind.REACT,
+        phase=TurnPhase.SUSPENDED,
+        current_node=ReActNode.TOOL,
+        approval=ApprovalTransaction(
+            approval_id="ap1",
+            turn_id="t1",
+            subject_type=ApprovalSubjectType.TOOL_BATCH,
+            subject_ids=["batch1"],
+            requests=[
+                ApprovalRequestState(
+                    request_id="r1",
+                    approval_id="ap1",
+                    tool_call_id="c1",
+                    tool_name="write_file",
+                    arguments=ToolArguments(values={"x": 1}),
+                    tier=ApprovalTier.DANGEROUS,
+                    iteration=1,
+                ),
+            ],
+        ),
+    )
+    snapshot2 = _snap(
+        ReActSnapshotPolicy()
+        .capture(state, SnapshotReason.TOOL_APPROVAL_REQUIRED)
+        .state_payload
+    )
+
+    result2 = await runner._handle_snapshot_approval(
+        action=ApprovalAction.ALLOW,
+        snapshot=snapshot2,
+        agent_context=_make_agent_context(),
+        emitter=MagicMock(),
+        session_id="s1",
+        context_state=ContextState(),
+        input_metadata={},
+        ctx_mgr=_FlushingCtxMgr(),
+    )
+
+    assert isinstance(result2, TurnSuspension)
+    assert [req.approval_id for req in result2.requests] == ["ap1"]
 
 
 async def test_handle_snapshot_approval_drains_on_success() -> None:
@@ -668,3 +766,20 @@ async def test_process_locked_descriptor_carries_graph_instance_id_from_metadata
     assert desc.graph_instance_id == 42
     assert desc.graph_context is resolved_ctx
     builder.graph_context_resolver.assert_called_once_with(42)
+
+
+async def test_terminate_pending_approval_resolves_pool_data_for_audit() -> None:
+    """The pool's cancel path calls terminate_pending_approval WITHOUT a
+    snapshot — the runner must route the request through its OWN pool-data
+    resolver so the decision coordinator is available and the batch is
+    audited (REQUEST_CANCEL), not silently skipped."""
+    from unittest.mock import AsyncMock
+
+    runner = _make_runner()
+    stub_pool_data = object()
+    runner._resolve_pool_data = lambda session_id: stub_pool_data  # type: ignore[method-assign]
+    runner._resumer.terminate_pending = AsyncMock(return_value=True)  # type: ignore[method-assign]
+
+    assert await runner.terminate_pending_approval("s1") is True
+
+    runner._resumer.terminate_pending.assert_awaited_once_with("s1", pool_data=stub_pool_data)

@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 
     from modex_agent.multi_agent.pool import AgentPool
     from modex_agent.plugins.assembly.context import AssemblyContext, SupplyInfra
+    from modex_agent.plugins.assembly.resources import AssemblyResourceOwner
     from modex_agent.plugins.capability import CapabilityWiring
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,7 @@ class AssemblyBuilder:
     propagated_context: AssemblyContext | None
     mcp_manager: Any | None
     capability_wirings: Mapping[str, CapabilityWiring] | None
+    agent_resource_owner: AssemblyResourceOwner | None
 
     def __init__(self) -> None:
         self.agent = None
@@ -151,6 +153,7 @@ class AssemblyBuilder:
         self.propagated_context = None
         self.mcp_manager = None
         self.capability_wirings = None
+        self.agent_resource_owner = None
         self._cleanups: list[Callable[[], Awaitable[None]]] = []
         self._cleaned_up: bool = False
 

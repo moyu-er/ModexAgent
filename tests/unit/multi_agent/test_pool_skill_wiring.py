@@ -143,13 +143,22 @@ async def test_public_materialization_keeps_root_skills_out_of_vetoed_subagent(
     broker = InMemoryMessageBroker()
     await broker.start()
     pool = AgentPool(broker=broker, agent_factory=factory)
-    pool_assembly = MagicMock(spec=PoolAssemblyContext)
-    pool_assembly.pool_name = "main"
-    pool_assembly.pool_spec = pool_spec
-    pool_assembly.pool_data = None
-    pool_assembly.project_dir = tmp_path
-    pool_assembly.peer_links = ()
-    pool_assembly.control_origin = "http://127.0.0.1:21800"
+    scope_path = ScopePath(workspace_root=tmp_path, pool_name="main")
+    pool_assembly = PoolAssemblyContext(
+        pool_name="main",
+        pool_spec=pool_spec,
+        project_dir=tmp_path,
+        data_dir=tmp_path / "data",
+        broker=broker,
+        inbox_server=MagicMock(),
+        agent_bus=MagicMock(),
+        output_adapter=MagicMock(),
+        safety=RuntimeSafetyPolicy(),
+        retention=MagicMock(),
+        registry=MagicMock(),
+        scope_path=scope_path,
+        control_origin="http://127.0.0.1:21800",
+    )
     deps = AgentMaterializeDeps(
         agent_factory=factory,
         pool=pool,
@@ -163,7 +172,7 @@ async def test_public_materialization_keeps_root_skills_out_of_vetoed_subagent(
         data_dir=tmp_path / "data",
         component_registry=registry,
         pool_assembly_ctx=pool_assembly,
-        scope_path=ScopePath(workspace_root=tmp_path, pool_name="main"),
+        scope_path=scope_path,
         capability_supply={
             "skills": skills_supply,
             "subagents": SubagentsSupply(service=MagicMock()),

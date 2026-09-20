@@ -8,7 +8,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from modex_agent.core.prompt import SystemPromptProvider
-from modex_agent.core.tool_manager import Tool
+from modex_agent.core.tool_manager import Tool, ToolOrigin
 from modex_agent.hook.runner import HookRunner
 from modex_agent.memory.context import ContextManager, InMemoryContextManager
 from modex_agent.multi_agent.descriptor import AgentInstance
@@ -28,7 +28,7 @@ from modex_agent.plugins.assembly.native_core import (
     NativeAssemblyResult,
     assemble_native_agent,
 )
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
+from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides, ToolEntry
 from modex_agent.plugins.assembly.stages.agent_assemble import AgentAssembleStage
 from modex_agent.plugins.registry import ComponentNotFoundError, ComponentRegistry
 from modex_agent.workspace.context import WorkspaceContext
@@ -91,7 +91,7 @@ def _spec(
         description="test worker",
         max_iterations=23,
         roles=["tester"],
-        tools=["tool"],
+        tools=[ToolEntry(name="tool", origin=ToolOrigin.PRESET)],
         tool_configs=tool_configs or {},
         hooks=hooks or [],
         llm_provider="llm",
@@ -376,7 +376,10 @@ async def test_unknown_tool_name_raises_component_not_found() -> None:
     ComponentNotFoundError — never a silent skip."""
     registry = _registry()
     ctx, inputs, _, _ = _harness(registry)
-    spec = _spec().model_copy(update={"tools": ["tool", "no_such_tool"]})
+    spec = _spec().model_copy(
+        update={"tools": [ToolEntry(name="tool", origin=ToolOrigin.PRESET),
+                          ToolEntry(name="no_such_tool", origin=ToolOrigin.PRESET)]}
+    )
 
     with pytest.raises(ComponentNotFoundError, match="no_such_tool"):
         await assemble_native_agent(spec, registry, inputs, ctx=ctx)

@@ -35,6 +35,8 @@ interface Props {
   slideOverHeader?: ReactNode;
 }
 
+import { useRegisterSettingsEditor } from "./editorNavigation";
+
 export function PromptEditor({ promptName, onClose, onSave, slideOverHeader }: Props) {
   const toast = useToast();
   const t = useT();
@@ -62,31 +64,14 @@ export function PromptEditor({ promptName, onClose, onSave, slideOverHeader }: P
     };
   }, [promptName]);
 
-  if (loadError) {
-    return (
-      <div className="space-y-3 p-4">
-        <p className="text-base text-error">{t("settings.promptEditor.failedToLoad", { error: loadError })}</p>
-        {onClose && (
-          <Button variant="link" onClick={onClose}>
-            {t("settings.promptEditor.back")}
-          </Button>
-        )}
-      </div>
-    );
-  }
-
-  if (original === null) {
-    return <p className="p-4 text-base text-mute">{t("settings.promptEditor.loading")}</p>;
-  }
-
-  const dirty = draft !== original;
+  const dirty = original !== null && draft !== original;
   const requestClose = (): void => {
     if (dirty) setConfirmDiscard(true);
     else onClose?.();
   };
 
-  const doSave = async (): Promise<void> => {
-    if (!onSave) return;
+  const doSave = async (): Promise<boolean> => {
+    if (!onSave || original === null || saving) return false;
     setSaving(true);
     try {
       await onSave(draft);
@@ -94,15 +79,24 @@ export function PromptEditor({ promptName, onClose, onSave, slideOverHeader }: P
       // Prompt writes unconditionally mark the pool dirty (no hot-reload path
       // yet), so the restart toast fires unconditionally.
       restartToast(toast, t);
+      return true;
     } catch (e) {
       toast.show({
         message: t("settings.promptEditor.saveFailed", { detail: e instanceof ApiError ? `${e.status} ${e.detail}` : String(e) }),
         tone: "warning",
       });
+      return false;
     } finally {
       setSaving(false);
     }
   };
+  useRegisterSettingsEditor(() => ({
+    isDirty: () => !readOnly && dirty,
+    save: doSave,
+    discard: () => setDraft(original ?? ""),
+  }));
+  if (loadError) return <p className="p-4 text-base text-error">{t("settings.promptEditor.failedToLoad", { error: loadError })}</p>;
+  if (original === null) return <p className="p-4 text-base text-mute">{t("settings.promptEditor.loading")}</p>;
 
   return (
     <div className="flex h-full flex-col">

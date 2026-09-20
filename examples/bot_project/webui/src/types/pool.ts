@@ -4,10 +4,6 @@
 // the scope declaration (edited via `scopeApi.ts`); only the listing summary
 // crosses this API since ticket 11.
 
-// ─── External providers ──────────────────────────────────────────────────────
-
-export type ProviderKind = "pi" | "opencode";
-
 // ─── Skill source / origin (closed literal sets) ─────────────────────────────
 
 export type SkillSource = "global" | "local";

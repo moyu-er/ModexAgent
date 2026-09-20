@@ -14,6 +14,8 @@ export interface ConfirmDialogProps {
   message?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** Extra action rendered between Cancel and Confirm (e.g. "Save and leave"). */
+  extraActions?: ReactNode;
   tone?: "default" | "danger";
   onConfirm: () => void;
   onCancel: () => void;
@@ -24,6 +26,7 @@ export function ConfirmDialog({
   message,
   confirmLabel,
   cancelLabel,
+  extraActions,
   tone = "default",
   onConfirm,
   onCancel,
@@ -54,6 +57,9 @@ export function ConfirmDialog({
         // Click on the backdrop (not its children) cancels.
         if (e.target === e.currentTarget) onCancel();
       }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && e.target === e.currentTarget) onConfirm();
+      }}
     >
       <div className="modal-panel-enter w-full max-w-sm rounded-lg border border-hairline bg-canvas-popover p-4 shadow-popover">
         <h3 className="text-base font-semibold text-ink">{title}</h3>
@@ -64,6 +70,7 @@ export function ConfirmDialog({
           <Button variant="secondary" size="sm" onClick={onCancel} autoFocus>
             {cancel}
           </Button>
+          {extraActions}
           <Button variant={confirmVariant} size="sm" onClick={onConfirm}>
             {confirm}
           </Button>

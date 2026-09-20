@@ -38,11 +38,8 @@ class TestPoolRuntimeDeps:
             "root_provider",
             "mcp_registry",
             "emitter_factory",
-            "terminal_manager",
-            "process_registry",
             "interceptor_chain",
             "command_processor",
-            "persistent_bash",
             "capability_supply",
         }
         actual = {f.name for f in dataclasses.fields(PoolRuntimeDeps)}
@@ -63,7 +60,6 @@ class TestPoolRuntimeDeps:
         assert instance.root_provider is None
         assert instance.mcp_registry is None
         assert instance.emitter_factory is None
-        assert instance.terminal_manager is None
 
     def test_frozen_immutability(self) -> None:
         instance = PoolRuntimeDeps(session_tree_manager=MagicMock())

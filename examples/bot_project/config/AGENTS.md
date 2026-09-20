@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-08-28 | capability-bundles doc sync (ADR-0047) -->
+<!-- Updated: 2026-09-10 | shell capability configuration -->
 
 # config
 
@@ -34,9 +34,9 @@ scopes/
 
 `bot.yml` shape — a `workspace:` root carrying resource selection (`persistence:` memory backend, `paths:` data-dir layout, `mcp:` shared server-name set; every field `None` = inherit the service-level domain config) and the pool trees. Each pool is a name key with optional `peers:` (cross-pool links, bidirectional, same-workspace) and an `agents:` mapping; agent names are mapping keys, nesting `agents:` under an agent is sugar for the flat `parent` model. A pool-as-root declaration (root key `pool:` instead of `workspace:`) boots the single-home stack.
 
-Position-derived defaults (SPEC §3.2) are NOT transcribed — only deviations declare: `toolset` (root → `full`, non-root → `read_write`), `eager`, `memory` (`archive_enabled`/`core_enabled`/`session.max_context_tokens`), `approval` (root-only), `execution_strategy` + `provider_kind` (external pools), `hooks` (with `+`/`-` merge prefixes), `capabilities` (override map, ADR-0047 — `false` forces a capability off, a config mapping forces it on: the shipped declaration enables `todo`/`experience`/`aci`/`ast_grep` per agent this way), `tools`, plus the roster face (`llm_provider`, `system_prompt`/`system_prompt_provider`, `memory_system`, `interceptors`, `commands`) resolved through the 11-slot `ComponentRegistry`. The full field face is `AgentSpec`/`WorkspaceSpec` in `modex_agent/scope/spec.py` (see `src/modex_agent/scope/AGENTS.md`).
+Position-derived defaults (SPEC §3.2) are NOT transcribed — only deviations declare: `toolset` (root → `full`, non-root → `read_write`), `eager`, `memory` (`archive_enabled`/`core_enabled`/`session.max_context_tokens`), `approval` (root-only), `execution_strategy` + `provider_kind` (external pools), `hooks` (with `+`/`-` merge prefixes), `capabilities` (override map, ADR-0047 — `false` forces a capability off, a config mapping forces it on), `tools`, plus the roster face (`llm_provider`, `system_prompt`/`system_prompt_provider`, `memory_system`, `interceptors`, `commands`) resolved through the 11-slot `ComponentRegistry`. Shell configuration lives only at `capabilities.shell`: `mode` is `subprocess`, `persistent` (default), or `terminal`; `terminal_visibility` belongs inside that mapping. The bot auto-applies shell when its toolset/roster selects `bash`; use `capabilities: {shell: false}` to veto it. `use_terminal`, root-level `terminal_visibility`, and independent companion entries are invalid legacy fields. The full field face is `AgentSpec`/`WorkspaceSpec` in `modex_agent/scope/spec.py` (see `src/modex_agent/scope/AGENTS.md`).
 
-Editing: by hand, or via the WebUI Settings → Scope tab (tree canvas + provenance bill; writes back through `PUT /api/scope/declaration`, restart-effective).
+Editing: by hand, via the WebUI Settings → Pools structured agent form, or via Settings → Scope raw YAML. The Pools form writes through `PUT /api/scope/model`; both roads use the same validate → compile → validate-effective gate and are restart-effective. Shell is one capability row there; mode choices come from `/api/scope/options`, not frontend constants.
 
 ## mcp/ Structure
 
@@ -61,7 +61,7 @@ Agents select which registered servers they see via their `mcp:` list (agent lev
 
 ### Common Patterns
 - Secrets (IM tokens, API keys) live in `im.yml` / `model.yml` / `.env`, never committed.
-- Editing pools via the WebUI Settings → Scope tab writes back to `bot.yml` (same file you could edit by hand); restart applies.
+- Editing pools via WebUI Settings → Pools or raw YAML via Settings → Scope writes back to `bot.yml`; restart applies.
 
 ## Dependencies
 

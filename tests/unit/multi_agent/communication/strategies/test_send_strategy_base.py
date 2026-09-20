@@ -6,7 +6,7 @@ Covers cross-cutting behavior injected between ``build_envelope`` and
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -46,8 +46,8 @@ def _make_context(graph_instance_id: int | None = None) -> AgentContext:
 
 
 def _make_deps(bus: _FakeBus) -> SendDeps:
-    tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
-
+    tree = MagicMock(spec=SessionTreeManager)
+    tree.sender_scope_id = AsyncMock(return_value=None)
     async def _deliver(sid: str, env: object) -> None:
         await bus.send(sid, env)
 

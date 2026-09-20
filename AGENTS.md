@@ -18,33 +18,34 @@ Before implementing:
 - If a simpler approach exists, say so. Push back when warranted.
 - If something is unclear, stop. Name what's confusing. Ask.
 
-### 2. Simplicity First
+### 2. Simplicity Through Convergence
 
-**Minimum code that solves the problem. Nothing speculative.**
+**One owner per concern, clear interfaces, complete behavior. Optimize for understanding and reuse, not line count.**
 
 - No features beyond what was asked.
-- No abstractions for single-use code.
+- Extract modules when they concentrate real behavior or serve existing callers; reuse established extension points.
 - No "flexibility" or "configurability" that wasn't requested.
 - No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
+- Necessary types, lifecycle wiring, tests and multi-file changes are part of a complete solution. A shorter patch that leaves duplicate rules or partial integration is not simpler.
 
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
-### 3. Surgical Changes
+### 3. Goal-Scoped Changes
 
-**Touch only what you must. Clean up only your own mess.**
+**Keep the scope tied to the requested goal; follow that concern through every affected caller.**
 
 When editing existing code:
 - Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
+- Refactor the affected concern when required to converge its callers or make the requested behavior testable; avoid unrelated refactors.
 - Match existing style, even if you'd do it differently.
 - If you notice unrelated dead code, mention it - don't delete it.
 
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
+When replacing an implementation:
+- Move all affected callers to the chosen owner, then remove superseded production paths, UI state, imports and helpers in the same feature batch.
+- Update behavioral tests to exercise the replacement; retain coverage of supported behavior, not obsolete implementation details.
+- Preserve unrelated user work. Investigate unfamiliar changes before deleting or overwriting them.
 
-The test: Every changed line should trace directly to the user's request.
+The test: every change has a goal-related reason, every affected caller uses the same rule, and replaced paths have no remaining production callers. See `rules/architecture.md` rule 16 for the completion check.
 
 ### 4. Goal-Driven Execution
 

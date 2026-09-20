@@ -35,7 +35,7 @@ class ModelChoiceStage(InputStage):
         #
         # Downstream behavior per pool:
         # - external: ExternalTurnRunner does not read RESOLVED_MODEL, so the
-        #   external CLI (opencode/pi) executes normally with its own model.
+        #   external CLI (opencode) executes normally with its own model.
         # - react: EnqueueStage does not register into ModelChoiceRegistry; at turn
         #   start, ModelChoiceBindHook falls back to the placeholder default (built by
         #   pool_builder._resolved_or_placeholder) whose empty api_key causes

@@ -24,7 +24,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from bot.control.history import project_history_messages, project_transcript_history
+from bot.control.history import (
+    load_native_history,
+    project_history_messages,
+    project_transcript_history,
+)
 from bot.control.models import (
     AgentSessionRef,
     ControlError,
@@ -188,7 +192,7 @@ class BotControlFacade:
         message_store = await self._message_store_provider(scope, resources)
 
         # 7. Load all messages (including soft-deleted).
-        raw_messages = await message_store.load_all_messages()
+        raw_messages = await load_native_history(message_store)
 
         # 8. Project to HistoryMessage, order newest-first, limit.
         items = project_history_messages(raw_messages, request.limit)

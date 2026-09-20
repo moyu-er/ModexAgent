@@ -34,8 +34,6 @@ class TestAgentTemplateDeadFieldsGone:
             "agent_type",
             "thinking_budget",
             "default_reads",
-            "use_terminal",
-            "terminal_visibility",
             "extra_tools",
             "approval",
             "experience",

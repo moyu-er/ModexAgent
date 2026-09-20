@@ -82,6 +82,7 @@ async def _full_pipeline_server(
     media_store = WorkspaceScopedMediaStore(data_dir_name=_DATA_DIR)
     pool_store = MagicMock()
     pool_store.get.return_value = "main"
+    pool_store.get_pool.return_value = "main"
     cmd = MagicMock()
     pipe = await build_webui_pipeline(
         registry=TEST_COMPONENT_REGISTRY,
@@ -453,43 +454,32 @@ async def test_non_image_served_as_octet_stream() -> None:
 
 
 @pytest.mark.asyncio
-async def test_svg_carries_strict_csp() -> None:
+async def test_svg_carries_strict_csp(tmp_path: Path) -> None:
     """An SVG attachment carries the strict CSP header (no XSS via inline svg)."""
-    with tempfile.TemporaryDirectory() as tmp:
-        ws_root = Path(tmp)
-        server = _build_server(ws_root)
-        store = server._store  # type: ignore[attr-defined]
-        ctx = server._input_ctx  # type: ignore[attr-defined]
-
-        session_id = "abc123.main"
-        att = Attachment(
-            id="att-svg",
-            kind=Kind.IMAGE,
-            name="logo.svg",
-            mime="image/svg+xml",
-            size=8,
-            path="media/main/uploads/abc123.main/logo.svg",
-            locator=AttachmentLocator.MEDIA,
-        )
-        ms = ctx.media_store.store_for("main", media_dir=_media_dir(ws_root, "main"))
-        ms.save(session_id, att.id, b"<svg/>")
-        await _append_user_message_with_attachment(
-            store, _sessions_dir(ws_root), session_id, att
-        )
-
-        client = TestClient(TestServer(server.app))
-        await client.start_server()
-        try:
-            resp = await client.get(f"/api/sessions/{session_id}/attachments/{att.id}")
-            assert resp.status == 200
-            assert resp.headers.get("Content-Type") == "image/svg+xml"
-            csp = resp.headers.get("Content-Security-Policy", "")
-            assert "default-src 'none'" in csp
-            assert "sandbox" in csp
-            assert "img-src 'self' data:" in csp
-            assert "style-src 'unsafe-inline'" in csp
-        finally:
-            await client.close()
+    # aiohttp closes FileResponse descriptors in its executor after sending.
+    # Let pytest own directory cleanup after the event loop/executor teardown.
+    server = _build_server(tmp_path)
+    store = server._store
+    ctx = server._input_ctx
+    session_id = "abc123.main"
+    att = Attachment(
+        id="att-svg", kind=Kind.IMAGE, name="logo.svg", mime="image/svg+xml",
+        size=6, path="media/main/uploads/abc123.main/logo.svg",
+        locator=AttachmentLocator.MEDIA,
+    )
+    ms = ctx.media_store.store_for("main", media_dir=_media_dir(tmp_path, "main"))
+    ms.save(session_id, att.id, b"<svg/>")
+    await _append_user_message_with_attachment(store, _sessions_dir(tmp_path), session_id, att)
+    async with TestClient(TestServer(server.app)) as client:
+        resp = await client.get(f"/api/sessions/{session_id}/attachments/{att.id}")
+        assert resp.status == 200
+        assert await resp.read() == b"<svg/>"
+        assert resp.headers.get("Content-Type") == "image/svg+xml"
+        csp = resp.headers.get("Content-Security-Policy", "")
+        assert "default-src 'none'" in csp
+        assert "sandbox" in csp
+        assert "img-src 'self' data:" in csp
+        assert "style-src 'unsafe-inline'" in csp
 
 
 @pytest.mark.asyncio

@@ -1,28 +1,33 @@
 import { useEffect, useMemo, useRef, useState, type FC, type ReactElement } from "react";
 import { Folder, Home, Plus, Settings, X } from "lucide-react";
-import type { WorkspaceTab, WorkspaceTabStatus } from "../hooks/useWorkspaceTabs";
-import { computeTabLabels } from "../hooks/useWorkspaceTabs";
-import { OpenWorkspaceMenu } from "./OpenWorkspaceMenu";
 import { ThemeToggle } from "./ThemeToggle";
+import { Mascot } from "./Mascot";
+import { OpenWorkspaceMenu } from "./OpenWorkspaceMenu";
+import {
+  computeTabLabels,
+  sameWorkspacePath,
+  type WorkspaceTab,
+  type WorkspaceTabStatus,
+} from "../hooks/useWorkspaceTabs";
 import { useToast } from "./ToastContext";
-import { LogoMarkIcon } from "./ui/icons";
 import { useT } from "../i18n";
 
 export interface WorkspaceTabBarProps {
   tabs: WorkspaceTab[];
   activeId: string;
   statuses: Record<string, WorkspaceTabStatus>;
-  /** Home path — the pinned first tab. */
   home: string;
   recentWorkspaces: { path: string }[];
-  /** Open a workspace in a NEW tab (always appends, never dedupes). */
+  /** The user's saved default workspace path (null = no default). */
+  defaultWorkspace: string | null;
   onOpenWorkspace: (path: string) => void;
-  /** Register + open a path picked from recents (runs cd first). */
   onOpenRecent: (path: string) => void;
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
   onReorder: (id: string, to: number) => void;
   onOpenSettings: () => void;
+  /** Save `path` as the default workspace preference (PA-08). */
+  onSetDefaultWorkspace: (path: string) => void;
 }
 
 export const WorkspaceTabBar: FC<WorkspaceTabBarProps> = ({
@@ -31,12 +36,14 @@ export const WorkspaceTabBar: FC<WorkspaceTabBarProps> = ({
   statuses,
   home,
   recentWorkspaces,
+  defaultWorkspace,
   onOpenWorkspace,
   onOpenRecent,
   onActivate,
   onClose,
   onReorder,
   onOpenSettings,
+  onSetDefaultWorkspace,
 }) => {
   const t = useT();
   const { restart } = useToast();
@@ -48,7 +55,7 @@ export const WorkspaceTabBar: FC<WorkspaceTabBarProps> = ({
   // thin visible scrollbar.
   const [overflowing, setOverflowing] = useState(false);
 
-  const labels = useMemo(() => computeTabLabels(tabs, home), [tabs, home]);
+  const labels = useMemo(() => computeTabLabels(tabs), [tabs]);
   const activeStatus = statuses[activeId];
   const connected = activeStatus?.connected ?? false;
 
@@ -118,7 +125,7 @@ export const WorkspaceTabBar: FC<WorkspaceTabBarProps> = ({
         title={connected ? t("chat.connected") : t("chat.disconnected")}
       >
         <span className="brand-mark" aria-hidden="true">
-          <LogoMarkIcon className="h-4 w-4" />
+          <Mascot size={16} />
         </span>
         <span className={connected ? "dot-signal" : "dot-dim"} aria-hidden="true" />
         ModexBot
@@ -129,9 +136,10 @@ export const WorkspaceTabBar: FC<WorkspaceTabBarProps> = ({
         className={`wstabs-scroll ${overflowing ? "overflowing" : ""}`}
       >
         {tabs.map((tab, index) => {
-          const isHome = tab.id === "__home__";
-          const label = isHome ? t("tabs.homeTab") : (labels[tab.id] ?? tab.path);
+          const label = labels[tab.id] ?? tab.path;
           const status = statuses[tab.id];
+          const isDefault =
+            defaultWorkspace !== null && sameWorkspacePath(tab.path, defaultWorkspace);
           return (
             <div
               key={tab.id}
@@ -141,13 +149,13 @@ export const WorkspaceTabBar: FC<WorkspaceTabBarProps> = ({
               tabIndex={0}
               className={`wstab ${tab.id === activeId ? "active" : ""} `}
               title={tab.path}
-              draggable={!isHome}
+              draggable
               onClick={() => onActivate(tab.id)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") onActivate(tab.id);
               }}
               onAuxClick={(e) => {
-                if (e.button === 1 && !isHome) onClose(tab.id);
+                if (e.button === 1) onClose(tab.id);
               }}
               onDragStart={() => {
                 dragIdRef.current = tab.id;
@@ -161,28 +169,38 @@ export const WorkspaceTabBar: FC<WorkspaceTabBarProps> = ({
               }}
             >
               <span className="wstab-icon" aria-hidden="true">
-                {isHome ? <Home size={13} /> : <Folder size={13} />}
+                {tab.path === home ? <Home size={13} /> : <Folder size={13} />}
               </span>
               <span className="wstab-label">{label}</span>
+              {isDefault && (
+                <span
+                  className="rounded-pill bg-hairline-soft px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-mute"
+                  title={
+                    defaultWorkspace
+                      ? t("tabs.defaultWorkspaceMenu", { path: defaultWorkspace })
+                      : undefined
+                  }
+                >
+                  {t("tabs.defaultBadge")}
+                </span>
+              )}
               {status && status.pendingApprovals > 0 ? (
                 <span className="wstab-dot warn" title={t("approval.awaitingApproval")} />
               ) : status && status.running > 0 ? (
                 <span className="wstab-dot run" />
               ) : null}
-              {!isHome && (
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  className="wstab-close"
-                  aria-label={t("tabs.closeWorkspace", { name: label })}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onClose(tab.id);
-                  }}
-                >
-                  <X size={10} aria-hidden="true" />
-                </button>
-              )}
+              <button
+                type="button"
+                tabIndex={-1}
+                className="wstab-close"
+                aria-label={t("tabs.closeWorkspace", { name: label })}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClose(tab.id);
+                }}
+              >
+                <X size={10} aria-hidden="true" />
+              </button>
             </div>
           );
         })}
@@ -195,9 +213,11 @@ export const WorkspaceTabBar: FC<WorkspaceTabBarProps> = ({
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
         recentWorkspaces={recentWorkspaces}
+        defaultWorkspace={defaultWorkspace}
         onOpenRecent={onOpenRecent}
         onBrowsePicked={onOpenWorkspace}
-        onGoHome={() => onActivate("__home__")}
+        onSetDefault={onSetDefaultWorkspace}
+        onGoHome={() => home && onOpenRecent(home)}
         anchorRight={overflowing}
       />
 

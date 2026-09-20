@@ -12,8 +12,9 @@ may degrade to HOST; permission/configuration errors propagate.
 
 The profile file outlives resolution and all bound shell consumers.
 ``close()`` removes the runtime's profiles after those consumers close.
-Live macOS enforcement has not been verified; the FULL report is not proof
-of every profile rule or tool's safety.
+Real macOS shell execution and file/network boundaries are exercised by
+``test_seatbelt_live.py``; the FULL report alone is not proof of every rule
+or arbitrary program's safety.
 """
 
 from __future__ import annotations
@@ -39,6 +40,12 @@ _get_platform = get_platform
 _resolve_host_shell = resolve_shell
 
 __all__ = ["SeatbeltRuntime", "compile_seatbelt_profile"]
+
+
+def _profile_path(path: Path) -> str:
+    """Quote a filesystem path as SBPL data, never as profile syntax."""
+    escaped = path.as_posix().replace("\\", "\\\\").replace('"', '\\"')
+    return '"' + escaped.replace("\n", "\\n").replace("\r", "\\r") + '"'
 
 
 def compile_seatbelt_profile(
@@ -88,12 +95,12 @@ def compile_seatbelt_profile(
             ]
             # Trailing rules win: allow writes under each root first...
             for root in writable_roots:
-                lines.append(f'(allow file-write* (subpath "{root.as_posix()}"))')
+                lines.append(f"(allow file-write* (subpath {_profile_path(root)}))")
             # ...then shadow the protected subpaths back to deny.
             for root in writable_roots:
                 for sub in settings.exclusive.protected_subpaths:
-                    protected = canonicalize_path(sub, base=root).as_posix()
-                    lines.append(f'(deny file-write* (subpath "{protected}"))')
+                    protected = canonicalize_path(sub, base=root)
+                    lines.append(f"(deny file-write* (subpath {_profile_path(protected)}))")
         case WriteSurface.FULL:
             lines = [
                 "(version 1)",
@@ -107,8 +114,10 @@ def compile_seatbelt_profile(
         case unreachable:
             assert_never(unreachable)
 
-    if not settings.network:
-        lines.append("(deny network*)")
+    # The implicit deny policy also denies launching the shell and its children.
+    # Permit execution explicitly without relaxing the file-write envelope.
+    lines.extend(["(allow process-exec)", "(allow process-fork)"])
+    lines.append("(allow network*)" if settings.network else "(deny network*)")
 
     return "\n".join(lines) + "\n"
 

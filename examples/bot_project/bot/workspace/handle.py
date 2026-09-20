@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     # which imports the bundle via wiring; deferring them to TYPE_CHECKING
     # keeps the import graph acyclic (handle is the low-level bundle module).
     from bot.service.session_pool_index import SessionPoolIndex
+    from bot.service.session_title import SessionTitleOps
+    from bot.service.session_title_task import SessionTitleNamingTask
     from bot.service.workspace_store import WorkspaceScopedTranscriptStore
     from bot.webui.transcript_store import TranscriptStore
     from bot.workspace.background import BackgroundTaskRunner
@@ -31,6 +33,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.pool_router import PoolRouter, PoolRoutingStore
     from modex_agent.orchestration import GraphOrchestrator
     from modex_agent.persistence.managers import WorkspacePersistenceManager
+    from modex_agent.persistence.session_registry import SessionRegistry
     from modex_agent.plugins.registry import ComponentRegistry
     from modex_graph import GraphOutput, GraphOutputAdapter
 
@@ -157,6 +160,26 @@ class PoolWorkspaceResources(WorkspaceResources):
     graph_conn: sqlite3.Connection | None = None
     # Released with the bundle on workspace eviction — no explicit cleanup API.
     session_pool_index: SessionPoolIndex | None = None
+    # The workspace's RUNTIME session registry (the cache pool turns, the
+    # HTTP title adapter, and the GC cleanup path must all reference —
+    # never a second cache). Created in wiring/_assemble_resources.
+    session_registry: SessionRegistry | None = None
+    # Single owner of title writes/pending naming tasks over that registry
+    # (bot.service.session_title). Shared by the PATCH route, the
+    # session_title hook, and the GC deletion path.
+    title_ops: SessionTitleOps | None = None
+    # The session_title hook's background naming-task owner (PA-03). One
+    # per workspace — every pool's session_title hook instance shares it.
+    # Workspace teardown is the single release point (DESIGN §2.4): closed
+    # in _stop_resources (the hook's ClosableHook.aclose is idempotent).
+    title_naming: SessionTitleNamingTask | None = None
+    # The declaration file THIS workspace actually booted from — the
+    # boot-selected path (the service roots' primary declaration, or a
+    # dynamic workspace's per-name file), never a per-cwd guess. The WebUI
+    # scope routes read/write through it so edits target the same
+    # declaration the running pools were assembled from. ``None`` means
+    # this bundle does not expose a declaration editor target.
+    scope_declaration_path: Path | None = None
 
     def resolve_workspace(self) -> PoolWorkspaceResources:
         """Resolver entry point the framework pipeline calls.

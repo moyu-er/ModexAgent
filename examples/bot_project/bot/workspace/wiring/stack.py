@@ -95,14 +95,18 @@ def build_workspace_stack(
         await _stop_resources(resources)
 
     factory = PoolResourceFactory(build_resources=build_resources, stop_resources=stop_resources)
+    # The registry home is the RUNTIME workspace root (service.roots
+    # workspace_home) — resident: the bot project dir, exactly as before;
+    # a bound single-project assembly: the IDE project root. Registry/home
+    # DBs and known-workspace records bind to this same root.
     store = build_workspace_registry_store(
         service._app_config,
         service._registry_persistence,
-        service._project_dir,
+        service.roots.workspace_home,
         data_dir_name,
     )
     registry: ScopeRegistry[PoolWorkspaceResources] = ScopeRegistry(
-        home=service._project_dir,
+        home=service.roots.workspace_home,
         data_dir_name=data_dir_name,
         factory=factory,
         store=store,

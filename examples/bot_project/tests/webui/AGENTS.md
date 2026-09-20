@@ -19,6 +19,7 @@ Tests for the WebUI backend and frontend — server endpoints, WebSocket adapter
 | `test_transcript_persistence_e2e.py` | Transcript persistence end-to-end |
 | `test_transcript_workspace_resolver.py` | Per-workspace transcript resolution |
 | `test_webui_emitter.py` | `WebBotEmitter` event emission tests |
+| `test_bot_transcript_emitter.py` | Shared `BotTranscriptEmitter` lifecycle (single-write transcript, full-fidelity tool pairs) + WebUI/ACP projection split |
 | `test_web_socket_adapter.py` | `WebSocketInputAdapter` lifecycle tests |
 | `test_fan_in_transcript.py` | Fan-in adapter multi-agent transcript merging (uses pipeline fixtures) |
 | `test_channel_router.py` | `ChannelRouterOutputAdapter` routing tests |

@@ -18,7 +18,9 @@ def test_decision_input_allows_null_call_id_roundtrip() -> None:
 
     payload = decision.model_dump(mode="json")
 
-    assert payload == {"tool_call_id": None, "action": "deny"}
+    # Total dump: the unset approval_id is carried as None here; the broker
+    # boundary's exclude_none dump (BrokerInputPayload) is what hides it.
+    assert payload == {"tool_call_id": None, "action": "deny", "approval_id": None}
     assert ApprovalDecisionInput.model_validate(payload) == decision
 
 
@@ -35,3 +37,18 @@ def test_decision_input_is_frozen_and_forbids_extra_fields() -> None:
                 "unexpected": True,
             }
         )
+
+
+def test_approval_decision_none_approval_id_uses_wire_exclude_none_contract() -> None:
+    """The unset approval_id is hidden by the broker boundary's existing
+    ``exclude_none=True`` payload dump (BrokerInputPayload) — never by a
+    per-field ``exclude_if`` kwarg that the pydantic>=2.0 floor does not
+    provide."""
+    legacy = ApprovalDecisionInput(tool_call_id="t1", action=ApprovalAction.ALLOW)
+    scoped = ApprovalDecisionInput(
+        tool_call_id="t1", action=ApprovalAction.ALLOW, approval_id="ap1",
+    )
+    plain = legacy.model_dump(mode="json")
+    assert plain["approval_id"] is None  # total dump carries None
+    assert "approval_id" not in legacy.model_dump(mode="json", exclude_none=True)
+    assert scoped.model_dump(mode="json", exclude_none=True)["approval_id"] == "ap1"
