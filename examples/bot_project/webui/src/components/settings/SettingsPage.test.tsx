@@ -197,6 +197,41 @@ describe("SettingsPage dirty guard", () => {
   });
 });
 
+describe("IM channel brand icons", () => {
+  it("renders a brand icon block for a known channel", async () => {
+    vi.stubGlobal("fetch", routeFetch());
+    renderPage({ section: "im" });
+    await waitFor(() => screen.getByDisplayValue("A"));
+    const icon = screen.getByRole("img", { name: "QQ" });
+    expect(icon).toBeTruthy();
+    expect(icon.closest("span")?.style.backgroundColor).toBe("#12b7f5");
+    expect(screen.getAllByText("QQ").length).toBeGreaterThan(0);
+  });
+
+  it("falls back to a plain-text heading for an unknown channel", async () => {
+    const wecomPayload = {
+      ...imPayload,
+      sections: {
+        wecom: {
+          label: "WeCom",
+          values: { corp_id: "X" },
+          fields: [
+            { name: "corp_id", label: "Corp ID", type: "string", required: false },
+          ],
+        },
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeFetch({ "GET /api/config/im": wecomPayload }),
+    );
+    renderPage({ section: "im" });
+    await waitFor(() => screen.getByDisplayValue("X"));
+    expect(screen.queryByRole("img", { name: "WeCom" })).toBeNull();
+    expect(screen.getByText("WeCom")).toBeTruthy();
+  });
+});
+
 describe("General settings (PA-11)", () => {
   it("saving the default pool PUTs the preference and reports it upward", async () => {
     const onPreferencesChanged = vi.fn();

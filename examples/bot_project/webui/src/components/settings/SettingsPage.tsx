@@ -32,6 +32,7 @@ import { GlobalSkillsView } from "./GlobalSkillsView";
 import { PromptsView } from "./PromptsView";
 import { ScopeView } from "./ScopeView";
 import { fetchConfig, saveConfig, ApiError } from "../../lib/api";
+import { IM_BRAND_ICONS } from "./imBrands";
 import type { ConfigPayload, RegistrySection } from "../../types/config";
 import { useToast } from "../ToastContext";
 import { restartToast } from "./restartToast";
@@ -207,9 +208,30 @@ function PersistedDomainEditor({ domain }: { domain: "model" | "im" }) {
                 key={key}
                 className="rounded-lg border border-hairline bg-canvas-elevated p-5"
               >
-                <h3 className="mb-4 font-mono text-base font-semibold text-bright">
-                  {section.label}
-                </h3>
+                {(() => {
+                  const brand = IM_BRAND_ICONS[key];
+                  if (!brand) {
+                    return (
+                      <h3 className="mb-4 font-mono text-base font-semibold text-bright">
+                        {section.label}
+                      </h3>
+                    );
+                  }
+                  const { Icon, color } = brand;
+                  return (
+                    <div className="mb-4 flex items-center gap-2.5">
+                      <span
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md"
+                        style={{ backgroundColor: color }}
+                      >
+                        <Icon className="h-5 w-5 text-white" />
+                      </span>
+                      <h3 className="font-mono text-base font-semibold text-bright">
+                        {section.label}
+                      </h3>
+                    </div>
+                  );
+                })()}
                 <ConfigForm
                   fields={section.fields}
                   values={section.values}
