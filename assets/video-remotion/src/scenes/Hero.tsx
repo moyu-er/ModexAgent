@@ -1,6 +1,6 @@
 import { AbsoluteFill, interpolate, useCurrentFrame } from "remotion";
 import { Background } from "../components/Background";
-import { Hub } from "../components/Hub";
+import { Mascot } from "../components/Mascot";
 import { C, MONO, SORA, easeExpo } from "../theme";
 
 export const Hero: React.FC = () => {
@@ -39,7 +39,7 @@ export const Hero: React.FC = () => {
             scale: `${botScale} ${botScale}`,
           }}
         >
-          <Hub size={360} />
+          <Mascot size={360} />
         </div>
 
         <div
