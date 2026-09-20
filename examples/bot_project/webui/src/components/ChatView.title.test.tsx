@@ -1,6 +1,7 @@
 // ChatView header (PA-02): shows the shared session display title and a
 // `···` menu whose Rename entry opens the one shared rename dialog. The
-// agentName remains visible. Menu opens/closes; rename invokes the callback
+// agentName prop is not rendered (the mascot mark leads the header) — it only
+// feeds skill autocomplete. Menu opens/closes; rename invokes the callback
 // with the selected session id.
 
 import { describe, it, expect, vi, afterEach } from "vitest";

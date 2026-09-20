@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useMemo, type FC, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { Bot, File, Menu, MoreHorizontal, Paperclip, Pause, Pencil, SendHorizonal, X } from "lucide-react";
+import { File, Menu, MoreHorizontal, Paperclip, Pause, Pencil, SendHorizonal, X } from "lucide-react";
 import type { ApprovalRequestView, TodoItemDTO, UIMessage } from "../types/events";
 import type { MediaConfigResponse, OutgoingAttachmentRef, UploadAttachmentResponse } from "../types/attachments";
 import { ApprovalCard } from "./ApprovalCard";
 import { ConversationSpine, type SpineAnchor } from "./ConversationSpine";
+import { Mascot } from "./Mascot";
 import { MessageBubble } from "./MessageBubble";
 import { ModelSelector } from "./ModelSelector";
 import { CommandSuggest, activeQuery, filterSuggestions, buildInsertion, handleSuggestKey } from "./CommandSuggest";
@@ -54,8 +55,9 @@ export interface ChatViewProps {
   onPause?: () => void;
   readOnly?: boolean;
   onOpenSidebar?: () => void;
-  /** Display name of the selected session's agent (shown in the chat header).
-   * Omitted/empty when no session is open → the header label is blank. */
+  /** Display name of the selected session's agent. Not rendered directly —
+   *  it feeds `useCommandSuggestions` (skill autocomplete); the header shows
+   *  the mascot mark instead. Omitted/empty when no session is open. */
   agentName?: string;
   /** Pool of the selected session (existing session) or the sidebar's
    *  selected pool (hero). Used to resolve the skill set for /skillName
@@ -86,6 +88,32 @@ const MIN_HERO_INPUT_HEIGHT = 96;
 // Chat column is capped at 1200px and centered; keep a reasonable floor
 // on desktop so the dialog doesn't collapse too narrowly.
 const CONTENT_WIDTH = "mx-auto w-full min-w-0 max-w-[1200px] md:min-w-[720px]";
+
+/** Hero rotating hints (PI-Desktop pattern): decorative copy cycled every 5s.
+ *  The span remounts on each index change (`key`) so the CSS fade-in replays;
+ *  the group is aria-hidden — the sr-only announcement below is the live copy. */
+const HERO_HINT_KEYS = [
+  "chat.heroHint1",
+  "chat.heroHint2",
+  "chat.heroHint3",
+] as const;
+
+const HeroHints: FC = () => {
+  const t = useT();
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(
+      () => setIndex((i) => (i + 1) % HERO_HINT_KEYS.length),
+      5000,
+    );
+    return (): void => clearInterval(timer);
+  }, []);
+  return (
+    <span key={index} aria-hidden="true" className="hero-hint-in text-sm text-mute">
+      {t(HERO_HINT_KEYS[index % HERO_HINT_KEYS.length]!)}
+    </span>
+  );
+};
 
 /** Chat-header `···` menu (PA-02). One entry — Rename — opening the shared
  *  rename dialog. Closes on outside pointer-down or Esc. */
@@ -609,16 +637,11 @@ export const ChatView: FC<ChatViewProps> = ({
         className="hero-view-enter relative flex h-full flex-col items-center justify-center gap-8 bg-canvas px-4"
       >
         {onOpenSidebar && <IconButton icon={<Menu size={18} />} label={t("chat.openSidebar")} variant="ghost" onClick={onOpenSidebar} className="absolute left-4 top-4 md:hidden" />}
-        {/* One keyed heading group replays both animations on pool changes. */}
-        <div key={pool || "brand"} className="flex max-w-full flex-col items-center gap-3">
-          <h1 className="hero-wordmark max-w-full break-words text-center [overflow-wrap:anywhere]">{pool || "ModexBot"}</h1>
-          <p
-            className="hero-view-enter font-mono text-[11px] font-semibold uppercase tracking-eyebrow text-faint"
-          >
-            {pool
-              ? t("chat.newConversationEyebrowPool", { pool })
-              : t("chat.newConversationEyebrow")}
-          </p>
+        {/* One keyed group replays the entry animation and resets the hint
+            rotation on pool changes. */}
+        <div key={pool || "brand"} className="hero-view-enter flex max-w-full flex-col items-center gap-4">
+          <Mascot size={180} animated />
+          <HeroHints />
         </div>
         <div className="w-full max-w-[720px]">
           {renderComposer(true)}
@@ -646,14 +669,7 @@ export const ChatView: FC<ChatViewProps> = ({
               className="md:hidden"
             />
           )}
-          {agentName && (
-            <>
-              <Bot size={15} className="text-signal shrink-0" aria-hidden="true" />
-              <span className="shrink-0 font-mono text-base font-semibold text-ink">
-                {agentName}
-              </span>
-            </>
-          )}
+          {agentName && <Mascot size={26} />}
           {sessionId && (
             <span
               className="ml-2 min-w-0 truncate font-mono text-sm text-mute"

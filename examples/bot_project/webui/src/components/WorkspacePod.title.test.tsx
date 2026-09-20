@@ -277,7 +277,7 @@ describe("WorkspacePod rename wiring (PA-02)", () => {
     void rerender;
   });
 
-  it("upper-left selector drives the hero eyebrow and the new conversation's pool", async () => {
+  it("upper-left selector resets the hero hint and drives the new conversation's pool", async () => {
     vi.mocked(fetchSessions).mockResolvedValue([]);
     render(
       <ToastProvider>
@@ -285,17 +285,18 @@ describe("WorkspacePod rename wiring (PA-02)", () => {
       </ToastProvider>,
     );
     // localStorage was cleared and no preferred pool is passed → nothing is
-    // silently selected; the hero eyebrow shows the un-pooled label.
+    // silently selected; the hero shows the first rotating hint.
     await waitFor(() =>
-      expect(screen.getByText("New conversation")).toBeTruthy(),
+      expect(screen.getByText("What can I help you build?")).toBeTruthy(),
     );
 
     // Pick "coder" in the UPPER-LEFT sidebar selector.
     fireEvent.click(screen.getByLabelText("Agent pool"));
     fireEvent.click(screen.getByRole("option", { name: "coder" }));
 
-    // The hero eyebrow re-renders for the new pool (animated remount).
-    expect(screen.getByText("New conversation · coder")).toBeTruthy();
+    // The keyed hero group remounts for the new pool — the hint rotation
+    // restarts at the first hint.
+    expect(screen.getByText("What can I help you build?")).toBeTruthy();
 
     // Sending from the hero composer attaches the draft to "coder".
     fireEvent.change(screen.getByPlaceholderText("Message…"), {
@@ -337,7 +338,7 @@ describe("WorkspacePod rename wiring (PA-02)", () => {
       </ToastProvider>,
     );
     await waitFor(() =>
-      expect(screen.getByText("New conversation")).toBeTruthy(),
+      expect(screen.getByText("What can I help you build?")).toBeTruthy(),
     );
     // No pool selected → composer gate: typing + Enter does nothing.
     const ta = screen.getByPlaceholderText("Message…") as HTMLTextAreaElement;

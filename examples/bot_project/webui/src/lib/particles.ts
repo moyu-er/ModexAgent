@@ -1,6 +1,6 @@
 /* Boot particle-morph engine — vanilla, zero dependencies.
    Simplified port of the website's docs/javascripts/particles.js for the
-   boot screen (DESIGN.md §7): ONE shape (the logo mark), phases
+   boot screen (DESIGN.md §7): ONE shape (the mascot still frame), phases
    drift → gather → disperse → done. No shape cycling, no text sampling.
    The phase state machine (reduceBootPhase) and the density cap
    (bootParticleCap) are pure exports; all canvas drawing lives in
@@ -107,7 +107,7 @@ function gradColor(stops: string[], t: number): RGB {
 }
 
 export interface BootParticlesOptions {
-  /** Logo image URL; defaults to the public asset copied from assets/. */
+  /** Mascot still image URL; defaults to the public asset copied from assets/. */
   logoSrc?: string;
   reducedMotion?: boolean;
   coarsePointer?: boolean;
@@ -151,7 +151,8 @@ export function mountBootParticles(
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const coarse =
     options.coarsePointer ?? window.matchMedia("(pointer: coarse)").matches;
-  const logoSrc = options.logoSrc ?? "/logo-icon.svg";
+  const logoSrc =
+    options.logoSrc ?? `${import.meta.env.BASE_URL}mascot/still-dark.png`;
   const emit = options.onPhaseChange;
 
   let W = 0;

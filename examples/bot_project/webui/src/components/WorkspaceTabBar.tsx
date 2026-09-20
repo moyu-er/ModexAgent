@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FC, type ReactElement } from "react";
 import { Folder, Home, Plus, Settings, X } from "lucide-react";
-import { LogoMarkIcon } from "./ui/icons";
 import { ThemeToggle } from "./ThemeToggle";
+import { Mascot } from "./Mascot";
 import { OpenWorkspaceMenu } from "./OpenWorkspaceMenu";
 import {
   computeTabLabels,
@@ -125,7 +125,7 @@ export const WorkspaceTabBar: FC<WorkspaceTabBarProps> = ({
         title={connected ? t("chat.connected") : t("chat.disconnected")}
       >
         <span className="brand-mark" aria-hidden="true">
-          <LogoMarkIcon className="h-4 w-4" />
+          <Mascot size={16} />
         </span>
         <span className={connected ? "dot-signal" : "dot-dim"} aria-hidden="true" />
         ModexBot

@@ -79,6 +79,25 @@ from bot.webui.types import (  # noqa: F401 — re-exports for backward compatib
 # ── Server ─────────────────────────────────────────────────────────────────
 
 
+@web.middleware
+async def _static_no_cache_middleware(
+    request: web.Request,
+    handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+) -> web.StreamResponse:
+    """Force revalidation for WebUI static assets.
+
+    ``public/`` files (mascot frames, favicon) keep stable URLs across
+    releases; without an explicit Cache-Control the browser heuristically
+    caches them from Last-Modified and stale artwork lingers after an
+    upgrade. ``no-cache`` keeps Last-Modified/304 revalidation cheap while
+    guaranteeing freshness.
+    """
+    response = await handler(request)
+    if request.path.startswith(_WEBUI_STATIC_PREFIX):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 class WebUIServer:
     """HTTP + WebSocket server for the bot WebUI.
 
@@ -179,7 +198,7 @@ class WebUIServer:
         # Running pool keys, separate from the saved declaration.
         self._available_pools_provider: Callable[[], set[str]] | None = None
 
-        self.app = web.Application()
+        self.app = web.Application(middlewares=[_static_no_cache_middleware])
         # Control facade slot — injected by WebUIService via
         # :meth:`set_control_facade`. ``None`` degrades the control routes
         # to 503 (matches ConfigController / PoolConfigController convention).
