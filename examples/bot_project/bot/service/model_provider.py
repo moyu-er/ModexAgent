@@ -1,20 +1,29 @@
 # bot/service/model_provider.py
 """BotModelProvider —— pool 级单例，按当前 turn 的 ContextVar 代理到真实 provider。
 
-框架 ReactLlmClient 调用 provider 时不传 model、但传 temperature/max_output_tokens（来自
-descriptor）。本 provider 从 ContextVar 取 ResolvedModel，覆盖 model/temperature/max_output_tokens
-后转发给按 (provider.key, model.model) 缓存的真实 provider。
+框架 ReactLlmClient 只消费原生事件流（``provider.stream``，ADR-0046 单一事件
+循环）。本 provider 从 ContextVar 取 ResolvedModel，把请求信封的 model 重写为
+解析结果后委托给按 (provider.key, model.model) 缓存的真实 provider——事件流
+逐事件透传，不经回调折叠。折叠会丢失回调面没有通道的事件：``ToolCallDelta``
+（工具参数流式增量，WebUI "Preparing" 心跳的信号源）在回调式 API 里无路可走，
+曾导致 bot 实际回合中参数流式阶段前端完全静默。
+
+采样参数（temperature/top_p/max_output_tokens）刻意清空：当前 turn 的模型及
+参数由 current_model_choice ContextVar 决定（spec B1：ReactLlmClient 传的是
+descriptor 占位值），真实 provider 在构造期烘焙各自 model.yml 的参数，清空后
+由 ``_with_sampling_defaults``/``build_body`` 回填。
 reasoning_effort v1 不透传（留 TODO）。
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import AsyncIterator
 
-from modex_agent.core.llm_struct import FinishReason, LLMResponse
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
+from modex_agent.core.llm_request import LLMRequest
+from modex_agent.core.llm_struct import LLMErrorInfo, LLMErrorKind
+from modex_agent.core.provider import LLMProvider
+from modex_agent.core.stream_events import LLMStreamEvent, StreamFailure
 from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.providers.http.provider import HTTPStreamProvider
 
@@ -25,18 +34,18 @@ logger = logging.getLogger(__name__)
 
 # Sentinel provider key used by model_config._placeholder_model_config().
 # When the resolved model's provider key matches this, no real model is
-# configured — chat_stream fails fast instead of making a doomed network call.
+# configured — the stream fails fast instead of making a doomed network call.
 _PLACEHOLDER_PROVIDER_KEY = "_unconfigured"
 
 
-class BotModelProvider(CallbackStreamProvider):
-    """按 turn ContextVar 代理到真实 LLM provider。"""
+class BotModelProvider(LLMProvider):
+    """按 turn ContextVar 代理到真实 LLM provider（原生事件流委托）。"""
 
     def __init__(self, model_config: BotModelConfig) -> None:
-        super().__init__()
         self._model_config = model_config
         self._cache: dict[tuple[str, str], LLMProvider] = {}
-        # ReactLlmClient 用 getattr(provider, "model", None) 构造 LLMStreamContext。
+        # ReactLlmClient 用 get_default_model() 构造 LLMStreamContext 与请求
+        # 信封的 model 占位；真实 model 在 stream() 里按 ContextVar 重写。
         self.model = model_config.default_resolved().model.model
 
     def get_default_model(self) -> str:
@@ -69,47 +78,37 @@ class BotModelProvider(CallbackStreamProvider):
             self._cache[key] = provider
         return provider
 
-    async def chat_stream(
-        self,
-        messages: list[ChatMessage],
-        # model/temperature/max_output_tokens 来自框架 ABC 签名，此处故意忽略——
-        # 当前 turn 的模型及其参数由 current_model_choice ContextVar 决定（spec B1：
-        # ReactLlmClient 不传 model，descriptor 的 temp/max_output_tokens 是冗余占位）。
-        model: str | None = None,
-        temperature: float = 0.7,
-        max_output_tokens: int | None = None,
-        tools: list[dict] | None = None,
-        on_content_delta: Any = None,  # noqa: ANN401  matches CallbackStreamProvider ABC
-        on_reasoning_delta: Any = None,  # noqa: ANN401
-        **kwargs: Any,  # noqa: ANN401
-    ) -> LLMResponse:
+    async def stream(self, request: LLMRequest) -> AsyncIterator[LLMStreamEvent]:
+        """Delegate to the ContextVar-resolved real provider's native event
+        stream, rewriting the envelope's model identity and clearing the
+        framework's placeholder sampling params (the resolved provider owns
+        them, baked at construction). Events pass through verbatim —
+        including ``ToolCallDelta``.
+
+        Resolution failures end the stream with one ``StreamFailure``
+        terminal event (the assembler folds it into an ERROR ``LLMResponse``,
+        matching the legacy chat_stream fail-fast contract).
+        """
         try:
             resolved = self._resolved()
-        except Exception as exc:  # resolve failed: return ERROR, don't raise
+        except Exception as exc:  # resolve failed: ERROR stream, don't raise
             logger.exception("BotModelProvider resolve failed")
-            return LLMResponse(
-                content=None,
-                finish_reason=FinishReason.ERROR.value,
-                error=f"model provider unavailable: {exc}",
-            )
+            yield self._provider_unavailable_failure(f"model provider unavailable: {exc}")
+            return
         # Fail fast when no real model is configured (placeholder config from
         # model_config._placeholder_model_config). Avoids a doomed network call
         # to api.openai.com + the full retry/backoff loop before erroring.
         if resolved.provider.key == _PLACEHOLDER_PROVIDER_KEY:
-            return LLMResponse(
-                content=None,
-                finish_reason=FinishReason.ERROR.value,
-                error="no model configured — set one via WebUI Settings → Models or 'modexbot config'",
+            yield self._provider_unavailable_failure(
+                "no model configured — set one via WebUI Settings → Models or 'modexbot config'"
             )
+            return
         try:
             real = self._real_provider(resolved)
-        except Exception as exc:  # provider build failed: return ERROR, don't raise
+        except Exception as exc:  # provider build failed: ERROR stream, don't raise
             logger.exception("BotModelProvider build failed")
-            return LLMResponse(
-                content=None,
-                finish_reason=FinishReason.ERROR.value,
-                error=f"model provider unavailable: {exc}",
-            )
+            yield self._provider_unavailable_failure(f"model provider unavailable: {exc}")
+            return
         # Model-call trajectory: the single chokepoint log that records which
         # provider+model actually serves each turn (covers every real provider —
         # all protocol engines). INFO so it surfaces in normal operation.
@@ -117,21 +116,26 @@ class BotModelProvider(CallbackStreamProvider):
             "model call: provider=%s model=%s messages=%d",
             resolved.provider.name,
             resolved.model.model,
-            len(messages),
+            len(request.messages),
         )
-        # NOTE: model/temperature/max_output_tokens are NOT forwarded. The real
-        # provider is constructed per resolved model via create_llm_provider
-        # (see _real_provider), which bakes in the config's model name
-        # VERBATIM (no prefix processing — a stale routing prefix simply
-        # reaches the API as part of the model name) plus the model's own
-        # temperature/max_output_tokens/reasoning_effort. Forwarding model=
-        # here would override the per-resolved-model provider with whatever
-        # model the framework ABC happened to pass. Let the baked provider
-        # own these values.
-        return await real.chat_stream(
-            messages=messages,
-            tools=tools,
-            on_content_delta=on_content_delta,
-            on_reasoning_delta=on_reasoning_delta,
-            **kwargs,
+        # The resolved model owns identity + sampling; the framework-passed
+        # placeholders (default model name / descriptor temperature /
+        # max_output_tokens / top_p) never reach the wire — None falls back
+        # to the real provider's baked config in _with_sampling_defaults /
+        # build_body.
+        delegated = request.model_copy(
+            update={
+                "model": resolved.model.model,
+                "temperature": None,
+                "top_p": None,
+                "max_output_tokens": None,
+            }
+        )
+        async for event in real.stream(delegated):
+            yield event
+
+    @staticmethod
+    def _provider_unavailable_failure(message: str) -> StreamFailure:
+        return StreamFailure(
+            error_info=LLMErrorInfo(kind=LLMErrorKind.UNKNOWN, message=message)
         )

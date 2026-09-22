@@ -4,22 +4,28 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
+from bot.acp.emitter import AcpEmitterHub, AcpTurnEmitter
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
 from bot.webui.emitter import CompositeEmitter, WebBotEmitter
+from bot.webui.emitter import web_bot as web_bot_module
 from bot.webui.events import (
+    ServerEvent,
+    ToolArgsDeltaEvent,
     ToolResultEvent,
     WebUIEventType,
 )
 from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.agents.react.constants import ToolCallEndPayload
+from modex_agent.agents.react.constants import ToolArgsDeltaPayload, ToolCallEndPayload
 from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.events import EmitterConfig
 from modex_agent.core.message import ToolCall
 from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.turn_events import TurnEvent
 
 
 @pytest.mark.asyncio
@@ -300,6 +306,171 @@ async def test_streaming_delta_flush_persists_content() -> None:
         )
 
 
+# ── tool_args_delta (transient pre-tool-call warm-up signal) tests ─────────
+
+
+@pytest.mark.asyncio
+async def test_tool_args_delta_first_fragment_sent_immediately() -> None:
+    """tool_args_delta: 首 fragment 立即外发; 不落 store、不 flush 打开中的文本段。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        input_adapter = WebSocketInputAdapter()
+        output_adapter = WebSocketOutputAdapter(input_adapter)
+        store = JSONLTranscriptStore(Path(tmp))
+        emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store)
+        input_adapter.register_connection("conv1.main", None)
+
+        await emitter.emit_delta("partial ")  # 打开中的文本段, 不得被预热信号 flush
+        fragment = '{"path": "/tmp'
+        await emitter.emit(
+            ReActEvent.TOOL_ARGS_DELTA,
+            ToolArgsDeltaPayload(call_id="call_0", tool_name="read_file", args_fragment=fragment),
+        )
+
+        q = input_adapter.get_delta_queue("conv1.main", None)
+        assert q is not None
+        text_env = q.get_nowait()
+        args_env = q.get_nowait()
+        assert text_env.event_type == WebUIEventType.MODEL_CONTENT_DELTA.value
+        assert args_env.event_type == WebUIEventType.TOOL_ARGS_DELTA.value
+        assert args_env.payload["tool"] == "read_file"
+        assert args_env.payload["call_id"] == "call_0"
+        assert args_env.payload["turn_id"] == text_env.payload["turn_id"]
+        assert len(args_env.payload["turn_id"]) > 0
+        assert args_env.payload["chars"] == len(fragment)
+        assert args_env.payload["preview"] == fragment
+        assert q.empty()
+
+        # 瞬态信号: store 无任何记录 —— 尤其无 AssistantTextEvent(文本段未 flush)。
+        events = await store.load("conv1.main")
+        assert events == []
+
+
+@pytest.mark.asyncio
+async def test_tool_args_delta_throttle_leading_edge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """窗口内吞 fragment; 过窗后一次外发携带累积 chars + 有界尾部 preview。"""
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(web_bot_module.time, "monotonic", lambda: clock["t"])
+
+    input_adapter = WebSocketInputAdapter()
+    output_adapter = WebSocketOutputAdapter(input_adapter)
+    emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig())
+    input_adapter.register_connection("conv1.main", None)
+
+    async def frag(fragment: str) -> None:
+        await emitter.emit(
+            ReActEvent.TOOL_ARGS_DELTA,
+            ToolArgsDeltaPayload(call_id="call_0", tool_name="read_file", args_fragment=fragment),
+        )
+
+    await frag("a" * 5)  # t=1000.0: 首 fragment 立即外发(leading edge)
+    clock["t"] = 1000.01
+    await frag("b" * 10)  # 窗口内: 吞掉
+    clock["t"] = 1000.02
+    await frag("c" * 15)  # 窗口内: 吞掉
+
+    q = input_adapter.get_delta_queue("conv1.main", None)
+    assert q is not None
+    first = q.get_nowait()
+    assert first.event_type == WebUIEventType.TOOL_ARGS_DELTA.value
+    assert first.payload["chars"] == 5
+    assert first.payload["preview"] == "a" * 5
+    assert q.empty()  # 窗口内无第二次外发
+
+    clock["t"] = 1000.2  # 越过 100ms 节流窗口
+    await frag("d" * 400)
+    second = q.get_nowait()
+    accumulated = "a" * 5 + "b" * 10 + "c" * 15 + "d" * 400
+    assert second.event_type == WebUIEventType.TOOL_ARGS_DELTA.value
+    assert second.payload["chars"] == len(accumulated)  # 累积计数含被吞 fragment
+    assert second.payload["preview"] == accumulated[-200:]  # 有界尾部预览
+    assert len(second.payload["preview"]) == 200
+    assert q.empty()
+
+
+@pytest.mark.asyncio
+async def test_tool_call_start_clears_args_stream_state() -> None:
+    """tool_call_start 随后照常外发, 并清掉该 call_id 的预热账目。"""
+    input_adapter = WebSocketInputAdapter()
+    output_adapter = WebSocketOutputAdapter(input_adapter)
+    emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig())
+    input_adapter.register_connection("conv1.main", None)
+
+    await emitter.emit(
+        ReActEvent.TOOL_ARGS_DELTA,
+        ToolArgsDeltaPayload(call_id="call_0", tool_name="read_file", args_fragment='{"path"'),
+    )
+    assert emitter._args_stream_state  # 预热账目已在位
+
+    tc = ToolCall(tool_name="read_file", arguments={"path": "/x"}, call_id="call_0")
+    await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
+
+    q = input_adapter.get_delta_queue("conv1.main", None)
+    assert q is not None
+    assert q.get_nowait().event_type == WebUIEventType.TOOL_ARGS_DELTA.value
+    start_env = q.get_nowait()
+    assert start_env.event_type == WebUIEventType.TOOL_CALL_START.value
+    assert start_env.payload["call_id"] == "call_0"
+    assert emitter._args_stream_state == {}
+
+
+@pytest.mark.asyncio
+async def test_turn_end_clears_args_stream_state() -> None:
+    """LENGTH 截断 / 规范 id 不一致的孤儿账目由回合结束清场。"""
+    input_adapter = WebSocketInputAdapter()
+    output_adapter = WebSocketOutputAdapter(input_adapter)
+    emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig())
+    input_adapter.register_connection("conv1.main", None)
+
+    await emitter.emit(
+        ReActEvent.TOOL_ARGS_DELTA,
+        ToolArgsDeltaPayload(call_id="orphan_1", tool_name="read_file", args_fragment="x"),
+    )
+    assert emitter._args_stream_state
+
+    await emitter.emit_complete(AgentResult(content="done"))
+    assert emitter._args_stream_state == {}
+
+
+@pytest.mark.asyncio
+async def test_tool_args_delta_is_noop_for_acp_projection() -> None:
+    """ACP 投影忽略预热信号: 基类钩子默认 no-op —— 无外发、无持久化。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = JSONLTranscriptStore(Path(tmp))
+        hub = AcpEmitterHub()
+        seen: list[TurnEvent] = []
+
+        async def listener(event: TurnEvent) -> None:
+            seen.append(event)
+
+        hub.register("conv1.main", listener)
+        emitter = AcpTurnEmitter(hub, "conv1.main", transcript_store=store)
+
+        await emitter.emit(
+            ReActEvent.TOOL_ARGS_DELTA,
+            ToolArgsDeltaPayload(call_id="call_0", tool_name="read_file", args_fragment="x"),
+        )
+        assert seen == []
+        assert await store.load("conv1.main") == []
+
+
+def test_tool_args_delta_event_roundtrip() -> None:
+    ev = ToolArgsDeltaEvent(
+        session_id="abc.main", agent_name="main",
+        tool="read_file", call_id="call_0", turn_id="a1b2c3d4e5f6",
+        chars=42, preview='{"path": "/tmp/x"}',
+    )
+    loaded = ServerEvent.from_dict(ev.to_dict())
+    assert isinstance(loaded, ToolArgsDeltaEvent)
+    assert loaded.tool == "read_file"
+    assert loaded.call_id == "call_0"
+    assert loaded.turn_id == "a1b2c3d4e5f6"
+    assert loaded.chars == 42
+    assert loaded.preview == '{"path": "/tmp/x"}'
+    assert loaded.event == WebUIEventType.TOOL_ARGS_DELTA.value
+
+
 # ── CompositeEmitter tests ────────────────────────────────────────────────
 
 
@@ -336,6 +507,26 @@ class _FailingEmitter(ContentEmitter[ReActEvent]):
         raise RuntimeError("boom")
 
 
+class _EventRecordingEmitter(ContentEmitter[ReActEvent]):
+    """Records every ``emit`` event name (for fan-out assertions)."""
+
+    def __init__(self) -> None:
+        super().__init__(EmitterConfig())
+        self.events: list[str] = []
+
+    async def emit(self, event: ReActEvent, data: Any = None) -> None:
+        self.events.append(event.value)
+
+    async def emit_delta(self, delta: str) -> None:
+        pass
+
+    async def emit_complete(self, result: AgentResult) -> None:
+        pass
+
+    async def emit_error(self, error: str) -> None:
+        pass
+
+
 @pytest.mark.asyncio
 async def test_composite_fans_out_to_all_children() -> None:
     """CompositeEmitter delegates to all children."""
@@ -348,6 +539,22 @@ async def test_composite_fans_out_to_all_children() -> None:
 
     assert stub1.calls == ["delta:hello", "complete:done"]
     assert stub2.calls == ["delta:hello", "complete:done"]
+
+
+@pytest.mark.asyncio
+async def test_composite_fans_out_tool_args_delta() -> None:
+    """tool_args_delta 经 CompositeEmitter 扇出到所有子 emitter。"""
+    stub1 = _EventRecordingEmitter()
+    stub2 = _EventRecordingEmitter()
+    composite = CompositeEmitter[ReActEvent](emitters=[stub1, stub2])
+
+    await composite.emit(
+        ReActEvent.TOOL_ARGS_DELTA,
+        ToolArgsDeltaPayload(call_id="call_0", tool_name="read_file", args_fragment="x"),
+    )
+
+    assert stub1.events == ["tool_args_delta"]
+    assert stub2.events == ["tool_args_delta"]
 
 
 @pytest.mark.asyncio

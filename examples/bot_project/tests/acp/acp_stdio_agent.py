@@ -12,7 +12,7 @@ construction seam all pools route through), replaced here with a scripted
 
 The temporary ``model.yml`` must configure a REAL provider entry — a missing
 model.yml makes BotService boot with the ``_unconfigured`` placeholder,
-which fails fast in ``BotModelProvider.chat_stream`` BEFORE any provider is
+which fails fast in ``BotModelProvider.stream`` BEFORE any provider is
 constructed (the factory seam would never run).
 
 Scripted reply contract (keyed on the newest non-reminder user turn):

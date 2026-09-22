@@ -3,9 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -15,8 +14,10 @@ from bot.service.model_choice import current_model_choice
 from bot.service.model_config import BotModelConfig
 from bot.service.model_provider import BotModelProvider
 
-from modex_agent.core.llm_struct import FinishReason, LLMResponse
+from modex_agent.core.llm_request import LLMRequest
+from modex_agent.core.llm_struct import FinishReason
 from modex_agent.core.message import ChatMessage, MessageRole
+from modex_agent.core.stream_events import Finish, LLMStreamEvent, TextDelta
 
 _YML = """
 models:
@@ -41,12 +42,18 @@ def _cfg(tmp_path: Path) -> BotModelConfig:
 
 
 class _FakeReal:
-    def __init__(self) -> None:
-        self.last_kwargs: dict = {}
+    """Fake native provider: echoes one TextDelta, records the delegated
+    request envelope (the only carrier of model/sampling to the wire)."""
 
-    async def chat_stream(self, **kwargs: Any) -> LLMResponse:  # noqa: ANN401
-        self.last_kwargs = kwargs
-        return LLMResponse(content="ok", finish_reason=FinishReason.STOP.value)
+    def __init__(self) -> None:
+        self.called = False
+        self.last_request: LLMRequest | None = None
+
+    async def stream(self, request: LLMRequest) -> AsyncIterator[LLMStreamEvent]:
+        self.called = True
+        self.last_request = request
+        yield TextDelta(text="ok")
+        yield Finish(finish_reason=FinishReason.STOP)
 
 
 @pytest.fixture(autouse=True)
@@ -61,17 +68,21 @@ def test_default_model_used_when_ctxvar_unset(tmp_path: Path) -> None:
     fake = _FakeReal()
     prov._cache[("a", "m1")] = fake  # type: ignore[attr-defined]
 
-    async def go() -> LLMResponse:
-        return await prov.chat_stream(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
+    async def go() -> None:
+        # Folded callback surface (base LLMProvider.chat_stream) rides the
+        # same native stream — the resolution seam is identical.
+        await prov.chat_stream(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
 
-    resp = asyncio.run(go())
-    assert resp.content == "ok"
-    # The default model M1's real provider is the one called.
-    assert "messages" in fake.last_kwargs
-    # model/temperature/max_output_tokens are NOT forwarded — the real provider
-    # is baked with them at construction (see test_real_provider_baked_per_resolved_model).
-    assert "model" not in fake.last_kwargs
-    assert "temperature" not in fake.last_kwargs
+    asyncio.run(go())
+    # The default model M1's real provider is the one called, and the
+    # delegated envelope carries M1's identity (not the placeholder).
+    assert fake.called
+    assert fake.last_request is not None
+    assert fake.last_request.model == "m1"
+    # Sampling placeholders are cleared — the real provider is baked with
+    # them at construction (see test_real_provider_baked_per_resolved_model).
+    assert fake.last_request.temperature is None
+    assert fake.last_request.max_output_tokens is None
 
 
 def test_ctxvar_switches_model(tmp_path: Path) -> None:
@@ -86,13 +97,15 @@ def test_ctxvar_switches_model(tmp_path: Path) -> None:
     assert m2 is not None
     current_model_choice.set(m2)
 
-    async def go() -> LLMResponse:
-        return await prov.chat_stream(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
+    async def go() -> None:
+        await prov.chat_stream(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
 
     asyncio.run(go())
     # The ContextVar-selected model M2 routes to M2's real provider, not M1's.
-    assert "messages" in fake2.last_kwargs
-    assert fake1.last_kwargs == {}
+    assert fake2.called
+    assert fake2.last_request is not None
+    assert fake2.last_request.model == "m2"
+    assert not fake1.called
 
 
 def test_real_provider_baked_per_resolved_model(tmp_path: Path) -> None:
@@ -162,33 +175,22 @@ def _prefix_cfg(tmp_path: Path) -> BotModelConfig:
     return BotModelConfig.from_yaml(p)
 
 
-class _BakedFakeReal:
-    """Mimics a real provider: the model sent to the API is ``model=`` if the
-    caller forwarded one, else the baked ``self._model`` (what
-    create_llm_provider constructed it with). Records what would reach the API."""
-
-    def __init__(self, baked_model: str) -> None:
-        self.baked_model = baked_model
-        self.received_model_kwarg: object = "NOT_CALLED"
-        self.api_model: str | None = None
-
-    async def chat_stream(self, **kwargs: Any) -> LLMResponse:  # noqa: ANN401
-        self.received_model_kwarg = kwargs.get("model", "NOT_PASSED")
-        self.api_model = kwargs.get("model") or self.baked_model
-        return LLMResponse(content="ok", finish_reason=FinishReason.STOP.value)
-
-
 def test_provider_model_not_overridden_by_call_site_model_kwarg(tmp_path: Path) -> None:
     """create_llm_provider bakes the config's model name verbatim into the
-    real provider; BotModelProvider never forwards a model kwarg, so the
-    framework ABC's model argument can never override the resolved model."""
+    real provider; BotModelProvider rewrites the delegated envelope's model to
+    the resolved identity, so the framework call-site's model argument can
+    never override the resolved model."""
     prov = BotModelProvider(_prefix_cfg(tmp_path))
-    fake = _BakedFakeReal(baked_model="step-3.7-flash")
+    fake = _FakeReal()
     prov._cache[("step", "step-3.7-flash")] = fake  # type: ignore[attr-defined]
 
-    async def go() -> LLMResponse:
-        return await prov.chat_stream(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
+    async def go() -> None:
+        await prov.chat_stream(
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            model="gpt-4",  # stale call-site placeholder must not win
+        )
 
     asyncio.run(go())
-    assert fake.received_model_kwarg == "NOT_PASSED"
-    assert fake.api_model == "step-3.7-flash"
+    assert fake.called
+    assert fake.last_request is not None
+    assert fake.last_request.model == "step-3.7-flash"

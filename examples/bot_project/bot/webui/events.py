@@ -19,6 +19,7 @@ class WebUIEventType(StrEnum):
     USER_MESSAGE = "user_message"
     MODEL_CONTENT_DELTA = "model_content_delta"
     MODEL_REASONING_DELTA = "model_reasoning_delta"
+    TOOL_ARGS_DELTA = "tool_args_delta"
     TOOL_CALL_START = "tool_call_start"
     TOOL_CALL_END = "tool_call_end"
     TURN_START = "turn_start"
@@ -212,6 +213,21 @@ class ModelReasoningDelta(ServerEvent):
     turn_id: str = ""
     segment_id: str = ""
     event: str = field(default=WebUIEventType.MODEL_REASONING_DELTA.value, init=False)
+
+
+@dataclass
+class ToolArgsDeltaEvent(ServerEvent):
+    """工具参数流式增量(``tool_call_start`` 之前的瞬态预热信号)。
+
+    ``chars`` 是服务端按 call_id 累积的参数字符数; ``preview`` 是累积
+    原文的尾部预览(有界)。瞬态事件, 不落 transcript store。
+    """
+    tool: str = ""
+    call_id: str = ""
+    turn_id: str = ""
+    chars: int = 0
+    preview: str = ""
+    event: str = field(default=WebUIEventType.TOOL_ARGS_DELTA.value, init=False)
 
 
 @dataclass

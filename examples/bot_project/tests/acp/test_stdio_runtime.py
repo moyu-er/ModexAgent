@@ -237,7 +237,7 @@ def _write_project_config(
     """Settings dir + editor project + a REAL model.yml.
 
     Without model.yml BotService boots the ``_unconfigured`` placeholder and
-    ``BotModelProvider.chat_stream`` fails fast BEFORE constructing any
+    ``BotModelProvider.stream`` fails fast BEFORE constructing any
     provider — the factory seam under test would never run. The provider
     entry below is never dialed (the factory is monkeypatched in the
     subprocess); it only has to pass ``BotModelConfig`` validation.

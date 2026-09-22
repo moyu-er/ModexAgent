@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import shutil
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -34,9 +35,11 @@ from bot.service.roots import BotAssemblyRoots
 from modex_agent.adapters.emitter import StreamingAwareEmitter
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.core.llm_struct import LLMResponse
+from modex_agent.core.llm_request import LLMRequest
+from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.core.stream_events import Finish, LLMStreamEvent, TextDelta
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.messaging.models import InputMessage, OutputMessage
 
@@ -275,31 +278,23 @@ async def test_every_materialized_workspace_delivers_output(
 
     # Pool turns resolve their LLM through the registry (bot_default →
     # BotModelProvider over the dummy model.yml URL), which the service-level
-    # provider patch above never reaches — echo at the provider class instead.
+    # provider patch above never reaches — echo at the provider class instead,
+    # on the native event surface ReactLlmClient actually consumes.
     from bot.service.model_provider import BotModelProvider
 
-    original_chat_stream = BotModelProvider.chat_stream
+    original_stream = BotModelProvider.stream
 
-    async def _echo_chat_stream(
+    async def _echo_stream(
         self: BotModelProvider,
-        messages: list[Any],
-        model: str | None = None,
-        temperature: float = 0.7,
-        max_output_tokens: int | None = None,
-        tools: list[dict] | None = None,
-        on_content_delta: Any = None,
-        on_reasoning_delta: Any = None,
-        **kwargs: object,
-    ) -> Any:
-        del model, temperature, max_output_tokens, tools, on_reasoning_delta, kwargs
+        request: LLMRequest,
+    ) -> AsyncIterator[LLMStreamEvent]:
+        del self
         provider.calls += 1
-        content = _last_user_content(messages)
-        text = f"echo:{content}" if content else "echo:ok"
-        if on_content_delta is not None:
-            await on_content_delta(text)
-        return LLMResponse(content=text)
+        content = _last_user_content(request.messages)
+        yield TextDelta(text=f"echo:{content}" if content else "echo:ok")
+        yield Finish(finish_reason=FinishReason.STOP)
 
-    BotModelProvider.chat_stream = _echo_chat_stream  # type: ignore[method-assign]
+    BotModelProvider.stream = _echo_stream  # type: ignore[method-assign]
 
     try:
         await service.initialize()
@@ -395,4 +390,4 @@ async def test_every_materialized_workspace_delivers_output(
             await service.stop()
         core_mod.BotService._build_default_provider = original_default_provider  # type: ignore[assignment]
         core_mod.BotService._project_dir = original_project_dir  # type: ignore[assignment]
-        BotModelProvider.chat_stream = original_chat_stream  # type: ignore[method-assign]
+        BotModelProvider.stream = original_stream  # type: ignore[method-assign]

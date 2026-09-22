@@ -69,7 +69,7 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
 
     This base owns recording (transcript writes, segment buffering, turn
     identity); subclasses own projection — translating each recorded fact
-    into their own sink format. The five ``_project_*`` hooks receive the
+    into their own sink format. The six ``_project_*`` hooks receive the
     full-fidelity fact (never a display-truncated copy).
     """
 
@@ -154,6 +154,13 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
         seq: int | None,
     ) -> None:
         """Project a tool call end with the FULL result text and ``seq``."""
+
+    async def _project_tool_args_delta(self, tool_name: str, call_id: str, args_fragment: str) -> None:
+        """Project one streamed argument fragment (pre-``tool_call_start``).
+
+        默认 no-op: 预热态是纯显示投影, 记录生命周期(段缓冲/持久化)不参与;
+        WebUI 投影覆盖此钩子做节流外发, ACP 投影忽略。
+        """
 
     @abstractmethod
     async def _project_turn_end(self, latency_ms: int) -> None:
@@ -373,6 +380,15 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
             await self._record_reasoning_delta(text, None)
             self._ensure_turn_started()
             self._accumulate_segment(text, "reasoning", None)
+
+        elif event_value == "tool_args_delta":
+            # 瞬态预热信号: 不 flush 文本段(正文可能仍在语义上未结束)、不落
+            # transcript、不进 partial buffer —— 刷新恢复靠随后的 tool_call_start
+            # 全量参数, 丢失预热态无害。
+            self._ensure_turn_started()
+            await self._project_tool_args_delta(
+                data.tool_name, data.call_id, data.args_fragment
+            )
 
         elif event_value == "tool_call_start":
             tool_name: str = data.tool_name

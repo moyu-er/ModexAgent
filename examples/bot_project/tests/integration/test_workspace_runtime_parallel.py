@@ -2,7 +2,7 @@
 
 One real-service harness (``BotService`` boots from a workspace-layer scope
 declaration; ONLY the LLM is scripted, patched onto
-``BotModelProvider.chat_stream``) drives three scenarios:
+``BotModelProvider.stream``) drives three scenarios:
 
 1. **Runtime creation (the WebUI road)** — ``create_workspace`` writes the
    per-workspace declaration under ``config/scopes/workspaces/``, then
@@ -103,7 +103,7 @@ def _tool_names(tools: list[dict[str, Any]] | None) -> set[str]:
 
 @dataclass
 class _ScriptedLLM:
-    """Drives ``BotModelProvider.chat_stream`` for every pool/agent/turn.
+    """Drives ``BotModelProvider.stream`` for every pool/agent/turn.
 
     Echo mode (creation/routing tests): reply ``echo:<last user content>``.
 
@@ -419,23 +419,34 @@ async def _boot(
         core_mod.BotService, "_project_dir", property(lambda self: tmp_path)
     )
 
-    async def _scripted_chat_stream(
-        self: BotModelProvider,
-        messages: list[Any],
-        model: str | None = None,
-        temperature: float = 0.7,
-        max_output_tokens: int | None = None,
-        tools: list[dict[str, Any]] | None = None,
-        on_content_delta: Any = None,
-        on_reasoning_delta: Any = None,
-        **kwargs: Any,
-    ) -> LLMResponse:
-        del self, model, temperature, max_output_tokens, on_reasoning_delta
-        return await script.chat_stream(
-            messages, tools=tools, on_content_delta=on_content_delta, **kwargs
-        )
+    class _ScriptedBridge(CallbackStreamProvider):
+        """Bridge the callback-scripted LLM onto the native event surface
+        ReactLlmClient consumes (BotModelProvider.stream)."""
 
-    monkeypatch.setattr(BotModelProvider, "chat_stream", _scripted_chat_stream)
+        def get_default_model(self) -> str:
+            return "scripted"
+
+        async def chat_stream(
+            self,
+            messages: list[Any],
+            model: str | None = None,
+            temperature: float | None = None,
+            max_output_tokens: int | None = None,
+            tools: list[dict[str, Any]] | None = None,
+            on_content_delta: Any = None,
+            on_reasoning_delta: Any = None,
+            **kwargs: Any,
+        ) -> LLMResponse:
+            del model, temperature, max_output_tokens, on_reasoning_delta
+            return await script.chat_stream(
+                messages, tools=tools, on_content_delta=on_content_delta, **kwargs
+            )
+
+    monkeypatch.setattr(
+        BotModelProvider,
+        "stream",
+        lambda self, request: _ScriptedBridge().stream(request),
+    )
 
     await service.initialize()
     await input_adapter.start()

@@ -185,9 +185,10 @@ def _placeholder_model_config() -> BotModelConfig:
     Lets the bot boot so the user can configure a real model via the WebUI
     (Settings -> Models) or ``modexbot config``. The placeholder provider has
     empty api_key/base_url, so every real LLM call fails — but
-    ``BotModelProvider.chat_stream`` catches the provider-build failure and
-    returns an ``LLMResponse(finish_reason=ERROR)``, and the ReAct LLM/end
-    nodes surface that as a turn error instead of crashing the process.
+    ``BotModelProvider.stream`` fails fast with a ``StreamFailure`` terminal
+    event (folded into an ``LLMResponse(finish_reason=ERROR)``), and the
+    ReAct LLM/end nodes surface that as a turn error instead of crashing
+    the process.
     """
     return BotModelConfig(
         default_provider="_unconfigured",

@@ -13,7 +13,9 @@ frontend for rendering.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +28,7 @@ from ..events import (
     ModelReasoningDelta,
     ServerEvent,
     SessionMeta,
+    ToolArgsDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
     TurnEndEvent,
@@ -38,6 +41,11 @@ from .bot_transcript import BotTranscriptEmitter
 _MAX_TOOL_ARGS_LEN: int = 500
 _MAX_TOOL_RESULT_LEN: int = 200
 
+# ── tool_args_delta 节流外发参数 ────────────────────────────────────────────
+
+_TOOL_ARGS_THROTTLE_SECONDS: float = 0.1
+_TOOL_ARGS_PREVIEW_CHARS: int = 200
+
 
 def _truncate_tool_args(args: dict[str, object]) -> dict[str, object]:
     """Return a copy of *args* with values truncated for frontend display."""
@@ -49,6 +57,14 @@ def _truncate_tool_args(args: dict[str, object]) -> dict[str, object]:
         else:
             truncated[key] = val
     return truncated
+
+
+@dataclass
+class _ToolArgsStreamState:
+    """一个 call_id 的参数流累积账目(节流外发用, 模块内部值对象)。"""
+    chars: int = 0
+    preview: str = ""
+    last_sent: float | None = None  # time.monotonic(); None = 尚未外发过
 
 
 class WebBotEmitter(BotTranscriptEmitter):
@@ -80,6 +96,9 @@ class WebBotEmitter(BotTranscriptEmitter):
             sessions_dir_provider=sessions_dir_provider,
         )
         self._output: WebSocketOutputAdapter = output_adapter
+        # tool_args_delta 节流账目, 按 call_id 键控; 由 _project_tool_start /
+        # _project_turn_end 清场(见各自清理注释)。
+        self._args_stream_state: dict[str, _ToolArgsStreamState] = {}
 
     # ------------------------------------------------------------------
     # WebSocket projection
@@ -116,6 +135,32 @@ class WebBotEmitter(BotTranscriptEmitter):
         )
         await self._send_event(evt)
 
+    async def _project_tool_args_delta(self, tool_name: str, call_id: str, args_fragment: str) -> None:
+        state = self._args_stream_state.setdefault(call_id, _ToolArgsStreamState())
+        state.chars += len(args_fragment)
+        state.preview = (state.preview + args_fragment)[-_TOOL_ARGS_PREVIEW_CHARS:]
+        # leading-edge 节流: 每个 call_id 的首 fragment 立即外发; 窗口内的
+        # 后续 fragment 吞掉, 下一窗口的外发携带累积 chars + 尾部 preview。
+        # 无需 trailing-edge 定时器 —— tool_call_start 随后携带全量参数, 兜底
+        # 一切预热态。
+        now = time.monotonic()
+        if (
+            state.last_sent is None
+            or (now - state.last_sent) >= _TOOL_ARGS_THROTTLE_SECONDS
+        ):
+            await self._send_event(
+                ToolArgsDeltaEvent(
+                    session_id=self._session_id,
+                    agent_name=self._agent_name,
+                    tool=tool_name,
+                    call_id=call_id,
+                    turn_id=self._current_turn_id,
+                    chars=state.chars,
+                    preview=state.preview,
+                )
+            )
+            state.last_sent = now
+
     async def _project_tool_start(
         self,
         tool_name: str,
@@ -132,6 +177,10 @@ class WebBotEmitter(BotTranscriptEmitter):
                 call_id=call_id,
             )
         )
+        # 预热账目用完即弃: tool_call_start 已携带全量参数, 该 call_id 的累积
+        # 状态不再需要。provider 省略 id 时规范 call_id 可能与流式 id 不同,
+        # pop 尽力而为, 残项由 _project_turn_end 清场兜底。
+        self._args_stream_state.pop(call_id, None)
 
     async def _project_tool_end(
         self,
@@ -166,3 +215,6 @@ class WebBotEmitter(BotTranscriptEmitter):
                 latency_ms=latency_ms,
             )
         )
+        # 清场: LENGTH 截断 / 规范 id 不一致等孤儿预热账目随回合结束一并
+        # 丢弃, 避免跨回合泄漏累积状态。
+        self._args_stream_state.clear()

@@ -5,7 +5,7 @@ The unit tests exercise each link in isolation:
 
 - EnqueueStage writes the registry (input_pipeline/test_enqueue_model_choice.py)
 - ModelChoiceBindHook.before_graph sets current_model_choice (unit/service/test_model_choice.py)
-- BotModelProvider.chat_stream reads the ContextVar (unit/service/test_model_provider.py)
+- BotModelProvider.stream reads the ContextVar (unit/service/test_model_provider_new_system.py)
 
 NO test joins the three REAL components in one async turn task. This file does —
 it proves the ContextVar propagates registry-write -> hook -> provider within a
@@ -17,10 +17,9 @@ drift silently breaks model switching because the hook falls back to default).
 from __future__ import annotations
 
 import sys
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 
@@ -35,8 +34,10 @@ from bot.service.model_choice import (
 from bot.service.model_config import BotModelConfig
 from bot.service.model_provider import BotModelProvider
 
-from modex_agent.core.llm_struct import FinishReason, LLMResponse
+from modex_agent.core.llm_request import LLMRequest
+from modex_agent.core.llm_struct import FinishReason
 from modex_agent.core.message import ChatMessage, MessageRole
+from modex_agent.core.stream_events import Finish, LLMStreamEvent, TextDelta
 
 _YML = """
 models:
@@ -68,17 +69,19 @@ def _ctx(session_id: str) -> SimpleNamespace:
 
 
 class _FakeReal:
-    """Fake real-provider: records that it served the turn."""
+    """Fake native provider: echoes its tag as one TextDelta and records the
+    delegated request envelope (model identity rewritten by BotModelProvider)."""
 
     def __init__(self, tag: str) -> None:
         self.tag = tag
         self.called = False
-        self.last_kwargs: dict = {}
+        self.last_request: LLMRequest | None = None
 
-    async def chat_stream(self, **kwargs: Any) -> LLMResponse:  # noqa: ANN401
+    async def stream(self, request: LLMRequest) -> AsyncIterator[LLMStreamEvent]:
         self.called = True
-        self.last_kwargs = kwargs
-        return LLMResponse(content=self.tag, finish_reason=FinishReason.STOP.value)
+        self.last_request = request
+        yield TextDelta(text=self.tag)
+        yield Finish(finish_reason=FinishReason.STOP)
 
 
 @pytest.fixture(autouse=True)
@@ -115,8 +118,8 @@ async def test_chain_registry_to_hook_to_provider_uses_m2(tmp_path: Path) -> Non
     assert current_model_choice.get() is m2_resolved
 
     # 3. Provider reads the ContextVar IN THE SAME TASK and routes to M2's real
-    #    provider. Seed the cache with distinguishable fakes keyed by the same
-    #    (provider.key, model.model) tuple BotModelProvider._real_provider uses.
+    # provider. Seed the cache with distinguishable fakes keyed by the same
+    # (provider.key, model.model) tuple BotModelProvider._real_provider uses.
     provider = BotModelProvider(cfg)
     fake_m1 = _FakeReal("m1")
     fake_m2 = _FakeReal("m2")
@@ -129,6 +132,10 @@ async def test_chain_registry_to_hook_to_provider_uses_m2(tmp_path: Path) -> Non
     assert fake_m2.called, "M2 (the registered choice) was not routed to"
     assert not fake_m1.called, "M1 (default) was called instead of the registered M2"
     assert resp.content == "m2"
+    # The delegated envelope carries the RESOLVED model identity, not the
+    # framework placeholder (BotModelProvider.get_default_model() → "m1").
+    assert fake_m2.last_request is not None
+    assert fake_m2.last_request.model == "m2"
     # The ContextVar still holds M2 after the call (not reset to default).
     assert current_model_choice.get() is m2_resolved
 
