@@ -60,7 +60,8 @@ export const zh: Messages = {
   },
   approval: { eyebrow: "操作确认", awaitingApproval: "等待确认", approve: "允许", denyAll: "全部拒绝", showLess: "收起", showMore: "展开", collapseArgs: "收起参数", expandArgs: "展开参数" },
   todo: { tasks: "任务", close: "关闭", prev: "上一页", next: "下一页", previousPage: "上一页", nextPage: "下一页", toggleTaskList: "切换任务列表" },
-  message: { thinking: "思考中" }, toolTrace: { done: "已完成", args: "参数", result: "结果" },
+  message: { thinking: "思考中" },
+  toolTrace: { done: "已完成", args: "参数", result: "结果", preparing: "准备中", chars: "已接收 {n} 字符", argsPreview: "参数预览" },
   reasoning: { label: "推理过程" }, attachments: { fileUnavailable: "文件已不可用" }, markdown: { copied: "已复制", copy: "复制" },
   mermaid: {
     label: "Mermaid 图表", renderFailed: "渲染失败（{message}）", source: "源码", diagram: "图表", zoom: "缩放",

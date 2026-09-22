@@ -9,8 +9,10 @@ import type {
   ModelReasoningDelta,
   ServerEventUnion,
   TodoItemDTO,
+  ToolArgsDeltaEvent,
   ToolCallEndEvent,
   ToolCallStartEvent,
+  ToolTrace,
   TurnBlock,
   UIMessage,
 } from "../types/events";
@@ -77,6 +79,34 @@ function _upsertStreamingBlock(
       timestamp: undefined as unknown as number,
     });
   }
+  return msgs;
+}
+
+/** Update the tool block matching ``match`` on the last streaming assistant
+ *  message for this agent (in place — no new block appended); null when no
+ *  block matches, so the caller decides whether to append instead. */
+function _updateStreamingToolBlock(
+  messages: UIMessage[],
+  agentName: string,
+  match: (tool: ToolTrace) => boolean,
+  update: (tool: ToolTrace) => ToolTrace,
+): UIMessage[] | null {
+  const msgs = [...messages];
+  const lastIdx = msgs.findLastIndex(
+    (m: UIMessage) => m.role === "assistant" && m.agent_name === agentName && m.isStreaming,
+  );
+  if (lastIdx < 0) return null;
+  const last = msgs[lastIdx];
+  if (!last) return null;
+  const blockIdx = last.blocks.findLastIndex(
+    (b) => b.kind === "tool" && match(b.tool),
+  );
+  if (blockIdx < 0) return null;
+  const prev = last.blocks[blockIdx];
+  if (!prev || prev.kind !== "tool") return null;
+  const blocks = [...last.blocks];
+  blocks[blockIdx] = { kind: "tool", tool: update(prev.tool) };
+  msgs[lastIdx] = { ...last, blocks };
   return msgs;
 }
 
@@ -158,8 +188,44 @@ function _applyEventToMessages(
       );
       return { messages: msgs, isStreaming: true };
     }
+    case "tool_args_delta": {
+      // Transient heartbeat while the LLM streams large tool arguments (pre
+      // tool_call_start): update the block this call already seeded, or append
+      // a preparing-only block so the card shows live progress instead of
+      // silence between the last text delta and tool_call_start.
+      const delta = event as ToolArgsDeltaEvent;
+      const updated = _updateStreamingToolBlock(
+        messages,
+        delta.agent_name,
+        (tool) => tool.call_id === delta.call_id,
+        (tool) => ({ ...tool, preparing: { chars: delta.chars, preview: delta.preview } }),
+      );
+      if (updated) return { messages: updated, isStreaming: true };
+      const msgs = _upsertStreamingBlock(messages, delta.agent_name, {
+        kind: "tool",
+        tool: {
+          tool: delta.tool,
+          args: {},
+          call_id: delta.call_id,
+          preparing: { chars: delta.chars, preview: delta.preview },
+        },
+      });
+      return { messages: msgs, isStreaming: true };
+    }
     case "tool_call_start": {
       const start = event as ToolCallStartEvent;
+      // A tool_args_delta heartbeat may have already seeded a preparing block
+      // for this call — upgrade it in place instead of appending a duplicate
+      // card. Provider-omitted call ids can be canonicalized server-side
+      // between streaming and start, so a missed match falls back to append
+      // (the stale orphan preparing block is then cleaned at turn_end).
+      const replaced = _updateStreamingToolBlock(
+        messages,
+        start.agent_name,
+        (tool) => tool.call_id === start.call_id && tool.preparing !== undefined,
+        () => ({ tool: start.tool, args: start.args, call_id: start.call_id }),
+      );
+      if (replaced) return { messages: replaced, isStreaming: true };
       const msgs = _upsertStreamingBlock(messages, start.agent_name,
         { kind: "tool", tool: { tool: start.tool, args: start.args, call_id: start.call_id } },
       );
@@ -206,7 +272,11 @@ function _applyEventToMessages(
           ) {
             matched = true;
             changed = true;
-            return { ...b, tool: { ...b.tool, result: end.result_summary } };
+            // Strip preparing defensively: the resume-after-approval path
+            // emits END without START, so the matched block may still carry
+            // a preparing heartbeat from tool_args_delta.
+            const { preparing: _preparing, ...tool } = b.tool;
+            return { ...b, tool: { ...tool, result: end.result_summary } };
           }
           return b;
         });
@@ -230,10 +300,20 @@ function _applyEventToMessages(
     case "turn_end": {
       const msgs = [...messages];
       const lastIdx = msgs.findLastIndex(
-        (m: UIMessage) => m.role === "assistant" && m.isStreaming,
+        (m) =>
+          m.role === "assistant" &&
+          m.isStreaming &&
+          m.agent_name === event.agent_name,
       );
       if (lastIdx >= 0 && msgs[lastIdx]) {
-        msgs[lastIdx] = { ...msgs[lastIdx]!, isStreaming: false };
+        // Drop preparing-only orphans: a tool_args_delta heartbeat seeded the
+        // block but tool_call_start never arrived (LENGTH truncation or a
+        // canonicalized call-id mismatch) — no args and no result to show.
+        const blocks = msgs[lastIdx]!.blocks.filter(
+          (b) => !(b.kind === "tool" && b.tool.preparing !== undefined
+            && b.tool.result === undefined && Object.keys(b.tool.args).length === 0),
+        );
+        msgs[lastIdx] = { ...msgs[lastIdx]!, isStreaming: false, blocks };
       }
       return { messages: msgs, isStreaming: false };
     }

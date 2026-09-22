@@ -34,34 +34,63 @@ export const ToolTraceCard: FC<ToolTraceCardProps> = ({ tool }) => {
         className="flex w-full items-center gap-1.5 text-left transition-colors hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
       >
         <ChevronToggleIcon open={expanded} className="text-mute" />
-        <Wrench size={13} strokeWidth={1.75} className="text-mute" aria-hidden="true" />
+        <Wrench
+          size={13}
+          strokeWidth={1.75}
+          className={tool.preparing !== undefined ? "animate-pulse text-mute" : "text-mute"}
+          aria-hidden="true"
+        />
         <span className="chat-label text-brand">{tool.tool}</span>
-        {tool.result !== undefined && (
+        {tool.result !== undefined ? (
           <span className="ml-auto flex items-center gap-1 text-xs text-success">
             <Check size={11} strokeWidth={2.5} aria-hidden="true" />
             {t("toolTrace.done")}
           </span>
-        )}
+        ) : tool.preparing !== undefined ? (
+          <span className="ml-auto flex items-center gap-1 text-xs text-mute">
+            <span>{t("toolTrace.preparing")}</span>
+            {/* Identity announcement (chars=0) shows the label alone — the
+                counter starts with the first real fragment. */}
+            {tool.preparing.chars > 0 && (
+              <span>{t("toolTrace.chars", { n: tool.preparing.chars })}</span>
+            )}
+          </span>
+        ) : null}
       </button>
       {expanded && (
         <div className="mt-1.5 rounded border border-hairline bg-canvas p-3">
-          <div className="mb-2">
-            <span className="chat-label text-mute">
-              {t("toolTrace.args")}
-            </span>
-            <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-body">
-              {argsStr}
-            </pre>
-          </div>
-          {tool.result !== undefined && (
-            <div>
-              <span className="chat-label text-mute">
-                {t("toolTrace.result")}
-              </span>
-              <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-ink">
-                {tool.result}
-              </pre>
-            </div>
+          {tool.preparing !== undefined ? (
+            tool.preparing.preview && (
+              <div>
+                <span className="chat-label text-mute">
+                  {t("toolTrace.argsPreview")}
+                </span>
+                <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-body">
+                  {tool.preparing.preview}
+                </pre>
+              </div>
+            )
+          ) : (
+            <>
+              <div className="mb-2">
+                <span className="chat-label text-mute">
+                  {t("toolTrace.args")}
+                </span>
+                <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-body">
+                  {argsStr}
+                </pre>
+              </div>
+              {tool.result !== undefined && (
+                <div>
+                  <span className="chat-label text-mute">
+                    {t("toolTrace.result")}
+                  </span>
+                  <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-ink">
+                    {tool.result}
+                  </pre>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

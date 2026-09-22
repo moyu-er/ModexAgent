@@ -360,6 +360,135 @@ describe("applyServerEvent streaming stability", () => {
   });
 });
 
+describe("applyServerEvent tool_args_delta", () => {
+  const delta = (chars: number, preview: string) => ({
+    event: "tool_args_delta" as const,
+    session_id: "conv.main",
+    agent_name: "main",
+    tool: "write_file",
+    call_id: "call_1",
+    turn_id: "turn_1",
+    chars,
+    preview,
+  });
+  const start = (call_id: string) => ({
+    event: "tool_call_start" as const,
+    session_id: "conv.main",
+    agent_name: "main",
+    tool: "write_file",
+    args: { path: "a.md", content: "x" },
+    turn_id: "turn_1",
+    call_id,
+  });
+  const end = (call_id: string) => ({
+    event: "tool_call_end" as const,
+    session_id: "conv.main",
+    agent_name: "main",
+    tool: "write_file",
+    result_summary: "wrote 1 byte",
+    turn_id: "turn_1",
+    call_id,
+  });
+  const turnEnd = () => ({
+    event: "turn_end" as const,
+    session_id: "conv.main",
+    agent_name: "main",
+    turn_id: "turn_1",
+    latency_ms: 0,
+  });
+  const toolBlocks = (state: StreamState) =>
+    (state.messages[0]?.blocks ?? [])
+      .filter((b) => b.kind === "tool")
+      .map((b) => (b.kind === "tool" ? b.tool : null));
+
+  it("seeds a preparing tool block on a streaming assistant message", () => {
+    const ref = { current: null as string | null };
+    const state = applyServerEvent(emptyState(), delta(512, '{"path": "a'), "conv.main", ref);
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0]!.role).toBe("assistant");
+    expect(state.messages[0]!.isStreaming).toBe(true);
+    expect(state.isStreaming).toBe(true);
+    expect(state.messages[0]!.blocks).toHaveLength(1);
+    expect(state.messages[0]!.blocks[0]).toMatchObject({
+      kind: "tool",
+      tool: {
+        tool: "write_file",
+        args: {},
+        call_id: "call_1",
+        preparing: { chars: 512, preview: '{"path": "a' },
+      },
+    });
+  });
+
+  it("updates the existing preparing block on repeated deltas (one block)", () => {
+    const ref = { current: null as string | null };
+    let state = applyServerEvent(emptyState(), delta(512, '{"path'), "conv.main", ref);
+    state = applyServerEvent(state, delta(1024, '{"path": "a.md"'), "conv.main", ref);
+    const tools = toolBlocks(state);
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.preparing).toEqual({ chars: 1024, preview: '{"path": "a.md"' });
+  });
+
+  it("upgrades the preparing block in place when tool_call_start matches call_id", () => {
+    const ref = { current: null as string | null };
+    let state = applyServerEvent(emptyState(), delta(512, '{"path'), "conv.main", ref);
+    state = applyServerEvent(state, start("call_1"), "conv.main", ref);
+    const tools = toolBlocks(state);
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toMatchObject({
+      tool: "write_file",
+      args: { path: "a.md", content: "x" },
+      call_id: "call_1",
+    });
+    expect(tools[0]?.preparing).toBeUndefined();
+    expect(tools[0]?.result).toBeUndefined();
+  });
+
+  it("appends a new block when tool_call_start has no prior preparing block", () => {
+    const ref = { current: null as string | null };
+    const state = applyServerEvent(emptyState(), start("call_1"), "conv.main", ref);
+    const tools = toolBlocks(state);
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toMatchObject({
+      tool: "write_file",
+      args: { path: "a.md", content: "x" },
+      call_id: "call_1",
+    });
+    expect(tools[0]?.preparing).toBeUndefined();
+  });
+
+  it("falls back to append on call-id mismatch and drops the orphan at turn_end", () => {
+    // Provider-omitted call ids can be canonicalized server-side between
+    // streaming and start: the start misses the preparing block and appends.
+    // turn_end must clean the preparing-only orphan while KEEPING the real
+    // block (args delivered, no result yet — it may still be running).
+    const ref = { current: null as string | null };
+    let state = applyServerEvent(emptyState(), delta(512, '{"path'), "conv.main", ref);
+    state = applyServerEvent(state, start("call_canonical"), "conv.main", ref);
+    expect(toolBlocks(state)).toHaveLength(2);
+
+    state = applyServerEvent(state, turnEnd(), "conv.main", ref);
+    const tools = toolBlocks(state);
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.call_id).toBe("call_canonical");
+    expect(tools[0]?.args).toEqual({ path: "a.md", content: "x" });
+    expect(tools[0]?.result).toBeUndefined();
+    expect(state.isStreaming).toBe(false);
+  });
+
+  it("stamps the result and strips preparing when tool_call_end matches a preparing block", () => {
+    // Defensive resume-after-approval shape: END arrives with no START, so
+    // the block still carries its preparing heartbeat.
+    const ref = { current: null as string | null };
+    let state = applyServerEvent(emptyState(), delta(512, '{"path'), "conv.main", ref);
+    state = applyServerEvent(state, end("call_1"), "conv.main", ref);
+    const tools = toolBlocks(state);
+    expect(tools).toHaveLength(1);
+    expect(tools[0]?.result).toBe("wrote 1 byte");
+    expect(tools[0]?.preparing).toBeUndefined();
+  });
+});
+
 describe("applyServerEvent control notices", () => {
   it("surfaces a 'content' notice as a visible non-streaming message", () => {
     // Backend control notices (e.g. "⏹ Agent turn stopped.",

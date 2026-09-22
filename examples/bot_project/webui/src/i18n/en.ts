@@ -187,6 +187,9 @@ export const en = {
     done: "done",
     args: "Args",
     result: "Result",
+    preparing: "Preparing",
+    chars: "{n} chars received",
+    argsPreview: "Streamed args",
   },
   reasoning: {
     label: "Reasoning",

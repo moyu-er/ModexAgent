@@ -7,6 +7,7 @@ export type WebUIEventType =
   | "model_content_delta"
   | "model_reasoning_delta"
   | "assistant_reasoning"
+  | "tool_args_delta"
   | "tool_call_start"
   | "tool_call_end"
   | "turn_end"
@@ -52,6 +53,21 @@ export interface AssistantReasoningEvent extends ServerEvent {
   event: "assistant_reasoning";
   text: string;
   turn_id: string;
+}
+
+/**
+ * Transient pre-``tool_call_start`` heartbeat sent while the LLM streams
+ * large tool arguments. ``chars`` is the server-side cumulative arg char
+ * count; ``preview`` is a bounded tail (≤200 chars) of the raw accumulated
+ * JSON args. Dropped on refresh — the event is not persisted server-side.
+ */
+export interface ToolArgsDeltaEvent extends ServerEvent {
+  event: "tool_args_delta";
+  tool: string;
+  call_id: string;
+  turn_id: string;
+  chars: number;
+  preview: string;
 }
 
 export interface ToolCallStartEvent extends ServerEvent {
@@ -165,6 +181,7 @@ export type ServerEventUnion =
   | ModelContentDelta
   | ModelReasoningDelta
   | AssistantReasoningEvent
+  | ToolArgsDeltaEvent
   | ToolCallStartEvent
   | ToolCallEndEvent
   | TurnEndEvent
@@ -276,6 +293,9 @@ export interface ToolTrace {
   /** Present on streaming blocks (from tool_call_start); history blocks
    *  materialized from the transcript don't carry it. */
   call_id?: string;
+  /** Present while tool arguments stream (pre tool_call_start): the card renders
+   *  a "preparing" state. Cleared when tool_call_start delivers full args. */
+  preparing?: { chars: number; preview?: string };
 }
 
 // ── Ordered content blocks (preserves streaming interleaving) ────────────
