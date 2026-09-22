@@ -21,6 +21,7 @@ from modex_agent.core.stream_events import (
     StreamFailure,
     TextDelta,
     ToolCallComplete,
+    ToolCallDelta,
     UsageSnapshot,
 )
 
@@ -146,6 +147,26 @@ class TestSequenceAssembly:
         )
 
         assert [tc.call_id for tc in assembler.result().tool_calls] == ["call_1", "call_2"]
+
+    async def test_tool_call_delta_is_display_only(self) -> None:
+        """ToolCallDelta 不参与组装: 内容仅由 TextDelta 贡献, 不报错。"""
+        assembler = EventAssembler()
+
+        await feed_all(
+            assembler,
+            [
+                TextDelta(text="Hi"),
+                ToolCallDelta(
+                    call_id="call_1", tool_name="get_weather", args_fragment='{"city":'
+                ),
+                Finish(finish_reason=FinishReason.STOP),
+            ],
+        )
+
+        response = assembler.result()
+        assert response.content == "Hi"
+        assert response.tool_calls == []
+        assert response.error is None
 
 
 class TestEofWithoutTerminal:

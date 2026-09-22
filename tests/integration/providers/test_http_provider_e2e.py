@@ -44,6 +44,7 @@ import httpx
 import pytest
 
 from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.agents.react.constants import ToolArgsDeltaPayload
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.media_injection import inject_multimodal
 from modex_agent.agents.react.message_builder import build_assistant_message
@@ -566,6 +567,14 @@ async def test_react_llm_client_drives_emitter_over_full_transport(
         ("emit", ReActEvent.MODEL_OUTPUT, "Hello"),
         ("emit_delta", " world"),
         ("emit", ReActEvent.MODEL_OUTPUT, " world"),
+        # 参数流式增量: 首 fragment 携带身份(arguments 为空的通告), 第二个
+        # fragment 是参数原文 —— 均先于 emit_stream_end / TOOL_CALL_START。
+        ("emit", ReActEvent.TOOL_ARGS_DELTA, ToolArgsDeltaPayload(
+            call_id="call_a", tool_name="get_weather", args_fragment=""
+        )),
+        ("emit", ReActEvent.TOOL_ARGS_DELTA, ToolArgsDeltaPayload(
+            call_id="call_a", tool_name="get_weather", args_fragment='{"city": "Beijing"}'
+        )),
         ("emit_stream_end", True),
     ]
     assert response.error is None

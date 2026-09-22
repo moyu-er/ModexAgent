@@ -306,6 +306,30 @@ async def test_eof_after_delta_events_is_not_retried(
     assert len(requests) == 1
 
 
+async def test_escaped_tool_args_delta_prevents_retry(
+    make_provider: Callable[..., tuple[HTTPStreamProvider, list[httpx.Request]]],
+) -> None:
+    async def truncated_body() -> AsyncIterator[bytes]:
+        # One streamed tool-call fragment (ToolCallDelta), then EOF: no
+        # finish_reason frame, no [DONE] — the provider synthesizes a
+        # retryable TIMEOUT StreamFailure.
+        yield (
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+            b'"function":{"name":"get_weather","arguments":"{\\"city\\":"}}]}}]}\n\n'
+        )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=truncated_body(), headers=_SSE_HEADERS)
+
+    provider, requests = make_provider(handler, safety=_retry_fast())
+    response = await provider.chat_stream(messages=_user_message())
+
+    # A leaked args fragment is consumer-visible — a retry would duplicate
+    # it downstream, so the failure passes through unretried.
+    assert response.finish_reason == FinishReason.ERROR
+    assert len(requests) == 1
+
+
 def test_stream_retry_defaults_agree_across_layers() -> None:
     from modex_agent.ioc.configs.safety import SafetyConfig
 

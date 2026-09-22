@@ -64,6 +64,7 @@ from modex_agent.core.stream_events import (
     StreamFailure,
     TextDelta,
     ToolCallComplete,
+    ToolCallDelta,
     UsageSnapshot,
 )
 from modex_agent.providers.http.protocol import LLMProtocol, ProtocolConfig
@@ -670,9 +671,20 @@ class AnthropicProtocol(LLMProtocol):
                         kind = block.get("type")
                         if kind == "tool_use":
                             block_kinds[index] = "tool_use"
-                            tool_state = start(
-                                tool_state, index, block.get("id", ""), block.get("name", "")
-                            )
+                            block_id = block.get("id", "")
+                            block_name = block.get("name", "")
+                            tool_state = start(tool_state, index, block_id, block_name)
+                            # 身份通告(参数未开始); 空/非字符串身份无法在下游配对, 不外发。
+                            # start 保持无条件登记(既有行为)。
+                            if (
+                                isinstance(block_id, str)
+                                and block_id
+                                and isinstance(block_name, str)
+                                and block_name
+                            ):
+                                yield ToolCallDelta(
+                                    call_id=block_id, tool_name=block_name, args_fragment=""
+                                )
                         elif kind in ("text", "thinking"):
                             block_kinds[index] = kind
                         else:
@@ -693,8 +705,19 @@ class AnthropicProtocol(LLMProtocol):
                                     reasoning_parts.append(text)
                                     yield ReasoningDelta(text=text)
                             case "input_json_delta":
-                                tool_state, _ = append_existing(
-                                    tool_state, index, delta.get("partial_json") or ""
+                                fragment = delta.get("partial_json") or ""
+                                if not fragment:
+                                    # 空/缺失片段跳过: 空 args_fragment 的语义是
+                                    # 身份通告, 参数流中途产出属噪声(累积器对空
+                                    # 片段同样 no-op)。
+                                    continue
+                                tool_state, pending = append_existing(
+                                    tool_state, index, fragment
+                                )
+                                yield ToolCallDelta(
+                                    call_id=pending.id,
+                                    tool_name=pending.name,
+                                    args_fragment=fragment,
                                 )
                             case "signature_delta":
                                 got = delta.get("signature") or ""

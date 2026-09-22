@@ -34,6 +34,7 @@ from modex_agent.core.stream_events import (
     StreamFailure,
     TextDelta,
     ToolCallComplete,
+    ToolCallDelta,
     UsageSnapshot,
 )
 from modex_agent.providers.http.formats.anthropic import AnthropicProtocol, ProtocolStructureError
@@ -226,11 +227,44 @@ class TestToolUseStream:
             _MESSAGE_STOP,
         )
 
-        assert events[0] == ToolCallComplete(
+        # block_start announces the identity (empty fragment); every
+        # non-empty input_json_delta yields its wire fragment — an empty/
+        # missing partial_json mid-stream is skipped (an empty fragment
+        # means "identity announcement", not a data shard).
+        deltas = [event for event in events if isinstance(event, ToolCallDelta)]
+        assert deltas == [
+            ToolCallDelta(call_id="toolu_A", tool_name="get_weather", args_fragment=""),
+            ToolCallDelta(call_id="toolu_A", tool_name="get_weather", args_fragment='{"city":'),
+            ToolCallDelta(call_id="toolu_A", tool_name="get_weather", args_fragment=' "Paris"}'),
+        ]
+        complete = next(e for e in events if isinstance(e, ToolCallComplete))
+        assert complete == ToolCallComplete(
             call_id="toolu_A", tool_name="get_weather", arguments={"city": "Paris"}
         )
         finish = _finish_of(events)
         assert finish.finish_reason is FinishReason.TOOL_CALLS
+
+    async def test_tool_args_stream_yields_announce_fragments_then_complete(self) -> None:
+        events = await _run(
+            _message_start({"input_tokens": 10, "output_tokens": 2}),
+            _block_start(0, {"type": "tool_use", "id": "toolu_1", "name": "edit", "input": {}}),
+            _delta(0, {"type": "input_json_delta", "partial_json": '{"path":'}),
+            _delta(0, {"type": "input_json_delta", "partial_json": ' "a.txt"}'}),
+            _block_stop(0),
+            _message_delta("tool_use", {"output_tokens": 5}),
+            _MESSAGE_STOP,
+        )
+
+        deltas = [event for event in events if isinstance(event, ToolCallDelta)]
+        assert deltas == [
+            ToolCallDelta(call_id="toolu_1", tool_name="edit", args_fragment=""),
+            ToolCallDelta(call_id="toolu_1", tool_name="edit", args_fragment='{"path":'),
+            ToolCallDelta(call_id="toolu_1", tool_name="edit", args_fragment=' "a.txt"}'),
+        ]
+        assert events[3] == ToolCallComplete(
+            call_id="toolu_1", tool_name="edit", arguments={"path": "a.txt"}
+        )
+        assert _finish_of(events).finish_reason is FinishReason.TOOL_CALLS
 
     async def test_tool_use_missing_block_stop_finishes_at_message_stop(self) -> None:
         """A tool_use block whose content_block_stop never arrived still completes."""
@@ -245,12 +279,20 @@ class TestToolUseStream:
             _MESSAGE_STOP,
         )
 
-        assert events[0] == ToolCallComplete(
+        deltas = [event for event in events if isinstance(event, ToolCallDelta)]
+        assert deltas == [
+            ToolCallDelta(call_id="toolu_A", tool_name="get_weather", args_fragment=""),
+            ToolCallDelta(
+                call_id="toolu_A", tool_name="get_weather", args_fragment='{"city": "Paris"}'
+            ),
+            ToolCallDelta(call_id="toolu_B", tool_name="now", args_fragment=""),
+        ]
+        # Zero-argument call (no delta ever arrived) finishes with arguments={}.
+        assert events[3] == ToolCallComplete(
             call_id="toolu_A", tool_name="get_weather", arguments={"city": "Paris"}
         )
-        # Zero-argument call (no delta ever arrived) finishes with arguments={}.
-        assert events[1] == ToolCallComplete(call_id="toolu_B", tool_name="now", arguments={})
-        assert isinstance(events[2], UsageSnapshot)
+        assert events[4] == ToolCallComplete(call_id="toolu_B", tool_name="now", arguments={})
+        assert isinstance(events[5], UsageSnapshot)
         assert _finish_of(events).finish_reason is FinishReason.TOOL_CALLS
 
 

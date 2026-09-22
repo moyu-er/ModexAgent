@@ -29,6 +29,7 @@ from modex_agent.core.stream_events import (
     StreamFailure,
     TextDelta,
     ToolCallComplete,
+    ToolCallDelta,
 )
 from modex_agent.providers.http.protocol import LLMProtocol, ProtocolConfig
 from modex_agent.providers.http.sse import SseFrame, sse_frames
@@ -204,7 +205,7 @@ class HTTPStreamProvider(LLMProvider):
             failure: StreamFailure | None = None
             async for event in self._stream_once(body, merged_headers):
                 match event:
-                    case TextDelta() | ReasoningDelta() | ToolCallComplete():
+                    case TextDelta() | ReasoningDelta() | ToolCallDelta() | ToolCallComplete():
                         # Consumer-visible side effects — a retry would
                         # duplicate them downstream.
                         escaped = True

@@ -22,6 +22,7 @@ from collections.abc import AsyncIterator
 import pytest
 
 from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.agents.react.constants import ToolArgsDeltaPayload
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.control.channel import InMemoryControlChannel
@@ -46,6 +47,7 @@ from modex_agent.core.stream_events import (
     StreamFailure,
     TextDelta,
     ToolCallComplete,
+    ToolCallDelta,
     UsageSnapshot,
 )
 from modex_agent.hook.builtin.control_drain import LlmCancelInterceptor
@@ -299,6 +301,65 @@ class TestStreamNativeProviderAssembly:
         assert result.finish_reason == FinishReason.ERROR
         assert result.error == "idle timeout"
         assert result.content == "partial"
+
+
+class TestToolArgsDeltaEmission:
+    """ToolCallDelta → 流式 emitter 收到 TOOL_ARGS_DELTA + ToolArgsDeltaPayload;
+    折叠响应不受影响(无 ToolCallComplete 即无 tool_calls), 非流式 emitter 不收。"""
+
+    @staticmethod
+    def _provider() -> LLMProvider:
+        class _DirectEventProvider(LLMProvider):
+            def get_default_model(self) -> str:
+                return "mock"
+
+            def stream(self, request: LLMRequest) -> AsyncIterator[LLMStreamEvent]:
+                async def _gen() -> AsyncIterator[LLMStreamEvent]:
+                    yield ToolCallDelta(
+                        call_id="c1", tool_name="bash", args_fragment='{"cmd":'
+                    )
+                    yield ToolCallDelta(
+                        call_id="c1", tool_name="bash", args_fragment=' "ls"}'
+                    )
+                    yield Finish(finish_reason=FinishReason.STOP)
+
+                return _gen()
+
+        return _DirectEventProvider()
+
+    async def test_streaming_emitter_receives_tool_args_delta_payloads(self):
+        ctx = _make_ctx()
+        emitter = _RecordingEmitter()
+        ctx.emitter = emitter
+
+        result = await ReactLlmClient(self._provider()).call([], ctx)
+
+        delta_calls = [call for call in emitter.calls if call[1] is ReActEvent.TOOL_ARGS_DELTA]
+        assert delta_calls == [
+            (
+                "emit",
+                ReActEvent.TOOL_ARGS_DELTA,
+                ToolArgsDeltaPayload(call_id="c1", tool_name="bash", args_fragment='{"cmd":'),
+            ),
+            (
+                "emit",
+                ReActEvent.TOOL_ARGS_DELTA,
+                ToolArgsDeltaPayload(call_id="c1", tool_name="bash", args_fragment=' "ls"}'),
+            ),
+        ]
+        # No ToolCallComplete was fed — the folded response stays tool-free.
+        assert result.tool_calls == []
+        assert result.finish_reason == FinishReason.STOP
+
+    async def test_non_streaming_emitter_receives_no_tool_args_delta(self):
+        ctx = _make_ctx()
+        emitter = _RecordingEmitter(streaming=False)
+        ctx.emitter = emitter
+
+        result = await ReactLlmClient(self._provider()).call([], ctx)
+
+        assert emitter.calls == [("emit_stream_end", False)]
+        assert result.tool_calls == []
 
 
 class TestMidStreamCancelStashesPartial:

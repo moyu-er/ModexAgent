@@ -1,4 +1,4 @@
-"""LLM 流式事件层 —— LLMStreamEvent 六变体封闭联合。
+"""LLM 流式事件层 —— LLMStreamEvent 七变体封闭联合。
 
 协议引擎(openai_compat / openai_responses / anthropic)把 SSE 帧翻译为本
 模块的事件变体, EventAssembler(T9)再把事件序列折叠为一个 LLMResponse。
@@ -71,6 +71,22 @@ class ToolCallComplete(BaseModel):
     arguments: dict[str, Any]
 
 
+class ToolCallDelta(BaseModel):
+    """工具调用参数的流式增量(瞬态、显示性)。
+
+    引擎在参数累积期间逐片段产出; ``args_fragment`` 为空表示身份通告
+    (工具名已到、参数未开始)。不参与响应组装——EventAssembler 显式
+    忽略本变体, 完整参数始终以 ``ToolCallComplete`` 为准。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["tool_call_delta"] = "tool_call_delta"
+    call_id: str
+    tool_name: str
+    args_fragment: str
+
+
 class UsageSnapshot(BaseModel):
     """用量快照, 通常在流终结前产出一次。"""
 
@@ -109,7 +125,13 @@ class StreamFailure(BaseModel):
 
 
 LLMStreamEvent = Annotated[
-    TextDelta | ReasoningDelta | ToolCallComplete | UsageSnapshot | Finish | StreamFailure,
+    TextDelta
+    | ReasoningDelta
+    | ToolCallComplete
+    | ToolCallDelta
+    | UsageSnapshot
+    | Finish
+    | StreamFailure,
     Field(discriminator="kind"),
 ]
 """判别联合(rule 15)。两条不变量:
@@ -121,10 +143,6 @@ LLMStreamEvent = Annotated[
    StreamFailure, PRD 第 6 章纪律 3)。
 """
 
-# V2 候选(勿实现): ToolCallDelta(kind="tool_call_delta", call_id, tool_name, args_fragment: str)
-#   —— 工具参数流式外露, 前提是出现真实消费方(如 WebUI 工具面板流式渲染);
-#   事件变体是增量添加, 消费方用 match + 显式 ignore 分支处理未知变体
-
 
 _EOF_WITHOUT_TERMINAL = "stream ended without terminal event"
 
@@ -132,7 +150,7 @@ _EOF_WITHOUT_TERMINAL = "stream ended without terminal event"
 class EventAssembler:
     """Fold one stream's events into one ``LLMResponse`` (one instance per stream).
 
-    纯累加器, 无 I/O: 协议引擎把 SSE 帧翻译为封闭六变体事件联合, 本类是把
+    纯累加器, 无 I/O: 协议引擎把 SSE 帧翻译为封闭七变体事件联合, 本类是把
     事件序列折叠为一个响应的唯一所在。两个消费方共享它(ADR-0046):
     ``LLMProvider.chat_stream``(回调外观折叠)与 React LLM 事件循环(逐事件
     ``feed``)——组装字段必须与旧 ``_stream_with_control`` 响应形态对齐。
@@ -197,6 +215,9 @@ class EventAssembler:
                 if event.text:
                     self._reasoning_parts.append(event.text)
                     await self._invoke_callback(self._on_reasoning_delta, event.text)
+            case ToolCallDelta():
+                # 显示性增量, 折叠不消费; 完整参数以 ToolCallComplete 为准
+                pass
             case ToolCallComplete():
                 self._tool_calls.append(
                     ToolCall(
@@ -289,5 +310,6 @@ __all__ = [
     "StreamFailure",
     "TextDelta",
     "ToolCallComplete",
+    "ToolCallDelta",
     "UsageSnapshot",
 ]

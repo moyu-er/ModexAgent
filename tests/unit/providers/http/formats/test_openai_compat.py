@@ -36,6 +36,7 @@ from modex_agent.core.stream_events import (
     StreamFailure,
     TextDelta,
     ToolCallComplete,
+    ToolCallDelta,
     UsageSnapshot,
 )
 from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
@@ -241,6 +242,12 @@ class TestEventStreamTranslation:
             _DONE,
         )
         assert events == [
+            # Every tool_calls delta yields its fragment; the first fragment
+            # for an index is the identity announcement (empty arguments).
+            ToolCallDelta(call_id="call_a", tool_name="get_weather", args_fragment=""),
+            ToolCallDelta(call_id="call_b", tool_name="get_time", args_fragment='{"tz":'),
+            ToolCallDelta(call_id="call_a", tool_name="get_weather", args_fragment='{"city":"SF"}'),
+            ToolCallDelta(call_id="call_b", tool_name="get_time", args_fragment='"UTC"}'),
             ToolCallComplete(
                 call_id="call_a",
                 tool_name="get_weather",
@@ -251,13 +258,34 @@ class TestEventStreamTranslation:
             Finish(finish_reason=FinishReason.TOOL_CALLS, replay=None),
         ]
 
+    async def test_tool_args_stream_yields_deltas_then_complete(self) -> None:
+        events = await _run(
+            _tool_delta(0, "", call_id="call_1", name="get_weather"),
+            _tool_delta(0, '{"city":"'),
+            _tool_delta(0, 'SF"}'),
+            _chunk(finish="tool_calls"),
+            _DONE,
+        )
+        assert events == [
+            ToolCallDelta(call_id="call_1", tool_name="get_weather", args_fragment=""),
+            ToolCallDelta(call_id="call_1", tool_name="get_weather", args_fragment='{"city":"'),
+            ToolCallDelta(call_id="call_1", tool_name="get_weather", args_fragment='SF"}'),
+            ToolCallComplete(call_id="call_1", tool_name="get_weather", arguments={"city": "SF"}),
+            Finish(finish_reason=FinishReason.TOOL_CALLS, replay=None),
+        ]
+
     async def test_length_finish_reason_discards_pending_tools(self) -> None:
         events = await _run(
             _tool_delta(0, '{"city":', call_id="call_a", name="get_weather"),
             _chunk(finish="length"),
             _DONE,
         )
-        assert events == [Finish(finish_reason=FinishReason.LENGTH, replay=None)]
+        assert events == [
+            # The args fragment already escaped (display-only); LENGTH still
+            # discards the pending accumulation — no ToolCallComplete.
+            ToolCallDelta(call_id="call_a", tool_name="get_weather", args_fragment='{"city":'),
+            Finish(finish_reason=FinishReason.LENGTH, replay=None),
+        ]
 
     async def test_content_filter_finish_reason_mapped(self) -> None:
         events = await _run(

@@ -20,6 +20,7 @@ import logging
 from collections.abc import Sequence
 
 from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.agents.react.constants import ToolArgsDeltaPayload
 from modex_agent.agents.react.error_recovery import (
     ErrorRecoveryConfig,
     attempt_recovery,
@@ -37,6 +38,7 @@ from modex_agent.core.stream_events import (
     ReasoningDelta,
     TextDelta,
     ToolCallComplete,
+    ToolCallDelta,
 )
 from modex_agent.interceptor.abc import (
     InterceptorScope,
@@ -167,6 +169,19 @@ class ReactLlmClient:
                         if streaming_emitter is not None and event.text:
                             await streaming_emitter.emit(ReActEvent.MODEL_REASONING, event.text)
                         await assembler.feed(event)
+                    case ToolCallDelta():
+                        await self._drain_control(ctx)
+                        renew_dispatch_deadline()
+                        # 显示性增量不进组装器; 非流式 emitter 走折叠路径, 由 TOOL_CALL_START 覆盖
+                        if streaming_emitter is not None:
+                            await streaming_emitter.emit(
+                                ReActEvent.TOOL_ARGS_DELTA,
+                                ToolArgsDeltaPayload(
+                                    call_id=event.call_id,
+                                    tool_name=event.tool_name,
+                                    args_fragment=event.args_fragment,
+                                ),
+                            )
                     case ToolCallComplete():
                         tool_names.append(event.tool_name)
                         await assembler.feed(event)

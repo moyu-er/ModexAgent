@@ -35,6 +35,7 @@ from modex_agent.core.stream_events import (
     StreamFailure,
     TextDelta,
     ToolCallComplete,
+    ToolCallDelta,
     UsageSnapshot,
 )
 from modex_agent.providers.http.formats.openai_responses import OpenAIResponsesProtocol
@@ -84,6 +85,10 @@ def _cfg(
 
 def _completions(events: list[LLMStreamEvent]) -> list[ToolCallComplete]:
     return [event for event in events if isinstance(event, ToolCallComplete)]
+
+
+def _deltas(events: list[LLMStreamEvent]) -> list[ToolCallDelta]:
+    return [event for event in events if isinstance(event, ToolCallDelta)]
 
 
 class TestEventStreamTranslation:
@@ -349,6 +354,60 @@ class TestEventStreamTranslation:
             ToolCallComplete(call_id="call_half", tool_name="search", arguments={"query": "full"})
         ]
 
+    async def test_function_call_args_stream_yields_deltas_then_complete(self) -> None:
+        events = await _run(
+            _frame(
+                "response.output_item.added",
+                {
+                    "output_index": 0,
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_A",
+                        "name": "write",
+                        "arguments": "",
+                    },
+                },
+            ),
+            _frame(
+                "response.function_call_arguments.delta",
+                {"item_id": "fc_1", "delta": '{"file":'},
+            ),
+            _frame(
+                "response.function_call_arguments.delta",
+                {"item_id": "fc_1", "delta": ' "a.txt"}'},
+            ),
+            _frame(
+                "response.output_item.done",
+                {
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_A",
+                        "name": "write",
+                        # The authoritative full value differs from the deltas.
+                        "arguments": '{"file": "b.txt"}',
+                    }
+                },
+            ),
+            _frame("response.completed", {"response": {"id": "resp_10"}}),
+        )
+        # added announces the identity (empty fragment); each arguments.delta
+        # yields its wire fragment keyed on call_id, never the item_id.
+        assert _deltas(events) == [
+            ToolCallDelta(call_id="call_A", tool_name="write", args_fragment=""),
+            ToolCallDelta(call_id="call_A", tool_name="write", args_fragment='{"file":'),
+            ToolCallDelta(call_id="call_A", tool_name="write", args_fragment=' "a.txt"}'),
+        ]
+        # ToolCallComplete carries the DONE arguments (finish_with_input
+        # override — the accumulated fragments are ignored).
+        assert _completions(events) == [
+            ToolCallComplete(call_id="call_A", tool_name="write", arguments={"file": "b.txt"})
+        ]
+        finish = events[-1]
+        assert isinstance(finish, Finish)
+        assert finish.finish_reason is FinishReason.TOOL_CALLS
+
     async def test_response_failed_yields_stream_failure(self) -> None:
         events = await _run(
             _frame("response.output_text.delta", {"item_id": "msg_1", "delta": "partial"}),
@@ -419,9 +478,12 @@ class TestEventStreamTranslation:
                 },
             ),
         )
-        # LENGTH discards the truncated pending accumulation.
+        # LENGTH discards the truncated pending accumulation (no
+        # ToolCallComplete), but the escaped display fragments remain.
         assert not _completions(events)
         assert events == [
+            ToolCallDelta(call_id="call_trunc", tool_name="search", args_fragment=""),
+            ToolCallDelta(call_id="call_trunc", tool_name="search", args_fragment='{"qu'),
             UsageSnapshot(usage=TokenUsage(input_tokens=8, output_tokens=4)),
             Finish(finish_reason=FinishReason.LENGTH, replay=None),
         ]

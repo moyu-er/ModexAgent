@@ -18,6 +18,7 @@ CORE_PUBLIC = [
     "TextDelta",
     "ReasoningDelta",
     "ToolCallComplete",
+    "ToolCallDelta",
     "UsageSnapshot",
     "Finish",
     "StreamFailure",

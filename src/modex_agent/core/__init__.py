@@ -58,6 +58,7 @@ from .stream_events import (
     StreamFailure,
     TextDelta,
     ToolCallComplete,
+    ToolCallDelta,
     UsageSnapshot,
 )
 from .tool_manager import (
@@ -97,6 +98,7 @@ __all__ = [
     "TextDelta",
     "ReasoningDelta",
     "ToolCallComplete",
+    "ToolCallDelta",
     "UsageSnapshot",
     "Finish",
     "StreamFailure",

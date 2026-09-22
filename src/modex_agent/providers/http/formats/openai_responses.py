@@ -73,6 +73,7 @@ from modex_agent.core.stream_events import (
     StreamFailure,
     TextDelta,
     ToolCallComplete,
+    ToolCallDelta,
     UsageSnapshot,
 )
 from modex_agent.providers.http.protocol import LLMProtocol, ProtocolConfig
@@ -648,7 +649,13 @@ class OpenAIResponsesProtocol(LLMProtocol):
                         item_id = payload.get("item_id")
                         delta = payload.get("delta")
                         if isinstance(item_id, str) and isinstance(delta, str) and delta:
-                            tool_state, _ = append_existing(tool_state, item_id, delta)
+                            tool_state, pending = append_existing(tool_state, item_id, delta)
+                            # 参数流式增量: 身份取自 pending(item_id 只是流键), 片段为线上原文
+                            yield ToolCallDelta(
+                                call_id=pending.id,
+                                tool_name=pending.name,
+                                args_fragment=delta,
+                            )
                     case "response.output_item.added":
                         item = payload.get("item")
                         item_id = item.get("id") if isinstance(item, dict) else None
@@ -664,6 +671,10 @@ class OpenAIResponsesProtocol(LLMProtocol):
                                 and tool_name
                             ):
                                 tool_state = start(tool_state, item_id, call_id, tool_name)
+                                # 身份通告: 工具名已到、参数未开始(args_fragment 为空)
+                                yield ToolCallDelta(
+                                    call_id=call_id, tool_name=tool_name, args_fragment=""
+                                )
                             else:
                                 logger.error(
                                     "openai_responses engine: function_call item %r added "

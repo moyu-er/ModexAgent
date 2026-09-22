@@ -71,6 +71,7 @@ from modex_agent.core.stream_events import (
     StreamFailure,
     TextDelta,
     ToolCallComplete,
+    ToolCallDelta,
     UsageSnapshot,
 )
 from modex_agent.providers.http.protocol import LLMProtocol, ProtocolConfig
@@ -588,12 +589,18 @@ class OpenAICompatProtocol(LLMProtocol):
                         if isinstance(tool_calls, list):
                             for tc in tool_calls:
                                 function = tc.get("function") or {}
-                                tool_state, _ = append_or_start(
+                                tool_state, pending = append_or_start(
                                     tool_state,
                                     tc.get("index"),
                                     tc.get("id"),
                                     function.get("name"),
                                     function.get("arguments") or "",
+                                )
+                                # 参数流式增量: 身份取自 pending(首片段即身份通告), 片段为线上原文
+                                yield ToolCallDelta(
+                                    call_id=pending.id,
+                                    tool_name=pending.name,
+                                    args_fragment=function.get("arguments") or "",
                                 )
                         chunk_finish = choice.get("finish_reason")
                         if chunk_finish is not None:

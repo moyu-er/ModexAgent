@@ -41,6 +41,8 @@ class ReActEvent(AgentEvent, Enum):
     - MODEL_REASONING: 模型的推理/思考过程（新增，DeepSeek R1、Kimi 等模型）。
       与 MODEL_OUTPUT 分开，业务层决定如何展示。
 
+    - TOOL_ARGS_DELTA: 工具参数流式增量（TOOL_CALL_START 之前、参数仍在累积时直发）。
+
     - TOOL_CALL_START: 准备调用工具
     - TOOL_CALL_END: 工具调用完成（包含结果）
     - ITERATION_START/END: 单次 Thought-Action-Observation 循环
@@ -52,6 +54,9 @@ class ReActEvent(AgentEvent, Enum):
 
     # 模型推理/思考过程（DeepSeek R1, Kimi 等模型）
     MODEL_REASONING = "model_reasoning"
+
+    # 参数流式增量(在 TOOL_CALL_START 之前、参数仍在累积时经 emitter.emit 直发, 不走图运行时)
+    TOOL_ARGS_DELTA = "tool_args_delta"
 
     # 工具相关
     TOOL_CALL_START = "tool_call_start"

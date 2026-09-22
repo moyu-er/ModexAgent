@@ -28,6 +28,16 @@ class ToolCallEndPayload(BaseModel):
     seq: int
 
 
+class ToolArgsDeltaPayload(BaseModel):
+    """``TOOL_ARGS_DELTA`` 事件载荷(与 ToolCallEndPayload 同级)。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    call_id: str
+    tool_name: str
+    args_fragment: str
+
+
 class ReActNode(StrEnum):
     START = "start"
     LLM = "llm"

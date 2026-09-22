@@ -1,6 +1,6 @@
 """Unit tests for the LLMStreamEvent closed union (core/stream_events.py).
 
-Covers discriminator defaults on all six variants, frozen enforcement,
+Covers discriminator defaults on all seven variants, frozen enforcement,
 the ``Finish.replay`` round-trip, unknown-kind rejection through the
 discriminated union, required-field validation, and TypeAdapter dispatch
 proving the union is usable as a standalone type.
@@ -20,6 +20,7 @@ from modex_agent.core.stream_events import (
     StreamFailure,
     TextDelta,
     ToolCallComplete,
+    ToolCallDelta,
     UsageSnapshot,
 )
 
@@ -33,6 +34,7 @@ def test_variant_kind_discriminators() -> None:
         ToolCallComplete(call_id="c1", tool_name="t", arguments={"a": 1}).kind
         == "tool_call_complete"
     )
+    assert ToolCallDelta(call_id="c1", tool_name="t", args_fragment='{"a"').kind == "tool_call_delta"
     assert UsageSnapshot(usage=TokenUsage()).kind == "usage_snapshot"
     assert Finish(finish_reason=FinishReason.STOP).kind == "finish"
     assert (
@@ -88,7 +90,7 @@ def test_extra_field_forbidden() -> None:
         TextDelta(text="x", extra=1)  # type: ignore[call-arg]
 
 
-def test_union_dispatches_all_six_variants() -> None:
+def test_union_dispatches_all_seven_variants() -> None:
     text = _ADAPTER.validate_python({"kind": "text_delta", "text": "hello"})
     assert isinstance(text, TextDelta)
     assert text.text == "hello"
@@ -109,6 +111,14 @@ def test_union_dispatches_all_six_variants() -> None:
     assert tool.call_id == "c1"
     assert tool.tool_name == "get_weather"
     assert tool.arguments == {"city": "北京"}
+
+    tool_delta = _ADAPTER.validate_python(
+        {"kind": "tool_call_delta", "call_id": "c2", "tool_name": "get_weather", "args_fragment": ""}
+    )
+    assert isinstance(tool_delta, ToolCallDelta)
+    assert tool_delta.call_id == "c2"
+    assert tool_delta.tool_name == "get_weather"
+    assert tool_delta.args_fragment == ""
 
     usage = _ADAPTER.validate_python({"kind": "usage_snapshot", "usage": {"input_tokens": 3}})
     assert isinstance(usage, UsageSnapshot)
