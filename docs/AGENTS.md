@@ -10,7 +10,7 @@ Documentation index for the ModexAgent project — ADRs, design docs, and agent 
 ```
 docs/
 ├── AGENTS.md              ← this file (docs index)
-├── adr/                   ← Architecture Decision Records (ADR-0001 ~ 0048)
+├── adr/                   ← Architecture Decision Records (ADR-0001 ~ 0050)
 │   ├── history/            ← Historical/superseded ADRs
 │   └── AGENTS.md          ← ADR index + conventions
 ├── design/                ← Feature design docs (PRD per feature; completed tickets in _archive/)
@@ -36,6 +36,7 @@ docs/
 │   ├── cross-pool-peer-communication/ (ADR-0019)
 │   ├── session-gc/                    (ADR-0018)
 │   ├── memory-context-management/     (compact, governance)
+│   ├── per-model-context-compaction/  (ADR-0050) per-model context budgets, unified compaction interface, segmented summarization, subagent model pins — PRD, tickets
 │   ├── prompt-configuration/          (ADR-0020)
 │   ├── config-ux-overhaul/            (ADR-0020/0023)
 │   └── split-task-tool/               (task tool)
@@ -48,7 +49,7 @@ docs/
 
 | Document | Location | Description |
 |----------|----------|-------------|
-| ADR index | `adr/` | 48 Architecture Decision Records (ADR-0001~0048) — see `adr/AGENTS.md` for the full index |
+| ADR index | `adr/` | 50 Architecture Decision Records (ADR-0001~0050) — see `adr/AGENTS.md` for the full index |
 | Bot local setup | `bot-local-setup.md` | Step-by-step bot setup from source (prerequisites, venv, config, troubleshooting) |
 | Issue tracker | `agents/issue-tracker.md` | Issues live as local markdown under `docs/design/<feature>/` |
 | Triage labels | `agents/triage-labels.md` | Canonical triage label vocabulary |
