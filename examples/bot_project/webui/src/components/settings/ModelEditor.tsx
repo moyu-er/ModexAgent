@@ -44,6 +44,9 @@ interface ModelEntry {
   temperature: number;
   top_p?: number | null;
   max_output_tokens: number;
+  /** Declared context-window ceiling; null/undefined = inherit the global
+   * max_context_tokens (per-model context budget, PRD §4.2 D1). */
+  context_limit?: number | null;
   reasoning_effort: string;
 }
 
@@ -436,6 +439,7 @@ export function ModelEditor({ values, onChange }: Props) {
         />
         <Input
           label={t("settings.models.maxContextTokens")}
+          helper={t("settings.models.maxContextTokensHelper")}
           type="number"
           value={Number.isFinite(maxContext) ? maxContext : 0}
           onChange={(e) => update({ max_context_tokens: Number(e.target.value) })}
@@ -779,7 +783,37 @@ export function ModelEditor({ values, onChange }: Props) {
                                     })
                                   }
                                 />
+                                <Input
+                                  label={t("settings.models.contextLimit")}
+                                  type="number"
+                                  placeholder={t("settings.models.contextLimitPlaceholder")}
+                                  value={m.context_limit ?? ""}
+                                  onChange={(e) =>
+                                    updateModel(pi, mi, {
+                                      context_limit:
+                                        e.target.value === ""
+                                          ? null
+                                          : Number(e.target.value),
+                                    })
+                                  }
+                                />
                               </div>
+
+                              {/* Read-only effective input budget: the declared
+                                  limit (or the global fallback) minus the
+                                  declared max output — what the conversation
+                                  actually gets before compaction triggers. */}
+                              {(() => {
+                                const effectiveLimit =
+                                  m.context_limit ?? (Number.isFinite(maxContext) ? maxContext : null);
+                                if (effectiveLimit === null) return null;
+                                const budget = effectiveLimit - (Number(m.max_output_tokens) || 0);
+                                return (
+                                  <p className="mt-1.5 text-xs text-mute" data-testid="model-effective-budget">
+                                    {t("settings.models.effectiveBudget", { budget })}
+                                  </p>
+                                );
+                              })()}
 
                               {/* Reasoning effort (closed enum) */}
                               <div className="mt-3">

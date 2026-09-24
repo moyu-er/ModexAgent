@@ -446,3 +446,106 @@ def test_explicit_default_sandbox_needs_no_root_provider() -> None:
     builder = pipeline._turn_runner.turn_context_builder
     assert builder is not None and builder.runtime_services is not None
     assert builder.runtime_services.guard_only_approval is None
+
+
+def _memory_context_manager(tmp_path: Path):
+    """A real MemorySystemContextManager over a real DefaultMemorySystem."""
+    from modex_agent.memory.default_system import DefaultMemorySystem
+    from modex_agent.memory.injection import FullInjectionPolicy
+    from modex_agent.memory.layers.factory import MemoryLayerFactory
+    from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+    from modex_agent.memory.system import MemorySystemContextManager
+
+    registry = DefaultMemoryStoreRegistry(tmp_path)
+    memory_system = DefaultMemorySystem(
+        layer_set=MemoryLayerFactory.single_user(registry=registry),
+        store_registry=registry,
+    )
+    return MemorySystemContextManager(
+        memory_system=memory_system,
+        default_agent_id="main",
+        default_agent_role="main",
+        injection_policy=FullInjectionPolicy(),
+    )
+
+
+def test_memory_backed_pool_gets_compaction_governance_head(tmp_path: Path) -> None:
+    """T3: a memory-backed main pipeline gets MemoryCompactionGovernance as
+    the chain head (persistent compaction before mechanical repair); the
+    mechanical ContextBudgetGovernance is absent (bot default, PRD D-3)."""
+    from modex_agent.memory.compaction_governance import MemoryCompactionGovernance
+    from modex_agent.memory.context_governance import (
+        CompositeGovernance,
+        ToolChainRepairGovernance,
+    )
+    from modex_agent.memory.presets import main_agent_memory
+
+    pipeline = _make_pipeline()
+    pool = _StandInPool("main", pipeline)
+    main_spec = _make_main_spec(approval=None)
+    context_manager = _memory_context_manager(tmp_path)
+    _wire_main_pipeline(
+        pool=pool,
+        root_agent_name="main",
+        inbox_consumer=MagicMock(name="inbox_consumer"),
+        notification_service=MagicMock(name="notification_service"),
+        shared_interceptor_chain=MagicMock(name="interceptor_chain"),
+        im_ui=MagicMock(name="im_ui"),
+        main_spec=main_spec,
+        assembly_deps=PoolAssemblyDeps(memory=main_agent_memory(max_context_tokens=64_000)),
+        project_dir=Path("/proj"),
+        command_processor=None,
+        pool_name="main",
+        tool_manager=InMemoryToolManager(),
+        pool_spec=PoolSpec(name="main", agents=[main_spec]),
+        bot_model_config=_BOT_CFG,
+        memory_context_manager=context_manager,
+    )
+
+    builder = pipeline._turn_runner.turn_context_builder
+    assert builder is not None
+    governance = builder.governance
+    assert isinstance(governance, CompositeGovernance)
+    strategies = governance._strategies
+    assert len(strategies) == 2
+    assert isinstance(strategies[0], MemoryCompactionGovernance)
+    assert strategies[0]._memory_system is context_manager.memory_system
+    assert strategies[0]._fallback_max_context_tokens == 64_000
+    assert isinstance(strategies[1], ToolChainRepairGovernance)
+
+
+def test_memory_less_wiring_keeps_legacy_chain(tmp_path: Path) -> None:
+    """No memory context manager (test fallback CM) → no memory head; with
+    the default preset (budget now default-off) the chain is repair-only."""
+    from modex_agent.memory.context_governance import (
+        CompositeGovernance,
+        ToolChainRepairGovernance,
+    )
+    from modex_agent.memory.presets import main_agent_memory
+
+    pipeline = _make_pipeline()
+    pool = _StandInPool("main", pipeline)
+    main_spec = _make_main_spec(approval=None)
+    _wire_main_pipeline(
+        pool=pool,
+        root_agent_name="main",
+        inbox_consumer=MagicMock(name="inbox_consumer"),
+        notification_service=MagicMock(name="notification_service"),
+        shared_interceptor_chain=MagicMock(name="interceptor_chain"),
+        im_ui=MagicMock(name="im_ui"),
+        main_spec=main_spec,
+        assembly_deps=PoolAssemblyDeps(memory=main_agent_memory()),
+        project_dir=Path("/proj"),
+        command_processor=None,
+        pool_name="main",
+        tool_manager=InMemoryToolManager(),
+        pool_spec=PoolSpec(name="main", agents=[main_spec]),
+        bot_model_config=_BOT_CFG,
+    )
+
+    builder = pipeline._turn_runner.turn_context_builder
+    assert builder is not None
+    governance = builder.governance
+    assert isinstance(governance, CompositeGovernance)
+    assert len(governance._strategies) == 1
+    assert isinstance(governance._strategies[0], ToolChainRepairGovernance)

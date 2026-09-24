@@ -5,15 +5,17 @@ and dispatches one background task per completed user turn; the model call
 never blocks the main reply. This module owns that task's body:
 
 - read the earliest real user input from the transcript (<=1000 chars)
-- lazily build ONE plain provider from the bot global default model config
-  (``create_llm_provider``) — never the turn-scoped ``BotModelProvider``
+- lazily resolve ONE pinned provider for the bot GLOBAL default model
+  (D-6: a :class:`~bot.service.model_provider.PinnedModelProvider` — the
+  real provider is built on first call, and the turn-scoped ContextVar is
+  deliberately ignored)
 - one no-tools ``chat`` call with the DESIGN §2.2 prompt
 - normalize the output and hand it to :class:`SessionTitleOps.auto_title`,
   which re-checks eligibility under the shared short lock
 
 Deterministic seams (injected, real in production wiring):
-- ``provider_source`` — lazily constructs the provider on first need and
-  is closed with the task owner (``ClosableHook`` → ``aclose``);
+- ``provider_source`` — lazily resolves the pinned naming provider on first
+  need and is closed with the task owner (``ClosableHook`` → ``aclose``);
 - ``transcript_reader`` — reads the earliest user content for a session
   from the workspace's transcript store.
 """
@@ -37,8 +39,8 @@ from modex_agent.core.message import ChatMessage, MessageRole
 if TYPE_CHECKING:
     from collections.abc import Awaitable
 
+    from bot.service.model_provider import PinnedModelProvider
     from modex_agent.core.session_id import SessionInfo
-    from modex_agent.providers.http.provider import HTTPStreamProvider
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +58,8 @@ TITLE_PROMPT_TEMPLATE: Final = (
 
 #: Reads the earliest real user content for a session (None when absent).
 TranscriptReader = Callable[[str], "Awaitable[str | None] | str | None"]
-#: Lazily constructs the naming provider (closed with the task owner).
-ProviderSource = Callable[[], "HTTPStreamProvider"]
+#: Lazily resolves the naming provider — the default-model pin (D-6).
+ProviderSource = Callable[[], "PinnedModelProvider"]
 
 
 def _clean_model_title(raw: str) -> str | None:
@@ -90,10 +92,10 @@ class SessionTitleNamingTask:
 
     The hook calls :meth:`submit` with its pool identity; everything else
     is internal. ``aclose`` cancels every in-flight task and closes the
-    lazily-built provider (DESIGN §2.4 rule 4 — stop/evict recovers tasks
+    lazily-resolved provider (DESIGN §2.4 rule 4 — stop/evict recovers tasks
     + provider). One instance per workspace; all pools' hook instances
-    share it (the provider is workspace-global, built from the bot global
-    default model config).
+    share it (the provider is workspace-global — the default-model pin,
+    never a per-turn choice).
     """
 
     def __init__(
@@ -106,7 +108,7 @@ class SessionTitleNamingTask:
         self._ops = ops
         self._provider_source = provider_source
         self._transcript_reader = transcript_reader
-        self._provider: HTTPStreamProvider | None = None
+        self._provider: PinnedModelProvider | None = None
         # Retain tasks until they actually exit, including revoked GC tasks.
         self._tasks: dict[asyncio.Task[None], str] = {}
         self._closed = False

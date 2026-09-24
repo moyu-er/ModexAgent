@@ -79,6 +79,8 @@ export const en = {
   composer: {
     model: "Model",
     default: "Default",
+    smallerModelHint:
+      "This model's context limit is {limit}. If the current conversation exceeds it, it will be compacted automatically before the next call.",
   },
   sidebar: {
     conversations: "Conversations",
@@ -293,6 +295,7 @@ export const en = {
       defaultModel: "Default model",
       selectModel: "Select a model",
       maxContextTokens: "Max context tokens",
+      maxContextTokensHelper: "Fallback for models without a declared context limit.",
       providers: "Providers",
       provider: "Provider",
       providerKey: "Provider key",
@@ -323,6 +326,11 @@ export const en = {
       topP: "Top P",
       topPPlaceholder: "0.95",
       maxOutputTokens: "Max output tokens",
+      contextLimit: "Context limit (tokens)",
+      contextLimitPlaceholder: "Leave empty to inherit global max context tokens",
+      effectiveBudget: "Effective input budget ≈ {budget} tokens (limit − max output)",
+      outputExceedsLimit:
+        "Some model declares max output tokens above its own context limit — lower max output tokens or raise the context limit.",
       reasoningEffort: "Reasoning effort",
       noModels: "No models in this provider yet.",
       addModel: "Add model",
@@ -615,6 +623,10 @@ export const en = {
       newAgentInvalidKey:
         "Use lowercase letters, digits, and hyphens; start with a letter.",
       sectionFriendly: "Overview",
+      model: "Model",
+      modelFollowSession: "Default model",
+      modelHelper:
+        "Pin this agent to a specific model. Agents without a pin use the global default model; the pool root always follows the per-turn selection.",
       sectionAdvancedFields: "Advanced",
       sectionExtensions: "Skills & MCP",
       skillsDisabled: "Enable the Skills plugin and save to manage skills for this assistant.",

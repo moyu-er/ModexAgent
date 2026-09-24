@@ -43,12 +43,16 @@ logger = logging.getLogger("bot.webui.server")
 
 
 async def handle_models(request: web.Request) -> web.Response:
-    """``GET /api/models`` -- list (provider_name, model_name, default) choices
-    for the frontend model selector.
+    """``GET /api/models`` -- list (provider_name, model_name, default)
+    choices for the frontend model selector.
 
-    Re-reads model.yml live so CLI edits appear without a restart. Only
-    provider_name / model_name / default are returned -- NEVER api_key or url
-    (those stay server-side).
+    Re-reads model.yml live so CLI edits appear without a restart. Each
+    choice carries ``context_limit`` (the model's declared context-window
+    ceiling, ``null`` = inherit the global ``max_context_tokens``, also
+    returned top-level so the frontend can compute effective budgets).
+    Only provider_name / model_name / default / context_limit /
+    max_context_tokens are returned -- NEVER api_key or url (those stay
+    server-side).
     """
     server: WebUIServer = request.app["server"]
     loader = server._model_config_loader
@@ -57,10 +61,17 @@ async def handle_models(request: web.Request) -> web.Response:
         return web.json_response({"choices": []})
     default = (cfg.default_provider, cfg.default_model)
     choices = [
-        {"provider_name": p, "model_name": m, "default": (p, m) == default}
-        for (p, m) in cfg.all_choices()
+        {
+            "provider_name": p,
+            "model_name": m,
+            "default": (p, m) == default,
+            "context_limit": limit,
+        }
+        for (p, m, limit) in cfg.all_choices()
     ]
-    return web.json_response({"choices": choices})
+    return web.json_response(
+        {"choices": choices, "max_context_tokens": cfg.max_context_tokens}
+    )
 
 
 async def handle_get_config(request: web.Request) -> web.Response:

@@ -230,6 +230,31 @@ export function setField(body: AgentBody, key: string, value: unknown): void {
   else body[key] = value;
 }
 
+// ── Agent model pin (D-5) ────────────────────────────────────────────────────
+//
+// The declaration's `model: {provider, name}` references a model.yml entry
+// (reference only — sampling fields are owned by the entry itself). Absent
+// = follow the conversation (inherit the caller); the pool root always
+// follows the per-turn selection.
+
+export interface AgentModelRefView {
+  provider: string;
+  name: string;
+}
+
+/** The agent's declared model pin, or null (follow the conversation). */
+export function agentModelRef(body: AgentBody): AgentModelRefView | null {
+  const ref = asMap(body.model);
+  const provider = typeof ref?.provider === "string" ? ref.provider : "";
+  const name = typeof ref?.name === "string" ? ref.name : "";
+  return provider !== "" && name !== "" ? { provider, name } : null;
+}
+
+/** Pin the agent to a model.yml entry, or remove the pin (null). */
+export function setAgentModelRef(body: AgentBody, ref: AgentModelRefView | null): void {
+  setField(body, "model", ref === null ? null : { provider: ref.provider, name: ref.name });
+}
+
 // Capabilities: the declaration's override map is tri-state per name —
 // absent (follow auto) / {} (force on) / false (force off).
 export type CapabilityMode = "auto" | "on" | "off";

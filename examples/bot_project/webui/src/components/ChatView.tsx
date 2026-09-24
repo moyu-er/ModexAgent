@@ -14,7 +14,7 @@ import { IconButton } from "./ui/IconButton";
 import { fetchMediaConfig, fetchModels, uploadAttachment, type ModelChoice } from "../lib/api";
 import { sessionDisplayTitle } from "../lib/sessionTree";
 import { useCommandSuggestions } from "../hooks/useCommandSuggestions";
-import { formatBytes } from "../lib/format";
+import { formatBytes, formatContextLimit } from "../lib/format";
 import { useT } from "../i18n";
 
 export interface ChatViewProps {
@@ -224,9 +224,14 @@ export const ChatView: FC<ChatViewProps> = ({
   // swallowed — the selector just renders empty and the send falls back to
   // the backend's configured default.
   const [models, setModels] = useState<ModelChoice[]>([]);
+  const [maxContextTokens, setMaxContextTokens] = useState<number | undefined>(undefined);
   const [selected, setSelected] = useState<{ provider: string; model: string }>(
     { provider: "", model: "" },
   );
+  // Purely informational smaller-model notice (PRD D-1: switching models has
+  // ZERO runtime action — no backend call, no compaction). Transient line
+  // under the composer; auto-clears alongside the next selection.
+  const [modelHint, setModelHint] = useState<string | null>(null);
 
   // Fetch models on mount. If the backend returns an empty list (config not
   // loaded yet — common right after a restart), retry a few times with backoff
@@ -245,6 +250,7 @@ export const ChatView: FC<ChatViewProps> = ({
             if (cancelled) return;
             if (r.choices.length > 0) {
               setModels(r.choices);
+              setMaxContextTokens(r.max_context_tokens);
               const d = r.choices.find((c) => c.default) ?? r.choices[0];
               if (d) setSelected({ provider: d.provider_name, model: d.model_name });
             } else {
@@ -261,6 +267,32 @@ export const ChatView: FC<ChatViewProps> = ({
       if (timer) clearTimeout(timer);
     };
   }, []);
+
+  // The effective limit is the model's declared context_limit falling back
+  // to the global max_context_tokens; without either, no comparison is
+  // possible and no notice is shown (the copy stays generic — no session
+  // token estimate exists client-side, and none is fetched for this).
+  const effectiveLimitOf = (m: ModelChoice | undefined): number | undefined =>
+    m ? (m.context_limit ?? maxContextTokens) : undefined;
+
+  const handleModelChange = (next: { provider: string; model: string }): void => {
+    const prev = models.find(
+      (m) => m.provider_name === selected.provider && m.model_name === selected.model,
+    );
+    const nextChoice = models.find(
+      (m) => m.provider_name === next.provider && m.model_name === next.model,
+    );
+    const prevLimit = effectiveLimitOf(prev);
+    const nextLimit = effectiveLimitOf(nextChoice);
+    if (prevLimit !== undefined && nextLimit !== undefined && nextLimit < prevLimit) {
+      setModelHint(
+        t("composer.smallerModelHint", { limit: formatContextLimit(nextLimit) }),
+      );
+    } else {
+      setModelHint(null);
+    }
+    setSelected(next);
+  };
 
   // Slash-command autocomplete: skills + built-in commands, merged by
   // useCommandSuggestions. Warmup fills the skill cache; the read hook
@@ -596,7 +628,7 @@ export const ChatView: FC<ChatViewProps> = ({
             <ModelSelector
               models={models}
               value={selected}
-              onChange={setSelected}
+              onChange={handleModelChange}
             />
           )}
           {isBusy ? (
@@ -626,6 +658,15 @@ export const ChatView: FC<ChatViewProps> = ({
             />
           )}
         </form>
+        {modelHint && (
+          <p
+            role="status"
+            data-testid="model-switch-hint"
+            className="mt-1.5 px-1 text-right text-xs text-mute"
+          >
+            {modelHint}
+          </p>
+        )}
       </>
     );
   };

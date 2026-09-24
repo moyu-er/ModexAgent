@@ -98,6 +98,51 @@ async def test_hook_overrides_model_info(tmp_path: Path) -> None:
     assert services.model_info is not None
 
 
+_BUDGET_YML = """
+models:
+  default_provider: "A"
+  default_model: "M1"
+  providers:
+    - {key: a, name: "A", url: u, api_key: k, models: [
+        {name: M1, model: m1, context_limit: 8192, max_output_tokens: 40000},
+        {name: M2, model: m2}
+      ]}
+"""
+
+
+@pytest.mark.asyncio
+async def test_hook_model_info_carries_declared_budget(tmp_path: Path) -> None:
+    """当轮覆写的 model_info 携带该模型的预算档案(数据源:ResolvedModel → ModelCfg)。"""
+    p = tmp_path / "model.yml"
+    p.write_text(_BUDGET_YML, encoding="utf-8")
+    cfg = BotModelConfig.from_yaml(p)
+    reg = ModelChoiceRegistry()
+    services = SimpleNamespace(model_info=None)
+    hook = ModelChoiceBindHook(cfg, reg)
+    await hook.before_graph(_ctx("s", services=services))
+    assert services.model_info is not None
+    assert services.model_info.context_limit == 8192
+    assert services.model_info.max_output_tokens == 40000
+
+
+@pytest.mark.asyncio
+async def test_hook_model_info_budget_none_when_undeclared(tmp_path: Path) -> None:
+    """选中未声明 context_limit 的模型 → 档案字段为 None(消费方回退池级静态配置)。"""
+    p = tmp_path / "model.yml"
+    p.write_text(_BUDGET_YML, encoding="utf-8")
+    cfg = BotModelConfig.from_yaml(p)
+    reg = ModelChoiceRegistry()
+    m2 = cfg.resolve("A", "M2")
+    assert m2 is not None
+    reg.set("sessB", m2)
+    services = SimpleNamespace(model_info=None)
+    hook = ModelChoiceBindHook(cfg, reg)
+    await hook.before_graph(_ctx("sessB", services=services))
+    assert services.model_info is not None
+    assert services.model_info.model_name == "m2"
+    assert services.model_info.context_limit is None
+
+
 @pytest.mark.asyncio
 async def test_hook_is_a_before_graph_hook(tmp_path: Path) -> None:
     """BEFORE_GRAPH fires on every actual_turn() entry — including approval

@@ -23,7 +23,10 @@ _CFG = BotModelConfig(
             name="A",
             url="u",
             api_key="k",
-            models=[ModelCfg(name="M1", model="m1"), ModelCfg(name="M2", model="m2")],
+            models=[
+                ModelCfg(name="M1", model="m1"),
+                ModelCfg(name="M2", model="m2", context_limit=65536),
+            ],
         ),
     ],
 )
@@ -47,8 +50,10 @@ async def test_models_endpoint_lists_choices() -> None:
         resp = await client.get("/api/models")
         body = await resp.json()
         assert resp.status == 200
-        assert {"provider_name": "A", "model_name": "M1", "default": True} in body["choices"]
-        assert {"provider_name": "A", "model_name": "M2", "default": False} in body["choices"]
+        assert {"provider_name": "A", "model_name": "M1", "default": True, "context_limit": None} in body["choices"]
+        assert {"provider_name": "A", "model_name": "M2", "default": False, "context_limit": 65536} in body["choices"]
+        # 全局回退上限一并透出(前端算有效预算:context_limit ?? max_context_tokens)。
+        assert body["max_context_tokens"] == 200000
     finally:
         await client.close()
 
@@ -95,7 +100,7 @@ async def test_models_endpoint_live_refreshes_and_leaks_no_secret(tmp_path: Path
         assert resp1.status == 200
         assert {c["model_name"] for c in body1["choices"]} == {"M1"}
         # No secret material may cross the wire.
-        assert all(set(c) <= {"provider_name", "model_name", "default"} for c in body1["choices"])
+        assert all(set(c) <= {"provider_name", "model_name", "default", "context_limit"} for c in body1["choices"])
 
         # User runs `modexbot model` and adds M2 to model.yml on disk.
         model_yml.write_text(
@@ -108,6 +113,6 @@ async def test_models_endpoint_live_refreshes_and_leaks_no_secret(tmp_path: Path
         body2 = await resp2.json()
         # Live refresh — M2 appears without a restart.
         assert {c["model_name"] for c in body2["choices"]} == {"M1", "M2"}
-        assert all(set(c) <= {"provider_name", "model_name", "default"} for c in body2["choices"])
+        assert all(set(c) <= {"provider_name", "model_name", "default", "context_limit"} for c in body2["choices"])
     finally:
         await client.close()

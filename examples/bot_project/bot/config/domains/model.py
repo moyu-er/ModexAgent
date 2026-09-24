@@ -15,9 +15,10 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import model_validator
 
 from bot.config.domain import ConfigDomain, DomainFlavor, atomic_write, register_domain
-from bot.service.model_config import BotModelConfig
+from bot.service.model_config import DEFAULT_OUTPUT_RESERVE_TOKENS, BotModelConfig
 
 
 def _load_model(path: Path) -> dict[str, Any]:
@@ -45,6 +46,36 @@ def _dump_model(path: Path, data: dict[str, Any]) -> None:
     )
 
 
+class WriteModelConfig(BotModelConfig):
+    """The STRICT validation face for ``PUT /api/config/model`` (PRD §4.7 D6).
+
+    Runtime parsing (``from_yaml``, assembly) deliberately stays tolerant of
+    an over-declared ``max_output_tokens`` — the synthesize-time clamp is the
+    runtime safety net. The WRITE face rejects it with an actionable error so
+    misconfigurations never reach the file through the WebUI/HTTP road.
+    """
+
+    @model_validator(mode="after")
+    def _output_fits_declared_window(self) -> WriteModelConfig:
+        # Same reserve constant the runtime clamp uses (synthesize_llm_config,
+        # PRD per-model-context-compaction §4.2) — one ceiling definition.
+        for provider in self.providers:
+            for model in provider.models:
+                if model.context_limit is None:
+                    continue
+                ceiling = model.context_limit - DEFAULT_OUTPUT_RESERVE_TOKENS
+                if model.max_output_tokens > ceiling:
+                    raise ValueError(
+                        f"model {model.name!r} on provider {provider.name!r}: "
+                        f"max_output_tokens {model.max_output_tokens} exceeds "
+                        f"context_limit {model.context_limit} minus output "
+                        f"reserve {DEFAULT_OUTPUT_RESERVE_TOKENS} "
+                        f"(ceiling {ceiling}) — lower max_output_tokens to "
+                        f"at most {ceiling} or raise context_limit"
+                    )
+        return self
+
+
 # bot/config/domains/model.py → parents[3] is the bot_project root.
 _MODEL_PATH = Path(__file__).resolve().parents[3] / "config" / "model.yml"
 
@@ -53,7 +84,7 @@ model_domain = ConfigDomain(
     label="Models",
     yaml_path=_MODEL_PATH,
     flavor=DomainFlavor.SINGLETON,
-    root_schema=BotModelConfig,
+    root_schema=WriteModelConfig,
     loader=_load_model,
     dumper=_dump_model,
 )

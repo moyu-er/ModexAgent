@@ -49,7 +49,11 @@ STANDALONE_SERVICES_HOOKS: Final = (
 )
 STANDALONE_SERVICES_GOVERNANCE: Final = (
     "CompositeGovernance",
-    ("ContextBudgetGovernance", "ToolChainRepairGovernance"),
+    # MemoryCompactionGovernance replaced ContextBudgetGovernance at the chain
+    # head (ADR-0050): the standalone face wires a memory system, so the
+    # read-side compaction face owns the 0.60-0.85 band; mechanical budget
+    # pruning exited the default chain.
+    ("MemoryCompactionGovernance", "ToolChainRepairGovernance"),
     None,
 )
 STANDALONE_STATIC_PROMPT: Final = "You are a helpful assistant."

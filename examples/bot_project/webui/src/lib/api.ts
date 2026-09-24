@@ -66,12 +66,21 @@ export interface ModelChoice {
   provider_name: string;
   model_name: string;
   default: boolean;
+  /** Declared context-window ceiling (tokens); null = inherit the global
+   * max_context_tokens (also returned by fetchModels as the fallback). */
+  context_limit?: number | null;
 }
 
-export async function fetchModels(): Promise<{ choices: ModelChoice[] }> {
+export interface ModelsResponse {
+  choices: ModelChoice[];
+  /** Global fallback for models whose context_limit is null. */
+  max_context_tokens?: number;
+}
+
+export async function fetchModels(): Promise<ModelsResponse> {
   const resp = await fetch(`${API_BASE}/models`);
   await assertOk(resp);
-  return resp.json() as Promise<{ choices: ModelChoice[] }>;
+  return resp.json() as Promise<ModelsResponse>;
 }
 
 // ── Provider model-list fetch ───────────────────────────────────────────────

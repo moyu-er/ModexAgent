@@ -158,7 +158,9 @@ def test_duplicate_provider_name_raises(tmp_path: Path) -> None:
 
 def test_all_choices(tmp_path: Path) -> None:
     cfg = _load(tmp_path)
-    assert set(cfg.all_choices()) == {("MiniMax", "M3"), ("MiniMax", "M2")}
+    # (provider.name, model.name, context_limit) 三元组 —— limit None = 未声明
+    # (继承全局 max_context_tokens),/api/models 以此透出徽标与有效预算。
+    assert set(cfg.all_choices()) == {("MiniMax", "M3", None), ("MiniMax", "M2", None)}
 
 
 # ── interface-format routing (synthesize_llm_config) ────────────────────
@@ -329,3 +331,128 @@ def test_legacy_models_wrapper_still_parses(tmp_path: Path) -> None:
     assert cfg.default_provider == "MiniMax"
     assert cfg.default_model == "M3"
     assert cfg.providers[0].key == "minimax"
+
+
+# ── per-model context budget (PRD per-model-context-compaction §4.2 D1) ──
+# context_limit 声明 → synthesize_llm_config 钳制输出预算;None → 继承全局
+# max_context_tokens(不钳制)。
+
+_BUDGET_YML = """
+models:
+  default_provider: "P"
+  default_model: "small"
+  max_context_tokens: 150000
+  providers:
+    - {key: p, name: "P", base_url: u, api_key: k, models: [
+        {name: small, model: m-small, context_limit: 8192, max_output_tokens: 50000},
+        {name: tiny, model: m-tiny, context_limit: 100, max_output_tokens: 50000},
+        {name: wide, model: m-wide, context_limit: 1000000, max_output_tokens: 40000, temperature: 0.3, reasoning_effort: medium},
+        {name: unset, model: m-unset}
+      ]}
+"""
+
+
+def _budget_cfg(tmp_path: Path) -> BotModelConfig:
+    p = tmp_path / "model.yml"
+    p.write_text(_BUDGET_YML, encoding="utf-8")
+    return BotModelConfig.from_yaml(p)
+
+
+def test_context_limit_parses_and_none_means_inherit_global(tmp_path: Path) -> None:
+    cfg = _budget_cfg(tmp_path)
+    small = cfg.resolve("P", "small")
+    assert small is not None
+    assert small.model.context_limit == 8192
+    unset = cfg.resolve("P", "unset")
+    assert unset is not None
+    assert unset.model.context_limit is None  # 未声明 → 继承全局 max_context_tokens
+
+
+def test_max_output_tokens_zero_rejected_at_parse(tmp_path: Path) -> None:
+    """model.yml 写 0 在解析面就拒(ge=1,与 ModelInfo.max_output_tokens
+    对齐)—— 否则 resolved.model_info 绑定时才 ValidationError。"""
+    import pytest
+    from pydantic import ValidationError
+
+    p = tmp_path / "model.yml"
+    p.write_text(
+        """
+models:
+  default_provider: "P"
+  default_model: "small"
+  providers:
+    - {key: p, name: "P", base_url: u, api_key: k, models: [
+        {name: small, model: m-small, max_output_tokens: 0}
+      ]}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError):
+        BotModelConfig.from_yaml(p)
+
+
+def test_context_limit_none_leaves_max_output_untouched(tmp_path: Path) -> None:
+    cfg = _budget_cfg(tmp_path)
+    unset = cfg.resolve("P", "unset")
+    assert unset is not None
+    llm = cfg.synthesize_llm_config(unset)
+    # 无 limit 不钳制:默认 50000 原样进入 LLMConfig
+    assert llm.max_output_tokens == 50000
+
+
+def test_context_limit_clamps_max_output_tokens(tmp_path: Path) -> None:
+    from bot.service.model_config import DEFAULT_OUTPUT_RESERVE_TOKENS
+
+    cfg = _budget_cfg(tmp_path)
+    small = cfg.resolve("P", "small")
+    assert small is not None
+    llm = cfg.synthesize_llm_config(small)
+    # limit 8192 < 声明 50000 → 钳到 limit − 预留
+    assert llm.max_output_tokens == 8192 - DEFAULT_OUTPUT_RESERVE_TOKENS
+
+
+def test_tiny_context_limit_keeps_max_output_positive(tmp_path: Path) -> None:
+    cfg = _budget_cfg(tmp_path)
+    tiny = cfg.resolve("P", "tiny")
+    assert tiny is not None
+    llm = cfg.synthesize_llm_config(tiny)
+    # 极小 limit(预留吃满窗口)也不得产生非正值
+    assert llm.max_output_tokens >= 1
+
+
+def test_clamp_untouched_when_declared_output_below_ceiling(tmp_path: Path) -> None:
+    cfg = _budget_cfg(tmp_path)
+    wide = cfg.resolve("P", "wide")
+    assert wide is not None
+    llm = cfg.synthesize_llm_config(wide)
+    # 声明 40000 < limit − 预留:既不放大也不缩小,其余采样字段不回归
+    assert llm.max_output_tokens == 40000
+    assert llm.temperature == 0.3
+    assert llm.reasoning_effort == ReasoningEffort.MEDIUM
+
+
+def test_context_limit_non_positive_rejected(tmp_path: Path) -> None:
+    p = tmp_path / "model.yml"
+    p.write_text(
+        "models:\n  default_provider: P\n  default_model: M1\n  providers:\n"
+        "    - {key: p, name: P, base_url: u, api_key: k,"
+        " models: [{name: M1, model: m1, context_limit: 0}]}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError):
+        BotModelConfig.from_yaml(p)
+
+
+def test_resolved_model_info_carries_budget_profile(tmp_path: Path) -> None:
+    cfg = _budget_cfg(tmp_path)
+    small = cfg.resolve("P", "small")
+    assert small is not None
+    info = small.model_info
+    assert info.model_name == "m-small"
+    assert info.context_limit == 8192
+    assert info.max_output_tokens == 50000
+    unset = cfg.resolve("P", "unset")
+    assert unset is not None
+    # 未声明 → 档案字段为 None,消费方(resolve_effective_budget)回退池级配置
+    assert unset.model_info.context_limit is None
+    assert unset.model_info.max_output_tokens == 50000

@@ -38,7 +38,6 @@ from modex_agent.adapters.output import OutputAdapter
 from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.agent import ExecutionStrategyKind
-from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory
@@ -103,6 +102,11 @@ from ..builders import (
 )
 from ..external_strategy import ProviderUnavailableError
 from ..model_config import _resolved_or_placeholder
+from ..model_provider import (
+    ProviderCache,
+    pinned_default_provider,
+    resolve_agent_llm_pins,
+)
 from .agent_factory import (
     _build_agent_factory,
     _cell_sessions_dir,
@@ -415,13 +419,12 @@ async def create_pool(
     )
 
     session_binding_store = InMemorySessionBindingStore()
-    default_resolved = _resolved_or_placeholder(bot_model_config).default_resolved()
+    resolved_model_cfg = _resolved_or_placeholder(bot_model_config)
+    default_resolved = resolved_model_cfg.default_resolved()
 
-    # C1 sub path: the subagent-default provider name resolves once here
-    # (hoisted before the pipeline, ticket 09): it is the SUPPLIED
-    # bot-global default provider for the ``experience_review`` HOOK-slot
-    # factory (the reviewer must not depend on any pool's own provider).
-    # External pools keep None.
+    # C1 sub path: the subagent-default provider slot resolves once here
+    # (hoisted before the pipeline, ticket 09) — it now only gates whether
+    # this pool HAS an LLM slot. External pools keep None.
     sub_default_llm_provider: LLMProvider | None = None
     if strategy.requires_llm_provider:
         sub_default_llm_provider = await _resolve_llm_slot(
@@ -430,6 +433,28 @@ async def create_pool(
             {},
             ctx,
             workspace_ctx_for_spec,
+        )
+
+    # Default-model pin (ADR-0050, D-5 re-based + D-6): everything that is
+    # neither the main agent's per-turn selection nor an explicit agent pin
+    # runs on the DEFAULT model — derived from the bot_default SLOT product
+    # (a BotModelProvider in production is wrapped into a pin that ignores
+    # the turn's ContextVar; a custom slot product passes through — the LLM
+    # slot stays the extension point). Unconfigured subagents materialize
+    # with it (their turns are InboxPoller-dispatched tasks where the
+    # turn-scoped ContextVar never arrives, so caller-inheritance was
+    # structurally impossible); supply-side workers (the experience
+    # reviewer) use it as the review provider. Shares ONE real-provider
+    # cache with declared agent pins (created here because SupplyInfra
+    # assembles before resolve_agent_llm_pins). External pools keep None.
+    llm_pin_cache: ProviderCache = {}
+    default_pinned_provider: LLMProvider | None = None
+    if sub_default_llm_provider is not None:
+        default_pinned_provider = pinned_default_provider(
+            sub_default_llm_provider,
+            resolved_model_cfg,
+            default_resolved,
+            llm_pin_cache,
         )
 
     # Template registry + path resolver + poller/tree_manager are
@@ -574,10 +599,7 @@ async def create_pool(
                 temperature=default_resolved.model.temperature,
                 max_output_tokens=default_resolved.model.max_output_tokens,
                 reasoning_effort=default_resolved.model.reasoning_effort,
-                model_info=ModelInfo(
-                    model_name=default_resolved.model.model,
-                    capabilities=default_resolved.capabilities,
-                ),
+                model_info=default_resolved.model_info,
             ),
             pool=pool,
             context_manager=strategy_result.context_manager,
@@ -604,27 +626,26 @@ async def create_pool(
     # Constructed BEFORE the pipeline (ticket 09): HOOK-slot factories
     # dispatched at Stage 4 (user_notice_cleanup, experience_review) resolve
     # their runtime deps from the chain — the notification service rides
-    # SupplyInfra into PoolRuntimeDeps, and the bot-global default provider
-    # rides SupplyInfra into the capability supply views (the experience
-    # reviewer builds on it — the retired experience-specific typed field
-    # died with the supply-face convergence).
+    # SupplyInfra into PoolRuntimeDeps, and the D-6 default-model PIN rides
+    # SupplyInfra into the capability supply views (the experience reviewer
+    # builds on it — stable default model, never the triggering turn's
+    # choice).
     notification_service = AgentNotificationService(
         output_adapter=output_adapter,
     )
-    default_llm_provider = sub_default_llm_provider
     infra = SupplyInfra(
         pool_assembly_ctx=ctx,
         pool=pool,
         # The pool's COMPLETE compiled spec set (root + subagents) — Stage 3
         # aggregates the capability supply over exactly this set (SPEC
-        # §7.1), so capabilities effective only on subagents still get
-        # their pool-level supply.
+        # §7.1), so capabilities effective only on subagents still get their
+        # pool-level supply.
         pool_specs=(
             declared.root.spec,
             *(agent.spec for agent in declared.subagents),
         ),
         notification_service=notification_service,
-        default_llm_provider=default_llm_provider,
+        default_llm_provider=default_pinned_provider,
     )
     assembly_ctx = AssemblyContext(
         registry=resolved_registry,
@@ -734,6 +755,15 @@ async def create_pool(
     approval_audit_store = build_approval_audit_store(
         app_config, persistence, BotRecordScope(pool=pool_name),
     )
+    # D-5 per-agent model pins: declared ``model`` references resolve against
+    # model.yml ONCE here — the single assembly-layer resolution point. The
+    # framework template/materialize consumes the resolved values blind; a
+    # pinned subtree carries its nearest explicit declaration as the default.
+    # The cache is the SAME one the D-6 supply-side pin uses — one real
+    # provider per (provider.key, model) across the whole pool.
+    agent_llm_pins = resolve_agent_llm_pins(
+        pool_spec, resolved_model_cfg, cache=llm_pin_cache
+    )
     deps = AgentMaterializeDeps(
         agent_factory=factory,
         pool=pool,
@@ -745,11 +775,11 @@ async def create_pool(
         llm_temperature=default_resolved.model.temperature,
         llm_max_output_tokens=default_resolved.model.max_output_tokens,
         llm_reasoning_effort=default_resolved.model.reasoning_effort,
-        llm_model_info=ModelInfo(
-            model_name=default_resolved.model.model,
-            capabilities=default_resolved.capabilities,
-        ),
-        llm_provider=sub_default_llm_provider,
+        llm_model_info=default_resolved.model_info,
+        # D-5 re-based: the materialization default is the default-model
+        # pinned provider — unconfigured subagents run the DEFAULT model
+        # (ADR-0050), with LlmDefaults above already matching it.
+        llm_provider=default_pinned_provider,
         project_dir=project_dir,
         notification_service=notification_service,
         inbox_consumer=inbox_consumer,
@@ -777,6 +807,7 @@ async def create_pool(
         graph_context_resolver=graph_context_resolver,
         capability_supply=capability_supply,
         approval_audit=approval_audit_store,
+        agent_llm_pins=agent_llm_pins,
     )
     pool.materialize_deps = deps
     pool.pool_name = pool_name
@@ -884,6 +915,17 @@ async def create_pool(
     )
 
     if strategy.requires_main_agent_tools:
+        # The main agent's memory-backed context manager — the same instance
+        # its load() resolves through; governance compaction must address the
+        # same MemoryContext (narrowing from the ContextManager ABC follows
+        # the native_core.py:551 precedent at this assembly seam).
+        from modex_agent.memory.system import MemorySystemContextManager
+
+        main_memory_context_manager = (
+            context_manager
+            if isinstance(context_manager, MemorySystemContextManager)
+            else None
+        )
         _wire_main_pipeline(
             pool,
             root_agent_name,
@@ -906,6 +948,7 @@ async def create_pool(
             session_binding_store=session_binding_store,
             component_hook_specs=component_hook_specs,
             approval_audit_store=approval_audit_store,
+            memory_context_manager=main_memory_context_manager,
         )
     else:
         # external path: the external agent has no tool surface (it

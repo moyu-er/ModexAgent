@@ -21,12 +21,13 @@
 // draft is clean, debounced preview when dirty); edits write declared
 // deviations through scopeModel's unified tri-state mutations.
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   ScopeAgentBill,
   ScopeModelIssue,
   ScopeOptions,
 } from "../../../lib/scopeApi";
+import { fetchModels, type ModelChoice } from "../../../lib/api";
 import { useT, type MessageKey } from "../../../i18n";
 import { Button } from "../../ui/Button";
 import { Checkbox } from "../../ui/Checkbox";
@@ -41,6 +42,7 @@ import { AgentSkillSelector } from "../AgentSkillSelector";
 import { PromptBodyEditor } from "./PromptBodyEditor";
 import {
   addSubagent,
+  agentModelRef,
   asString,
   asStringList,
   capabilityMode,
@@ -51,6 +53,7 @@ import {
   resetApproval,
   resetMemoryLayer,
   sessionTitleOn,
+  setAgentModelRef,
   setApprovalEnabled,
   setCapabilityMode,
   setField,
@@ -291,6 +294,18 @@ export function AgentForm({
             }
           />
         ) : null}
+
+        {/* Model pin (D-5): subagents may pin a model.yml entry; the pool
+            root always follows the per-turn selection and external agents
+            own their model config — both hide the picker (the backend
+            rejects those pins; the external branch already hides native
+            settings). */}
+        {!isExternal && !isRoot ? (
+          <AgentModelField
+            value={agentModelRef(body)}
+            onChange={(ref) => updateAgent((b) => setAgentModelRef(b, ref))}
+          />
+        ) : null}
       </FormSection>
 
       {/* Collaborators — root only, one level, nested preserved */}
@@ -456,6 +471,74 @@ export function AgentForm({
         </FormSection>
       ) : null}
     </div>
+  );
+}
+
+// ── Model pin picker (D-5) ───────────────────────────────────────────────────
+
+const _MODEL_NONE = "";
+
+/**
+ * Pin this agent to a model.yml entry. The default option means "the global
+ * default model" (D-5 re-based: unconfigured subagents run the default
+ * model); entries come from the existing GET /api/models choices — the
+ * single model-configuration channel. A fetch failure degrades to the
+ * default option only (the pin stays editable through the raw Scope editor).
+ */
+function AgentModelField({
+  value,
+  onChange,
+}: {
+  value: { provider: string; name: string } | null;
+  onChange: (ref: { provider: string; name: string } | null) => void;
+}) {
+  const t = useT();
+  const [choices, setChoices] = useState<ModelChoice[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchModels()
+      .then((r) => {
+        if (!cancelled) setChoices(Array.isArray(r.choices) ? r.choices : []);
+      })
+      .catch(() => {
+        /* degrade to the follow-session default only */
+      });
+    return (): void => {
+      cancelled = true;
+    };
+  }, []);
+
+  const options = useMemo(
+    () => [
+      { value: _MODEL_NONE, label: t("settings.poolsPanel.modelFollowSession") },
+      ...choices.map((c) => ({
+        value: `${c.provider_name}::${c.model_name}`,
+        label: c.model_name,
+        group: c.provider_name,
+      })),
+    ],
+    [choices, t],
+  );
+  const currentValue =
+    value !== null ? `${value.provider}::${value.name}` : _MODEL_NONE;
+
+  return (
+    <DropdownPanel
+      label={t("settings.poolsPanel.model")}
+      helper={t("settings.poolsPanel.modelHelper")}
+      options={options}
+      value={currentValue}
+      onChange={(v) => {
+        if (v === _MODEL_NONE) {
+          onChange(null);
+          return;
+        }
+        const [provider, name] = v.split("::");
+        if (!provider || !name) return;
+        onChange({ provider, name });
+      }}
+    />
   );
 }
 

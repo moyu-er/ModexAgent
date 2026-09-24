@@ -14,7 +14,6 @@ from typing import Any
 from bot.service.model_config import BotModelConfig
 from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import ExecutionStrategyKind
-from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.memory.default_system import DefaultMemorySystem
@@ -155,10 +154,7 @@ async def _register_external_main_agent(
             temperature=default_resolved.model.temperature,
             max_output_tokens=default_resolved.model.max_output_tokens,
             reasoning_effort=default_resolved.model.reasoning_effort,
-            model_info=ModelInfo(
-                model_name=default_resolved.model.model,
-                capabilities=default_resolved.capabilities,
-            ),
+            model_info=default_resolved.model_info,
         ),
         system_prompt_template=system_prompt,
         max_iterations=main_spec.max_steps,

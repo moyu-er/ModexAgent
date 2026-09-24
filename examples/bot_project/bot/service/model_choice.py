@@ -17,7 +17,6 @@ from collections import OrderedDict
 from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
-from modex_agent.core.capabilities import ModelInfo
 from modex_agent.hook.abc import BeforeGraphHook
 
 from .model_config import BotModelConfig, ResolvedModel
@@ -66,9 +65,10 @@ class ModelChoiceRegistry:
 class ModelChoiceBindHook(BeforeGraphHook):
     """BeforeGraphHook：把 registry 中本 session 的模型选择快照进 ContextVar，
 
-    并把当前模型的 capabilities 覆写到 runtime.services.model_info（按 turn
-    切换图片内联行为）。registry 缺失（IM / 后台）时回退默认模型。绑定发生在
-    每次 actual_turn() 入口（含 approval resume），先于任何节点与 LLM/工具读取。
+    并把当前模型的档案（capabilities + context_limit/max_output_tokens 预算）
+    覆写到 runtime.services.model_info（按 turn 切换图片内联/预算行为）。
+    registry 缺失（IM / 后台）时回退默认模型。绑定发生在每次 actual_turn()
+    入口（含 approval resume），先于任何节点与 LLM/工具读取。
     """
 
     def __init__(self, model_config: BotModelConfig, registry: ModelChoiceRegistry) -> None:
@@ -88,7 +88,4 @@ class ModelChoiceBindHook(BeforeGraphHook):
         runtime = ctx.runtime
         services = runtime.services if runtime is not None else None
         if services is not None:
-            services.model_info = ModelInfo(
-                model_name=resolved.model.model,
-                capabilities=resolved.capabilities,
-            )
+            services.model_info = resolved.model_info

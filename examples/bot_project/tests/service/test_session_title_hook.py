@@ -12,8 +12,8 @@ declared-roster dispatch (``_dispatch_hooks``), and the REAL hook runner:
 - existing title → zero model calls; concurrent turns → one task
 - earliest real user input from the transcript, truncated to 1000 chars
 - model output normalized (trim/single-line/length); empty/error → no save
-- provider built lazily from the bot global default config via
-  ``create_llm_provider`` — NOT the turn's BotModelProvider
+- provider resolves lazily to the bot default-model PIN (D-6
+  :class:`PinnedModelProvider`) — NOT the turn's ContextVar choice
 - ClosableHook: ``aclose`` cancels pending tasks and closes the provider
 """
 
@@ -397,6 +397,76 @@ async def test_model_error_no_save_retry_next_turn(tmp_path: Path) -> None:
     await _dispatch_finally(hook, ctx, AgentResult(stop_reason=StopReason.COMPLETED))
     await settle_titles(hook)
     assert await ops.read_title("abc123.main") == "恢复后的标题"
+
+
+@pytest.mark.asyncio
+async def test_session_title_model_is_default_pin_ignoring_turn_choice(tmp_path: Path) -> None:
+    """D-6:命名模型 = 默认模型 pin。生产 provider_source 构造的是
+    PinnedModelProvider(default_resolved);触发轮选了非默认模型
+    (current_model_choice),命名请求的 model 仍是默认模型。"""
+    from bot.service.model_choice import current_model_choice
+    from bot.service.model_config import BotModelConfig, ProviderCfg
+    from bot.service.model_provider import PinnedModelProvider
+    from bot.service.session_title_task import SessionTitleNamingTask
+
+    from modex_agent.core.llm_request import LLMRequest
+    from modex_agent.core.llm_struct import FinishReason
+    from modex_agent.core.stream_events import Finish, TextDelta
+
+    cfg = BotModelConfig(
+        default_provider="A",
+        default_model="M1",
+        providers=[
+            ProviderCfg(
+                key="a",
+                name="A",
+                base_url="u",
+                api_key="k",
+                models=[
+                    {"name": "M1", "model": "m1"},
+                    {"name": "M2", "model": "m2"},
+                ],
+            ),
+        ],
+    )
+
+    class _RecordingReal(LLMProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.models: list[str] = []
+
+        def get_default_model(self) -> str:
+            return "m1"
+
+        async def stream(self, request: LLMRequest) -> Any:  # type: ignore[override]
+            self.models.append(request.model)
+            yield TextDelta(text="默认模型的标题")
+            yield Finish(finish_reason=FinishReason.STOP)
+
+    real = _RecordingReal()
+    # 生产 seam 形状:provider_source() → PinnedModelProvider(默认模型)。
+    pinned = PinnedModelProvider(cfg, cfg.default_resolved())
+    pinned._cache[("a", "m1")] = real  # noqa: SLF001 — test seam: seeded real provider
+
+    ops, registry = await _make_ops(tmp_path)
+    session = _main_session()
+    await registry.register(session)
+    naming = SessionTitleNamingTask(
+        ops=ops,
+        provider_source=lambda: pinned,
+        transcript_reader=lambda sid: "内容",
+    )
+    # 触发轮选了非默认模型 M2 —— 命名不得继承。
+    m2 = cfg.resolve("A", "M2")
+    assert m2 is not None
+    token = current_model_choice.set(m2)
+    try:
+        naming.submit("default", session)
+        await settle_titles(naming)
+    finally:
+        current_model_choice.reset(token)
+    assert real.models == ["m1"]
+    assert await ops.read_title("abc123.main") == "默认模型的标题"
 
 
 @pytest.mark.asyncio

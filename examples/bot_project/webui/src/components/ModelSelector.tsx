@@ -2,11 +2,14 @@
 //
 // Rebuilt on the shared DropdownPanel primitive (DESIGN.md §5.3): compact
 // pill trigger, upward-opening panel, provider groups as sticky mono eyebrow
-// headers, brand "Default" badge on the provider's default model. Keyboard
-// nav, selection styling and the open animation all come from DropdownPanel.
+// headers, brand "Default" badge plus a context-limit badge on the
+// provider's models (declared limit only — null inherits the global and
+// renders no badge). Keyboard nav, selection styling and the open animation
+// all come from DropdownPanel.
 
 import { useMemo, type FC } from "react";
 import type { ModelChoice } from "../lib/api";
+import { formatContextLimit } from "../lib/format";
 import { DropdownPanel, type DropdownOption } from "./ui/DropdownPanel";
 import { useT } from "../i18n";
 
@@ -35,12 +38,19 @@ export const ModelSelector: FC<ModelSelectorProps> = ({
 
   const options = useMemo<DropdownOption[]>(
     () =>
-      models.map((m) => ({
-        value: keyOf(m),
-        label: m.model_name,
-        group: m.provider_name,
-        badge: m.default ? t("composer.default") : undefined,
-      })),
+      models.map((m) => {
+        const marks: string[] = [];
+        if (m.default) marks.push(t("composer.default"));
+        if (typeof m.context_limit === "number") {
+          marks.push(formatContextLimit(m.context_limit));
+        }
+        return {
+          value: keyOf(m),
+          label: m.model_name,
+          group: m.provider_name,
+          badge: marks.length > 0 ? marks.join(" · ") : undefined,
+        };
+      }),
     [models, t],
   );
 

@@ -19,11 +19,11 @@ if TYPE_CHECKING:
     from modex_graph.context import GraphContext
 
 from bot.service.model_config import BotModelConfig
-from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.tool_manager import ToolManager
 from modex_agent.hook import HookErrorPolicy, HookSpec
 from modex_agent.hook.notification import TurnOutcomeNotifyHook
 from modex_agent.ioc.factories.governance import create_governance
+from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.multi_agent import AgentPool
 from modex_agent.multi_agent.communication.peer_resolution import PeerLink
 from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
@@ -90,6 +90,7 @@ def _wire_main_pipeline(
     session_binding_store: SessionBindingStore | None = None,
     component_hook_specs: tuple[HookSpec, ...] = (),
     approval_audit_store: Any | None = None,
+    memory_context_manager: MemorySystemContextManager | None = None,
 ) -> None:
     """Wire interceptors, governance, and command processor on the main pipeline.
 
@@ -143,7 +144,30 @@ def _wire_main_pipeline(
     approval = turn_runner.approval_renderer
     if builder is not None:
         builder.interceptor_chain = shared_interceptor_chain
-        builder.governance = create_governance(assembly_deps.memory)
+        # Memory-backed pools get the persistent-compaction governance head.
+        # The resolver goes through the SAME context manager load() uses, so
+        # compaction addresses the session's real MemoryContext (T3 hard
+        # constraint); memory_system None (test fallback CM) keeps the old
+        # tool-chain-only chain.
+        memory_system = (
+            memory_context_manager.memory_system
+            if memory_context_manager is not None
+            else None
+        )
+        memory_context_resolver = (
+            (
+                lambda actx: memory_context_manager.resolve_memory_context(
+                    actx.session.session_id
+                )
+            )
+            if memory_system is not None
+            else None
+        )
+        builder.governance = create_governance(
+            assembly_deps.memory,
+            memory_system=memory_system,
+            memory_context_resolver=memory_context_resolver,
+        )
     if approval is not None:
         approval.user_interface = im_ui
 
@@ -162,10 +186,7 @@ def _wire_main_pipeline(
 
     services_kwargs: dict[str, Any] = {
         "safety": pipeline.safety,
-        "model_info": ModelInfo(
-            model_name=default_resolved.model.model,
-            capabilities=default_resolved.capabilities,
-        ),
+        "model_info": default_resolved.model_info,
     }
     if approval_runtime is not None:
         services_kwargs["approval"] = approval_runtime

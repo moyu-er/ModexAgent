@@ -28,8 +28,10 @@ PINNED_SENTINEL_TOOLS: Final = (
     "glob",
 )
 PINNED_SENTINEL_MEMORY_CONFIG: Final = (
+    # governance.budget pins null: mechanical budget governance exited the
+    # default chain (ADR-0050 D-3); the field remains an explicit opt-in.
     '{"session":{"max_context_tokens":32000,"max_token_ratio":0.85,'
-    '"keep_ratio":0.3,"max_output_tokens":0},"compact":{"enabled":true,'
+    '"max_output_tokens":0},"compact":{"enabled":true,'
     '"max_output_tokens":8192,"max_iterations":3,"temperature":0.2,'
     '"tool_output_max_chars":2000},"archive":{"enabled":true,'
     '"max_entries":1000,"retained_consumed_pairs":3,"max_archive_count":10,'
@@ -41,8 +43,7 @@ PINNED_SENTINEL_MEMORY_CONFIG: Final = (
     '"max_consume_per_run":3},"summarizer_agent":null,"retention":'
     '{"min_recent_user_turns":2,"min_recent_agent_turns":1,'
     '"recent_tool_result_count":3},"governance":{"tool_chain_repair":true,'
-    '"budget":{"governance_ratio":0.6,"protect_tokens":40000,'
-    '"min_gain_tokens":20000,"keep_recent":10,"whitelist_tools":[]}},'
+    '"budget":null},'
     '"pruned":{"enabled":true,"max_files":50,"topic_max_chars":200}}'
 )
 

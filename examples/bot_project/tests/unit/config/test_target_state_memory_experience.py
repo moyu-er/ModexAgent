@@ -17,7 +17,7 @@ The contract:
 
 | Agent type | memory | experience | governance | hooks |
 |---|---|---|---|---|
-| native main | session + compact + governance + pruned | enabled (ExperienceReviewHook fires) | create_governance (budget + tool_chain_repair) | MaxIter + TurnOutcome + ModelChoiceBind + ExperienceReview |
+| native main | session + compact + governance + pruned | enabled (ExperienceReviewHook fires) | create_governance (memory compaction + tool_chain_repair; budget default-off, PRD D-3) | MaxIter + TurnOutcome + ModelChoiceBind + ExperienceReview |
 | native subagent | session + compact + governance + pruned | N/A | create_subagent_governance (tool_chain_repair only) | SubagentAutoSend + MaxIter |
 | external main | skipped structurally | skipped | skipped | skipped |
 | external subagent | skipped structurally | skipped | skipped | skipped |
@@ -155,7 +155,6 @@ class TestMemoryDefaultsContract:
         # Session layer (compression triggers)
         assert isinstance(m.session, SessionConfig)
         assert m.session.max_token_ratio > 0
-        assert 0 < m.session.keep_ratio < 1
 
         # Archive layer (default off — user enables per-pool)
         assert m.archive is None, "archive must be off by default for main agents"
@@ -170,13 +169,18 @@ class TestMemoryDefaultsContract:
         assert m.compact is not None, "compact must be enabled for main agents"
         assert m.compact.enabled is True
 
-        # Governance (tool chain repair + lossy compaction)
+        # Governance (tool chain repair; memory compaction is wired at
+        # assembly, not configured here). Budget (mechanical placeholder
+        # pruning) is intentionally OFF by default — the pre-LLM face is
+        # MemoryCompactionGovernance (per-model compaction PRD D-3); an
+        # explicit governance.budget config can still opt in.
         assert m.governance is not None, "governance must be enabled for main agents"
         assert isinstance(m.governance, GovernanceConfig)
         assert m.governance.tool_chain_repair is True
-        assert m.governance.budget is not None, (
-            "main agent governance MUST have budget — without it, "
-            "oversized tool results will blow up the context window"
+        assert m.governance.budget is None, (
+            "main agent budget governance must be off by default — the "
+            "0.60~0.85 band goes to persistent compaction, not placeholder "
+            "pruning (per-model compaction PRD D-3)"
         )
 
         # Pruned catalog
@@ -295,7 +299,7 @@ class TestAssemblyDepsUniformInjection:
             assert m.core is None  # default off
             assert m.dream_engine is None  # default off
             assert m.compact is not None and m.compact.enabled  # compact always on
-            assert m.governance is not None and m.governance.budget is not None
+            assert m.governance is not None and m.governance.budget is None  # D-3 default-off
             assert m.pruned is not None and m.pruned.enabled
             assert m.session.max_context_tokens == 50000
 
@@ -566,7 +570,7 @@ class TestMemorySystemCleanupHookFiring:
 
         class _FixedEstimator(TokenEstimator):
             def __init__(self) -> None:
-                self.per_message = 10
+                self.per_message = 100
 
             def estimate_text(self, text: str) -> int:
                 return self.per_message
@@ -586,7 +590,6 @@ class TestMemorySystemCleanupHookFiring:
             cleanup_config={
                 "max_context_tokens": 100,
                 "max_token_ratio": 0.8,
-                "keep_ratio": 0.5,
             },
             token_estimator=_FixedEstimator(),
         )
@@ -627,7 +630,7 @@ class TestMemorySystemCleanupHookFiring:
 
         class _FixedEstimator(TokenEstimator):
             def __init__(self) -> None:
-                self.per_message = 10
+                self.per_message = 100
 
             def estimate_text(self, text: str) -> int:
                 return self.per_message
@@ -651,7 +654,6 @@ class TestMemorySystemCleanupHookFiring:
             cleanup_config={
                 "max_context_tokens": 100,
                 "max_token_ratio": 0.8,
-                "keep_ratio": 0.5,
             },
             token_estimator=_FixedEstimator(),
         )
@@ -663,8 +665,15 @@ class TestMemorySystemCleanupHookFiring:
         context = MemoryContext(session_id="test-session", user_id="test-user")
         history = system.create_message_history(context)
 
+        # Seed the store directly (bypassing the per-append trigger) so the
+        # FIRST history append fires the check on a session that already
+        # exceeds the 2_000-token tail keep budget — the first cleanup round
+        # is then a real pruning round (20 msgs x 104 tokens = 2_080).
         for i in range(20):
-            await history.append({"role": "user", "content": f"msg-{i}"})
+            await system.layers.session.add_messages(
+                context, [{"role": "user", "content": f"msg-{i}"}]
+            )
+        await history.append({"role": "user", "content": "the-trigger"})
 
         assert len(hook.triggered_calls) > 0, (
             "CleanupTriggeredHook must fire on the normal cleanup path"

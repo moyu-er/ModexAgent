@@ -97,4 +97,38 @@ describe("validateModelValues", () => {
       default_model: "m1",
     })).toBe("settings.models.defaultNotFound");
   });
+
+  // ── per-model budget (PRD §4.7 D6): declared output must fit the
+  // model's own declared window; undeclared limits inherit the global and
+  // are not checked client-side.
+
+  it("returns outputExceedsLimit when max output exceeds the declared context limit", () => {
+    expect(validateModelValues({
+      default_provider: "P",
+      default_model: "m1",
+      providers: [{ name: "P", models: [
+        { name: "m1", max_output_tokens: 50000, context_limit: 8192 },
+      ] }],
+    })).toBe("settings.models.outputExceedsLimit");
+  });
+
+  it("returns null when max output fits the declared context limit", () => {
+    expect(validateModelValues({
+      default_provider: "P",
+      default_model: "m1",
+      providers: [{ name: "P", models: [
+        { name: "m1", max_output_tokens: 50000, context_limit: 65536 },
+      ] }],
+    })).toBeNull();
+  });
+
+  it("returns null when the context limit is undeclared (inherits global)", () => {
+    expect(validateModelValues({
+      default_provider: "P",
+      default_model: "m1",
+      providers: [{ name: "P", models: [
+        { name: "m1", max_output_tokens: 50000, context_limit: null },
+      ] }],
+    })).toBeNull();
+  });
 });

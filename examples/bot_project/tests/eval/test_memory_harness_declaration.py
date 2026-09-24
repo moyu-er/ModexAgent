@@ -88,21 +88,20 @@ async def test_memory_harness_stack_observables_are_pinned(
         assert bundle.memory_config.dream_engine is not None
         assert bundle.memory_config.dream_engine.enabled is True
         assert bundle.memory_config.governance is not None
+        # governance.budget is None: mechanical budget governance exited the
+        # default chain (ADR-0050 D-3); the field stays an explicit opt-in.
         assert bundle.memory_config.governance.model_dump() == {
             "tool_chain_repair": True,
-            "budget": {
-                "governance_ratio": 0.6,
-                "protect_tokens": 40_000,
-                "min_gain_tokens": 20_000,
-                "keep_recent": 10,
-                "whitelist_tools": set(),
-            },
+            "budget": None,
         }
         governance = bundle.runtime_services.governance
         assert governance is not None
         assert type(governance).__name__ == "CompositeGovernance"
+        # MemoryCompactionGovernance holds the chain head (ADR-0050): the
+        # harness wires a memory system, so the read-side compaction face
+        # replaces the default-off mechanical budget pruning.
         assert tuple(type(strategy).__name__ for strategy in governance._strategies) == (
-            "ContextBudgetGovernance",
+            "MemoryCompactionGovernance",
             "ToolChainRepairGovernance",
         )
         assert bundle.context_manager.default_agent_id == "react"

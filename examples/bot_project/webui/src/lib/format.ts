@@ -13,3 +13,16 @@ export function formatBytes(bytes: number): string {
   }
   return `${value.toFixed(1)} ${units[unit]}`;
 }
+
+/**
+ * Format a model context-window limit as the short badge form ("128k").
+ * Binary units — model limits are conventionally powers of two (65536 →
+ * "64k", 131072 → "128k"); small limits render verbatim.
+ */
+export function formatContextLimit(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens <= 0) return "—";
+  if (tokens < 1024) return String(tokens);
+  const k = tokens / 1024;
+  if (k < 1024) return `${Math.round(k)}k`;
+  return `${(k / 1024).toFixed(k / 1024 >= 10 ? 0 : 1)}m`;
+}

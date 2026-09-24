@@ -14,7 +14,6 @@ if TYPE_CHECKING:
     from bot.kb.provider import KbProvider
     from bot.service.core import BotService
     from modex_agent.persistence.managers import WorkspacePersistenceManager
-    from modex_agent.providers.http.provider import HTTPStreamProvider
 
 from bot.config.webui_config import build_control_origin
 from bot.service.builders import (
@@ -23,6 +22,7 @@ from bot.service.builders import (
     resolve_declared_root_prompt,
 )
 from bot.service.model_choice import ModelChoiceRegistry
+from bot.service.model_provider import PinnedModelProvider
 from bot.service.pool.declaration import (
     DeclaredPoolBuild,
     ScopeBoot,
@@ -317,22 +317,18 @@ async def _assemble_resources(
         on_changed=lambda: service.session_titles_changed(ctx.target),
     )
 
-    def _naming_provider_source() -> HTTPStreamProvider:
-        # DESIGN §2.3: lazily construct ONE plain provider from the bot
-        # GLOBAL default model config via create_llm_provider — never the
-        # turn-scoped BotModelProvider (ContextVar-bound). Missing model
-        # configuration fails only the naming task; manual rename is independent.
-        from bot.service.model_config import _resolved_or_placeholder
-        from modex_agent.ioc.factories.llm import create_llm_provider
-        from modex_agent.providers.http.provider import HTTPStreamProvider
-
+    def _naming_provider_source() -> PinnedModelProvider:
+        # DESIGN §2.3 + PRD D-6: resolve ONE default-model pin — the
+        # PinnedModelProvider deliberately ignores the turn-scoped ContextVar
+        # (the naming model is stably the bot default, never the triggering
+        # turn's choice) and builds its real provider lazily on first call.
+        # Missing model configuration fails only the naming task; manual
+        # rename is independent.
         if service._bot_model_config is None:
             raise ValueError("Configure a default model to enable automatic session titles")
-        cfg = _resolved_or_placeholder(service._bot_model_config)
-        provider = create_llm_provider(cfg.synthesize_llm_config())
-        if not isinstance(provider, HTTPStreamProvider):
-            raise TypeError("The configured title model must supply a closable HTTP provider")
-        return provider
+        return PinnedModelProvider(
+            service._bot_model_config, service._bot_model_config.default_resolved()
+        )
 
     async def _earliest_user_content(session_id: str) -> str | None:
         # This existing store selects FILE/SQLite; the explicit directory
