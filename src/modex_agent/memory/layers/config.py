@@ -3,14 +3,14 @@
 Default session cleanup flow:
 
 1. Session writes go through ``ScopedMessageHistory.append/extend``;
-   both call ``cleanup_session()`` after the append.
+   both trigger the memory system's ``compact_session()`` (which runs the
+   ``cleanup_session()`` engine) after the append.
 2. ``cleanup_session()`` (in ``framework/memory/cleanup.py``) is
-   token-based: it compresses when non-system session tokens exceed
-   ``max_context_tokens * max_token_ratio``, keeping a tail within
-   ``max_context_tokens * keep_ratio``.
-3. When the threshold is exceeded, messages are pruned using the configured
-   ``keep_ratio``. If an ``archive_strategy`` is provided, pruned messages
-   are archived before removal.
+   token-based: it compresses when non-system session tokens exceed the
+   dual-condition trigger, keeping a tail within the absolute token budget
+   ``clamp(usable × 0.25, 2000, 15000)`` (PRD §4.4.7).
+3. If an ``archive_strategy`` is provided, pruned messages are archived
+   before removal.
 """
 
 from __future__ import annotations

@@ -181,6 +181,31 @@ class MemorySystemContextManager(ContextManager):
     ) -> ContextGovernance | None:
         return governance
 
+    def resolve_memory_context(self, session_id: str) -> MemoryContext:
+        """Return the session's ``MemoryContext`` — cache hit or build-and-cache.
+
+        Single owner of the cache-or-build rule. ``load()`` resolves its
+        context through this method (no-runtime-info path), so an external
+        resolver — e.g. ``MemoryCompactionGovernance``'s context resolver —
+        hands back the SAME instance ``load()`` built for this session. The
+        memory store is keyed by ``MemoryContext``; a freshly built
+        look-alike context would address a different storage scope
+        (per-model compaction PRD §4.3.2 correctness constraint).
+        """
+        cached = self._context_cache.get(session_id)
+        if cached is not None:
+            return cached
+        ctx = MemoryContext(
+            session_id=session_id,
+            user_id=self.default_user_id,
+            agent_id=self.default_agent_id,
+            agent_role=self.default_agent_role,
+        )
+        if len(self._context_cache) >= self._max_context_cache_size:
+            self._context_cache.clear()
+        self._context_cache[session_id] = ctx
+        return ctx
+
     # -- ContextManager interface -----------------------------------------
 
     async def load_with_metadata(
@@ -200,16 +225,7 @@ class MemorySystemContextManager(ContextManager):
         if runtime_info or metadata:
             ctx = self._build_context(session_id, runtime_info=runtime_info, metadata=metadata)
         else:
-            cached_ctx = self._context_cache.get(session_id)
-            if cached_ctx is None:
-                ctx = MemoryContext(
-                    session_id=session_id,
-                    user_id=self.default_user_id,
-                    agent_id=self.default_agent_id,
-                    agent_role=self.default_agent_role,
-                )
-            else:
-                ctx = cached_ctx
+            ctx = self.resolve_memory_context(session_id)
         # Budget enforcement before every LLM request
         try:
             await self._memory_system.ensure_within_budget(ctx)
@@ -364,6 +380,13 @@ class MemorySystemContextManager(ContextManager):
         history = self._memory_system.create_message_history(
             context=ctx,
             initial_messages=result.messages,
+            # Per-turn budget override: the active model's profile (context /
+            # output limits) rides runtime_info into the history so its
+            # append-path trigger judges against the CURRENT model's window,
+            # not the static pool config (PRD §4.3.3).
+            model_info=(
+                runtime_info.get(RuntimeInfoKey.MODEL_INFO) if runtime_info is not None else None
+            ),
         )
         return ContextState(
             system_prompt=system_prompt,
@@ -384,14 +407,7 @@ class MemorySystemContextManager(ContextManager):
         pass  # All messages written in real-time through ScopedMessageHistory
 
     async def clear(self, session_id: str) -> None:
-        ctx = self._context_cache.get(session_id)
-        if ctx is None:
-            ctx = MemoryContext(
-                session_id=session_id,
-                user_id=self.default_user_id,
-                agent_id=self.default_agent_id,
-                agent_role=self.default_agent_role,
-            )
+        ctx = self.resolve_memory_context(session_id)
         await self._memory_system.clear(ctx)
 
     # -- System prompt composition ----------------------------------------

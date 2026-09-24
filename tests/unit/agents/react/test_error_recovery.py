@@ -4,6 +4,9 @@ Covers:
 - ``is_context_overflow_error`` marker detection
 - ``EmergencyCompactionGovernance`` trimming logic (system + tail, user-start)
 - ``attempt_recovery`` level escalation and max-retry boundary
+- sameModel guard (FIRST attempt only): an overflow report from a stale
+  model with a sufficient current budget retries unchanged instead of
+  trimming; the second overflow always trims
 """
 
 from __future__ import annotations
@@ -22,6 +25,9 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.message import ChatMessage, MessageRole
 
 _CTX: MagicMock = MagicMock(spec=AgentContext)
+# Honest "no runtime bound" context: leaving a MagicMock here would leak a
+# mock model_info into the sameModel budget resolution.
+_CTX.runtime = None
 
 # ---------------------------------------------------------------------------
 # is_context_overflow_error
@@ -224,3 +230,89 @@ async def test_emergency_compaction_all_assistant_tail():
     # Synthetic user message should be prepended
     assert result[1]["role"] == "user"
     assert "Continue" in str(result[1]["content"])
+
+
+# ---------------------------------------------------------------------------
+# sameModel guard (per-model compaction PRD §4.3.3)
+# ---------------------------------------------------------------------------
+
+
+def _context_with_model(limit: int | None) -> AgentContext:
+    from modex_agent.core.capabilities import ModelInfo
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.memory.history import ListMessageHistory
+    from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+    from modex_agent.tools.manager import InMemoryToolManager
+
+    model_info = ModelInfo(model_name="m", context_limit=limit)
+    runtime = AgentRuntime(
+        services=AgentRuntimeServices(model_info=model_info),
+        state=None,  # type: ignore[arg-type]  # guard only reads model_info
+    )
+    return AgentContext(
+        system_prompt="sys",
+        history=ListMessageHistory(),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("s1.recovery"),
+        runtime=runtime,
+    )
+
+
+@pytest.mark.asyncio
+async def test_same_model_guard_retries_unchanged_within_budget():
+    """Overflow error + current model's window comfortably large → no trim.
+
+    The messages carry no cached token_count, so the CharTokenEstimator
+    measures real (tiny) content — far below a 200k limit.
+    """
+    messages = _make_chat_messages(40)
+    ctx = _context_with_model(limit=200_000)
+    recovery = await attempt_recovery(messages, RuntimeError("413"), 0, ErrorRecoveryConfig(), ctx)
+    assert recovery.should_retry is True
+    assert recovery.trimmed_messages is None
+    assert recovery.reason == (
+        "overflow attributed to a different model; current budget sufficient"
+    )
+
+
+@pytest.mark.asyncio
+async def test_same_model_guard_trims_when_current_budget_exceeded():
+    """Small declared limit → the messages genuinely over the current model
+    → the existing two-level trim applies."""
+    messages = _make_chat_messages(40)
+    ctx = _context_with_model(limit=1)
+    recovery = await attempt_recovery(messages, RuntimeError("413"), 0, ErrorRecoveryConfig(), ctx)
+    assert recovery.should_retry is True
+    assert recovery.trimmed_messages is not None
+    assert "level 1" in recovery.reason
+    assert len(recovery.trimmed_messages) < len(messages)
+
+
+@pytest.mark.asyncio
+async def test_same_model_guard_inactive_without_model_info():
+    """No runtime / no declared budget → the guard cannot judge → trim
+    (regression of the pre-guard behavior)."""
+    messages = _make_chat_messages(40)
+    for ctx in (_CTX, _context_with_model(limit=None)):
+        recovery = await attempt_recovery(
+            messages, RuntimeError("413"), 0, ErrorRecoveryConfig(), ctx
+        )
+        assert recovery.should_retry is True
+        assert recovery.trimmed_messages is not None
+
+
+@pytest.mark.asyncio
+async def test_same_model_guard_second_attempt_always_trims():
+    """Second overflow trims even when the current budget still looks
+    sufficient: the unchanged retry already happened once, so a low
+    estimate must not keep shielding the messages — otherwise retry
+    exhaustion turns into a hard failure."""
+    messages = _make_chat_messages(40)
+    ctx = _context_with_model(limit=200_000)
+    recovery = await attempt_recovery(
+        messages, RuntimeError("413"), 1, ErrorRecoveryConfig(), ctx
+    )
+    assert recovery.should_retry is True
+    assert recovery.trimmed_messages is not None
+    assert "level 2" in recovery.reason
+    assert len(recovery.trimmed_messages) < len(messages)

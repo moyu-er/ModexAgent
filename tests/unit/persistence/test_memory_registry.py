@@ -14,6 +14,7 @@ from modex_agent.memory.archive_models import (
     ArchiveDocuments,
     ArchiveGenerationResult,
 )
+from modex_agent.memory.budget import ContextBudget
 from modex_agent.memory.cleanup import cleanup_session
 from modex_agent.memory.core.models import ArchiveEntry
 from modex_agent.memory.injection.archive import ArchiveInjectionConfig
@@ -44,7 +45,7 @@ class _PoolScopedRecordScope(RecordScope):
 class _FixedEstimator(TokenEstimator):
     def estimate_text(self, text: str) -> int:
         _ = text
-        return 10
+        return 300
 
 
 class _TypedArchiveGenerator(ArchiveGenerator):
@@ -210,9 +211,8 @@ async def test_sqlite_cleanup_commits_generated_archive_and_injects_context(
             session=system.layers.session,
             archive=system.layers.archive,
             context=context,
-            max_context_tokens=50,
+            budget=ContextBudget(max_context_tokens=50),
             max_token_ratio=0.8,
-            keep_ratio=0.5,
             token_estimator=_FixedEstimator(),
             archive_agent=_TypedArchiveGenerator(),
             pruned_manager=pruned,

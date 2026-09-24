@@ -462,6 +462,7 @@ class TestConcurrentCleanupSession:
         """
         from modex_agent.agents.summarizer.abc import ArchiveGenerator
         from modex_agent.memory.archive_models import ArchiveDocuments, ArchiveGenerationResult
+        from modex_agent.memory.budget import ContextBudget
         from modex_agent.memory.cleanup import cleanup_session
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
@@ -499,25 +500,26 @@ class TestConcurrentCleanupSession:
 
         mock_agent = _MockArchiveAgent()
 
-        # Run cleanup concurrently — max_context_tokens=70 so 280 tokens each triggers cleanup
+        # Run cleanup concurrently — 20 msgs × 104 tokens each clears the
+        # 2_000-token tail floor (prunes) and the 70-token trigger line
         results = await asyncio.gather(
             cleanup_session(
                 session=layer_set.session,
                 archive=layer_set.archive,
                 context=ctx_a,
-                max_context_tokens=70,
+                budget=ContextBudget(max_context_tokens=70),
                 max_token_ratio=0.8,
                 archive_agent=mock_agent,
-                token_estimator=FixedTokenEstimator(10),
+                token_estimator=FixedTokenEstimator(100),
             ),
             cleanup_session(
                 session=layer_set.session,
                 archive=layer_set.archive,
                 context=ctx_b,
-                max_context_tokens=70,
+                budget=ContextBudget(max_context_tokens=70),
                 max_token_ratio=0.8,
                 archive_agent=mock_agent,
-                token_estimator=FixedTokenEstimator(10),
+                token_estimator=FixedTokenEstimator(100),
             ),
         )
 
@@ -541,6 +543,7 @@ class TestConcurrentCleanupSession:
         """
         from modex_agent.agents.summarizer.abc import ArchiveGenerator
         from modex_agent.memory.archive_models import ArchiveDocuments, ArchiveGenerationResult
+        from modex_agent.memory.budget import ContextBudget
         from modex_agent.memory.cleanup import cleanup_session
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
@@ -579,19 +582,19 @@ class TestConcurrentCleanupSession:
                 session=layer_set.session,
                 archive=layer_set.archive,
                 context=ctx_a,
-                max_context_tokens=70,
+                budget=ContextBudget(max_context_tokens=70),
                 max_token_ratio=0.8,
                 archive_agent=_MockArchiveAgent(),
-                token_estimator=FixedTokenEstimator(10),
+                token_estimator=FixedTokenEstimator(100),
             ),
             cleanup_session(
                 session=layer_set.session,
                 archive=layer_set.archive,
                 context=ctx_b,
-                max_context_tokens=70,
+                budget=ContextBudget(max_context_tokens=70),
                 max_token_ratio=0.8,
                 archive_agent=_MockArchiveAgent(),
-                token_estimator=FixedTokenEstimator(10),
+                token_estimator=FixedTokenEstimator(100),
             ),
         )
 

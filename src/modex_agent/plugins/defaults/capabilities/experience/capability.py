@@ -122,8 +122,9 @@ class ExperienceCapability(Capability):
         ``WorkspacePaths.experience_dir``, keyed by the pool's ROOT agent.
         Pool config comes from conflict-checked arbitration; review config
         stays per-agent (``review_config_by_agent``). ``review_provider``
-        is the deployment's default LLM provider (may be ``None`` — the
-        reviewer skips fail-soft, §10.6).
+        is the deployment's default-model PIN (PRD D-6 — stably the
+        default model, never the triggering turn's choice; may be ``None``
+        — the reviewer skips fail-soft, §10.6).
         """
         if view.data_dir is None:
             raise ValueError(

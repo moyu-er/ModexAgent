@@ -297,7 +297,31 @@ async def assemble_declared_single_agent(
             ),
             ctx=component_ctx,
         )
-        governance = create_governance(memory_config) if infra.governance_enabled else None
+        # Memory governance wiring: both the system and the resolver must be
+        # present and paired (the resolver goes through the SAME
+        # MemorySystemContextManager load() resolves through — the
+        # correctness constraint for MemoryCompactionGovernance's context).
+        # A custom MEMORY_SYSTEM slot may produce a non-memory context
+        # manager; narrowing follows the native_core.py:551 precedent at
+        # this assembly seam.
+        memory_cm = (
+            context_manager
+            if isinstance(context_manager, MemorySystemContextManager)
+            else None
+        )
+        governance = (
+            create_governance(
+                memory_config,
+                memory_system=memory_system if memory_cm is not None else None,
+                memory_context_resolver=(
+                    (lambda actx: memory_cm.resolve_memory_context(actx.session.session_id))
+                    if memory_cm is not None
+                    else None
+                ),
+            )
+            if infra.governance_enabled
+            else None
+        )
         if result.instance.pipeline is not None:
             builder = result.instance.pipeline._turn_context_builder
             if builder is not None:

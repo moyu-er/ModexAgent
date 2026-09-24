@@ -54,9 +54,27 @@ class ModelInfo(BaseModel):
     ``TurnContextBuilder.assemble`` through ``load`` into the prompt
     pipeline's ``ModelInfoProvider``. Tools read it via
     ``ToolExecutionContext.model_info``.
+
+    Budget profile (per-model context compaction PRD §4.2): the context /
+    output limits ride the same per-turn pipe. ``None`` means "not declared
+    for this model" — consumers fall back to the static pool config via
+    ``modex_agent.memory.budget.resolve_effective_budget``, the sole
+    definition of that priority chain.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     model_name: str = ""
     capabilities: ModelCapabilities = Field(default_factory=ModelCapabilities)
+    context_limit: int | None = Field(
+        default=None,
+        ge=1,
+        description="Context-window limit of the active model (tokens); "
+        "None = undeclared, fall back to pool-level config",
+    )
+    max_output_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description="Output budget of the active model (tokens); "
+        "None = undeclared, fall back to pool-level config",
+    )

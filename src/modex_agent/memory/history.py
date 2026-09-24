@@ -4,20 +4,17 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from modex_agent.core import MessageHistory as _MessageHistory
+from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.message import ChatMessage
-from modex_agent.memory.core.layers import ArchiveMemoryManager, SessionMemoryManager
-from modex_agent.memory.hooks import MemoryHookRunner
-from modex_agent.memory.pruned.manager import PrunedManager
+from modex_agent.memory.budget import ContextBudget, resolve_effective_budget
+from modex_agent.memory.core.layers import SessionMemoryManager
+from modex_agent.memory.core.system import ContextManagedMemorySystem
 from modex_agent.memory.recorder import MemoryAppendRecorder
 from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
-
-if TYPE_CHECKING:
-    from modex_agent.agents.summarizer.abc import ArchiveGenerator
-    from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
 
 class ListMessageHistory(_MessageHistory):
@@ -71,28 +68,20 @@ class ScopedMessageHistory(_MessageHistory):
         self,
         manager: SessionMemoryManager,
         context: MemoryContext,
+        memory_system: ContextManagedMemorySystem,
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
         recorder: MemoryAppendRecorder | None = None,
-        archive_manager: ArchiveMemoryManager | None = None,
         cleanup_config: dict[str, int | float] | None = None,
-        pruned_manager: PrunedManager | None = None,
-        archive_agent: ArchiveGenerator | None = None,
-        archive_storage: DirArchiveStorage | None = None,
-        hook_runner: MemoryHookRunner | None = None,
         token_estimator: TokenEstimator | None = None,
-        compactor: Any | None = None,
+        model_info: ModelInfo | None = None,
     ) -> None:
         self._manager = manager
         self._context = context
+        self._memory_system = memory_system
         self._recorder = recorder
-        self._archive_manager = archive_manager
         self._cleanup_config: dict[str, int | float] = cleanup_config or {}
-        self._pruned_manager: PrunedManager | None = pruned_manager
-        self._archive_agent = archive_agent
-        self._archive_storage = archive_storage
-        self._hook_runner: MemoryHookRunner | None = hook_runner
         self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
-        self._compactor = compactor
+        self._model_info: ModelInfo | None = model_info
         self._cache: list[ChatMessage] | None = (
             [ChatMessage.coerce(message) for message in initial_messages]
             if initial_messages is not None
@@ -100,29 +89,30 @@ class ScopedMessageHistory(_MessageHistory):
         )
         self._cache_lock = asyncio.Lock()
 
+    def _effective_budget(self) -> ContextBudget:
+        """Resolve the budget this history's trigger judges against.
+
+        Per-turn ``model_info`` (bound at ``load()`` from the active model)
+        wins over the static pool ``cleanup_config``; the priority chain is
+        defined ONLY in ``memory/budget.py`` — never expanded here.
+        """
+        max_context_tokens = self._cleanup_config.get("max_context_tokens")
+        return resolve_effective_budget(
+            self._model_info,
+            int(max_context_tokens) if max_context_tokens is not None else None,
+            int(self._cleanup_config.get("max_output_tokens", 0)),
+        )
+
     async def _run_cleanup_if_triggered(self) -> bool:
         if not self._is_trigger_condition_met():
             return False
-        from modex_agent.memory.cleanup import cleanup_session
+        from modex_agent.memory.cleanup import CompactionSource
 
-        max_context_tokens = self._cleanup_config.get("max_context_tokens")
-        result = await cleanup_session(
-            session=self._manager,
-            archive=self._archive_manager,
-            context=self._context,
-            compactor=self._compactor,
-            max_context_tokens=(
-                int(max_context_tokens) if max_context_tokens is not None else None
-            ),
-            max_token_ratio=float(self._cleanup_config.get("max_token_ratio", 0.85)),
-            max_output_tokens=int(self._cleanup_config.get("max_output_tokens", 0)),
-            keep_ratio=float(self._cleanup_config.get("keep_ratio", 0.3)),
-            max_backups=int(self._cleanup_config.get("max_backups", 10)),
-            pruned_manager=self._pruned_manager,
-            archive_agent=self._archive_agent,
-            archive_storage=self._archive_storage,
-            hook_runner=self._hook_runner,
-            token_estimator=self._token_estimator,
+        budget = self._effective_budget()
+        result = await self._memory_system.compact_session(
+            self._context,
+            budget=budget,
+            source=CompactionSource.POST_APPEND,
         )
         return result.triggered
 
@@ -131,13 +121,13 @@ class ScopedMessageHistory(_MessageHistory):
             return True
         from modex_agent.memory.cleanup import check_cleanup_trigger
 
-        max_context_tokens = self._cleanup_config.get("max_context_tokens")
+        budget = self._effective_budget()
         reason = check_cleanup_trigger(
             self._cache,
             self._token_estimator,
-            int(max_context_tokens) if max_context_tokens is not None else None,
+            budget.max_context_tokens,
             float(self._cleanup_config.get("max_token_ratio", 0.85)),
-            int(self._cleanup_config.get("max_output_tokens", 0)),
+            budget.max_output_tokens,
         )
         return reason is not None
 
@@ -160,6 +150,15 @@ class ScopedMessageHistory(_MessageHistory):
         async with self._cache_lock:
             self._cache = None
 
+    async def refresh(self) -> None:
+        """Drop the read cache — the next ``to_list`` re-reads the store.
+
+        Called after an external writer (pre-LLM compaction governance)
+        compacted the session through ``memory_system.compact_session``,
+        bypassing this history's own append path.
+        """
+        await self._invalidate_cache()
+
     def _stamp_token_count(
         self, messages: Sequence[ChatMessage | dict[str, Any]]
     ) -> list[ChatMessage | dict[str, Any]]:
@@ -180,7 +179,7 @@ class ScopedMessageHistory(_MessageHistory):
             await self._recorder.record([stamped], self._context)
         compacted = await self._run_cleanup_if_triggered()
         if compacted:
-            await self._refresh_cache()
+            await self._invalidate_cache()
         else:
             self._append_to_cache([stamped])
 
@@ -193,7 +192,7 @@ class ScopedMessageHistory(_MessageHistory):
             await self._recorder.record(stamped, self._context)
         compacted = await self._run_cleanup_if_triggered()
         if compacted:
-            await self._refresh_cache()
+            await self._invalidate_cache()
         else:
             self._append_to_cache(stamped)
 

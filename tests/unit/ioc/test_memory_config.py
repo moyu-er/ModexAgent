@@ -39,8 +39,8 @@ class TestMemoryConfig:
         cfg = SessionConfig()
         assert cfg.max_context_tokens == 200000
         assert cfg.max_token_ratio == 0.85
-        assert cfg.keep_ratio == 0.3
         assert not hasattr(cfg, "max_messages")
+        assert not hasattr(cfg, "keep_ratio")
         assert not hasattr(cfg, "keep_ratio_for_messages")
         assert not hasattr(cfg, "keep_ratio_for_token")
 
@@ -49,8 +49,8 @@ class TestMemoryConfig:
         cfg = ShortTermConfig()
         assert cfg.max_context_tokens == 200000
         assert cfg.max_token_ratio == 0.85
-        assert cfg.keep_ratio == 0.3
         assert not hasattr(cfg, "max_messages")
+        assert not hasattr(cfg, "keep_ratio")
         assert not hasattr(cfg, "keep_ratio_for_messages")
         assert not hasattr(cfg, "keep_ratio_for_token")
 

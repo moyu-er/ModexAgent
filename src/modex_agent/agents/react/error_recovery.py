@@ -17,7 +17,9 @@ from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.llm_struct import is_context_overflow_text
 from modex_agent.core.message import ChatMessage
+from modex_agent.memory.cleanup import check_cleanup_trigger
 from modex_agent.memory.context_governance import ContextGovernance
+from modex_agent.memory.token_estimator import CharTokenEstimator
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -26,6 +28,20 @@ if TYPE_CHECKING:
 def is_context_overflow_error(exc: Exception) -> bool:
     """Return *True* if *exc* indicates a context-length / payload-too-large error."""
     return is_context_overflow_text(str(exc).lower())
+
+
+#: Estimator for the sameModel guard's pressure check (cached ``token_count``
+#: on the messages is preferred by ``check_cleanup_trigger``).
+_TOKEN_ESTIMATOR = CharTokenEstimator()
+
+#: "Fits comfortably" ratio for the sameModel guard. Semantics (and the
+#: default) come from ``SessionConfig.max_token_ratio`` — the persistent-
+#: compaction trigger threshold — so "within budget" here means exactly
+#: "the compaction faces would NOT have compacted these messages". This
+#: layer receives no config (the guard only reads the turn's ModelInfo),
+#: so the value mirrors the session-config default instead of being
+#: threaded through one.
+_CURRENT_BUDGET_RATIO = 0.85
 
 
 class ErrorRecoveryConfig(BaseModel):
@@ -106,6 +122,21 @@ async def attempt_recovery(
     *attempt_count* starts at 0 (first overflow → level 1, second → level 2).
     """
     if is_context_overflow_error(error) and attempt_count < config.max_context_overflow_retries:
+        # sameModel guard (pi-style, per-model compaction PRD §4.3.3): an
+        # overflow error can be a DELAYED report from a model that was just
+        # switched away from. If the messages sit comfortably inside the
+        # CURRENT model's effective budget (the same dual-condition pressure
+        # judgment the compaction faces use), trimming would destroy context
+        # for no reason — retry unchanged. FIRST ATTEMPT ONLY: by the second
+        # overflow the unchanged retry already happened once, so a low
+        # estimate must no longer shield the messages — trim unconditionally
+        # or retry exhaustion turns into a hard failure.
+        if attempt_count == 0 and _within_current_budget(messages, ctx):
+            return RecoveryAttempt(
+                should_retry=True,
+                trimmed_messages=None,
+                reason="overflow attributed to a different model; current budget sufficient",
+            )
         if attempt_count == 0:
             keep = config.emergency_keep_messages
         else:
@@ -122,3 +153,33 @@ async def attempt_recovery(
             reason=f"Context overflow detected, applied emergency compaction level {attempt_count + 1}",
         )
     return RecoveryAttempt(should_retry=False, reason="No recovery available")
+
+
+def _within_current_budget(
+    messages: list[ChatMessage],
+    ctx: AgentContext,
+) -> bool:
+    """Return True when the messages fit the current model's effective budget.
+
+    Budget resolution goes through the sole priority-chain resolver
+    (``memory.budget``) on the turn's ``model_info`` alone — this layer has
+    no config of its own. Pressure judgment reuses ``check_cleanup_trigger``
+    (the single threshold function) at the compaction ratio, so "fits" means
+    the compaction faces would NOT have compacted these messages for the
+    current model. No model profile (``None`` limit) means the guard cannot
+    judge — returns False and the existing trim levels apply.
+    """
+    from modex_agent.memory.budget import resolve_effective_budget
+
+    model_info = ctx.runtime.model_info if ctx.runtime is not None else None
+    budget = resolve_effective_budget(model_info, None, 0)
+    if budget.max_context_tokens is None:
+        return False
+    reason = check_cleanup_trigger(
+        messages,
+        _TOKEN_ESTIMATOR,
+        budget.max_context_tokens,
+        _CURRENT_BUDGET_RATIO,
+        budget.max_output_tokens,
+    )
+    return reason is None

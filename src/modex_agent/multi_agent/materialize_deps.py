@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from modex_agent.adapters.output import OutputAdapter
-    from modex_agent.core.llm import LLMProvider
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+    from modex_agent.core.provider import LLMProvider
     from modex_agent.core.session_id import SessionIdFactory
     from modex_agent.hook.notification import AgentNotificationService
     from modex_agent.memory.registry import MemoryStoreRegistry
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.pool import AgentPool
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.persistence.session_registry import SessionRegistry
+    from modex_agent.plugins.assembly.native_core import LlmDefaults
     from modex_agent.plugins.capability import CapabilitySupply
     from modex_agent.plugins.registry import ComponentRegistry
     from modex_agent.runtime.approval_decision import ApprovalAuditStore
@@ -45,6 +46,32 @@ if TYPE_CHECKING:
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_request import ReasoningEffort
+
+
+class AgentLLMPin:
+    """Assembly-resolved LLM override for ONE agent (D-5 explicit pin).
+
+    Carries the RESOLVED pair — the provider instance plus the
+    descriptor-level model profile — for an agent whose declared
+    ``AgentSpec.model`` reference the business assembly layer has already
+    resolved (including subtree inheritance: an undeclared descendant of a
+    pinned agent carries its nearest pinned ancestor's value). The
+    framework consumes these values blind; reference resolution against the
+    deployment's model table lives entirely in the business assembly layer
+    (architecture rule 5/9 — fail-fast there).
+    """
+
+    def __init__(self, provider: LLMProvider, defaults: LlmDefaults) -> None:
+        self.provider = provider
+        self.defaults = defaults
+
+    provider: LLMProvider
+    """The pinned provider — replaces both the pool default provider and any
+    ``llm_provider`` slot resolution for this agent."""
+
+    defaults: LlmDefaults
+    """The pinned model's descriptor profile (model / temperature /
+    max_output_tokens / reasoning_effort / model_info)."""
 
 
 class AgentMaterializeDeps:
@@ -91,6 +118,7 @@ class AgentMaterializeDeps:
         graph_context_resolver: Callable[[int], GraphContext[Any] | None] | None = None,
         capability_supply: Mapping[str, CapabilitySupply] = MappingProxyType({}),
         approval_audit: ApprovalAuditStore | None = None,
+        agent_llm_pins: Mapping[str, AgentLLMPin] = MappingProxyType({}),
     ) -> None:
         self.agent_factory = agent_factory
         self.pool = pool
@@ -131,6 +159,7 @@ class AgentMaterializeDeps:
         self.graph_context_resolver = graph_context_resolver
         self.capability_supply = capability_supply
         self.approval_audit = approval_audit
+        self.agent_llm_pins = agent_llm_pins
 
     safety: RuntimeSafetyPolicy | None
     approval_audit: ApprovalAuditStore | None
@@ -244,3 +273,12 @@ class AgentMaterializeDeps:
     ``PoolRuntimeDeps`` so capability consumers on the subagent path read
     one pool-wide face. Empty for framework tests / pools without
     capabilities."""
+    agent_llm_pins: Mapping[str, AgentLLMPin]
+    """Per-agent resolved LLM pins, keyed by agent name (D-5). The business
+    assembly layer resolves declared ``AgentSpec.model`` references here —
+    ONCE, fail-fast — including subtree inheritance (an undeclared
+    descendant carries its nearest pinned ancestor's entry).
+    ``AgentTemplate.materialize`` prefers an entry over both the pool
+    default provider and any ``llm_provider`` slot name. Empty = no pins:
+    every agent inherits the caller's model (the contractualized status
+    quo — byte-identical default path)."""

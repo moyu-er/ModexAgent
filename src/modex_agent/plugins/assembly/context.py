@@ -88,13 +88,14 @@ class SupplyInfra:
     StrategyAssembly field ``None``. Takes precedence over the strategy
     product."""
     default_llm_provider: LLMProvider | None = None
-    """The deployment-level default LLM provider (the orchestrator-resolved
-    bot-global default): threaded into the capability supply views so
-    LLM-driven supply-side background workers can build on it (the
-    ``experience`` reviewer is the bundled consumer — the retired
-    experience-specific ``experience_review_provider`` typed field died
-    with the supply-face convergence). ``None`` on the legacy roster road
-    (whose specs never reference such workers)."""
+    """The deployment-level default-model PIN for supply-side background
+    workers (PRD per-model-context-compaction D-6): a provider that serves
+    the bot-global default model and deliberately ignores any per-turn
+    model selection, so background maintenance (the ``experience``
+    reviewer is the bundled consumer) never inherits the triggering
+    turn's model. Threaded into the capability supply views; ``None`` on
+    deployments that assemble no such pin (the reviewer skips
+    fail-soft)."""
 
 
 @dataclass(frozen=True)

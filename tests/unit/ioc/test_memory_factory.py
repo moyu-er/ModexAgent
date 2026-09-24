@@ -29,14 +29,15 @@ class TestCreateMemoryCleanupConfig:
             session=SessionConfig(
                 max_context_tokens=50000,
                 max_token_ratio=0.7,
-                keep_ratio=0.2,
             ),
         )
         system = create_memory(cfg, _make_provider(), tmp_path)
         cleanup = system._cleanup_config
         assert cleanup["max_context_tokens"] == cfg.session.max_context_tokens
         assert cleanup["max_token_ratio"] == cfg.session.max_token_ratio
-        assert cleanup["keep_ratio"] == cfg.session.keep_ratio
+        # keep_ratio is gone: the tail keep budget is the engine's absolute
+        # clamp formula (PRD §4.4.7), not a configurable ratio.
+        assert "keep_ratio" not in cleanup
         assert "max_messages" not in cleanup
 
     def test_cleanup_config_present_by_default(self, tmp_path: Path) -> None:
@@ -46,7 +47,9 @@ class TestCreateMemoryCleanupConfig:
         cleanup = system._cleanup_config
         assert cleanup["max_context_tokens"] == cfg.session.max_context_tokens
         assert cleanup["max_token_ratio"] == cfg.session.max_token_ratio
-        assert cleanup["keep_ratio"] == cfg.session.keep_ratio
+        # keep_ratio is gone: the tail keep budget is the engine's absolute
+        # clamp formula (PRD §4.4.7), not a configurable ratio.
+        assert "keep_ratio" not in cleanup
         assert "max_messages" not in cleanup
 
     def test_no_compression_coordinator_attribute(self, tmp_path: Path) -> None:

@@ -76,10 +76,15 @@ def _scoped_history(tmp_path: Path) -> ScopedMessageHistory:
     what was *persisted*, proving resolution never mutated storage — only the
     LLM-bound copy changed.
     """
+    from modex_agent.memory.default_system import DefaultMemorySystem
+
     registry = DefaultMemoryStoreRegistry(tmp_path)
     layer_set = MemoryLayerFactory.single_user(registry=registry)
+    system = DefaultMemorySystem(layer_set=layer_set, store_registry=registry)
     ctx = MemoryContext(session_id="s1", user_id="u1")
-    return ScopedMessageHistory(manager=layer_set.session, context=ctx)
+    history = system.create_message_history(ctx)
+    assert isinstance(history, ScopedMessageHistory)
+    return history
 
 
 def _make_ctx(

@@ -165,8 +165,8 @@ class _FakeInjectableMemorySystem(MemorySystem):
 def _bot_project_system(
     registry: MemoryStoreRegistry,
     max_context_tokens: int = 700,
-    keep_ratio: float = 0.5,
     *,
+    per_message: int = 100,
     archive_agent: object | None = None,
     archive_storage: DirArchiveStorage | None = None,
 ) -> DefaultMemorySystem:
@@ -176,13 +176,16 @@ def _bot_project_system(
     can generate archive entries on the hot path.
 
     Token-driven: cleanup fires when non-system session tokens exceed
-    ``max_context_tokens * max_token_ratio`` (i.e. ``max_context_tokens * 0.8``).
+    ``max_context_tokens * max_token_ratio`` (i.e. ``max_context_tokens * 0.8``)
+    and prunes down to the absolute tail budget
+    ``clamp(usable × 0.25, 2000, 15000)`` — so the per-message token weight
+    must be large enough (default 100 + 4 overhead) for sessions to exceed
+    the 2_000-token tail floor.
     """
     layer_set = MemoryLayerFactory.single_user(registry=registry)
     cleanup_config: dict[str, int | float] = {
         "max_context_tokens": max_context_tokens,
         "max_token_ratio": 0.8,
-        "keep_ratio": keep_ratio,
     }
     return DefaultMemorySystem(
         layer_set=layer_set,
@@ -190,7 +193,7 @@ def _bot_project_system(
         cleanup_config=cleanup_config,
         archive_agent=archive_agent,  # type: ignore[arg-type]
         archive_storage=archive_storage,  # type: ignore[arg-type]
-        token_estimator=FixedTokenEstimator(10),
+        token_estimator=FixedTokenEstimator(per_message),
     )
 
 
@@ -227,23 +230,28 @@ async def test_multi_turn_triggers_cleanup_at_threshold(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_cleanup_respects_threshold(tmp_path: Path):
-    """After cleanup, adding a few more messages does not re-trigger until threshold is exceeded."""
+    """After cleanup, adding a few more messages does not re-trigger until threshold is exceeded.
+
+    Limit 10_000 keeps the tail budget (2_500 tokens ≈ 24 msgs) far BELOW the
+    8_000-token trigger line, so the post-cleanup session is stable — the
+    premise this test locks."""
     registry = DefaultMemoryStoreRegistry(tmp_path)
     mock = _MockArchiveGenerator()
     storage = DirArchiveStorage(tmp_path / "archives")
     system = _bot_project_system(
-        registry, max_context_tokens=140, archive_agent=mock, archive_storage=storage
+        registry, max_context_tokens=10_000, archive_agent=mock, archive_storage=storage
     )
     await system.initialize()
     ctx = _make_ctx("threshold")
 
     history = system.create_message_history(ctx)
-    for i in range(20):
+    for i in range(45):
         await history.append({"role": "user", "content": f"q{i}"})
         await history.append({"role": "assistant", "content": f"a{i}"})
 
     compressed_count = len(await system.get_history(ctx))
     archive_count_1 = len(await storage.list_archives())
+    assert archive_count_1 > 0, "seeding past the line must have compacted"
 
     # Add only 2 more turns (4 messages)
     for i in range(2):
@@ -684,7 +692,11 @@ async def test_three_tier_memory_cascade_preserves_tool_context(tmp_path: Path):
     )
     storage = DirArchiveStorage(tmp_path / "archives")
     system = _bot_project_system(
-        registry, max_context_tokens=70, archive_agent=mock, archive_storage=storage
+        registry,
+        max_context_tokens=70,
+        per_message=300,  # 16 msgs ≈ 4_864 tokens: crosses the 2_000 tail floor
+        archive_agent=mock,
+        archive_storage=storage,
     )
     await system.initialize()
     ctx = _make_ctx("three-tier")
@@ -750,7 +762,11 @@ async def test_archive_entries_are_meaningful_for_dream_engine(tmp_path: Path):
     )
     storage = DirArchiveStorage(tmp_path / "archives")
     system = _bot_project_system(
-        registry, max_context_tokens=42, archive_agent=mock, archive_storage=storage
+        registry,
+        max_context_tokens=42,
+        per_message=300,  # 16 msgs ≈ 4_864 tokens: crosses the 2_000 tail floor
+        archive_agent=mock,
+        archive_storage=storage,
     )
     await system.initialize()
     ctx = _make_ctx("dream-input")

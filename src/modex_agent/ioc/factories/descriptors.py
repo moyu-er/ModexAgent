@@ -14,9 +14,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from modex_agent.core.provider import LLMProvider
     from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
 
 from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.ioc.factories.memory import build_session_compactor
 from modex_agent.memory.injection import RestrictedInjectionPolicy
 from modex_agent.memory.layers.config import (
     MemoryLayerConfigSet,
@@ -38,8 +40,15 @@ def build_session_only_memory(
     fork_context_spec: ForkContextSpec | None = None,
     roles: list[str] | None = None,
     store_registry: MemoryStoreRegistry | None = None,
+    llm_provider: LLMProvider | None = None,
 ) -> MemorySystemContextManager:
-    """Create a session-only memory system for a subagent."""
+    """Create a session-only memory system for a subagent.
+
+    ``llm_provider`` is the subagent's EFFECTIVE provider (assembly-resolved
+    pin or the default-model pin): with it and ``cfg.compact`` enabled, the
+    session gets a real compactor, so subagent cleanup produces an LLM
+    summary instead of degrading to tail-only.
+    """
     layer_config = MemoryLayerConfigSet(
         session=SessionMemoryConfig(),
         archive=None,
@@ -49,10 +58,11 @@ def build_session_only_memory(
     cleanup_config: dict[str, int | float] | None = None
     if cfg is not None:
         st = cfg.session
+        # The tail keep budget is the engine's absolute formula
+        # clamp(usable×0.25, 2k..15k) (PRD §4.4.7) — deliberately not a knob.
         cleanup_config = {
             "max_context_tokens": st.max_context_tokens,
             "max_token_ratio": st.max_token_ratio,
-            "keep_ratio": st.keep_ratio,
             "max_output_tokens": st.max_output_tokens,
         }
 
@@ -63,6 +73,7 @@ def build_session_only_memory(
         cleanup_config=cleanup_config,
         pruned_manager=pruned_manager,
         store_registry=store_registry,
+        compactor=build_session_compactor(cfg, llm_provider) if cfg is not None else None,
     )
 
     return MemorySystemContextManager(

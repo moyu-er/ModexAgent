@@ -210,7 +210,7 @@ class AgentTemplate:
         snapshot = DelegationSnapshot(
             workspace_root=root, settings=settings, depth=self._declared_depth(deps),
         )
-        if strategy_name_of(self.spec.execution_strategy) == ExecutionStrategyKind.EXTERNAL.value:
+        if strategy_name_of(self.spec.execution_strategy) == ExecutionStrategyKind.EXTERNAL:
             instance = await self._materialize_external(parent_session, invocation_id, deps)
         else:
             instance = await self._materialize_native(parent_session, invocation_id, deps, snapshot, settings)
@@ -424,6 +424,47 @@ class AgentTemplate:
                 fork_max_messages=self.spec.fork_max_messages,
             )
 
+        # ── LLM provider + descriptor model profile ──
+        # Resolved BEFORE the memory build so the subagent's session memory
+        # gets a compactor backed by its EFFECTIVE provider (explicit pin,
+        # or the default-model pin — ADR-0050 D-5 re-based). Single
+        # precedence chain, no agent-specific branches: an assembly-resolved
+        # pin beats the declared slot name, which beats the pool default
+        # (deps.llm_provider, the default-model pinned provider).
+        # Ticket 04: component factories resolve against the per-agent
+        # full-chain context derived from the legacy AssemblyContext view.
+        from modex_agent.plugins.assembly.context import agent_context_chain
+        from modex_agent.plugins.assembly.native_core import (
+            LlmDefaults,
+            NativeAssemblyInputs,
+            _resolve_single,
+            assemble_native_agent,
+        )
+
+        component_chain = agent_context_chain(
+            component_ctx,
+            spec=assembly_spec,
+            parent_session=parent_session,
+            invocation_id=invocation_id,
+        )
+        llm_pin = deps.agent_llm_pins.get(assembly_spec.agent_name)
+        llm_provider: LLMProvider | None
+        if llm_pin is not None:
+            llm_provider = llm_pin.provider
+        elif (
+            deps.llm_provider is not None
+            and assembly_spec.llm_provider == deps.default_llm_provider
+        ):
+            llm_provider = deps.llm_provider
+        else:
+            llm_provider = await _resolve_single(
+                component_ctx.registry,
+                ComponentSlot.LLM_PROVIDER,
+                assembly_spec.llm_provider,
+                assembly_spec.llm_provider_config,
+                component_chain,
+            )
+
         subagent_ctx = build_session_only_memory(
             cfg=self.memory,
             workspace=memory_workspace,
@@ -435,6 +476,7 @@ class AgentTemplate:
             fork_context_spec=fork_context_spec,
             roles=list(self.spec.roles),
             store_registry=deps.memory_store_registry,
+            llm_provider=llm_provider,
         )
 
         # Post-cleanup reorientation (``TodoReorientationHook``) is NOT
@@ -471,39 +513,17 @@ class AgentTemplate:
         # the subagent env template (self + declared parent pool map,
         # SUBAGENT comm kind) from the context chain.
 
-        # deps.llm_provider is the deps-assembly resolution of the NAME
-        # deps.default_llm_provider: default-named subs reuse the instance,
-        # per-agent override names resolve here (once, C1).
-        # Ticket 04: component factories resolve against the per-agent
-        # full-chain context derived from the legacy AssemblyContext view.
-        from modex_agent.plugins.assembly.context import agent_context_chain
-        from modex_agent.plugins.assembly.native_core import (
-            LlmDefaults,
-            NativeAssemblyInputs,
-            _resolve_single,
-            assemble_native_agent,
-        )
-
-        component_chain = agent_context_chain(
-            component_ctx,
-            spec=assembly_spec,
-            parent_session=parent_session,
-            invocation_id=invocation_id,
-        )
-        llm_provider: LLMProvider | None
-        if (
-            deps.llm_provider is not None
-            and assembly_spec.llm_provider == deps.default_llm_provider
-        ):
-            llm_provider = deps.llm_provider
-        else:
-            llm_provider = await _resolve_single(
-                component_ctx.registry,
-                ComponentSlot.LLM_PROVIDER,
-                assembly_spec.llm_provider,
-                assembly_spec.llm_provider_config,
-                component_chain,
+        llm_defaults = (
+            llm_pin.defaults
+            if llm_pin is not None
+            else LlmDefaults(
+                model=deps.llm_model,
+                temperature=deps.llm_temperature,
+                max_output_tokens=deps.llm_max_output_tokens,
+                reasoning_effort=deps.llm_reasoning_effort,
+                model_info=deps.llm_model_info,
             )
+        )
 
         result = await assemble_native_agent(
             assembly_spec,
@@ -511,13 +531,7 @@ class AgentTemplate:
             NativeAssemblyInputs(
                 agent_factory=deps.agent_factory,
                 broker=deps.broker,
-                llm_defaults=LlmDefaults(
-                    model=deps.llm_model,
-                    temperature=deps.llm_temperature,
-                    max_output_tokens=deps.llm_max_output_tokens,
-                    reasoning_effort=deps.llm_reasoning_effort,
-                    model_info=deps.llm_model_info,
-                ),
+                llm_defaults=llm_defaults,
                 pool=deps.pool,
                 context_manager=context_manager_for_create,
                 memory_system=subagent_ctx.memory_system,
@@ -597,7 +611,7 @@ class AgentTemplate:
         from modex_agent.sandbox.types import EnforcementLevel
 
         builder = instance.pipeline._turn_runner.turn_context_builder if instance.pipeline else None
-        native = strategy_name_of(self.spec.execution_strategy) != ExecutionStrategyKind.EXTERNAL.value
+        native = strategy_name_of(self.spec.execution_strategy) != ExecutionStrategyKind.EXTERNAL
         checks_run = native and builder is not None
         resolved = await resolved_substrate(instance.pipeline.interceptor_chain) if checks_run and instance.pipeline else None
         limits = (

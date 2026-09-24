@@ -52,6 +52,7 @@ from modex_agent.scope.seam import ScopeGenerationTracker, spec_hash
 from modex_agent.scope.spec import (
     AgentSpec,
     MemoryDeclaration,
+    ModelRef,
     PoolSpec,
     ScopeKind,
     ScopeSpec,
@@ -88,6 +89,7 @@ __all__ = [
     "HookOrigin",
     "MemoryDeclaration",
     "MemoryPreset",
+    "ModelRef",
     "PoolSpec",
     "PoolOverlay",
     "PositionDefaults",

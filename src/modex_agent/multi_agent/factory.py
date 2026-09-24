@@ -302,8 +302,26 @@ class DefaultAgentFactory(AgentFactory):
         subagent_governance: Any | None = None
         if descriptor.comm_kind == AgentCommKind.SUBAGENT:
             from modex_agent.ioc.factories.governance import create_subagent_governance
+            from modex_agent.memory.system import MemorySystemContextManager
 
-            subagent_governance = create_subagent_governance(descriptor.memory_config)
+            # A subagent's turn runner loads through THIS context manager
+            # (template materialization builds one MemorySystemContextManager
+            # per subagent; turn_runner.py never overrides a subagent's CM
+            # with the pool's), so the memory-compaction governance binds to
+            # it: same MemoryContext instances load() builds — the T3 hard
+            # constraint. Non-memory CMs keep the repair-only chain
+            # (narrowing precedent: native_core.py:551).
+            memory_cm = ctx_mgr if isinstance(ctx_mgr, MemorySystemContextManager) else None
+            memory_system = memory_cm.memory_system if memory_cm is not None else None
+            subagent_governance = create_subagent_governance(
+                descriptor.memory_config,
+                memory_system=memory_system,
+                memory_context_resolver=(
+                    (lambda actx: memory_cm.resolve_memory_context(actx.session.session_id))
+                    if memory_system is not None
+                    else None
+                ),
+            )
 
         from modex_agent.messaging.broker_bridge import (
             BrokerInputAdapter,

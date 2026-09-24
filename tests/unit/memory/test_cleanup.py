@@ -13,9 +13,11 @@ from modex_agent.agents.summarizer.outcomes import CompactionOutcome
 from modex_agent.agents.summarizer.session_compactor import SessionCompactorAgent
 from modex_agent.core.message import ChatMessage
 from modex_agent.memory.archive_models import ArchiveDocuments, ArchiveGenerationResult
+from modex_agent.memory.budget import ContextBudget
 from modex_agent.memory.cleanup import (
     CleanupResult,
     _compute_boundary,
+    _tail_keep_budget,
     check_cleanup_trigger,
     cleanup_session,
 )
@@ -209,6 +211,61 @@ class TestCheckTriggerTokenOnly:
         assert check_cleanup_trigger(
             msgs, est, max_context_tokens=200000, max_token_ratio=0.85, max_output_tokens=300000
         ) == CompressionReason.TOKEN_PRESSURE
+
+
+class TestCheckTriggerDualCondition:
+    """Second (absolute-reserve) trigger condition — kimi-style dual trigger.
+
+    Fires when EITHER ``pressure > effective * ratio`` OR
+    ``pressure + reserve >= effective``. ``reserve_tokens=None`` auto-derives
+    ``min(20_000, effective // 10)``; ``0`` explicitly disables the second
+    condition.
+    """
+
+    def test_absolute_fires_before_ratio_with_explicit_reserve(self) -> None:
+        """Reserve 500 on a 2000 window: the absolute line (1500) sits below
+        the 0.85 ratio line (1700) — pressure 1600 fires only absolutely."""
+        msgs = [{"role": "user", "content": "x", "token_count": 100}] * 16  # 1600
+        est = _FixedEstimator(10)
+
+        assert check_cleanup_trigger(
+            msgs, est, max_context_tokens=2000, max_token_ratio=0.85, reserve_tokens=500
+        ) == CompressionReason.TOKEN_PRESSURE
+        # Same pressure with the second condition disabled → quiet.
+        assert check_cleanup_trigger(
+            msgs, est, max_context_tokens=2000, max_token_ratio=0.85, reserve_tokens=0
+        ) is None
+        # Just under the absolute line → quiet with a sub-ratio pressure.
+        lower = [{"role": "user", "content": "x", "token_count": 100}] * 14  # 1400
+        assert check_cleanup_trigger(
+            lower, est, max_context_tokens=2000, max_token_ratio=0.85, reserve_tokens=500
+        ) is None
+
+    def test_auto_reserve_is_tenth_of_effective_window(self) -> None:
+        """Auto reserve on a 100k window = min(20k, 10k) = 10k. With a loose
+        ratio (0.95 → line 95k), pressure 90.5k fires only absolutely."""
+        msgs = [{"role": "user", "content": "x", "token_count": 500}] * 181  # 90_500
+        est = _FixedEstimator(10)
+
+        assert check_cleanup_trigger(
+            msgs, est, max_context_tokens=100_000, max_token_ratio=0.95
+        ) == CompressionReason.TOKEN_PRESSURE
+        assert check_cleanup_trigger(
+            msgs, est, max_context_tokens=100_000, max_token_ratio=0.95, reserve_tokens=0
+        ) is None
+
+    def test_auto_reserve_caps_at_20k(self) -> None:
+        """Auto reserve on a 500k window = min(20k, 50k) = 20k: pressure
+        481k + 20k ≥ 500k fires although the 0.97 ratio line (485k) holds."""
+        msgs = [{"role": "user", "content": "x", "token_count": 1000}] * 481  # 481_000
+        est = _FixedEstimator(10)
+
+        assert check_cleanup_trigger(
+            msgs, est, max_context_tokens=500_000, max_token_ratio=0.97
+        ) == CompressionReason.TOKEN_PRESSURE
+        assert check_cleanup_trigger(
+            msgs, est, max_context_tokens=500_000, max_token_ratio=0.97, reserve_tokens=0
+        ) is None
     """Boundary keeps a tail whose token sum stays within the keep target."""
 
     def test_keeps_tail_within_token_target(self) -> None:
@@ -246,6 +303,55 @@ class TestCheckTriggerTokenOnly:
         assert len(keep) == 1
 
 
+class TestTailKeepBudget:
+    """Tail keep budget is absolute (PRD §4.4.7): clamp(usable×0.25, 2k..15k).
+
+    The tail is an absolute token budget, not a ratio of the window.
+    """
+
+    def test_small_window_floors_at_2000(self) -> None:
+        assert _tail_keep_budget(ContextBudget(max_context_tokens=4_000)) == 2_000
+
+    def test_large_window_clamps_at_15000(self) -> None:
+        assert _tail_keep_budget(ContextBudget(max_context_tokens=200_000)) == 15_000
+
+    def test_mid_window_is_a_quarter_of_usable(self) -> None:
+        # usable = 40_000 − 8_000 = 32_000 → ×0.25 = 8_000 (within clamp).
+        budget = ContextBudget(max_context_tokens=40_000, max_output_tokens=8_000)
+        assert _tail_keep_budget(budget) == 8_000
+
+    @pytest.mark.asyncio
+    async def test_kept_tail_tokens_follow_formula_under_small_limit(
+        self, registry: MemoryStoreRegistry
+    ) -> None:
+        """Integration: the kept tail's token sum lands within one message of
+        the clamp-formula budget (limit 10_000, usable 10_000 → tail 2_500)."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx("tail-budget")
+        session = layer_set.session
+        # 90 messages × 104 tokens (100 estimate + 4 overhead) = 9_360
+        # > 0.8 × 10_000 line → triggers; tail budget 2_500 → keep 24 msgs.
+        await _add_messages(session, context, [_user_msg(f"u-{i}") for i in range(90)])
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            budget=ContextBudget(max_context_tokens=10_000),
+            max_token_ratio=0.8,
+            token_estimator=_FixedEstimator(100),
+        )
+
+        assert result.triggered is True
+        assert result.messages_pruned == 66
+        assert result.messages_kept == 24
+        remaining = await session.get_all_messages(context)
+        # Messages were seeded via the store (no cached token_count), so
+        # recompute with the same estimator the engine used.
+        kept_tokens = sum(_FixedEstimator(100).estimate_message(m.to_dict()) for m in remaining)
+        assert 2_500 - 104 < kept_tokens <= 2_500
+
+
 class TestNoTrigger:
     """cleanup_session should not trigger when session is under limits."""
 
@@ -264,9 +370,8 @@ class TestNoTrigger:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=8000,
+            budget=ContextBudget(max_context_tokens=8000),
             max_token_ratio=0.8,
-            keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
         )
 
@@ -297,9 +402,8 @@ class TestCleanupHookTriggered:
             session=session,
             archive=None,
             context=context,
-            max_context_tokens=100,
+            budget=ContextBudget(max_context_tokens=100),
             max_token_ratio=0.8,
-            keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
             hook_runner=runner,
         )
@@ -325,9 +429,8 @@ class TestCleanupHookTriggered:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=8000,
+            budget=ContextBudget(max_context_tokens=8000),
             max_token_ratio=0.8,
-            keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
             hook_runner=runner,
         )
@@ -344,7 +447,9 @@ class TestCleanupHookTriggered:
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
-        await _add_messages(session, context, [_user_msg(f"u-{i}") for i in range(10)])
+        # 90 msgs × 104 tokens > 0.8 × 10_000 line → triggers AND prunes
+        # (tail budget 2_500), so the archive agent really receives messages.
+        await _add_messages(session, context, [_user_msg(f"u-{i}") for i in range(90)])
 
         order: list[str] = []
 
@@ -369,10 +474,9 @@ class TestCleanupHookTriggered:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,
+            budget=ContextBudget(max_context_tokens=10_000),
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             hook_runner=runner,
             archive_agent=_OrderArchiveAgent(),
             archive_storage=storage,
@@ -398,9 +502,8 @@ class TestCleanupHookTriggered:
             session=session,
             archive=None,
             context=context,
-            max_context_tokens=100,
+            budget=ContextBudget(max_context_tokens=100),
             max_token_ratio=0.8,
-            keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
             hook_runner=runner,
         )
@@ -465,9 +568,8 @@ class TestCleanupHookTruthTable:
             result = await cleanup_session(
                 session=session,
                 archive=layer_set.archive,
-                max_context_tokens=8000,
+                budget=ContextBudget(max_context_tokens=8000),
                 max_token_ratio=0.8,
-                keep_ratio=0.5,
                 **common,
             )
             assert result.triggered is False
@@ -488,9 +590,8 @@ class TestCleanupHookTruthTable:
             result = await cleanup_session(
                 session=session,
                 archive=None,
-                max_context_tokens=100,
+                budget=ContextBudget(max_context_tokens=100),
                 max_token_ratio=0.8,
-                keep_ratio=0.5,
                 **common,
             )
             assert result.triggered is True
@@ -506,18 +607,31 @@ class TestCleanupHookTruthTable:
         if scenario == "no_safe_boundary":
             layer_set = _make_layer_set(registry)
             session = layer_set.session
+            # Tail budget floors at 2_000 tokens. One assistant call with 25
+            # tool calls followed by their 25 results: the tail walk stops
+            # inside the result run and every kept result's owner is pruned,
+            # so the boundary evicts forward through the whole run → no safe
+            # boundary exists.
+            multi_call = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {"id": f"c{i}", "type": "function",
+                     "function": {"name": "tool_a", "arguments": "{}"}}
+                    for i in range(25)
+                ],
+            }
             await _add_messages(session, context, [
                 _user_msg("question"),
-                _tool_call_msg("c1", "tool_a"),
-                _tool_result_msg("c1", "result"),
+                multi_call,
+                *[_tool_result_msg(f"c{i}", "result") for i in range(25)],
             ])
             result = await cleanup_session(
                 session=session,
                 archive=None,
-                max_context_tokens=10,
+                budget=ContextBudget(max_context_tokens=3_000),
                 max_token_ratio=0.8,
-                keep_ratio=0.05,
-                **common,
+                **{**common, "token_estimator": _FixedEstimator(100)},
             )
             assert result.triggered is True
             assert result.messages_pruned == 0
@@ -538,9 +652,8 @@ class TestCleanupHookTruthTable:
             result = await cleanup_session(
                 session=conflict_session,
                 archive=None,
-                max_context_tokens=50,
+                budget=ContextBudget(max_context_tokens=50),
                 max_token_ratio=0.8,
-                keep_ratio=0.5,
                 **common,
             )
             assert result.triggered is True
@@ -555,15 +668,14 @@ class TestCleanupHookTruthTable:
             layer_set = _make_layer_set(registry)
             session = layer_set.session
             await _add_messages(session, context, [
-                _user_msg(f"u-{i}") for i in range(10)
+                _user_msg(f"u-{i}") for i in range(90)
             ])
             result = await cleanup_session(
                 session=session,
                 archive=None,
-                max_context_tokens=50,
+                budget=ContextBudget(max_context_tokens=10_000),
                 max_token_ratio=0.8,
-                keep_ratio=0.5,
-                **common,
+                **{**common, "token_estimator": _FixedEstimator(100)},
             )
             assert result.triggered is True
             assert result.messages_pruned > 0
@@ -603,9 +715,8 @@ class TestCleanupHookResilience:
             session=session,
             archive=None,
             context=context,
-            max_context_tokens=100,
+            budget=ContextBudget(max_context_tokens=100),
             max_token_ratio=0.8,
-            keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
             hook_runner=runner,
         )
@@ -636,7 +747,7 @@ class TestCleanupHookLateRegistration:
         system = DefaultMemorySystem(
             layer_set=layer_set,
             store_registry=registry,
-            cleanup_config={"max_context_tokens": 50, "max_token_ratio": 0.8, "keep_ratio": 0.5},
+            cleanup_config={"max_context_tokens": 50, "max_token_ratio": 0.8},
             token_estimator=_FixedEstimator(10),
         )
 
@@ -671,9 +782,10 @@ class TestTriggerAndCleanup:
         context = _ctx()
         session = layer_set.session
 
-        # Add 20 messages = 200 tokens, max_context_tokens=100 -> line 80 -> triggers
+        # 90 msgs × 104 tokens = 9_360 > 0.8 × 10_000 line → triggers; the
+        # absolute tail budget (2_500 tokens) keeps only ~24 messages.
         msgs = []
-        for i in range(10):
+        for i in range(45):
             msgs.append(_user_msg(f"user-{i}"))
             msgs.append(_assistant_msg(f"asst-{i}"))
         await _add_messages(session, context, msgs)
@@ -682,10 +794,9 @@ class TestTriggerAndCleanup:
             session=session,
             archive=None,
             context=context,
-            max_context_tokens=100,
+            budget=ContextBudget(max_context_tokens=10_000),
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
         )
 
         assert result.triggered is True
@@ -696,7 +807,7 @@ class TestTriggerAndCleanup:
         # Verify session was actually pruned
         remaining = await session.get_all_messages(context)
         assert len(remaining) == result.messages_kept
-        assert len(remaining) < 20
+        assert len(remaining) < 90
 
     @pytest.mark.asyncio
     async def test_trigger_when_over_token_limit(self, registry: MemoryStoreRegistry) -> None:
@@ -704,9 +815,9 @@ class TestTriggerAndCleanup:
         context = _ctx()
         session = layer_set.session
 
-        # Add messages to trigger token pressure: 20 msgs = 200 tokens, line 80 -> triggers
+        # 90 msgs × 104 tokens = 9_360 > 8_000 line → triggers
         msgs = []
-        for _i in range(20):
+        for _i in range(90):
             msgs.append(_user_msg("x" * 500))
         await _add_messages(session, context, msgs)
 
@@ -714,10 +825,9 @@ class TestTriggerAndCleanup:
             session=session,
             archive=None,
             context=context,
-            max_context_tokens=100,  # line 80 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
         )
 
         assert result.triggered is True
@@ -733,9 +843,9 @@ class TestCleanupAlwaysExecutes:
         context = _ctx()
         session = layer_set.session
 
-        # 10 messages = 100 tokens, max_context_tokens=50 -> line 40 -> triggered
+        # 90 msgs × 104 tokens = 9_360 > 8_000 line → triggered
         msgs = []
-        for i in range(5):
+        for i in range(45):
             msgs.append(_user_msg(f"u-{i}"))
             msgs.append(_assistant_msg(f"a-{i}"))
         await _add_messages(session, context, msgs)
@@ -744,16 +854,15 @@ class TestCleanupAlwaysExecutes:
             session=session,
             archive=None,  # No archive
             context=context,
-            max_context_tokens=50,
+            budget=ContextBudget(max_context_tokens=10_000),
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
         )
 
         assert result.triggered is True
         # Session was cleaned even without archive
         remaining = await session.get_all_messages(context)
-        assert len(remaining) < 10
+        assert len(remaining) < 90
         assert len(remaining) > 0
 
 
@@ -787,9 +896,8 @@ class TestCleanupRemovesInvalidToolChains:
             session=session,
             archive=None,
             context=context,
-            max_context_tokens=50,
+            budget=ContextBudget(max_context_tokens=50),
             max_token_ratio=0.8,
-            keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
         )
 
@@ -807,34 +915,28 @@ class TestKeepBoundary:
 
     @pytest.mark.asyncio
     async def test_never_splits_tool_chain(self, registry: MemoryStoreRegistry) -> None:
-        """Boundary should not split an assistant tool_call from its tool result."""
+        """Boundary should not split an assistant tool_call from its tool result.
+
+        86 msgs × 104 tokens > 8_000 line; tail budget 2_500 keeps the last
+        ~24 messages — the tool chain sits inside the keep region and must
+        arrive there whole."""
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
 
-        # Build a sequence where the boundary would fall inside a tool chain
-        msgs = [
-            _user_msg("1"),
-            _assistant_msg("reply-1"),
-            _user_msg("2"),
-            _assistant_msg("reply-2"),
-            _user_msg("3"),
-            _assistant_msg("reply-3"),
-            _user_msg("4"),
-            _tool_call_msg("call_1", "tool_a"),  # tool chain start
-            _tool_result_msg("call_1", "result"),  # tool chain end
-            _assistant_msg("final"),
-        ]
+        msgs = [_user_msg(f"u-{i}") for i in range(80)]
+        msgs.append(_tool_call_msg("call_1", "tool_a"))  # tool chain start
+        msgs.append(_tool_result_msg("call_1", "result"))  # tool chain end
+        msgs.extend(_user_msg(f"tail-{i}") for i in range(4))
         await _add_messages(session, context, msgs)
 
         result = await cleanup_session(
             session=session,
             archive=None,
             context=context,
-            max_context_tokens=100,  # 10 msgs = 100 tokens, line 80 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),
             max_token_ratio=0.8,
-            keep_ratio=0.4,  # keep_target_tokens = 40 -> keep ~4 msgs
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
         )
 
         assert result.triggered is True
@@ -872,16 +974,15 @@ class TestKeepBoundary:
 
         result = await cleanup_session(
             session=session, archive=None, context=context,
-            max_context_tokens=280,  # 101 msgs ~= 1414 tokens (14/msg: 10 estimate + 4 overhead,
-            # recomputed since _add_messages bypasses append-stamping), line 224 -> triggers
-            max_token_ratio=0.8, keep_ratio=0.5,  # keep_target_tokens = 140 -> keep ~10 msgs
-            token_estimator=_FixedEstimator(10),
+            budget=ContextBudget(max_context_tokens=10_000),  # 101 msgs ≈ 10_504 tokens (104/msg), line 8_000 -> triggers
+            max_token_ratio=0.8,  # tail keep budget = clamp(10_000×0.25, 2k..15k) = 2_500
+            token_estimator=_FixedEstimator(100),
         )
 
         assert result.triggered is True
         assert result.messages_pruned > 0, (
             f"Must prune messages when over token limit (total={len(msgs)} msgs, "
-            f"max_context_tokens=280), but pruned=0"
+            f"max_context_tokens=10_000), but pruned=0"
         )
         remaining = await session.get_all_messages(context)
         assert len(remaining) < len(msgs), (
@@ -896,31 +997,28 @@ class TestKeepToolChainIntegrity:
     async def test_tool_chain_in_keep_region_not_split(
         self, registry: MemoryStoreRegistry,
     ) -> None:
-        """When keep boundary falls on a tool chain, the chain stays intact."""
+        """A chain sitting at the keep boundary is evicted WHOLE into pruned.
+
+        60 users + [tool_call, tool_result] + 24 users: the tail budget
+        (2_500 tokens ≈ 24 msgs) ends exactly at the chain, so the whole
+        chain must land in pruned — never a kept orphan result."""
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
 
-        msgs = [
-            _user_msg("1"),
-            _assistant_msg("r1"),
-            _user_msg("2"),
-            _assistant_msg("r2"),
-            _user_msg("3"),
-            _tool_call_msg("call_1"),     # tool chain
-            _tool_result_msg("call_1"),
-            _assistant_msg("final"),
-        ]
+        msgs = [_user_msg(f"u-{i}") for i in range(60)]
+        msgs.append(_tool_call_msg("call_1"))     # tool chain
+        msgs.append(_tool_result_msg("call_1"))
+        msgs.extend(_user_msg(f"tail-{i}") for i in range(24))
         await _add_messages(session, context, msgs)
 
         result = await cleanup_session(
             session=session,
             archive=None,
             context=context,
-            max_context_tokens=80,  # 8 msgs = 80 tokens, line 64 -> triggers
-            max_token_ratio=0.8,
-            keep_ratio=0.4,  # keep_target_tokens = 32 -> keep 3 (tool chain intact)
-            token_estimator=_FixedEstimator(10),
+            budget=ContextBudget(max_context_tokens=10_000),  # 86 msgs ≈ 8_944 tokens, line 8_000 -> triggers
+            max_token_ratio=0.8,  # tail keep budget 2_500 -> keep the last 24 users
+            token_estimator=_FixedEstimator(100),
         )
 
         assert result.triggered is True
@@ -945,7 +1043,7 @@ class TestToolChainDominanceDoesNotOverPrune:
     """Regression: sessions dominated by tool chains must not over-prune.
 
     When most of the session is tool chains (1 user + 50 tc/tool pairs + 1 user),
-    _adjust_boundary_for_first_user must not walk all the way to the last user,
+    the boundary adjustment must not walk all the way to the last user,
     keeping only 1 message. This was the MiniMax 400 error root cause.
     """
 
@@ -953,7 +1051,8 @@ class TestToolChainDominanceDoesNotOverPrune:
     async def test_tool_chain_heavy_session_keeps_reasonable_count(
         self, registry: MemoryStoreRegistry,
     ) -> None:
-        """1 user + 50 tool pairs + 1 new user: must keep ~40%, not 1."""
+        """1 user + 50 tool pairs + 1 new user: must keep a tail-sized batch,
+        not 1 (102 msgs × 104 tokens = 10_608 > 8_000 line; tail 2_500)."""
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
@@ -970,37 +1069,32 @@ class TestToolChainDominanceDoesNotOverPrune:
             session=session,
             archive=None,
             context=context,
-            max_context_tokens=1000,  # 102 msgs = 1020 tokens, line 800 -> triggers
-            max_token_ratio=0.8,
-            keep_ratio=0.4,  # keep_target_tokens = 400 -> keep ~40 msgs
-            token_estimator=_FixedEstimator(10),
+            budget=ContextBudget(max_context_tokens=10_000),
+            max_token_ratio=0.8,  # tail keep budget 2_500 -> keep ~23 msgs
+            token_estimator=_FixedEstimator(100),
         )
 
         assert result.triggered is True
-        assert result.messages_kept > 1, (
-            f"kept={result.messages_kept} but expected significantly more than 1. "
-            f"total={len(msgs)}, keep_ratio=0.4"
+        assert result.messages_kept > 10, (
+            f"kept={result.messages_kept} but expected a tail-sized keep "
+            f"(total={len(msgs)} msgs, tail budget=2_500 tokens)"
         )
 
     @pytest.mark.asyncio
-    async def test_kept_count_respects_keep_ratio_floor(
+    async def test_kept_count_respects_tail_budget_floor(
         self, registry: MemoryStoreRegistry,
     ) -> None:
-        """kept must be at least keep_target // 2 even with tool-chain sessions."""
+        """kept must stay proportional to the tail budget even when the
+        session is pure tool chains: at least tail // (pair size × per-msg)."""
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
-
-        total = 102
-        keep_ratio = 0.4
-        keep_target = max(1, int(total * keep_ratio))  # 40
 
         msgs = [_user_msg("q1")]
         for i in range(50):
             msgs.append(_tool_call_msg(f"call_{i}"))
             msgs.append(_tool_result_msg(f"call_{i}", f"r_{i}"))
         msgs.append(_user_msg("q2"))
-        assert len(msgs) == total
 
         await _add_messages(session, context, msgs)
 
@@ -1008,17 +1102,15 @@ class TestToolChainDominanceDoesNotOverPrune:
             session=session,
             archive=None,
             context=context,
-            max_context_tokens=1000,  # 102 msgs = 1020 tokens, line 800 -> triggers
-            max_token_ratio=0.8,
-            keep_ratio=keep_ratio,  # keep_target_tokens = 400 -> keep ~40 msgs
-            token_estimator=_FixedEstimator(10),
+            budget=ContextBudget(max_context_tokens=10_000),
+            max_token_ratio=0.8,  # tail keep budget 2_500 tokens
+            token_estimator=_FixedEstimator(100),
         )
 
         assert result.triggered is True
-        min_kept = max(keep_target // 2, 2)
+        min_kept = 2_500 // (2 * 104)  # a full tc/tr pair per 208 tokens
         assert result.messages_kept >= min_kept, (
-            f"kept={result.messages_kept} < min_kept={min_kept} "
-            f"(keep_target={keep_target})"
+            f"kept={result.messages_kept} < min_kept={min_kept} (tail budget=2_500)"
         )
 
 
@@ -1052,9 +1144,8 @@ class TestKeepResanitized:
             session=session,
             archive=None,
             context=context,
-            max_context_tokens=50,  # 8 msgs = 80 tokens, line 40 -> triggers
+            budget=ContextBudget(max_context_tokens=50),  # 8 msgs = 80 tokens, line 40 -> triggers
             max_token_ratio=0.8,
-            keep_ratio=0.6,
             token_estimator=_FixedEstimator(10),
         )
 
@@ -1164,7 +1255,7 @@ class TestArchiveAgentIntegration:
         session = layer_set.session
 
         msgs = []
-        for i in range(5):
+        for i in range(45):
             msgs.append(_user_msg(f"u-{i}"))
             msgs.append(_assistant_msg(f"a-{i}"))
         await _add_messages(session, context, msgs)
@@ -1176,10 +1267,9 @@ class TestArchiveAgentIntegration:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),  # 90 msgs = 9_360 tokens, line 8_000 -> triggers
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             archive_agent=agent,
             archive_storage=storage,
         )
@@ -1203,7 +1293,7 @@ class TestArchiveAgentIntegration:
         session = layer_set.session
 
         msgs = []
-        for i in range(5):
+        for i in range(45):
             msgs.append(_user_msg(f"u-{i}"))
             msgs.append(_assistant_msg(f"a-{i}"))
         await _add_messages(session, context, msgs)
@@ -1216,10 +1306,9 @@ class TestArchiveAgentIntegration:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),  # 90 msgs = 9_360 tokens, line 8_000 -> triggers
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             archive_agent=agent,
             archive_storage=storage,
             pruned_manager=pruned_mgr,
@@ -1242,7 +1331,7 @@ class TestArchiveAgentIntegration:
         session = layer_set.session
 
         msgs = []
-        for i in range(5):
+        for i in range(45):
             msgs.append(_user_msg(f"u-{i}"))
             msgs.append(_assistant_msg(f"a-{i}"))
         await _add_messages(session, context, msgs)
@@ -1255,10 +1344,9 @@ class TestArchiveAgentIntegration:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),  # 90 msgs = 9_360 tokens, line 8_000 -> triggers
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             archive_agent=agent,
             archive_storage=storage,
         )
@@ -1277,10 +1365,9 @@ class TestArchiveAgentIntegration:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),  # 90 msgs = 9_360 tokens, line 8_000 -> triggers
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             archive_agent=agent2,
             archive_storage=storage,
         )
@@ -1307,7 +1394,7 @@ class TestArchiveAgentIntegration:
         await storage.write_archive_file(1, "knowledge.md", "existing knowledge")
 
         msgs = []
-        for i in range(5):
+        for i in range(45):
             msgs.append(_user_msg(f"u-{i}"))
             msgs.append(_assistant_msg(f"a-{i}"))
         await _add_messages(session, context, msgs)
@@ -1318,10 +1405,9 @@ class TestArchiveAgentIntegration:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),  # 90 msgs = 9_360 tokens, line 8_000 -> triggers
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             archive_agent=agent,
             archive_storage=storage,
         )
@@ -1341,14 +1427,14 @@ class TestArchiveAgentIntegration:
         session = layer_set.session
 
         msgs = []
-        for i in range(5):
+        for i in range(45):
             msgs.append(_user_msg(f"u-{i}"))
             msgs.append(_assistant_msg(f"a-{i}"))
         await _add_messages(session, context, msgs)
 
         # Before cleanup, session has 10 messages
         before_count = len(await session.get_all_messages(context))
-        assert before_count == 10
+        assert before_count == 90
 
         agent = _MockArchiveAgent()
         storage = _DirArchiveStorageFactory.create(tmp_path)
@@ -1359,10 +1445,9 @@ class TestArchiveAgentIntegration:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),  # 90 msgs = 9_360 tokens, line 8_000 -> triggers
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             archive_agent=agent,
             archive_storage=storage,
         )
@@ -1398,7 +1483,7 @@ class TestArchiveSuccessPrunedContent:
         session = layer_set.session
 
         msgs = []
-        for i in range(5):
+        for i in range(45):
             msgs.append(_user_msg(f"u-{i}"))
             msgs.append(_assistant_msg(f"a-{i}"))
         await _add_messages(session, context, msgs)
@@ -1411,10 +1496,9 @@ class TestArchiveSuccessPrunedContent:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),  # 90 msgs = 9_360 tokens, line 8_000 -> triggers
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             archive_agent=agent,
             archive_storage=storage,
             pruned_manager=pruned_mgr,
@@ -1450,7 +1534,7 @@ class TestArchiveSuccessPrunedContent:
         session = layer_set.session
 
         msgs = []
-        for i in range(5):
+        for i in range(45):
             msgs.append(_user_msg(f"unique-content-{i}"))
             msgs.append(_assistant_msg(f"reply-{i}"))
         await _add_messages(session, context, msgs)
@@ -1463,10 +1547,9 @@ class TestArchiveSuccessPrunedContent:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),  # 90 msgs = 9_360 tokens, line 8_000 -> triggers
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             archive_agent=agent,
             archive_storage=storage,
             pruned_manager=pruned_mgr,
@@ -1502,7 +1585,7 @@ class TestArchiveSuccessPrunedContent:
         session = layer_set.session
 
         msgs = []
-        for i in range(5):
+        for i in range(45):
             msgs.append(_user_msg(f"u-{i}"))
             msgs.append(_assistant_msg(f"a-{i}"))
         await _add_messages(session, context, msgs)
@@ -1515,10 +1598,9 @@ class TestArchiveSuccessPrunedContent:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),  # 90 msgs = 9_360 tokens, line 8_000 -> triggers
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             archive_agent=agent,
             archive_storage=storage,
             pruned_manager=pruned_mgr,
@@ -1559,7 +1641,7 @@ class TestResolvedStoragePropagation:
         session = layer_set.session
 
         msgs = []
-        for i in range(5):
+        for i in range(45):
             msgs.append(_user_msg(f"u-{i}"))
             msgs.append(_assistant_msg(f"a-{i}"))
         await _add_messages(session, context, msgs)
@@ -1570,10 +1652,9 @@ class TestResolvedStoragePropagation:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,
+            budget=ContextBudget(max_context_tokens=10_000),
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             archive_agent=agent,
             archive_storage=None,
             pruned_manager=pruned_mgr,
@@ -1601,7 +1682,7 @@ class TestResolvedStoragePropagation:
         session = layer_set.session
 
         msgs = []
-        for i in range(5):
+        for i in range(45):
             msgs.append(_user_msg(f"u-{i}"))
             msgs.append(_assistant_msg(f"a-{i}"))
         await _add_messages(session, context, msgs)
@@ -1614,10 +1695,9 @@ class TestResolvedStoragePropagation:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),  # 90 msgs = 9_360 tokens, line 8_000 -> triggers
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             archive_agent=agent,
             archive_storage=storage,
             pruned_manager=pruned_mgr,
@@ -1647,7 +1727,7 @@ class TestResolvedStoragePropagation:
         session = layer_set.session
 
         msgs = []
-        for i in range(5):
+        for i in range(45):
             msgs.append(_user_msg(f"u-{i}"))
             msgs.append(_assistant_msg(f"a-{i}"))
         await _add_messages(session, context, msgs)
@@ -1659,10 +1739,9 @@ class TestResolvedStoragePropagation:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),  # 90 msgs = 9_360 tokens, line 8_000 -> triggers
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             archive_agent=agent,
             archive_storage=None,
             pruned_manager=pruned_mgr,
@@ -1692,7 +1771,7 @@ class TestResolvedStoragePropagation:
         session = layer_set.session
 
         msgs = []
-        for i in range(5):
+        for i in range(45):
             msgs.append(_user_msg(f"u-{i}"))
             msgs.append(_assistant_msg(f"a-{i}"))
         await _add_messages(session, context, msgs)
@@ -1703,10 +1782,9 @@ class TestResolvedStoragePropagation:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),  # 90 msgs = 9_360 tokens, line 8_000 -> triggers
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             pruned_manager=pruned_mgr,
         )
 
@@ -1730,7 +1808,7 @@ class TestResolvedStoragePropagation:
         session = layer_set.session
 
         msgs = []
-        for i in range(5):
+        for i in range(45):
             msgs.append(_user_msg(f"u-{i}"))
             msgs.append(_assistant_msg(f"a-{i}"))
         await _add_messages(session, context, msgs)
@@ -1745,10 +1823,9 @@ class TestResolvedStoragePropagation:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),  # 90 msgs = 9_360 tokens, line 8_000 -> triggers
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             archive_agent=agent,
             archive_storage=storage,
         )
@@ -1770,7 +1847,7 @@ class TestResolvedStoragePropagation:
         session = layer_set.session
 
         msgs = []
-        for i in range(5):
+        for i in range(45):
             msgs.append(_user_msg(f"u-{i}"))
             msgs.append(_assistant_msg(f"a-{i}"))
         await _add_messages(session, context, msgs)
@@ -1782,10 +1859,9 @@ class TestResolvedStoragePropagation:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            budget=ContextBudget(max_context_tokens=10_000),  # 90 msgs = 9_360 tokens, line 8_000 -> triggers
             max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
+            token_estimator=_FixedEstimator(100),
             archive_agent=agent,
             archive_storage=storage,
         )
@@ -1825,9 +1901,15 @@ class _StubCompactor(SessionCompactorAgent):
         previous_summary: str | None = None,
         *,
         session_id: str = "session-compactor",
+        budget: ContextBudget | None = None,
     ) -> CompactionOutcome:
         self.calls.append(
-            {"messages": list(messages), "previous_summary": previous_summary, "session_id": session_id}
+            {
+                "messages": list(messages),
+                "previous_summary": previous_summary,
+                "session_id": session_id,
+                "budget": budget,
+            }
         )
         return CompactionOutcome(summary=self._summary)
 
@@ -1874,7 +1956,7 @@ class TestCleanupSqliteBackend:
         try:
             context = _ctx("sqlite-compact-session")
             msgs = []
-            for i in range(10):
+            for i in range(45):
                 msgs.append(_user_msg(f"u-{i}"))
                 msgs.append(_assistant_msg(f"a-{i}"))
             await _add_messages(session, context, msgs)
@@ -1885,10 +1967,9 @@ class TestCleanupSqliteBackend:
                 archive=None,
                 context=context,
                 compactor=compactor,
-                max_context_tokens=100,  # 20 msgs = 200 tokens, line 85 -> triggers
-                max_token_ratio=0.85,
-                keep_ratio=0.3,  # keep last 3 messages
-                token_estimator=_FixedEstimator(10),
+                budget=ContextBudget(max_context_tokens=10_000),  # 90 msgs = 9_360 tokens, line 8_500 -> triggers
+                max_token_ratio=0.85,  # tail budget 2_500 -> keep 24 msgs
+                token_estimator=_FixedEstimator(100),
             )
 
             assert result.triggered is True
@@ -1924,7 +2005,7 @@ class TestCleanupSqliteBackend:
         try:
             context = _ctx("sqlite-chain-session")
             msgs = []
-            for i in range(10):
+            for i in range(45):
                 msgs.append(_user_msg(f"u-{i}"))
                 msgs.append(_assistant_msg(f"a-{i}"))
             await _add_messages(session, context, msgs)
@@ -1935,17 +2016,18 @@ class TestCleanupSqliteBackend:
                 archive=None,
                 context=context,
                 compactor=compactor,
-                max_context_tokens=100,
+                budget=ContextBudget(max_context_tokens=10_000),
                 max_token_ratio=0.85,
-                keep_ratio=0.3,
-                token_estimator=_FixedEstimator(10),
+                token_estimator=_FixedEstimator(100),
             )
 
-            # Grow the session past the trigger again.
+            # Grow the session past the trigger again (compact + 24 tail
+            # + 65 fresh = ~9_360 tokens > 8_500 line).
             more = []
-            for i in range(10, 15):
+            for i in range(45, 77):
                 more.append(_user_msg(f"u-{i}"))
                 more.append(_assistant_msg(f"a-{i}"))
+            more.append(_user_msg("final"))
             await _add_messages(session, context, more)
 
             result = await cleanup_session(
@@ -1953,10 +2035,9 @@ class TestCleanupSqliteBackend:
                 archive=None,
                 context=context,
                 compactor=compactor,
-                max_context_tokens=100,
+                budget=ContextBudget(max_context_tokens=10_000),
                 max_token_ratio=0.85,
-                keep_ratio=0.3,
-                token_estimator=_FixedEstimator(10),
+                token_estimator=_FixedEstimator(100),
             )
 
             assert result.triggered is True

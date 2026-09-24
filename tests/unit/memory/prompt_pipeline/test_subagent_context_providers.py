@@ -46,7 +46,10 @@ class _MockMemory(MemorySystem):
         self,
         context: MemoryContext,
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
+        *,
+        model_info: Any | None = None,
     ) -> ListMessageHistory:
+        _ = model_info
         return ListMessageHistory([])
 
     async def add_messages(

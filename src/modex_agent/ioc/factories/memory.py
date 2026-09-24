@@ -12,6 +12,7 @@ from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.token_estimator import TokenEstimator
 
 if TYPE_CHECKING:
+    from modex_agent.agents.summarizer.session_compactor import SessionCompactorAgent
     from modex_agent.memory.layers.config import MemoryLayerConfigSet
     from modex_agent.memory.registry import MemoryStoreRegistry
 
@@ -63,6 +64,42 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
     )
 
 
+def build_session_compactor(
+    cfg: MemoryConfig,
+    llm_provider: LLMProvider | None,
+    token_estimator: TokenEstimator | None = None,
+) -> SessionCompactorAgent | None:
+    """Build the session compactor from ``cfg.compact`` — shared by the main
+    memory factory and the subagent session-only memory builder.
+
+    Returns ``None`` (with a warning) when compaction is enabled but no
+    provider is configured — cleanup then degrades to tail-only.
+    """
+    from modex_agent.agents.summarizer.session_compactor import (
+        SessionCompactorAgent,
+        SessionCompactorConfig,
+    )
+
+    if cfg.compact is None or not cfg.compact.enabled:
+        return None
+    if llm_provider is None:
+        logger.warning(
+            "llm_provider is None — skipping session compactor "
+            "(no model configured). Cleanup will run in degraded mode "
+            "(tail-only, no compact summary)."
+        )
+        return None
+    compact_cfg = SessionCompactorConfig(
+        max_output_tokens=cfg.compact.max_output_tokens,
+        max_iterations=cfg.compact.max_iterations,
+        temperature=cfg.compact.temperature,
+        tool_output_max_chars=cfg.compact.tool_output_max_chars,
+    )
+    return SessionCompactorAgent(
+        llm_provider, config=compact_cfg, token_estimator=token_estimator
+    )
+
+
 def create_memory(
     cfg: MemoryConfig,
     llm_provider: LLMProvider | None,
@@ -87,10 +124,11 @@ def create_memory(
     layer_config = _build_memory_layer_config(cfg)
 
     st = cfg.session
+    # The tail keep budget is the engine's absolute formula
+    # clamp(usable×0.25, 2k..15k) (PRD §4.4.7) — deliberately not a config knob.
     cleanup_config: dict[str, int | float] = {
         "max_context_tokens": st.max_context_tokens,
         "max_token_ratio": st.max_token_ratio,
-        "keep_ratio": st.keep_ratio,
         "max_output_tokens": st.max_output_tokens,
     }
 
@@ -150,28 +188,7 @@ def create_memory(
     # Compact agent wiring — always enabled by default (compact_enabled=True).
     # Required for all agents (main + subagent): generates session-level
     # compact summary when token pressure triggers cleanup.
-    compactor = None
-    compact_enabled = cfg.compact is not None and cfg.compact.enabled
-    if compact_enabled:
-        if llm_provider is None:
-            logger.warning(
-                "llm_provider is None — skipping session compactor "
-                "(no model configured). Cleanup will run in degraded mode "
-                "(tail-only, no compact summary)."
-            )
-        else:
-            from modex_agent.agents.summarizer.session_compactor import (
-                SessionCompactorAgent,
-                SessionCompactorConfig,
-            )
-
-            compact_cfg = SessionCompactorConfig(
-                max_output_tokens=cfg.compact.max_output_tokens,
-                max_iterations=cfg.compact.max_iterations,
-                temperature=cfg.compact.temperature,
-                tool_output_max_chars=cfg.compact.tool_output_max_chars,
-            )
-            compactor = SessionCompactorAgent(llm_provider, config=compact_cfg)
+    compactor = build_session_compactor(cfg, llm_provider, token_estimator)
 
     return create_memory_system(
         workspace=workspace,

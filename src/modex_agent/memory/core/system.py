@@ -8,11 +8,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core import MessageHistory
+from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.message import ChatMessage
 from modex_agent.memory.archive_models import ArchiveChannel
+from modex_agent.memory.budget import ContextBudget
+from modex_agent.memory.cleanup import CleanupResult, CompactionSource
 from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.scope import MemoryContext
+from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 
 if TYPE_CHECKING:
     from modex_agent.memory.hooks import MemoryHook
@@ -44,7 +48,17 @@ class MemorySystem(ABC):
         self,
         context: MemoryContext,
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
-    ) -> MessageHistory: ...
+        *,
+        model_info: ModelInfo | None = None,
+    ) -> MessageHistory:
+        """Create a history for *context*, optionally bound to the turn's model.
+
+        ``model_info`` carries the active model's budget profile
+        (context/output limits); history implementations use it to judge
+        their append-path compaction trigger against the CURRENT model's
+        window instead of the static pool config.
+        """
+        ...
 
     @abstractmethod
     async def get_history(
@@ -149,7 +163,17 @@ class ContextManagedMemorySystem(
         self,
         context: MemoryContext,
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
-    ) -> MessageHistory: ...
+        *,
+        model_info: ModelInfo | None = None,
+    ) -> MessageHistory:
+        """Create a history for *context*, optionally bound to the turn's model.
+
+        ``model_info`` carries the active model's budget profile
+        (context/output limits); history implementations use it to judge
+        their append-path compaction trigger against the CURRENT model's
+        window instead of the static pool config.
+        """
+        ...
 
     @abstractmethod
     async def get_history(
@@ -173,3 +197,36 @@ class ContextManagedMemorySystem(
 
     @abstractmethod
     async def clear(self, context: MemoryContext) -> None: ...
+
+    async def compact_session(
+        self,
+        context: MemoryContext,
+        *,
+        budget: ContextBudget | None = None,
+        source: CompactionSource,
+    ) -> CleanupResult:
+        """Unified session-compaction entry point. Default no-op.
+
+        Deployments without compaction capability safely return
+        ``CleanupResult(triggered=False)``; ``DefaultMemorySystem`` owns the
+        real 5-phase pipeline (precedent for a non-abstract no-op hook:
+        ``ContextManager.flush``). ``budget`` is the CURRENT TURN's effective
+        budget (``resolve_effective_budget`` output — limit plus output
+        reservation in one typed value); ``None`` falls back to the
+        system-configured budget, semantics identical to the pre-budget
+        signature. ``source`` labels the trigger face (write-side append vs
+        read-side pre-LLM) on the result and hook payloads.
+        """
+        _ = context, budget, source
+        return CleanupResult(triggered=False)
+
+    @property
+    def token_estimator(self) -> TokenEstimator:
+        """The estimator this system's compaction trigger counts with.
+
+        Default: the zero-dependency char-based estimator. Concrete systems
+        that accept an injected estimator override this so downstream
+        trigger faces (e.g. the pre-LLM governance) reuse the SAME
+        estimator instead of silently judging pressure with a second one.
+        """
+        return CharTokenEstimator()

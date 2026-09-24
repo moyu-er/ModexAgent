@@ -161,15 +161,16 @@ def test_chatmessage_token_count_default_none_omitted() -> None:
 
 @pytest.mark.asyncio
 async def test_scoped_message_history_stamps_token_count(tmp_path) -> None:
-    from modex_agent.memory.history import ScopedMessageHistory
+    from modex_agent.memory.default_system import DefaultMemorySystem
     from modex_agent.memory.layers.factory import MemoryLayerFactory
     from modex_agent.memory.registry import DefaultMemoryStoreRegistry
     from modex_agent.memory.scope import MemoryContext
 
     registry = DefaultMemoryStoreRegistry(tmp_path)
     layer_set = MemoryLayerFactory.single_user(registry=registry)
+    system = DefaultMemorySystem(layer_set=layer_set, store_registry=registry)
     ctx = MemoryContext(session_id="s1", user_id="u1")
-    hist = ScopedMessageHistory(manager=layer_set.session, context=ctx)
+    hist = system.create_message_history(ctx)
     await hist.append({"role": "user", "content": "abcdefgh"})  # 2 content tokens + 4 overhead = 6
     msgs = await hist.to_list()
     assert msgs[-1].token_count == 6
@@ -177,10 +178,11 @@ async def test_scoped_message_history_stamps_token_count(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_cleanup_uses_injected_estimator_not_default(tmp_path) -> None:
-    """ScopedMessageHistory must forward its estimator to cleanup_session so
+    """The system must forward its estimator to cleanup_session so
     trigger/boundary share the same estimator as stamping. Regression for the
-    divergence bug where cleanup silently fell back to CharTokenEstimator."""
-    from modex_agent.memory.history import ScopedMessageHistory
+    divergence bug where cleanup silently fell back to CharTokenEstimator.
+    """
+    from modex_agent.memory.default_system import DefaultMemorySystem
     from modex_agent.memory.layers.factory import MemoryLayerFactory
     from modex_agent.memory.registry import DefaultMemoryStoreRegistry
     from modex_agent.memory.scope import MemoryContext
@@ -193,13 +195,14 @@ async def test_cleanup_uses_injected_estimator_not_default(tmp_path) -> None:
 
     registry = DefaultMemoryStoreRegistry(tmp_path)
     layer_set = MemoryLayerFactory.single_user(registry=registry)
-    ctx = MemoryContext(session_id="s1", user_id="u1")
-    hist = ScopedMessageHistory(
-        manager=layer_set.session,
-        context=ctx,
-        cleanup_config={"max_context_tokens": 100, "max_token_ratio": 0.85, "keep_ratio": 0.3},
+    system = DefaultMemorySystem(
+        layer_set=layer_set,
+        store_registry=registry,
+        cleanup_config={"max_context_tokens": 100, "max_token_ratio": 0.85},
         token_estimator=HugeEstimator(),
     )
+    ctx = MemoryContext(session_id="s1", user_id="u1")
+    hist = system.create_message_history(ctx)
     for i in range(3):
         await hist.append({"role": "user", "content": f"msg-{i}"})
 

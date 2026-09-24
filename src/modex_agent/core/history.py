@@ -36,6 +36,17 @@ class MessageHistory(ABC):
         """Append a single message and persist it."""
         pass
 
+    async def refresh(self) -> None:
+        """Drop any read cache so the next ``to_list`` re-reads the backing store.
+
+        Optional no-op default (precedent: ``ContextManager.flush``) —
+        implementations whose ``to_list`` is already authoritative (e.g.
+        in-memory lists) need not override it. Cache-backed implementations
+        (``ScopedMessageHistory``) override it to invalidate the cache after
+        an external writer (e.g. session compaction) mutated the store.
+        """
+        return None
+
     @abstractmethod
     async def extend(self, messages: Sequence[ChatMessage | dict[str, Any]]) -> None:
         """Append multiple messages and persist them."""

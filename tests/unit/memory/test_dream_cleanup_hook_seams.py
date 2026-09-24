@@ -10,6 +10,7 @@ from modex_agent.agents.summarizer.outcomes import (
     ConsolidationOutcome,
 )
 from modex_agent.agents.summarizer.session_compactor import SessionCompactorAgent
+from modex_agent.memory.budget import ContextBudget
 from modex_agent.memory.cleanup import cleanup_session
 from modex_agent.memory.consolidation.dream_engine import DreamEngine
 from modex_agent.memory.core.models import ArchiveEntry, CoreMemoryContents, UnprocessedResult
@@ -69,6 +70,7 @@ class _UsageCompactor(SessionCompactorAgent):
         previous_summary: str | None = None,
         *,
         session_id: str = "session-compactor",
+        budget: ContextBudget | None = None,
     ) -> CompactionOutcome:
         return CompactionOutcome(
             summary="## Objective\n- keep telemetry honest",
@@ -154,10 +156,12 @@ async def test_cleanup_finished_carries_compaction_usage_and_duration(
     registry = DefaultMemoryStoreRegistry(tmp_path)
     session = MemoryLayerFactory.single_user(registry=registry).session
     context = MemoryContext(session_id="cleanup-session", user_id="cleanup-user")
+    # ~258 tokens/message (len-based estimator): 10 messages = 2_580 tokens —
+    # over the 2_000-token tail-floor budget, so a real prune zone exists.
     for index in range(10):
         await session.add_messages(
             context,
-            [{"role": "user", "content": f"message-{index}-abcdefghij"}],
+            [{"role": "user", "content": f"message-{index}-" + "x" * 240}],
         )
     usage = _usage()
     runner = MemoryHookRunner()
@@ -169,9 +173,8 @@ async def test_cleanup_finished_carries_compaction_usage_and_duration(
         archive=None,
         context=context,
         compactor=_UsageCompactor(usage),
-        max_context_tokens=50,
+        budget=ContextBudget(max_context_tokens=50),
         max_token_ratio=0.8,
-        keep_ratio=0.5,
         hook_runner=runner,
         token_estimator=_LengthEstimator(),
     )

@@ -126,6 +126,31 @@ class MemoryDeclaration(BaseModel):
         return self
 
 
+class ModelRef(BaseModel):
+    """Reference to a deployment model entry (``AgentSpec.model``, D-5 pin).
+
+    An OPAQUE ``(provider, name)`` pair: the framework validates shape only
+    (both parts non-empty after strip). Resolving the reference against the
+    deployment's model table is the business assembly layer's job — it
+    fail-fasts there when the entry does not exist. The framework never
+    learns the model table (architecture rule 5/9).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    provider: str
+    name: str
+
+    @model_validator(mode="after")
+    def _non_empty_parts(self) -> ModelRef:
+        if not self.provider.strip() or not self.name.strip():
+            raise ValueError(
+                "model reference provider and name must be non-empty "
+                "(whitespace-only is rejected)"
+            )
+        return self
+
+
 class AgentSpec(BaseModel):
     """Unified per-node agent declaration (flat model, ``parent`` reference).
 
@@ -204,6 +229,14 @@ class AgentSpec(BaseModel):
     llm_provider: str | None = None
     # Open extension payload (rule 14): provider-specific config.
     llm_provider_config: dict[str, Any] | None = None
+    model: ModelRef | None = None
+    """Explicit model pin (D-5): a reference to a deployment model entry.
+    ``None`` (the default) = inherit the caller's model — the contractualized
+    status quo (the pool's per-turn model selection). A declared reference is
+    resolved by the business assembly layer into the agent's pinned provider
+    and model profile, and becomes the SUBTREE default for undeclared
+    descendants. Mutually exclusive with ``llm_provider`` (two authorities
+    for the same provider choice)."""
     eager: bool | None = None
     """Registration timing override: ``True`` = eager at boot, ``False`` =
     lazy on first dispatch; ``None`` = position-derived default."""
@@ -267,6 +300,12 @@ class AgentSpec(BaseModel):
     @model_validator(mode="after")
     def _validate(self) -> AgentSpec:
         _validate_execution_provider_pair(self.execution_strategy, self.provider_kind)
+        if self.model is not None and self.llm_provider is not None:
+            raise ValueError(
+                "model pin and llm_provider are mutually exclusive — a declared "
+                "model replaces the provider wholesale, leaving no slot for the "
+                "component name to pick"
+            )
         return self
 
 

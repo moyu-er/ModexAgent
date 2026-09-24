@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from modex_agent.ioc.configs.memory import (
     ArchiveConfig,
-    BudgetConfig,
     CoreMemoryConfig,
     DreamEngineConfig,
     GovernanceConfig,
@@ -44,7 +43,7 @@ def main_agent_memory(
     Defaults (``archive_enabled=False, core_enabled=False``) are byte-for-byte
     identical to the pre-toggle behavior.
     """
-    session = SessionConfig(max_token_ratio=0.85, keep_ratio=0.3)
+    session = SessionConfig(max_token_ratio=0.85)
     if max_context_tokens is not None:
         session = session.model_copy(update={"max_context_tokens": max_context_tokens})
     archive = ArchiveConfig(enabled=True) if archive_enabled else None
@@ -55,10 +54,12 @@ def main_agent_memory(
         archive=archive,
         core=core,
         dream_engine=dream,
-        governance=GovernanceConfig(
-            tool_chain_repair=True,
-            budget=BudgetConfig(),
-        ),
+        # Budget (mechanical placeholder) governance no longer on by default:
+        # the pre-LLM face is MemoryCompactionGovernance (persistent
+        # compaction, wired at assembly); the 0.60~0.85 band now goes to real
+        # compaction instead of placeholder loss (per-model compaction PRD
+        # D-3). Explicit ``governance.budget`` config still enables it.
+        governance=GovernanceConfig(tool_chain_repair=True),
         pruned=PrunedCatalogConfig(enabled=True, max_files=50, topic_max_chars=200),
     )
 
@@ -71,7 +72,7 @@ def subagent_memory() -> MemoryConfig:
     ``experience`` capability is its sole enablement.
     """
     return MemoryConfig(
-        session=SessionConfig(max_token_ratio=0.85, keep_ratio=0.3),
+        session=SessionConfig(max_token_ratio=0.85),
         archive=None,
         core=None,
         governance=GovernanceConfig(tool_chain_repair=True),

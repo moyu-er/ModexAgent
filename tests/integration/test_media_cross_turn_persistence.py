@@ -45,9 +45,12 @@ from modex_agent.core.tool_manager import ToolExecutionContext
 from modex_agent.ioc.configs.llm import InterfaceFormat, LLMConfig
 from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.media.store import LocalFileMediaStore
+from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.memory.core.split_stores import MemoryStoreBundle
+from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.history import ListMessageHistory, ScopedMessageHistory
 from modex_agent.memory.layers.session import ScopedSessionMemoryManager
+from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 from modex_agent.memory.scope import MemoryContext
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.cursor_store import SqliteCursorStore
@@ -192,9 +195,14 @@ async def test_media_ref_survives_turn_boundary_into_anthropic_body(tmp_path: Pa
                 cursors=SqliteCursorStore(connection, scope),
             )
 
+        memory_system = DefaultMemorySystem(
+            layer_set=MemoryLayerSet(session=ScopedSessionMemoryManager(storage_factory)),
+            store_registry=DefaultMemoryStoreRegistry(tmp_path),
+        )
         history = ScopedMessageHistory(
             manager=ScopedSessionMemoryManager(storage_factory),
             context=_MEMORY_CTX,
+            memory_system=memory_system,
         )
         assistant = build_assistant_message(
             None,

@@ -364,11 +364,13 @@ class TestCacheVisibility:
     async def test_history_to_list_contains_reminder(
         self,
         session_manager: SessionMemoryManager,
+        noop_memory_system,
     ) -> None:
         ctx = _ctx()
         history = ScopedMessageHistory(
             manager=session_manager,
             context=ctx,
+            memory_system=noop_memory_system,
         )
         await history.append(ChatMessage(role=MessageRole.USER, content="hello"))
 
@@ -421,6 +423,7 @@ class TestNoProviderFanOut:
     async def test_recorder_via_history_append_still_sees_only_user_message(
         self,
         session_manager: SessionMemoryManager,
+        noop_memory_system,
     ) -> None:
         """Contrast: ScopedMessageHistory.append (Path C) DOES record.
 
@@ -436,6 +439,7 @@ class TestNoProviderFanOut:
         history = ScopedMessageHistory(
             manager=session_manager,
             context=ctx,
+            memory_system=noop_memory_system,
             recorder=recorder,
         )
         await history.append(ChatMessage(role=MessageRole.USER, content="hello"))

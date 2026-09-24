@@ -15,7 +15,7 @@ def test_session_config_exists():
     cfg = SessionConfig()
     assert cfg.max_context_tokens == 200000
     assert cfg.max_token_ratio == 0.85
-    assert cfg.keep_ratio == 0.3
+    assert not hasattr(cfg, "keep_ratio")
 
 
 def test_archive_config_exists():
@@ -50,10 +50,23 @@ def test_memory_config_accepts_old_keys():
     cfg = MemoryConfig(**data)
     assert cfg.session.max_context_tokens == 50000
     assert cfg.session.max_token_ratio == 0.85
-    assert cfg.session.keep_ratio == 0.3
+    assert not hasattr(cfg.session, "keep_ratio")
     assert cfg.archive.enabled is True
     assert cfg.core.enabled is True
     assert cfg.core.default_templates_dir == "templates/knowledge"
+
+
+def test_session_config_ignores_removed_keep_ratio():
+    """A legacy config still carrying a tail keep ratio parses cleanly.
+
+    The tail keep budget is the engine's absolute formula
+    clamp(usable × 0.25, 2000, 15000) (PRD §4.4.7) — the removed field has
+    no successor knob. Old user configs that set it are silently ignored
+    (plain BaseModel: extra keys are ignored, not rejected).
+    """
+    cfg = MemoryConfig(**{"session": {"max_context_tokens": 50000, "keep_ratio": 0.9}})
+    assert cfg.session.max_context_tokens == 50000
+    assert not hasattr(cfg.session, "keep_ratio")
 
 
 def test_memory_config_accepts_new_keys():

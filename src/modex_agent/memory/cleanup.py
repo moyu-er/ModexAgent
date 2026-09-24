@@ -20,6 +20,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +32,7 @@ from modex_agent.core.message import (
     render_content_part_ref,
 )
 from modex_agent.memory.archive_models import ArchiveGenerationResult
+from modex_agent.memory.budget import ContextBudget
 from modex_agent.memory.core.layers import (
     ArchiveMemoryManager,
     SessionMemoryManager,
@@ -76,6 +78,43 @@ class CleanupResult:
     reason: CompressionReason | None = None
     usage: LlmUsage | None = None
     duration_ms: float = 0.0
+    source: CompactionSource | None = None
+
+
+class CompactionSource(StrEnum):
+    """Origin of a ``compact_session`` invocation (which trigger face fired).
+
+    Defined here, next to the cleanup engine and its ``CleanupResult.source``
+    field, rather than in ``core/system.py``: the engine owns the result type
+    the source is written into, and both the ABC (``core/system.py``) and the
+    append caller (``history.py``) import it from here without cycles.
+    """
+
+    PRE_LLM = "pre_llm"
+    POST_APPEND = "post_append"
+
+
+# ── Tail keep budget (PRD §4.4.7: absolute token budget, not a config knob) ──
+
+#: Fraction of the effective context window reserved for the kept tail.
+_TAIL_KEEP_RATIO = 0.25
+
+#: Absolute clamp bounds for the tail keep budget (tokens), opencode-style:
+#: small windows still keep a usable tail; huge windows never keep more than
+#: a bounded tail so compaction actually reclaims room.
+_TAIL_KEEP_MIN_TOKENS = 2_000
+_TAIL_KEEP_MAX_TOKENS = 15_000
+
+
+def _tail_keep_budget(budget: ContextBudget) -> int:
+    """Tail keep budget: ``clamp(usable × 0.25, 2000, 15000)`` tokens.
+
+    ``usable`` is the effective context window (limit minus the model's
+    output reservation). The tail is an absolute token budget regardless of
+    window size (PRD §4.4.7), not a ratio of it.
+    """
+    usable = max(1, (budget.max_context_tokens or 0) - budget.max_output_tokens)
+    return min(_TAIL_KEEP_MAX_TOKENS, max(_TAIL_KEEP_MIN_TOKENS, int(usable * _TAIL_KEEP_RATIO)))
 
 
 # ── Internal result types ──────────────────────────────────────────────────────
@@ -118,14 +157,16 @@ class _CompactOutcome:
 async def _prepare_cleanup_phase(
     session: SessionMemoryManager,
     context: MemoryContext,
-    max_context_tokens: int | None,
+    budget: ContextBudget,
     max_token_ratio: float,
-    max_output_tokens: int,
-    keep_ratio: float,
     max_backups: int,
     estimator: TokenEstimator,
 ) -> tuple[_CleanupPlan | None, int]:
     """Phase 1: trigger check → backup → sanitize → compute keep/prune boundary.
+
+    The tail keep target is the absolute token budget
+    ``clamp(usable × 0.25, 2000, 15000)`` (PRD §4.4.7), not a ratio of the
+    window.
 
     Returns the optional cleanup plan and the estimated content-token count
     before pruning.
@@ -135,7 +176,11 @@ async def _prepare_cleanup_phase(
     tokens_before = _estimate_content_tokens(all_messages, estimator)
 
     trigger_reason = check_cleanup_trigger(
-        all_messages, estimator, max_context_tokens, max_token_ratio, max_output_tokens
+        all_messages,
+        estimator,
+        budget.max_context_tokens,
+        max_token_ratio,
+        budget.max_output_tokens,
     )
     if trigger_reason is None:
         return None, tokens_before
@@ -176,7 +221,7 @@ async def _prepare_cleanup_phase(
             tokens_before,
         )
 
-    keep_target_tokens = max(1, int((max_context_tokens or 0) * keep_ratio))
+    keep_target_tokens = _tail_keep_budget(budget)
     keep_messages, pruned_messages = _compute_boundary(sanitized, keep_target_tokens, estimator)
 
     if not keep_messages:
@@ -209,12 +254,16 @@ async def _compact_generation_phase(
     compactor: SessionCompactorAgent | None,
     pruned_messages: list[dict[str, Any]],
     context: MemoryContext,
+    budget: ContextBudget,
 ) -> _CompactOutcome:
     """Phase 2: generate compact summary from pruned messages.
 
     Extracts previous compact summary from pruned messages (COMPACT role),
     removes it from the message list, serializes remaining messages to plain
     text, and calls the SessionCompactorAgent to generate a structured summary.
+    The turn's ``budget`` is handed to the compactor so it can size its
+    summarization calls (single-pass vs segmented map+reduce) against the
+    CURRENT model's window.
 
     Returns ``_CompactOutcome(generated=False)`` when compactor is None or
     when generation fails — the caller proceeds without a compact summary
@@ -245,6 +294,7 @@ async def _compact_generation_phase(
             messages=messages_for_compact,
             previous_summary=previous_summary,
             session_id=context.session_id or "session-compactor",
+            budget=budget,
         )
     except Exception:
         logger.warning(
@@ -485,11 +535,10 @@ async def cleanup_session(
     session: SessionMemoryManager,
     archive: ArchiveMemoryManager | None,
     context: MemoryContext,
+    budget: ContextBudget,
+    source: CompactionSource | None = None,
     compactor: SessionCompactorAgent | None = None,
-    max_context_tokens: int | None = None,
     max_token_ratio: float = 0.85,
-    max_output_tokens: int = 0,
-    keep_ratio: float = 0.3,
     max_backups: int = 10,
     pruned_manager: PrunedManager | None = None,
     archive_agent: ArchiveGenerator | None = None,
@@ -498,6 +547,11 @@ async def cleanup_session(
     token_estimator: TokenEstimator | None = None,
 ) -> CleanupResult:
     """Clean up a session by pruning old messages and generating a compact summary.
+
+    ``budget`` is the turn's effective budget (limit + output reservation in
+    one typed value; a ``None`` limit means no trigger ever fires). It drives
+    the trigger check, the tail keep budget, and the compactor's
+    summarization call sizing.
 
     Orchestrates 5 phases:
         1. Prepare (trigger, backup, sanitize, boundary)
@@ -520,6 +574,10 @@ async def cleanup_session(
 
     An unhandled cleanup exception does NOT synthesize a finished event —
     only the four explicit ``triggered=True`` returns dispatch FINISHED.
+
+    ``source`` labels the trigger face (write-side append vs read-side
+    pre-LLM) and is carried on every returned ``CleanupResult``; ``None``
+    means the caller did not label the invocation.
     """
     started = time.monotonic()
     # Phase 1: prepare
@@ -527,10 +585,8 @@ async def cleanup_session(
     plan, tokens_before = await _prepare_cleanup_phase(
         session,
         context,
-        max_context_tokens,
+        budget,
         max_token_ratio,
-        max_output_tokens,
-        keep_ratio,
         max_backups,
         estimator,
     )
@@ -539,6 +595,7 @@ async def cleanup_session(
             triggered=False,
             tokens_before=tokens_before,
             tokens_after=tokens_before,
+            source=source,
         )
 
     # Edge case: all messages invalid -> clear session.
@@ -555,6 +612,7 @@ async def cleanup_session(
             archive_skipped=True,
             reason=plan.trigger_reason,
             duration_ms=(time.monotonic() - started) * 1000,
+            source=source,
         )
         await _dispatch_cleanup_finished(
             hook_runner,
@@ -578,6 +636,7 @@ async def cleanup_session(
             archive_skipped=True,
             reason=plan.trigger_reason,
             duration_ms=(time.monotonic() - started) * 1000,
+            source=source,
         )
         await _dispatch_cleanup_finished(
             hook_runner,
@@ -608,6 +667,7 @@ async def cleanup_session(
         compactor,
         plan.pruned_messages,
         context,
+        budget,
     )
 
     # Phase 3: session commit
@@ -633,6 +693,7 @@ async def cleanup_session(
             reason=plan.trigger_reason,
             usage=compact_outcome.usage,
             duration_ms=(time.monotonic() - started) * 1000,
+            source=source,
         )
         await _dispatch_cleanup_finished(
             hook_runner,
@@ -675,6 +736,7 @@ async def cleanup_session(
         reason=plan.trigger_reason,
         usage=compact_outcome.usage,
         duration_ms=(time.monotonic() - started) * 1000,
+        source=source,
     )
     await _dispatch_cleanup_finished(
         hook_runner,
@@ -748,11 +810,28 @@ def check_cleanup_trigger(
     max_context_tokens: int | None,
     max_token_ratio: float,
     max_output_tokens: int = 0,
+    reserve_tokens: int | None = None,
 ) -> CompressionReason | None:
     """Fire compression when NON-SYSTEM session tokens exceed threshold.
 
     ``max_output_tokens`` reserves space for the model's response so the context
     window does not fill to the ratio limit leaving no room to generate.
+
+    Dual-condition trigger (kimi-style, PRD §4.3.2): compression fires when
+    EITHER
+
+    - ``pressure > effective_context * max_token_ratio`` (relative), or
+    - ``pressure + reserve >= effective_context`` (absolute reserve).
+
+    ``reserve_tokens`` semantics (single definition point of the reserve
+    formula):
+
+    - ``None`` (default): auto ``reserve = min(20_000, effective_context // 10)``
+      — the absolute condition engages only when it is strictly tighter than
+      the relative one;
+    - ``0``: the absolute condition is explicitly disabled (legacy
+      single-condition behavior for callers that opt out);
+    - ``> 0``: caller-declared fixed reserve.
     """
     if max_context_tokens is None:
         return None
@@ -763,7 +842,14 @@ def check_cleanup_trigger(
         for m in messages
         if str(m.get("role", "")) != _SYSTEM_ROLE
     )
-    return CompressionReason.TOKEN_PRESSURE if pressure > threshold else None
+    if pressure > threshold:
+        return CompressionReason.TOKEN_PRESSURE
+    reserve = (
+        min(20_000, effective_context // 10) if reserve_tokens is None else reserve_tokens
+    )
+    if 0 < reserve < effective_context and pressure + reserve >= effective_context:
+        return CompressionReason.TOKEN_PRESSURE
+    return None
 
 
 def _compute_boundary(

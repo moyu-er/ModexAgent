@@ -20,7 +20,6 @@ class ShortTermConfig(BaseModel):
 
     max_context_tokens: int = 200000
     max_token_ratio: float = 0.85
-    keep_ratio: float = 0.3
     max_output_tokens: int = 0
 
     @field_validator("max_token_ratio", mode="after")
@@ -81,7 +80,6 @@ class SessionConfig(BaseModel):
 
     max_context_tokens: int = 200000
     max_token_ratio: float = 0.85
-    keep_ratio: float = 0.3
     max_output_tokens: int = 0
 
     @field_validator("max_token_ratio", mode="after")

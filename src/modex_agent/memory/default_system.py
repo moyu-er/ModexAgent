@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core import MessageHistory
+from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.message import ChatMessage
 from modex_agent.memory.archive_models import ArchiveChannel
+from modex_agent.memory.budget import ContextBudget
+from modex_agent.memory.cleanup import CleanupResult, CompactionSource, cleanup_session
 from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.core.system import (
@@ -69,6 +73,10 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         self._hook_runner = hook_runner or MemoryHookRunner()
         self._recorder = MemoryAppendRecorder()
         self._compactor = compactor
+        # In-flight compaction dedup, keyed by session_id. No eviction: the
+        # dict only grows with distinct sessions and session count is
+        # process-bounded.
+        self._compaction_locks: dict[str, asyncio.Lock] = {}
         if providers is not None:
             for provider in providers.all():
                 self._recorder.add_provider(provider)
@@ -87,10 +95,10 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
     def add_cleanup_hook(self, hook: MemoryHook) -> None:
         """Register a memory lifecycle hook for cleanup dispatch.
 
-        Hooks are forwarded to every ``ScopedMessageHistory`` via the shared
-        ``MemoryHookRunner`` (passed by reference at creation time). Late
-        registration works: a hook added after a history is created still
-        receives subsequent events because the runner is the same object.
+        Hooks live on the shared ``MemoryHookRunner`` that this system's
+        ``compact_session`` dispatches through. Late registration works: a
+        hook added after a history is created still receives subsequent
+        events because every cleanup dispatch reads the same runner object.
         """
         self._hook_runner.add(hook)
 
@@ -98,24 +106,96 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
     def hook_runner(self) -> MemoryHookRunner:
         return self._hook_runner
 
+    @property
+    def token_estimator(self) -> TokenEstimator:
+        """The estimator this system finally adopted (injected or default).
+
+        Read-side trigger faces (the pre-LLM compaction governance) reuse
+        this so both compaction faces judge pressure with ONE estimator.
+        """
+        return self._token_estimator
+
     def create_message_history(
         self,
         context: MemoryContext,
         initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
+        *,
+        model_info: ModelInfo | None = None,
     ) -> MessageHistory:
+        """Create a scoped history, optionally bound to the turn's model profile.
+
+        ``model_info`` is the per-turn active-model profile (from
+        ``runtime_info[RuntimeInfoKey.MODEL_INFO]``); when present, the
+        history's append-path cleanup trigger resolves its budget through it
+        (static pool ``cleanup_config`` is the fallback) so a mid-turn switch
+        to a smaller-context model is judged against the CURRENT window.
+        """
         return _ScopedMessageHistory(
             manager=self._layers.session,
             context=context,
+            memory_system=self,
             initial_messages=initial_messages,
             recorder=self._recorder,
-            archive_manager=self._layers.archive,
             cleanup_config=self._cleanup_config,
-            pruned_manager=self._pruned_manager,
-            archive_agent=self._archive_agent,
-            archive_storage=self._archive_storage,
-            hook_runner=self._hook_runner,
             token_estimator=self._token_estimator,
-            compactor=self._compactor,
+            model_info=model_info,
+        )
+
+    async def compact_session(
+        self,
+        context: MemoryContext,
+        *,
+        budget: ContextBudget | None = None,
+        source: CompactionSource,
+    ) -> CleanupResult:
+        """Run the 5-phase cleanup pipeline for one session.
+
+        Single orchestration owner for both trigger faces (write-side
+        ``ScopedMessageHistory`` append and, from T3, read-side pre-LLM
+        governance): every system-held dependency (layers, pruned catalog,
+        compactor, hooks, estimator) is organized here so callers stay thin.
+        ``budget`` is the current turn's resolved budget (one typed value
+        replacing the scattered limit/output ints); ``None`` falls back to the
+        system-configured ``cleanup_config``.
+
+        In-flight dedup: a per-session ``asyncio.Lock`` serializes
+        concurrent calls for the same session. ``cleanup_session``'s prepare
+        phase is the authoritative trigger check and runs under the lock, so
+        a caller arriving while a compaction is in flight re-checks the
+        post-compaction state once it acquires the lock — one summary run
+        per pressure spike instead of one per adjacent trigger.
+        """
+        lock = self._compaction_locks.setdefault(context.session_id or "", asyncio.Lock())
+        async with lock:
+            effective_budget = (
+                budget
+                if budget is not None
+                else self._configured_budget()
+            )
+            return await cleanup_session(
+                session=self._layers.session,
+                archive=self._layers.archive,
+                context=context,
+                compactor=self._compactor,
+                budget=effective_budget,
+                max_token_ratio=float(self._cleanup_config.get("max_token_ratio", 0.85)),
+                max_backups=int(self._cleanup_config.get("max_backups", 10)),
+                pruned_manager=self._pruned_manager,
+                archive_agent=self._archive_agent,
+                archive_storage=self._archive_storage,
+                hook_runner=self._hook_runner,
+                token_estimator=self._token_estimator,
+                source=source,
+            )
+
+    def _configured_budget(self) -> ContextBudget:
+        """Budget from the static pool ``cleanup_config`` (fallback face)."""
+        configured_limit = self._cleanup_config.get("max_context_tokens")
+        return ContextBudget(
+            max_context_tokens=(
+                int(configured_limit) if configured_limit is not None else None
+            ),
+            max_output_tokens=int(self._cleanup_config.get("max_output_tokens", 0)),
         )
 
     async def get_history(
