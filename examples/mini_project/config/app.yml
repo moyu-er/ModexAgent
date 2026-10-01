@@ -1,0 +1,10 @@
+# The AppConfig surface RunnableAppService consumes. Everything not listed
+# here keeps its framework default.
+persistence:
+  # FILE keeps the demo state on disk without a SQLite dependency.
+  backend: file
+observability:
+  # Fully offline: no trace emission, no collector, no network.
+  # (Quoted — bare `off` would parse as YAML boolean false.)
+  trace_backend: "off"
+user_plugins_enabled: false

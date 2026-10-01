@@ -1,0 +1,20 @@
+# The mini project's WHOLE agent definition: one pool, one react agent.
+#
+# Pool-as-root form (a bare `pool:` instead of a `workspace:` layer) — the
+# framework boots it through the same declaration road as bot_project's
+# workspace tree, just without the multi-live workspace layer.
+pool:
+  name: mini
+  agents:
+    main:
+      description: Minimal demo agent — one custom tool, one custom hook, one scripted LLM.
+      execution_strategy: react
+      toolset: none
+      # `+name` adds to the position-derived roster: the custom plugin tool
+      # plus one framework-bundled tool, to show both ride the same slots.
+      tools:
+      - +mini_echo
+      - +read
+      llm_provider: mini_scripted
+      hooks:
+      - +mini_turn_logger
