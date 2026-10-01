@@ -7,7 +7,7 @@ import pytest
 from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
@@ -372,8 +372,8 @@ class TestTaskDispatchToolDescription:
 
 
 def _runtime_with_delegation(depth: int) -> object:
-    from modex_agent.runtime.enums import AgentKind, TurnPhase
-    from modex_agent.runtime.models import TurnIdentity, TurnStateBase
+    from modex_agent.core.turn.enums import AgentKind, TurnPhase
+    from modex_agent.core.turn.models import TurnIdentity, TurnStateBase
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
     from modex_agent.sandbox.delegation import DelegationSnapshot
     from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings

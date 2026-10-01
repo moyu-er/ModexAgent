@@ -19,7 +19,7 @@ backend in :class:`PoolScopedBackendProvider` before calling the builder.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from modex_agent.core.agent import ProviderKind
 
@@ -29,13 +29,13 @@ from .contracts import ProviderEventParser
 from .types import ExternalEnvSpec
 
 if TYPE_CHECKING:
-    from ...core.emitter import ContentEmitter
-    from ...core.provider import LLMProvider
-    from ...core.session_id import SessionIdFactory
-    from ...multi_agent.descriptor import AgentDescriptor
-    from ...multi_agent.session_tree.session_binding import SessionBindingStore
-    from ...persistence.session_registry import SessionRegistry
-    from ...pipeline.adapters import OutputAdapter
+    from modex_agent.core.emitter import ContentEmitter
+    from modex_agent.core.provider import LLMProvider
+    from modex_agent.core.session_id import SessionIdFactory
+    from modex_agent.multi_agent.descriptor import AgentDescriptor
+    from modex_agent.persistence.session_registry import SessionRegistry
+    from modex_agent.pipeline.adapters import OutputAdapter
+
     from .child_discovery import ChildSessionDiscoverySink
     from .events import ExternalEvent
     from .session_store import ExternalSessionMapStore
@@ -235,7 +235,8 @@ class ExternalAgentBuilder:
     def build_emitter_factory(
         emitter_output_adapter: OutputAdapter,
     ) -> Callable[[str], ContentEmitter[ExternalEvent]]:
-        from ...adapters.emitter import StreamingAwareEmitter
+        from modex_agent.adapters.emitter import StreamingAwareEmitter
+
         from .events import ExternalEvent
 
         def _factory(session_id: str) -> ContentEmitter[ExternalEvent]:
@@ -245,93 +246,3 @@ class ExternalAgentBuilder:
             )
 
         return _factory
-
-    @staticmethod
-    def assemble_pipeline(
-        descriptor: AgentDescriptor,
-        agent: ExternalAgent,
-        broker: Any,
-        safety: Any,
-        *,
-        hook_runner: Any | None = None,
-        session_registry: Any | None = None,
-        control_channel: Any | None = None,
-        output_adapter: Any | None = None,
-        context_manager: Any | None = None,
-        session_binding_store: SessionBindingStore | None = None,
-    ) -> Any:
-        """Assemble broker I/O + emitter + turn runner + pipeline + instance.
-
-        Shared by the main-agent path (``ExternalAwareFactory.
-        create_agent``) and the subagent path
-        (``ExternalExecutionStrategy._assemble_subagent``) so the ~40 lines of
-        broker-adapter / emitter-factory / turn-runner / pipeline /
-        AgentInstance construction live in one place.
-
-        Callers retain their distinct responsibilities: backend/provider
-        selection, env-spec construction, and (for subagent) hook
-        registration. Only the pipeline-IO-instance assembly is shared.
-        """
-        from modex_agent.memory.context import InMemoryContextManager
-
-        from ...core.llm_struct import RuntimeSafetyPolicy
-        from ...messaging.broker_bridge import (
-            BrokerInputAdapter,
-            BrokerOutputAdapter,
-        )
-        from ...multi_agent.descriptor import AgentInstance
-        from ...multi_agent.router import DefaultMeshRouter
-        from ...pipeline.pipeline import AgentPipeline
-        from ...pipeline.turn_session_registry import TurnSessionRegistry
-        from .turn_runner import ExternalTurnRunner
-
-        address = descriptor.address
-        input_adapter = BrokerInputAdapter(broker=broker, address=address)
-
-        if output_adapter is not None:
-            pipe_output_adapter = output_adapter
-            emitter_output_adapter = output_adapter
-        else:
-            pipe_output_adapter = BrokerOutputAdapter(
-                broker=broker,
-                sender=address,
-                default_topic=f"agent:{address.name}:out",
-            )
-            emitter_output_adapter = BrokerOutputAdapter(
-                broker=broker,
-                sender=address,
-                default_topic=f"agent:{address.name}:out",
-            )
-
-        emitter_factory = ExternalAgentBuilder.build_emitter_factory(emitter_output_adapter)
-
-        registry = TurnSessionRegistry()
-        turn_runner = ExternalTurnRunner(
-            agent=agent,
-            emitter_factory=emitter_factory,
-            output_adapter=pipe_output_adapter,
-            registry=registry,
-            on_session_start=None,
-            on_session_end=None,
-            safety=safety or RuntimeSafetyPolicy(),
-            hook_runner=hook_runner,
-            session_binding_store=session_binding_store,
-        )
-
-        pipeline = AgentPipeline(
-            agent=agent,
-            turn_runner=turn_runner,
-            input_adapter=input_adapter,
-            output_adapter=pipe_output_adapter,
-            registry=registry,
-            safety=safety or RuntimeSafetyPolicy(),
-            router=DefaultMeshRouter(session_registry=session_registry),
-            control_channel=control_channel,
-        )
-
-        ctx_mgr = context_manager or InMemoryContextManager(base_system_prompt="")
-        return AgentInstance(
-            descriptor=descriptor,
-            context_manager=ctx_mgr,
-            pipeline=pipeline,
-        )

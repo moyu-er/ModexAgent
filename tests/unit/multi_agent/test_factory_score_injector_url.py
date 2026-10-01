@@ -9,13 +9,13 @@ from typing import Any
 
 import pytest
 
-from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
-from modex_agent.plugins.capability import PoolSupplyAgentEntry, PoolSupplyView
 from modex_agent.plugins.defaults.capabilities.tracing import (
     TraceSupply,
     TracingCapability,
     TracingCapabilityConfig,
 )
+from modex_agent.scope.capability import PoolSupplyAgentEntry, PoolSupplyView
+from modex_agent.trace.observability import ObservabilityConfig, TraceBackend
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 
 

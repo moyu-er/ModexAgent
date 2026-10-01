@@ -14,6 +14,7 @@ from modex_agent.core.llm_struct import FinishReason, LLMResponse, RuntimeSafety
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.memory.cleanup_hooks import TodoReorientationHook
 from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
@@ -23,11 +24,11 @@ from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.template import AgentTemplate
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.plugins.assembly.subagent_materializer import SubagentMaterializer
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.scope.compiler import compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.scope_path import ScopePath
@@ -89,7 +90,7 @@ async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
     factory.create_agent = AsyncMock(return_value=fake_instance)
     from modex_agent.plugins.defaults import DefaultPlugin
     from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
-    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.scope.component_registry import ComponentRegistry
 
     registry = ComponentRegistry()
     await ComponentRegistryLoader.load(
@@ -120,6 +121,7 @@ async def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
     from modex_agent.plugins.defaults.capabilities.subagents import SubagentsSupply
 
     deps = AgentMaterializeDeps(
+        materializer=SubagentMaterializer(),
         agent_factory=factory,
         pool=pool,
         session_factory=SessionIdFactory(),
@@ -156,7 +158,7 @@ def _compiled_template(name: str, **agent_kwargs: object) -> AgentTemplate:
     position-derived profile + compiled assembly spec)."""
     from modex_agent.plugins.defaults import DefaultPlugin
     from modex_agent.plugins.loader import PluginRegistrationContext
-    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.scope.component_registry import ComponentRegistry
 
     registry = ComponentRegistry()
     with PluginRegistrationContext(registry) as registration:
@@ -213,9 +215,10 @@ def test_subagent_workspace_root_prefers_scope_path_over_project_dir():
     workspace scope path) and the workspace must win for non-home
     workspaces (project_dir-first picked the bot project for every
     workspace — the review's Issue 1)."""
-    from modex_agent.multi_agent.template import _subagent_workspace_root
+    from modex_agent.multi_agent.materializer import subagent_workspace_root
 
     deps = AgentMaterializeDeps(
+        materializer=SubagentMaterializer(),
         agent_factory=MagicMock(),
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
@@ -226,14 +229,14 @@ def test_subagent_workspace_root_prefers_scope_path_over_project_dir():
         root_provider=_StaticRootProvider(Path("/provider/root")),
     )
 
-    assert _subagent_workspace_root(deps) == Path("/live/workspace")
+    assert subagent_workspace_root(deps) == Path("/live/workspace")
 
     deps.scope_path = None
-    assert _subagent_workspace_root(deps) == Path("/provider/root")
+    assert subagent_workspace_root(deps) == Path("/provider/root")
 
     deps.root_provider = None
     with pytest.raises(ValueError, match=r"scope_path or root_provider"):
-        _subagent_workspace_root(deps)
+        subagent_workspace_root(deps)
 
 
 @pytest.mark.asyncio
@@ -429,9 +432,9 @@ async def test_materialize_subagent_wires_hooks_to_hook_runner():
     eradication every subagent hook — the position-default rows and the
     capability-contributed entries alike — is dispatched by the assembly
     core's roster pass onto the runner."""
-    from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
-    from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
+    from modex_agent.agents.react.hooks.deliver_retry import DeliverRetryHook
     from modex_agent.hook.runner import HookRunner
+    from modex_agent.plugins.defaults.capabilities.subagents.auto_send import SubagentAutoSendHook
 
     fake_instance = MagicMock()
     fake_instance.pipeline = MagicMock()
@@ -458,7 +461,7 @@ async def test_materialize_roster_todo_continuation_hook_receives_tree():
     with the pool's session tree — ``PoolRuntimeDeps.session_tree_manager``
     must be wired from ``deps.tree`` so the roster-dispatched hook (like the
     tree-aware one) never carries ``tree=None``."""
-    from modex_agent.hook.builtin.todo_continuation import TodoContinuationHook
+    from modex_agent.agents.react.hooks.todo_continuation import TodoContinuationHook
     from modex_agent.hook.runner import HookRunner
     from modex_agent.plugins.defaults.capabilities.subagents import SubagentsSupply
     from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
@@ -581,6 +584,7 @@ async def test_materialize_external_injects_emitter_factory_into_turn_runner():
     pool = MagicMock()
     pool.register_resident = AsyncMock()
     deps = AgentMaterializeDeps(
+        materializer=SubagentMaterializer(),
         agent_factory=MagicMock(),
         pool=pool,
         session_factory=SessionIdFactory(),
@@ -659,6 +663,7 @@ async def test_materialize_external_injects_pool_context_into_turn_runner():
     pool = MagicMock()
     pool.register_resident = AsyncMock()
     deps = AgentMaterializeDeps(
+        materializer=SubagentMaterializer(),
         agent_factory=MagicMock(),
         pool=pool,
         session_factory=SessionIdFactory(),
@@ -731,6 +736,7 @@ async def test_materialize_external_skips_emitter_injection_when_deps_emitter_no
     pool = MagicMock()
     pool.register_resident = AsyncMock()
     deps = AgentMaterializeDeps(
+        materializer=SubagentMaterializer(),
         agent_factory=MagicMock(),
         pool=pool,
         session_factory=SessionIdFactory(),
@@ -786,7 +792,7 @@ async def test_materialize_resolves_per_agent_llm_provider_override():
     from pydantic import BaseModel
 
     from modex_agent.multi_agent.factory import DefaultAgentFactory
-    from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
+    from modex_agent.scope.components import ComponentSlot, SimpleFactory
 
     class _EmptyConfig(BaseModel):
         model_config = {"frozen": True, "extra": "forbid"}
@@ -943,8 +949,8 @@ async def test_materialize_lands_delegation_snapshot_and_guard_only_approval():
     snapshot and the guard-only (escalate=False) approval runtime — a
     subagent never owns a card channel."""
     from modex_agent.approval.runtime import ApprovalRuntime
+    from modex_agent.approval.security import SecurityClassifier
     from modex_agent.sandbox.delegation import DelegationSnapshot
-    from modex_agent.sandbox.security_classifier import SecurityClassifier
 
     deps, factory = await _make_deps()
     template = _compiled_template("scout")
@@ -972,8 +978,8 @@ async def test_materialize_subagent_write_boundary_classification():
     """PRD #5: workspace-external write → HARDLINE (拒绝型 ToolResult via
     ToolNode) with the two-part delegation copy on last_deny_reason;
     in-workspace write → NORMAL."""
-    from modex_agent.approval.constants import ApprovalTier
     from modex_agent.core.message import ToolCall
+    from modex_agent.core.turn.approval_types import ApprovalTier
 
     deps, factory = await _make_deps()
     template = _compiled_template("scout")
@@ -1009,8 +1015,8 @@ async def test_materialize_subagent_write_boundary_classification():
 @pytest.mark.asyncio
 async def test_materialize_declared_roots_extend_the_write_envelope():
     """PRD #5: 声明根内写 → NORMAL (the dirs join the envelope)."""
-    from modex_agent.approval.constants import ApprovalTier
     from modex_agent.core.message import ToolCall
+    from modex_agent.core.turn.approval_types import ApprovalTier
     from modex_agent.sandbox.settings import ExclusiveConfig, SandboxSettings
 
     deps, factory = await _make_deps()
@@ -1130,8 +1136,8 @@ async def test_materialize_pool_full_access_inherits_to_subagent():
     approval = services.approval
     assert approval is not None
     ctx = _classify_ctx()
-    from modex_agent.approval.constants import ApprovalTier
     from modex_agent.core.message import ToolCall
+    from modex_agent.core.turn.approval_types import ApprovalTier
 
     inside = ToolCall(tool_name="write", arguments={"path": "src/a.py"}, call_id="c1")
     assert approval.classifier.classify(inside, ctx).tier is ApprovalTier.NORMAL

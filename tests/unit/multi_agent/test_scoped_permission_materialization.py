@@ -7,11 +7,11 @@ import pytest
 
 from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.tool_executor import ToolExecutor
-from modex_agent.approval.constants import ApprovalAuditSource, ApprovalTier
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
+from modex_agent.core.turn.approval_decision import ApprovalAuditStore
+from modex_agent.core.turn.approval_types import ApprovalAuditSource, ApprovalTier
 from modex_agent.multi_agent.descriptor import AgentInstance
 from modex_agent.multi_agent.factory import DefaultAgentFactory
-from modex_agent.runtime.approval_decision import ApprovalAuditStore
 from modex_agent.sandbox.settings import SandboxBackend, WriteSurface
 from modex_agent.sandbox.types import EnforcementLevel
 from modex_agent.scope.spec import AgentSpec
@@ -89,14 +89,14 @@ async def test_native_materialization_records_denial_in_shared_audit(
     from modex_agent.agents.react.context import ReActGraphContext
     from modex_agent.agents.react.runtime import ReactGraphRuntime
     from modex_agent.agents.react.state import ReActTurnState
-    from modex_agent.approval.constants import ApprovalAuditDecision
     from modex_agent.core.scope import RecordScope
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.approval_decision import DecisionActor
+    from modex_agent.core.turn.approval_types import ApprovalAuditDecision
+    from modex_agent.core.turn.enums import TurnCustomKey
     from modex_agent.memory.context import ContextState
     from modex_agent.persistence import ConnectionManager, DatabaseKind
     from modex_agent.persistence.adapters.approval_audit_store import SqliteApprovalAuditStore
-    from modex_agent.runtime.approval_decision import DecisionActor
-    from modex_agent.runtime.enums import TurnCustomKey
 
     manager = ConnectionManager(tmp_path / "audit.db", DatabaseKind.WORKSPACE)
     await manager.open()
@@ -188,17 +188,17 @@ async def test_external_real_runner_records_limits_without_fake_classifier(tmp_p
     from unittest.mock import MagicMock
 
     from modex_agent.agents.external.agent import ExternalAgent
-    from modex_agent.agents.external.turn_runner import ExternalTurnRunner
     from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.memory.context import InMemoryContextManager
-    from modex_agent.multi_agent.address import AgentAddress
+    from modex_agent.messaging.agent_messages import AgentAddress
     from modex_agent.multi_agent.descriptor import AgentDescriptor
     from modex_agent.multi_agent.execution_strategy import (
         ExecutionStrategy,
         ExecutionStrategyRegistry,
         SubagentAssembly,
     )
+    from modex_agent.pipeline.external_turn_runner import ExternalTurnRunner
     from modex_agent.pipeline.pipeline import AgentPipeline
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 

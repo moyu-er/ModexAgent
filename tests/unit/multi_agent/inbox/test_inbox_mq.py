@@ -21,10 +21,9 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.multi_agent.inbox.server import InboxMQ, InboxServer
+from modex_agent.core.inbox import InboxMessage, InboxMQ, InboxServer
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxMQ, LocalFileInboxServer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
-from modex_agent.multi_agent.inbox.types import InboxMessage
 
 
 def _msg(mid: str = "m1", session: str = "s1") -> InboxMessage:

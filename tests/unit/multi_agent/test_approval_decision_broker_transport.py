@@ -16,11 +16,11 @@ reconstructs it.
 from __future__ import annotations
 
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.messaging.agent_messages import AgentMessageEnvelope
 from modex_agent.messaging.broker import Address
-from modex_agent.messaging.broker_bridge import build_input_broker_message
 from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput, InputMessage
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.pool import input_message_from_dispatch_envelope
+from modex_agent.pipeline.broker_bridge import build_input_broker_message
 
 
 def _session() -> SessionInfo:

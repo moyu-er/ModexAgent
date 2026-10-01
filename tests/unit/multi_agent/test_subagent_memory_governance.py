@@ -32,9 +32,9 @@ from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.presets import subagent_memory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 from modex_agent.memory.system import MemorySystemContextManager
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import AgentDescriptor, AgentLLMConfig, DefaultAgentFactory
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.factory import AgentCommKind
 from modex_agent.tools.manager import InMemoryToolManager
 
@@ -142,7 +142,7 @@ class TestSubagentMemoryGovernanceHead:
         self, tmp_path: Path
     ) -> None:
         """Main agents register their governance at pool wiring
-        (``_wire_main_pipeline``), never here — unchanged behavior."""
+        (``wire_main_pipeline``), never here — unchanged behavior."""
         descriptor = _subagent_descriptor().model_copy(
             update={"comm_kind": AgentCommKind.NORMAL}
         )

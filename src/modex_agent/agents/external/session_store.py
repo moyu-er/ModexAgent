@@ -22,38 +22,17 @@ import asyncio
 import json
 import os
 import tempfile
-from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from modex_agent.core.agent import ProviderKind
+from modex_agent.core.external_session import ExternalSessionMapStore
 
 from .paths import ExternalPaths
 from .types import SessionMapEntry
 
-__all__ = ["ExternalSessionMapStore", "LocalFileExternalSessionMapStore"]
-
-
-class ExternalSessionMapStore(ABC):
-    """Persistence seam for Modex-to-provider session mappings."""
-
-    @abstractmethod
-    def resolve(self, modex_session_id: str) -> tuple[str | None, bool]:
-        """Resolve a resumable provider session for a Modex session."""
-
-    @abstractmethod
-    async def commit(
-        self,
-        modex_session_id: str,
-        provider_session_id: str,
-        provider_kind: ProviderKind,
-    ) -> None:
-        """Persist or replace a provider session mapping."""
-
-    @abstractmethod
-    async def invalidate(self, modex_session_id: str) -> None:
-        """Prevent a provider session mapping from being resumed."""
+__all__ = ["LocalFileExternalSessionMapStore"]
 
 
 class LocalFileExternalSessionMapStore(ExternalSessionMapStore):

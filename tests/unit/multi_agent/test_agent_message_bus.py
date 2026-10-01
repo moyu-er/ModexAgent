@@ -2,9 +2,8 @@
 
 from unittest.mock import MagicMock
 
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.agent_messages import AgentAddress, AgentMessageEnvelope
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer

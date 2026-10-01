@@ -31,6 +31,11 @@ external package owns its full execution story — parallel to how it
 owns its :class:`~modex_agent.agents.external.agent.ExternalAgent`
 subclass. The pipeline package injects this runner via the
 :class:`modex_agent.pipeline.turn_runner_abc.TurnRunner` ABC (ADR-0025 D3).
+
+Moved to the pipeline package (W3b, formerly ``agents/external/turn_runner.py``):
+turn runners live with the turn-runner ABC they implement — the external
+harness types it needs (``agents.external.agent`` / ``events``) sit one
+level below the pipeline, so the runner's home is here.
 """
 
 from __future__ import annotations
@@ -48,11 +53,11 @@ from modex_agent.adapters.emitter import StreamingAwareEmitter
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.message_utils import sanitize_reminder_content, wrap_system_reminder
+from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.hook.abc import HookPayload, HookPoint
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.pipeline.turn_runner_abc import TurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.runtime.models import TurnIdentity
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.runtime import bind_workspace_root
 
@@ -64,8 +69,8 @@ if TYPE_CHECKING:
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.hook.runner import HookRunner
+    from modex_agent.messaging.agent_messages import RouteResult
     from modex_agent.messaging.models import InputMessage
-    from modex_agent.multi_agent.router import RouteResult
     from modex_agent.multi_agent.session_tree.session_binding import (
         SessionBindingStore,
     )

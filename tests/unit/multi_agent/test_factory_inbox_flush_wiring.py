@@ -14,12 +14,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from modex_agent.hook import HookRunner
-from modex_agent.hook.builtin import InboxFlushHook
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+from modex_agent.multi_agent.inbox.flush_hook import InboxFlushHook
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 
 

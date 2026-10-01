@@ -3,7 +3,7 @@ into runtime_services so subagent tools can gate multimodal behaviour.
 
 Root cause being fixed: subagent's ``_build_turn_runner`` hardcoded
 ``runtime_services=None``, so ``ToolExecutionContext.model_info`` was always
-None → ``_read_image_as_multimodal`` degraded to text even when the LLM
+None → ``read_image_as_multimodal`` degraded to text even when the LLM
 supports IMAGE.
 """
 
@@ -16,13 +16,13 @@ import pytest
 from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import (
     AgentDescriptor,
     AgentLLMConfig,
     DefaultAgentFactory,
 )
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 
 

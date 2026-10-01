@@ -25,17 +25,19 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.messaging.agent_messages import (
+    AgentAddress,
+    AgentMessageEnvelope,
+    AgentMessageType,
+)
 from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import AgentPool, DefaultAgentFactory
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.inbox_poller import InboxPoller
-from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.state import AgentState
 from modex_agent.pipeline.turn_outcome import TurnOutcome
 

@@ -31,7 +31,7 @@ class _FakeBroker:
 
 
 def _mock_tree(bus: object) -> SessionTreeManager:
-    from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+    from modex_agent.messaging.agent_messages import AgentMessageEnvelope
 
     tree: SessionTreeManager = MagicMock(spec=SessionTreeManager)
 
@@ -125,7 +125,7 @@ class TestRegisterResidentTakesInstance:
 
     @pytest.mark.asyncio
     async def test_register_resident_stores_prebuilt_instance(self, pool):
-        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.messaging.agent_messages import AgentAddress
         from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         descriptor = AgentDescriptor(address=AgentAddress(name="main"))
@@ -137,7 +137,7 @@ class TestRegisterResidentTakesInstance:
         # Verify instance was stored (no consumer task — _consumers dict is deleted)
 
     async def test_unregister_resident_removes_exact_instance(self, pool):
-        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.messaging.agent_messages import AgentAddress
         from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         descriptor = AgentDescriptor(address=AgentAddress(name="main"))
@@ -150,7 +150,7 @@ class TestRegisterResidentTakesInstance:
         assert pool.get_status("main") is AgentState.SHUTDOWN
 
     async def test_unregister_resident_preserves_replacement(self, pool):
-        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.messaging.agent_messages import AgentAddress
         from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         descriptor = AgentDescriptor(address=AgentAddress(name="main"))
@@ -211,7 +211,7 @@ class TestRegisterResidentTakesInstance:
 class TestShutdownOwnership:
     @staticmethod
     async def _register(pool: AgentPool, name: str, stop: AsyncMock) -> None:
-        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.messaging.agent_messages import AgentAddress
         from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         instance = MagicMock()
@@ -607,8 +607,7 @@ class TestSubmitInputAndPollerHelpers:
         msg, sid = self._build_input_message()
         await pool.submit_input(sid, msg)
         # Seed a task_request envelope on the same session
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.messaging.agent_messages import AgentAddress, AgentMessageEnvelope
 
         await pool.tree.deliver(
             sid,

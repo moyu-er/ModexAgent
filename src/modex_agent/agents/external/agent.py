@@ -64,13 +64,13 @@ from modex_agent.core.agent import (
     current_agent_context,
 )
 from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
+from modex_agent.core.turn.dispatch import renew_dispatch_deadline
 from modex_agent.core.turn_events import (
     TurnReasoningEvent,
     TurnTextEvent,
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
-from modex_agent.runtime.dispatch import renew_dispatch_deadline
 from modex_agent.workspace.runtime import is_workspace_root_bound, resolve_workspace_root
 
 from .backend_provider import BackendProvider, TurnContext

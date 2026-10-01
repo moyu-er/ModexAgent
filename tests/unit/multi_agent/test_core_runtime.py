@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import (
     AgentDescriptor,
@@ -14,7 +15,6 @@ from modex_agent.multi_agent import (
     DefaultAgentFactory,
     SessionRetentionPolicy,
 )
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.router import DefaultMeshRouter
 from modex_agent.multi_agent.state import AgentState
 

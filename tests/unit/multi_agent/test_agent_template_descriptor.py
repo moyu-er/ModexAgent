@@ -20,9 +20,10 @@ from modex_agent.multi_agent.execution_strategy import (
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.template import AgentTemplate
-from modex_agent.plugins.abc import AgentType
 from modex_agent.plugins.assembly.context import AgentContext
+from modex_agent.plugins.assembly.subagent_materializer import SubagentMaterializer
 from modex_agent.scope.compiler import compile_scope
+from modex_agent.scope.components import AgentType
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
@@ -36,7 +37,7 @@ async def _deps(
 ) -> AgentMaterializeDeps:
     from modex_agent.plugins.defaults import DefaultPlugin
     from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
-    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.scope.component_registry import ComponentRegistry
 
     component_registry = ComponentRegistry()
     await ComponentRegistryLoader.load(
@@ -52,6 +53,7 @@ async def _deps(
     factory = MagicMock()
     factory.create_agent = AsyncMock(return_value=fake_instance)
     return AgentMaterializeDeps(
+        materializer=SubagentMaterializer(),
         agent_factory=factory,
         pool=pool,
         session_factory=SessionIdFactory(),

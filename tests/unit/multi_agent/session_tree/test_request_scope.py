@@ -19,22 +19,23 @@ import pytest
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
-from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
 from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.messaging.agent_messages import (
+    AgentAddress,
+    AgentMessageEnvelope,
+    AgentMessageType,
+)
 from modex_agent.messaging.broker import AddressKind
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput, InputMessage
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.inbox_poller import InboxPoller
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
-from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.session_tree.models import SessionTreeMetadata
@@ -55,6 +56,7 @@ from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrac
 from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
 from modex_agent.persistence.session_registry import InMemorySessionRegistry
 from modex_agent.pipeline.turn_outcome import TurnOutcome, TurnSuspension
+from modex_agent.plugins.defaults.capabilities.subagents.auto_send import SubagentAutoSendHook
 from modex_agent.tools.manager import InMemoryToolManager
 
 ROOT_SID = "root.main"

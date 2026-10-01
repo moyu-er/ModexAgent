@@ -3,16 +3,16 @@
 from unittest.mock import MagicMock
 
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.inbox import InboxMessage
 from modex_agent.core.message import MessageRole
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolManager
-from modex_agent.hook.builtin import InboxFlushHook
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.messaging.agent_messages import AgentMessageType
 from modex_agent.messaging.models import ReminderKind
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+from modex_agent.multi_agent.inbox.flush_hook import InboxFlushHook
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
-from modex_agent.multi_agent.inbox.types import InboxMessage
-from modex_agent.multi_agent.message_type import AgentMessageType
 
 
 class TestInboxFlushHook:

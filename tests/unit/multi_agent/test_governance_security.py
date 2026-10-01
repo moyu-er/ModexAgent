@@ -5,10 +5,9 @@ import pytest
 from modex_agent.core.tool_manager import (
     Tool,
 )
+from modex_agent.messaging.agent_messages import AgentAddress, AgentMessageEnvelope
 from modex_agent.messaging.broker import Address, BrokerMessage
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentDescriptor
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.plugins.defaults.capabilities.skills.filter import AllowListFilter
 from modex_agent.tools.filter import FilteredToolManager
 from modex_agent.tools.manager import InMemoryToolManager

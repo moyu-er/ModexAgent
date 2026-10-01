@@ -6,21 +6,25 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from modex_agent.agents.external.agent import ExternalAgent
     from modex_agent.commands.skill import SkillResolver
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.provider import LLMProvider
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from modex_agent.multi_agent.session_tree.session_binding import SessionBindingStore
+
 from modex_agent.core import AgentCommKind
-from modex_agent.core.agent import ExecutionStrategyKind
+from modex_agent.core.inbox import InboxServer
 from modex_agent.core.tool_manager import ToolManager
 from modex_agent.hook import HookRunner
-from modex_agent.hook.builtin import InboxFlushHook
-from modex_agent.ioc.configs.llm import LLMConfig
-from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.memory.context import ContextManager, InMemoryContextManager
+from modex_agent.multi_agent.inbox.flush_hook import InboxFlushHook
 from modex_agent.persistence.session_registry import SessionRegistry
+from modex_agent.providers.factory import create_llm_provider
+from modex_agent.providers.llm_config import LLMConfig
 from modex_agent.runtime.context import RuntimeContextManager
 from modex_agent.tools.filter import FilteredToolManager
 from modex_agent.tools.manager import InMemoryToolManager
@@ -28,7 +32,6 @@ from modex_agent.tools.manager import InMemoryToolManager
 from .descriptor import AgentDescriptor, AgentInstance
 from .inbox.consumer import InboxConsumer
 from .inbox.producer import InboxProducer
-from .inbox.server import InboxServer
 
 if TYPE_CHECKING:
     pass
@@ -137,23 +140,20 @@ class DefaultAgentFactory(AgentFactory):
             )
         )
 
-    def _get_builder(self, execution_strategy: ExecutionStrategyKind) -> type[Any] | None:
-        if execution_strategy == ExecutionStrategyKind.EXTERNAL:
-            from modex_agent.agents.external.builder import ExternalAgentBuilder
-
-            return ExternalAgentBuilder
-        if execution_strategy in (ExecutionStrategyKind.REACT, ExecutionStrategyKind.PIPELINE):
-            from modex_agent.agents.react.builder import ReActAgentBuilder
-
-            return ReActAgentBuilder
-        return None
-
     def _build_agent(self, descriptor: AgentDescriptor, provider: Any) -> Agent:
-        builder = self._get_builder(descriptor.execution_strategy)
-        if builder is None:
-            msg = f"Unsupported execution_strategy: {descriptor.execution_strategy}"
-            raise ValueError(msg)
-        return builder.build_agent(descriptor, provider)
+        """Build the ReAct agent (the factory's one runtime shape, W5).
+
+        The former ``_get_builder`` enum dispatch (REACT/PIPELINE/EXTERNAL)
+        died with the runtime-slot wave: the RUNTIME is an
+        EXECUTION_STRATEGY slot product — self-owning shapes (``external``)
+        build their runtime through their own strategy assembly, and
+        native-component custom loops plug their own constructor into
+        ``assemble_native_agent``. This factory is the bundled react
+        runtime constructor.
+        """
+        from modex_agent.agents.react.builder import ReActAgentBuilder
+
+        return ReActAgentBuilder.build_agent(descriptor, provider)
 
     def _resolve_context_manager(
         self,
@@ -301,7 +301,7 @@ class DefaultAgentFactory(AgentFactory):
 
         subagent_governance: Any | None = None
         if descriptor.comm_kind == AgentCommKind.SUBAGENT:
-            from modex_agent.ioc.factories.governance import create_subagent_governance
+            from modex_agent.memory.assembly import create_subagent_governance
             from modex_agent.memory.system import MemorySystemContextManager
 
             # A subagent's turn runner loads through THIS context manager
@@ -323,12 +323,12 @@ class DefaultAgentFactory(AgentFactory):
                 ),
             )
 
-        from modex_agent.messaging.broker_bridge import (
+        from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+        from modex_agent.multi_agent.router import DefaultMeshRouter
+        from modex_agent.pipeline.broker_bridge import (
             BrokerInputAdapter,
             BrokerOutputAdapter,
         )
-        from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-        from modex_agent.multi_agent.router import DefaultMeshRouter
         from modex_agent.pipeline.pipeline import AgentPipeline
         from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 
@@ -354,10 +354,9 @@ class DefaultAgentFactory(AgentFactory):
             emitter_output_adapter = BrokerOutputAdapter(
                 broker=broker, sender=address, default_topic=f"agent:{address.name}:out"
             )
-        builder = self._get_builder(descriptor.execution_strategy)
-        if builder is None:
-            raise ValueError(f"Unsupported execution_strategy: {descriptor.execution_strategy}")
-        emitter_factory = builder.build_emitter_factory(emitter_output_adapter)
+        from modex_agent.agents.react.builder import ReActAgentBuilder
+
+        emitter_factory = ReActAgentBuilder.build_emitter_factory(emitter_output_adapter)
         default_hook_specs = (
             self._default_hook_runner.hook_specs
             if self._default_hook_runner is not None
@@ -435,3 +434,99 @@ class DefaultAgentFactory(AgentFactory):
             context_manager=ctx_mgr,
             pipeline=pipeline,
         )
+
+
+def assemble_external_pipeline(
+    descriptor: AgentDescriptor,
+    agent: ExternalAgent,
+    broker: Any,
+    safety: Any,
+    *,
+    hook_runner: Any | None = None,
+    session_registry: Any | None = None,
+    control_channel: Any | None = None,
+    output_adapter: Any | None = None,
+    context_manager: Any | None = None,
+    session_binding_store: SessionBindingStore | None = None,
+) -> Any:
+    """Assemble broker I/O + emitter + turn runner + pipeline + instance.
+
+    Moved from ``ExternalAgentBuilder.assemble_pipeline`` (W3b): the
+    composition builds pipeline + multi-agent objects, so its home is the
+    factory that owns the native parallel path — not the agents package the
+    layering places below the pipeline.
+
+    Shared by the main-agent path
+    (``ExternalExecutionStrategy.assemble_main``) and the subagent path
+    (``ExternalExecutionStrategy.assemble_sub``) so the ~40 lines of
+    broker-adapter / emitter-factory / turn-runner /
+    pipeline / AgentInstance construction live in one place.
+
+    Callers retain their distinct responsibilities: backend/provider
+    selection, env-spec construction, and (for subagent) hook
+    registration. Only the pipeline-IO-instance assembly is shared.
+    """
+    from modex_agent.agents.external.builder import ExternalAgentBuilder
+    from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+    from modex_agent.memory.context import InMemoryContextManager
+    from modex_agent.pipeline.broker_bridge import (
+        BrokerInputAdapter,
+        BrokerOutputAdapter,
+    )
+    from modex_agent.pipeline.external_turn_runner import ExternalTurnRunner
+    from modex_agent.pipeline.pipeline import AgentPipeline
+    from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+
+    from .descriptor import AgentInstance
+    from .router import DefaultMeshRouter
+
+    address = descriptor.address
+    input_adapter = BrokerInputAdapter(broker=broker, address=address)
+
+    if output_adapter is not None:
+        pipe_output_adapter = output_adapter
+        emitter_output_adapter = output_adapter
+    else:
+        pipe_output_adapter = BrokerOutputAdapter(
+            broker=broker,
+            sender=address,
+            default_topic=f"agent:{address.name}:out",
+        )
+        emitter_output_adapter = BrokerOutputAdapter(
+            broker=broker,
+            sender=address,
+            default_topic=f"agent:{address.name}:out",
+        )
+
+    emitter_factory = ExternalAgentBuilder.build_emitter_factory(emitter_output_adapter)
+
+    registry = TurnSessionRegistry()
+    turn_runner = ExternalTurnRunner(
+        agent=agent,
+        emitter_factory=emitter_factory,
+        output_adapter=pipe_output_adapter,
+        registry=registry,
+        on_session_start=None,
+        on_session_end=None,
+        safety=safety or RuntimeSafetyPolicy(),
+        hook_runner=hook_runner,
+        session_binding_store=session_binding_store,
+    )
+
+    pipeline = AgentPipeline(
+        agent=agent,
+        turn_runner=turn_runner,
+        input_adapter=input_adapter,
+        output_adapter=pipe_output_adapter,
+        registry=registry,
+        safety=safety or RuntimeSafetyPolicy(),
+        router=DefaultMeshRouter(session_registry=session_registry),
+        control_channel=control_channel,
+    )
+
+    ctx_mgr = context_manager or InMemoryContextManager(base_system_prompt="")
+    return AgentInstance(
+        descriptor=descriptor,
+        context_manager=ctx_mgr,
+        pipeline=pipeline,
+    )

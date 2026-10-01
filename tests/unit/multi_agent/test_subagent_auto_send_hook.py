@@ -8,13 +8,13 @@ from modex_agent.core.agent import AgentContext, ExecutionStrategyKind
 from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.hook.builtin import SubagentAutoSendHook
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+from modex_agent.plugins.defaults.capabilities.subagents.auto_send import SubagentAutoSendHook
 from modex_agent.tools.manager import InMemoryToolManager
 
 

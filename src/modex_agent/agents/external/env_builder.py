@@ -63,7 +63,7 @@ class ExternalEnvBuilder:
 
         This is the single extraction point for MODEX_ var construction
         (ADR-0022 D6). Both :meth:`build` (external coding spawn) and
-        :class:`modex_agent.hook.builtin.env_injection.NativeEnvInjectionHook`
+        :class:`modex_agent.agents.react.hooks.env_injection.NativeEnvInjectionHook`
         (native agent contextvar injection) call this method so the two
         paths never diverge.
 

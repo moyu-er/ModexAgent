@@ -17,6 +17,8 @@ holding a fixed instance. The main-agent path wraps its pre-built
 backend in :class:`PoolScopedBackendProvider`.
 """
 
+from modex_agent.core.external_session import ExternalSessionMapStore
+
 from .backend_provider import (
     BackendProvider,
     PoolScopedBackendProvider,
@@ -26,7 +28,7 @@ from .contracts import ProviderBackend, ProviderEventParser
 from .env_builder import ExternalEnvBuilder
 from .events import ExternalEvent
 from .paths import ExternalPaths
-from .session_store import ExternalSessionMapStore, LocalFileExternalSessionMapStore
+from .session_store import LocalFileExternalSessionMapStore
 from .types import (
     BackendResult,
     BackendStatus,

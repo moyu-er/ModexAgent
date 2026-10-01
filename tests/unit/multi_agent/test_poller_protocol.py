@@ -24,12 +24,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
+from modex_agent.messaging.agent_messages import AgentAddress, AgentMessageEnvelope
 from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import AgentPool, DefaultAgentFactory
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
@@ -362,7 +361,7 @@ async def test_dispatch_stamps_parent_from_envelope_without_registry():
     Must fail on the pre-convergence code, which read the parent from
     ``_resolve_session_info`` (registry/store) and got ``None`` here.
     """
-    from modex_agent.multi_agent.message_type import AgentMessageType
+    from modex_agent.messaging.agent_messages import AgentMessageType
 
     pool, _bus, poller = await _make_poller_pool()  # no session_registry / no store
     try:

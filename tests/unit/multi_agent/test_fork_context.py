@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from modex_agent.core.tool_vocabulary import ContextMode
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.scope.spec import AgentSpec
-from modex_agent.tools.presets import ContextMode
 
 
 class TestForkContextPersistence:

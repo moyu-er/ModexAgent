@@ -12,10 +12,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.commands.skill import SkillResolver
-from modex_agent.core.agent import ExecutionStrategyKind
+from modex_agent.core.media import MediaConfig
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.messaging.broker import AddressKind
-from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.multi_agent.tools import CommunicationTargetStore
 
 if TYPE_CHECKING:
@@ -47,7 +46,11 @@ class PoolInstance:
     catalog. Subagent resolvers stay bound to their own pipelines."""
     mcp_manager: Any | None
     root_agent_name: str
-    main_execution_strategy: ExecutionStrategyKind
+    main_execution_strategy: str
+    """The pool root's execution-strategy NAME (the EXECUTION_STRATEGY slot
+    registry key — ``"react"`` / ``"external"`` / any registered shape, W5).
+    Consumers compare against :class:`modex_agent.core.agent.
+    ExecutionStrategyKind` members (StrEnum equality with the raw name)."""
     provider: Any
     notification_service: Any  # AgentNotificationService
     communication_service: (
@@ -56,7 +59,7 @@ class PoolInstance:
     tree_manager: SessionTreeManager  # exposed for cross-pool peer wiring
     target_store: CommunicationTargetStore  # exposed for cross-pool peer wiring
     session_binding_store: SessionBindingStore | None = None  # tree-level session binding
-    requires_main_agent_tools: bool = True  # ADR-0025: mirror of strategy.requires_main_agent_tools
+    requires_main_agent_tools: bool = True  # ADR-0025: mirror of strategy.ownership.needs_main_agent_tools
     roster_hook_names: frozenset[str] = frozenset()  # main-agent roster hooks dispatched at assembly (D-A8)
     comm_tools_derived: bool = False
     """Ticket 07: the communication tools were tree-derived at assembly

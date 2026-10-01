@@ -15,17 +15,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.template import AgentTemplate
+from modex_agent.plugins.assembly.subagent_materializer import SubagentMaterializer
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.sandbox.settings import ExclusiveConfig, SandboxSettings
 from modex_agent.scope.compiler import compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.scope_path import ScopePath
@@ -85,6 +86,7 @@ async def _deps(tmp_path: Path, pool_assembly: PoolAssemblyContext, ws: Path) ->
     pool.register_resident = AsyncMock()
     pool.get = MagicMock(return_value=None)
     return AgentMaterializeDeps(
+        materializer=SubagentMaterializer(),
         agent_factory=factory,
         pool=pool,
         session_factory=MagicMock(),

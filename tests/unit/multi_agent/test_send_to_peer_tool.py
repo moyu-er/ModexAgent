@@ -5,7 +5,7 @@ import pytest
 from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,

@@ -1,10 +1,10 @@
 # tests/unit/multi_agent/test_template.py
 """Tests for AgentTemplate."""
 
-from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.core.tool_vocabulary import ContextMode, ToolPreset
+from modex_agent.memory.config import MemoryConfig
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.scope.spec import AgentSpec
-from modex_agent.tools.presets import ContextMode, ToolPreset
 
 
 def test_agent_template_defaults():

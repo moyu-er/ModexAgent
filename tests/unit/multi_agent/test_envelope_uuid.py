@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.messaging.agent_messages import AgentAddress, AgentMessageEnvelope
 
 
 class TestEnvelopeUUID:

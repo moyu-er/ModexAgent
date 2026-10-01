@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core import AgentCommKind
-from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.prompt import SystemPromptProvider
@@ -20,26 +19,26 @@ from modex_agent.core.tool_group import ToolGroup, ToolGroupSpec
 from modex_agent.core.tool_manager import Tool, ToolManager, ToolOverrideRecord
 from modex_agent.hook import Hook, HookSpec
 from modex_agent.hook.runner import HookRunner
-from modex_agent.ioc.configs.memory import ArchiveConfig, CoreMemoryConfig, MemoryConfig
+from modex_agent.memory.config import ArchiveConfig, CoreMemoryConfig, MemoryConfig
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.presets import subagent_memory
 from modex_agent.memory.system import MemorySystemContextManager
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.multi_agent.descriptor import (
     AgentDescriptor,
     AgentInstance,
     AgentLLMConfig,
     ContextStrategy,
 )
-from modex_agent.plugins.abc import AgentType, ComponentSlot, HookRunnerKind
 from modex_agent.plugins.assembly.context import (
     AgentContext,
     AssemblyContext,
     agent_context_chain,
 )
 from modex_agent.plugins.assembly.resources import AssemblyResourceOwner
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides, ToolEntry
-from modex_agent.plugins.capability import CapabilityWiring, SectionPlacement
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides, ToolEntry
+from modex_agent.scope.capability import CapabilityWiring, SectionPlacement
+from modex_agent.scope.components import AgentType, ComponentSlot, HookRunnerKind
 from modex_agent.tools.manager import InMemoryToolManager
 
 if TYPE_CHECKING:
@@ -47,12 +46,12 @@ if TYPE_CHECKING:
     from modex_agent.commands.skill import SkillResolver
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.provider import LLMProvider
+    from modex_agent.core.workspace_root import WorkspaceRootProvider
     from modex_agent.memory.context import ContextManager
     from modex_agent.messaging import MessageBroker
     from modex_agent.multi_agent.factory import AgentFactory
     from modex_agent.multi_agent.pool import AgentPool
-    from modex_agent.plugins.registry import ComponentRegistry
-    from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
+    from modex_agent.scope.component_registry import ComponentRegistry
 
 
 T = TypeVar("T")
@@ -79,6 +78,15 @@ class NativeAssemblyInputs:
     runtime objects (tree, resolver, todo store, MCP registry, emitter factory,
     …) flow through ``PoolRuntimeDeps`` on the ``AssemblyContext`` where hook
     and tool factories read them — not through this carrier.
+
+    ``agent_factory`` IS the runtime-constructor seam (W5): the default is
+    the bundled react path (``DefaultAgentFactory`` produces the
+    ``ReActAgent`` + ``ReActTurnRunner``); a third-party native-component
+    strategy passes its OWN :class:`~modex_agent.multi_agent.factory.
+    AgentFactory` implementation so the tail of the native assembly builds
+    the strategy's loop while reusing the full native component resolution
+    above it (tools/hooks/llm/memory/capabilities) — "native components +
+    custom loop".
     """
 
     def __init__(
@@ -92,6 +100,7 @@ class NativeAssemblyInputs:
         memory_system: MemorySystem | None = None,
         memory_config: MemoryConfig | None = None,
         llm_provider: LLMProvider | None = None,
+        needs_llm_provider: bool = True,
         tool_manager: ToolManager | None = None,
         skill_resolver: SkillResolver | None = None,
         output_adapter: OutputAdapter | None = None,
@@ -100,7 +109,6 @@ class NativeAssemblyInputs:
         project_dir: Path | None = None,
         on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
         extra_hooks: tuple[Hook, ...] = (),
-        execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
         tool_transform: Callable[[Tool], Tool] | None = None,
         depth: int = 0,
         resource_owner: AssemblyResourceOwner | None = None,
@@ -113,6 +121,7 @@ class NativeAssemblyInputs:
         self.memory_system = memory_system
         self.memory_config = memory_config
         self.llm_provider = llm_provider
+        self.needs_llm_provider = needs_llm_provider
         self.tool_manager = tool_manager
         self.skill_resolver = skill_resolver
         self.output_adapter = output_adapter
@@ -121,7 +130,6 @@ class NativeAssemblyInputs:
         self.project_dir = project_dir
         self.on_subagent_created = on_subagent_created
         self.extra_hooks = extra_hooks
-        self.execution_strategy = execution_strategy
         self.tool_transform = tool_transform
         self.depth = depth
         self.resource_owner = resource_owner
@@ -236,7 +244,7 @@ async def _resolve_tools(
     return products
 
 
-async def _resolve_single(
+async def resolve_single(
     registry: ComponentRegistry,
     slot: ComponentSlot,
     name: str,
@@ -285,7 +293,7 @@ def _merge_memory(
     return base
 
 
-async def _dispatch_hooks(
+async def dispatch_hooks(
     spec: AssemblySpec,
     registry: ComponentRegistry,
     ctx: AgentContext,
@@ -399,10 +407,13 @@ async def _assemble_native_agent(
     # pool factory pre-resolves into AgentMaterializeDeps) both always pass
     # inputs.llm_provider, so this registry resolution is production-dead by
     # design — it exists so assemble_native_agent remains usable standalone
-    # (tests, tooling) without a pre-resolved provider.
+    # (tests, tooling) without a pre-resolved provider. A strategy declaring
+    # ownership.needs_llm_provider=False skips the fallback entirely: the
+    # runtime constructor receives provider=None and a no-LLM loop assembles
+    # without any provider product (W5 — ownership-derived).
     provider = inputs.llm_provider
-    if provider is None:
-        provider = await _resolve_single(
+    if provider is None and inputs.needs_llm_provider:
+        provider = await resolve_single(
             registry,
             ComponentSlot.LLM_PROVIDER,
             spec.llm_provider,
@@ -426,7 +437,7 @@ async def _assemble_native_agent(
         prompt_path = Path(prompt_config["path"])
         if not prompt_path.is_absolute():
             prompt_config["path"] = str(inputs.project_dir / prompt_path)
-    prompt_provider: SystemPromptProvider = await _resolve_single(
+    prompt_provider: SystemPromptProvider = await resolve_single(
         registry,
         ComponentSlot.SYSTEM_PROMPT_PROVIDER,
         spec.system_prompt_provider,
@@ -497,7 +508,7 @@ async def _assemble_native_agent(
         )
     system_prompt = await prompt_provider.get_or_refresh()
     hook_runner = HookRunner()
-    await _dispatch_hooks(spec, registry, chain, hook_runner, inputs.memory_system)
+    await dispatch_hooks(spec, registry, chain, hook_runner, inputs.memory_system)
     # Roster hooks and code-wired extra_hooks may name the same hook; the
     # name-based dedup keeps one instance (roster dispatch wins).
     seen_hook_names = {hook_spec.hook.name for hook_spec in hook_runner.hook_specs}
@@ -576,7 +587,7 @@ async def _assemble_native_agent(
         ),
         system_prompt_template=system_prompt,
         max_iterations=spec.max_iterations,
-        execution_strategy=inputs.execution_strategy,
+        execution_strategy=spec.execution_strategy,
         context_strategy=ContextStrategy.PERSISTENT,
         safety_policy=inputs.safety,
         comm_kind=comm_kind,
@@ -585,6 +596,10 @@ async def _assemble_native_agent(
         role_description=spec.description,
         depth=inputs.depth,
     )
+    # Runtime-constructor seam (W5): the tail of the native assembly hands
+    # the resolved components to `inputs.agent_factory` — the bundled react
+    # factory by default, or a third-party strategy's own loop builder when
+    # the strategy supplied one via StrategyAssembly.runtime_constructor.
     instance = await inputs.agent_factory.create_agent(
         descriptor,
         broker=inputs.broker,

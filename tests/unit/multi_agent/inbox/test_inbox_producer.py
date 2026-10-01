@@ -8,8 +8,7 @@ class TestInboxProducer:
     async def test_send_new_message(self):
         server = InMemoryInboxServer()
         producer = InboxProducer(server=server)
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.messaging.agent_messages import AgentAddress, AgentMessageEnvelope
 
         envelope = AgentMessageEnvelope(
             payload={"content": "hello"},
@@ -23,8 +22,7 @@ class TestInboxProducer:
     async def test_send_duplicate_ignored(self):
         server = InMemoryInboxServer()
         producer = InboxProducer(server=server)
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.messaging.agent_messages import AgentAddress, AgentMessageEnvelope
 
         envelope = AgentMessageEnvelope(
             payload={"content": "hello"},
@@ -40,8 +38,7 @@ class TestInboxProducer:
     async def test_local_cache_dedup(self):
         server = InMemoryInboxServer()
         producer = InboxProducer(server=server)
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.messaging.agent_messages import AgentAddress, AgentMessageEnvelope
 
         envelope = AgentMessageEnvelope(
             payload={"content": "hello"},

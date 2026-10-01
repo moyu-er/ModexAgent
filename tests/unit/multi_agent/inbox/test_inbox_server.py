@@ -5,9 +5,9 @@ import tempfile
 from datetime import UTC
 from pathlib import Path
 
+from modex_agent.core.inbox import InboxMessage
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
-from modex_agent.multi_agent.inbox.types import InboxMessage
 
 
 class TestInMemoryInboxServer:

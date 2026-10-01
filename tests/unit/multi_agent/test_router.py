@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.messaging.agent_messages import RouteResult
 from modex_agent.messaging.models import InputMessage
-from modex_agent.multi_agent.router import DefaultMeshRouter, RouteResult
+from modex_agent.multi_agent.router import DefaultMeshRouter
 
 
 class TestDefaultMeshRouter:

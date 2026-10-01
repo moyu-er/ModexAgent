@@ -26,13 +26,13 @@ from modex_agent.plugins.assembly.context import (
     AgentContext,
     PoolRuntimeDeps,
 )
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
-from modex_agent.plugins.capability import CapabilityBinding
 from modex_agent.plugins.defaults.capabilities.subagents import (
     SubagentsCapability,
     SubagentsSupply,
 )
 from modex_agent.plugins.defaults.communication import TaskToolFactory
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides
+from modex_agent.scope.capability import CapabilityBinding
 from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths

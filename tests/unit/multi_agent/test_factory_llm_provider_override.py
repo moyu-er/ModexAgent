@@ -15,9 +15,9 @@ from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import AgentDescriptor, DefaultAgentFactory
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentLLMConfig
 from modex_agent.providers.http.provider import HTTPStreamProvider
 

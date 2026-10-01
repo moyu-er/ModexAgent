@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from modex_agent.core.tool_group import ToolGroupResource
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.multi_agent.descriptor import (
     AgentDescriptor,
     AgentInstance,

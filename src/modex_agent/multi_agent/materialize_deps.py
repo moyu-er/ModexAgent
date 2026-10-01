@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.provider import LLMProvider
     from modex_agent.core.session_id import SessionIdFactory
+    from modex_agent.core.turn.approval_decision import ApprovalAuditStore
+    from modex_agent.core.workspace_root import WorkspaceRootProvider
     from modex_agent.hook.notification import AgentNotificationService
     from modex_agent.memory.registry import MemoryStoreRegistry
     from modex_agent.messaging.broker import MessageBroker
@@ -30,15 +32,14 @@ if TYPE_CHECKING:
     )
     from modex_agent.multi_agent.factory import AgentFactory
     from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+    from modex_agent.multi_agent.materializer import AgentMaterializer
     from modex_agent.multi_agent.pool import AgentPool
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.persistence.session_registry import SessionRegistry
     from modex_agent.plugins.assembly.native_core import LlmDefaults
-    from modex_agent.plugins.capability import CapabilitySupply
-    from modex_agent.plugins.registry import ComponentRegistry
-    from modex_agent.runtime.approval_decision import ApprovalAuditStore
+    from modex_agent.scope.capability import CapabilitySupply
+    from modex_agent.scope.component_registry import ComponentRegistry
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
-    from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
     from modex_agent.workspace import WorkspaceManager
     from modex_agent.workspace.scope_path import ScopePath
     from modex_graph.context import GraphContext
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_request import ReasoningEffort
+from modex_agent.core.scope import RecordScope
 
 
 class AgentLLMPin:
@@ -119,6 +121,8 @@ class AgentMaterializeDeps:
         capability_supply: Mapping[str, CapabilitySupply] = MappingProxyType({}),
         approval_audit: ApprovalAuditStore | None = None,
         agent_llm_pins: Mapping[str, AgentLLMPin] = MappingProxyType({}),
+        record_scope: RecordScope | None = None,
+        materializer: AgentMaterializer | None = None,
     ) -> None:
         self.agent_factory = agent_factory
         self.pool = pool
@@ -160,6 +164,8 @@ class AgentMaterializeDeps:
         self.capability_supply = capability_supply
         self.approval_audit = approval_audit
         self.agent_llm_pins = agent_llm_pins
+        self.record_scope = record_scope
+        self.materializer = materializer
 
     safety: RuntimeSafetyPolicy | None
     approval_audit: ApprovalAuditStore | None
@@ -253,6 +259,10 @@ class AgentMaterializeDeps:
     layer (``build_control_origin`` in ``bot.config.webui_config``) via
     ``create_pool``; empty string when not configured (framework tests,
     non-bot callers)."""
+    record_scope: RecordScope | None
+    """The pool's storage isolation scope — needed by the external sub path
+    to build the session map store's SQLite bucket scope. ``None`` → a
+    default ``RecordScope()``. Injected by ``create_pool``."""
     component_registry: ComponentRegistry | None
     pool_assembly_ctx: PoolAssemblyContext | None
     default_llm_provider: str
@@ -282,3 +292,14 @@ class AgentMaterializeDeps:
     default provider and any ``llm_provider`` slot name. Empty = no pins:
     every agent inherits the caller's model (the contractualized status
     quo — byte-identical default path)."""
+    materializer: AgentMaterializer | None
+    """The subagent construction seam (W5 template/plugins inversion).
+
+    ``AgentTemplate.materialize`` delegates the runtime construction
+    (native component assembly / external strategy dispatch) here — the
+    concrete machinery lives at the plugins assembly layer, above
+    ``multi_agent``, so it must be INJECTED (the strategy/pipeline wiring
+    passes :class:`~modex_agent.plugins.assembly.subagent_materializer.
+    SubagentMaterializer` at ``create_pool`` time). ``None`` →
+    materialization fails loudly (a template without a materializer is a
+    wiring error, never a silent react fallback)."""

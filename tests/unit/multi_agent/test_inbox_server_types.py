@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from modex_agent.core.inbox import InboxMessage
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
-from modex_agent.multi_agent.inbox.types import InboxMessage
 
 
 def _msg(session_id: str, mtype: str, mid: str) -> InboxMessage:

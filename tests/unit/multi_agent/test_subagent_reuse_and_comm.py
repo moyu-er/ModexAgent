@@ -27,15 +27,14 @@ import pytest
 
 from modex_agent.core import AgentCommKind
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
-from modex_agent.ioc.factories.descriptors import build_session_only_memory
+from modex_agent.memory.assembly import build_session_only_memory
 from modex_agent.memory.scope import MemoryAgentRole
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.agent_messages import AgentAddress, AgentMessageEnvelope
 from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.plugins.defaults.capabilities.subagents.auto_send import SubagentAutoSendHook
 
 
 def _mock_tree(bus: object) -> SessionTreeManager:

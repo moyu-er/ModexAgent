@@ -7,7 +7,7 @@ from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import StopReason
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.multi_agent.message_format import (
+from modex_agent.messaging.message_format import (
     ResultMeta,
     ResultStatus,
     SourceLabel,
@@ -88,7 +88,7 @@ class TestInvocationIdNullCreatesNewSubagent:
 
     async def test_null_invocation_id_normal_agent(self):
         """send_to_agent(target='normal-agent', invocation_id=null) sends normally."""
-        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.messaging.agent_messages import AgentAddress
         from modex_agent.multi_agent.communication import AgentCommunicationService
 
         mock_registry = MagicMock()
@@ -123,7 +123,7 @@ class TestInvocationIdNullCreatesNewSubagent:
 
     async def test_concrete_invocation_id_continues_session(self):
         """send_to_agent(target='helper', invocation_id='abc123') continues existing session."""
-        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.messaging.agent_messages import AgentAddress
         from modex_agent.multi_agent.communication import AgentCommunicationService
 
         mock_registry = MagicMock()
@@ -193,7 +193,7 @@ class TestSubagentIdentityResolution:
     async def test_subagent_send_has_correct_source(self):
         """When subagent sends via send_to_agent, envelope source must be subagent name."""
         from modex_agent.core.agent import current_agent_context
-        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.messaging.agent_messages import AgentAddress
         from modex_agent.multi_agent.communication import AgentCommunicationService
 
         sent_envelopes: list = []
@@ -278,7 +278,7 @@ class TestAgentMessageXmlWrapping:
 
     async def test_agent_message_wraps_content_in_xml(self):
         """Normal agent_message must also be XML-wrapped."""
-        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.messaging.agent_messages import AgentAddress
         from modex_agent.multi_agent.communication import AgentCommunicationService
         from modex_agent.multi_agent.descriptor import AgentDescriptor
 
@@ -433,7 +433,8 @@ class TestOutputMdInjection:
 
     def test_full_template_does_not_get_scoped_tools(self):
         """READ_WRITE template uses standard write/edit, not scoped versions."""
-        from modex_agent.tools.presets import ToolPreset, get_preset_tools
+        from modex_agent.core.tool_vocabulary import ToolPreset
+        from modex_agent.tools.presets import get_preset_tools
 
         tools = get_preset_tools(ToolPreset.READ_WRITE)
         tool_names = {t.name for t in tools}
@@ -452,8 +453,8 @@ class TestOutputMdInjection:
         import tempfile
         from pathlib import Path as _Path
 
-        from modex_agent.ioc.configs.memory import MemoryConfig
-        from modex_agent.ioc.factories.descriptors import build_session_only_memory
+        from modex_agent.memory.assembly import build_session_only_memory
+        from modex_agent.memory.config import MemoryConfig
         from modex_agent.memory.scope import MemoryAgentRole
 
         runtime_dir = _Path(tempfile.mkdtemp()) / "runtime"

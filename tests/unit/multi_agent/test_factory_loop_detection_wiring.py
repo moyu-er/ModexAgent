@@ -4,7 +4,7 @@ HOOK-slot factory — not constructed inside DefaultAgentFactory."""
 
 import pytest
 
-from modex_agent.hook.builtin.loop_detection import LoopDetectionHook
+from modex_agent.agents.react.hooks.loop_detection import LoopDetectionHook
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.plugins.defaults.hooks import LoopDetectionHookFactory
 from modex_agent.scope.defaults import POSITION_DEFAULT_HOOKS
@@ -21,18 +21,18 @@ def test_hook_slot_factory_registered() -> None:
 @pytest.mark.asyncio
 async def test_main_agent_gets_loop_detection_hook():
     """The PRODUCTION path: the compiled roster carries `loop_detection` as a
-    position-default row and `_dispatch_hooks` resolves it through the
+    position-default row and `dispatch_hooks` resolves it through the
     HOOK-slot factory. The bare DefaultAgentFactory.create_agent path carries
     NO LoopDetectionHook — roster dispatch is the single registration path."""
     from modex_agent.core import AgentCommKind
     from modex_agent.hook import HookSpec
-    from modex_agent.multi_agent.address import AgentAddress
+    from modex_agent.messaging.agent_messages import AgentAddress
     from modex_agent.multi_agent.descriptor import AgentDescriptor
-    from modex_agent.plugins.abc import ComponentSlot
     from modex_agent.plugins.defaults import DefaultPlugin
     from modex_agent.plugins.defaults.hooks import _EmptyHookConfig
     from modex_agent.plugins.loader import PluginRegistrationContext
-    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.scope.component_registry import ComponentRegistry
+    from modex_agent.scope.components import ComponentSlot
 
     registry = ComponentRegistry()
     ctx = PluginRegistrationContext(registry=registry)
@@ -65,13 +65,13 @@ async def test_subagent_gets_loop_detection_hook():
     POSITION_DEFAULT_HOOKS) — the roster resolution is identical."""
     from modex_agent.core import AgentCommKind
     from modex_agent.hook import HookSpec
-    from modex_agent.multi_agent.address import AgentAddress
+    from modex_agent.messaging.agent_messages import AgentAddress
     from modex_agent.multi_agent.descriptor import AgentDescriptor
-    from modex_agent.plugins.abc import ComponentSlot
     from modex_agent.plugins.defaults import DefaultPlugin
     from modex_agent.plugins.defaults.hooks import _EmptyHookConfig
     from modex_agent.plugins.loader import PluginRegistrationContext
-    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.scope.component_registry import ComponentRegistry
+    from modex_agent.scope.components import ComponentSlot
     from modex_agent.scope.defaults import POSITION_DEFAULT_HOOKS
 
     registry = ComponentRegistry()
