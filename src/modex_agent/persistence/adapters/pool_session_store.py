@@ -26,8 +26,7 @@ from pathlib import Path
 
 from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
 from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
-from modex_agent.utils.file_io import safe_filename
-from modex_agent.utils.file_io import atomic_write_text
+from modex_agent.utils.file_io import atomic_write_text, safe_filename
 
 
 class WorkspacePoolSessionStore(LocalFileSessionStore):

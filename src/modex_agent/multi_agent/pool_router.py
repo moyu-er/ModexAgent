@@ -22,8 +22,8 @@ from modex_agent.core.stores import PoolRoutingStore
 from modex_agent.messaging.broker import MessageBroker
 from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent.pool_instance import PoolInstance
-from modex_agent.utils.file_io import safe_filename
 from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.utils.file_io import safe_filename
 
 if TYPE_CHECKING:
     from modex_agent.scope.spec import ScopeSpec
