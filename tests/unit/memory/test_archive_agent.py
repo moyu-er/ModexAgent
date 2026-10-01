@@ -327,9 +327,15 @@ class TestSummarizerTrajectoryEmitter:
         import asyncio
         import json
 
-        from modex_agent.agents.react.agent import ReActEvent
-        from modex_agent.agents.react.constants import ToolCallEndPayload
         from modex_agent.agents.summarizer.emitter import SummarizerTrajectoryEmitter
+        from modex_agent.core.turn_events import (
+            IterationStartedEvent,
+            StopReason,
+            TurnFinishedEvent,
+            TurnTextEvent,
+            TurnToolCallEvent,
+            TurnToolResultEvent,
+        )
 
         trace_path = tmp_path / "trace.jsonl"
         emitter = SummarizerTrajectoryEmitter(
@@ -339,21 +345,25 @@ class TestSummarizerTrajectoryEmitter:
         )
 
         async def _run() -> None:
-            await emitter.emit(ReActEvent.ITERATION_START, {"iteration": 1})
-            await emitter.emit(ReActEvent.MODEL_OUTPUT, "hello")
-            from modex_agent.core.message import ToolCall
-            from modex_agent.core.tool_manager import ToolResult
-            await emitter.emit(ReActEvent.TOOL_CALL_START, ToolCall(tool_name="write", arguments={"path": "/tmp/f.txt"}))
+            await emitter.emit(IterationStartedEvent(iteration=1))
+            await emitter.emit(TurnTextEvent(text="hello"))
             await emitter.emit(
-                ReActEvent.TOOL_CALL_END,
-                ToolCallEndPayload(
-                    tool_call=ToolCall(tool_name="write", arguments={}),
-                    result=ToolResult.from_text("write", "ok"),
-                    seq=0,
-                ),
+                TurnToolCallEvent(
+                    tool_name="write",
+                    call_id="call_0",
+                    arguments={"path": "/tmp/f.txt"},
+                )
             )
-            from modex_agent.core.emitter import AgentResult
-            await emitter.emit_complete(AgentResult(content="done", stop_reason="completed"))
+            await emitter.emit(
+                TurnToolResultEvent(
+                    tool_name="write",
+                    call_id="call_0",
+                    output="ok",
+                )
+            )
+            await emitter.emit(
+                TurnFinishedEvent(stop_reason=StopReason.COMPLETED)
+            )
 
         asyncio.run(_run())
 

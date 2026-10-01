@@ -58,10 +58,9 @@ from bot.eval.task_spec import (
     FileExistsAssertion,
     WorldAssertion,
 )
-from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import Agent, AgentContext
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import TurnEvent, TurnEventSink
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
@@ -184,21 +183,15 @@ def _span_tool_stats(contexts: list[AgentContext]) -> ToolStats:
     return ToolStats(total=total, errors=errors, success_rate=success_rate, source="metrics")
 
 
-class _NoopEmitter(ContentEmitter[ReActEvent]):
-    """Minimal emitter that discards all events.
+class _NoopEmitter(TurnEventSink):
+    """Minimal sink that discards all events.
 
     Eval runs consume only the final ``AgentResult``; streaming events are
-    not needed. All abstract methods are no-ops.
+    not needed.
     """
 
-    async def emit_delta(self, delta: str) -> None:
-        pass
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        pass
-
-    async def emit_error(self, error: str) -> None:
-        pass
+    async def _dispatch(self, event: TurnEvent) -> None:
+        _ = event
 
 
 class EvalRunner:
@@ -250,7 +243,7 @@ class EvalRunner:
         toolset: EvalToolset,
         deny_tools: list[str],
     ) -> tuple[
-        Agent[ReActEvent],
+        Agent,
         AgentRuntimeServices,
         ToolManager,
         SingleAgentAssembled,

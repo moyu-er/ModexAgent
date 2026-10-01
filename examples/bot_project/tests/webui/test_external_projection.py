@@ -1,16 +1,17 @@
-"""WebBotEmitter projection of ExternalEvent -> ServerEvent (Scheme C).
+"""WebBotEmitter projection of core TurnEvents -> ServerEvent.
 
 External coding agents (OpenCode) stream and persist
 basic semantic events through the existing WebUI DeltaEnvelope / ServerEvent
 / transcript / materializer path. Provider parsers keep emitting the typed
 ``Emission`` (the provider-independent external semantic contract); the
+external agent maps it onto the core ``TurnEvent`` union, and the
 WebBotEmitter projects those onto the same ``ServerEvent`` types the ReAct
 path uses, so live streaming and transcript replay consume one schema with
-no frontend changes and no ReActEvent coupling in the adapters.
+no frontend changes and no plane coupling in the adapters.
 
-The emitter is referenced as a bare ``ContentEmitter`` (the same loose
-typing the ``ExternalTurnRunner`` factory uses) because one physical emitter
-serves both ReAct and external event enums at runtime.
+The emitter is referenced as a bare ``TurnEventSink`` (the same typing the
+``ExternalTurnRunner`` factory uses) because one physical sink serves both
+execution planes at runtime.
 """
 
 from __future__ import annotations
@@ -29,15 +30,11 @@ from bot.webui.events import (
 )
 from bot.webui.transcript_store import JSONLTranscriptStore
 
-from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import BufferingSink
 from modex_agent.adapters.output import OutputAdapter
-from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.agents.react.constants import ToolCallEndPayload
-from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.events import EmitterConfig
-from modex_agent.core.message import ToolCall
-from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.emitter import AgentResult, TurnEventSink, turn_finished_event
 from modex_agent.core.turn_events import (
+    IterationFinishedEvent,
     TurnReasoningEvent,
     TurnTextEvent,
     TurnToolCallEvent,
@@ -48,14 +45,13 @@ from modex_agent.messaging.models import OutputMessage
 
 def _make_emitter(
     tmp: str, session_id: str = "conv1.opencode"
-) -> tuple[ContentEmitter, WebSocketInputAdapter, JSONLTranscriptStore, str]:
+) -> tuple[TurnEventSink, WebSocketInputAdapter, JSONLTranscriptStore, str]:
     input_adapter = WebSocketInputAdapter()
     output_adapter = WebSocketOutputAdapter(input_adapter)
     store = JSONLTranscriptStore(Path(tmp))
-    emitter: ContentEmitter = WebBotEmitter(
+    emitter: TurnEventSink = WebBotEmitter(
         output_adapter,
         session_id,
-        config=EmitterConfig(),
         transcript_store=store,
     )
     input_adapter.register_connection(session_id, None)
@@ -73,7 +69,7 @@ async def test_external_reasoning_streams_delta_and_persists_event() -> None:
     AssistantReasoningEvent (persisted at flush boundary)."""
     with tempfile.TemporaryDirectory() as tmp:
         emitter, input_adapter, store, sid = _make_emitter(tmp)
-        await emitter.emit_turn_event(TurnReasoningEvent(text="reasoning chunk"))
+        await emitter.emit(TurnReasoningEvent(text="reasoning chunk"))
 
         q = input_adapter.get_delta_queue(sid, None)
         assert q is not None
@@ -84,7 +80,7 @@ async def test_external_reasoning_streams_delta_and_persists_event() -> None:
         # Reasoning is buffered for persistence — not yet in transcript
         assert len(await store.load(sid)) == 0
 
-        await emitter.emit_complete(AgentResult(content=""))
+        await emitter.emit(turn_finished_event(AgentResult(content="")))
 
         events = await store.load(sid)
         assert len(events) == 1
@@ -99,9 +95,9 @@ async def test_external_reasoning_deltas_coalesced_into_single_event() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         emitter, _input_adapter, store, _sid = _make_emitter(tmp)
         for fragment in ["Let", " me", " think", " about", " this."]:
-            await emitter.emit_turn_event(TurnReasoningEvent(text=fragment))
+            await emitter.emit(TurnReasoningEvent(text=fragment))
 
-        await emitter.emit_complete(AgentResult(content=""))
+        await emitter.emit(turn_finished_event(AgentResult(content="")))
 
         events = await store.load("conv1.opencode")
         reasoning_events = [e for e in events if isinstance(e, AssistantReasoningEvent)]
@@ -119,10 +115,10 @@ async def test_interleaved_text_and_reasoning_produce_two_events_not_many() -> N
     with tempfile.TemporaryDirectory() as tmp:
         emitter, _input_adapter, store, _sid = _make_emitter(tmp)
         for i in range(5):
-            await emitter.emit_turn_event(TurnTextEvent(text=f"t{i} ", part_id="p1"))
-            await emitter.emit_turn_event(TurnReasoningEvent(text=f"r{i} ", part_id="p2"))
+            await emitter.emit(TurnTextEvent(text=f"t{i} ", part_id="p1"))
+            await emitter.emit(TurnReasoningEvent(text=f"r{i} ", part_id="p2"))
 
-        await emitter.emit_complete(AgentResult(content=""))
+        await emitter.emit(turn_finished_event(AgentResult(content="")))
 
         events = await store.load("conv1.opencode")
         text_events = [e for e in events if e.event == "assistant_text"]
@@ -141,15 +137,15 @@ async def test_same_part_id_text_deltas_coalesce_across_tool_calls() -> None:
     by a tool) produce two events."""
     with tempfile.TemporaryDirectory() as tmp:
         emitter, _input_adapter, store, _sid = _make_emitter(tmp)
-        await emitter.emit_turn_event(TurnTextEvent(text="before", part_id="p1"))
-        await emitter.emit_turn_event(
+        await emitter.emit(TurnTextEvent(text="before", part_id="p1"))
+        await emitter.emit(
             TurnToolCallEvent(tool_name="read", arguments={"path": "a"}, call_id="c1")
         )
-        await emitter.emit_turn_event(
+        await emitter.emit(
             TurnToolResultEvent(tool_name="read", call_id="c1", output="ok")
         )
-        await emitter.emit_turn_event(TurnTextEvent(text="after", part_id="p1"))
-        await emitter.emit_complete(AgentResult(content=""))
+        await emitter.emit(TurnTextEvent(text="after", part_id="p1"))
+        await emitter.emit(turn_finished_event(AgentResult(content="")))
 
         events = await store.load("conv1.opencode")
         text_events = [e for e in events if e.event == "assistant_text"]
@@ -170,12 +166,12 @@ async def test_external_tool_start_end_streamed_and_persisted_with_shared_call_i
     with tempfile.TemporaryDirectory() as tmp:
         emitter, input_adapter, store, sid = _make_emitter(tmp)
         call_id = "tc-shared"
-        await emitter.emit_turn_event(
+        await emitter.emit(
             TurnToolCallEvent(
                 tool_name="bash", arguments={"cmd": "ls"}, call_id=call_id
             )
         )
-        await emitter.emit_turn_event(
+        await emitter.emit(
             TurnToolResultEvent(
                 tool_name="bash", call_id=call_id, output="file.txt"
             )
@@ -208,19 +204,19 @@ async def test_external_tool_replay_materializes_complete_tool_block() -> None:
     tool block (tool + args + result), paired by call_id."""
     with tempfile.TemporaryDirectory() as tmp:
         emitter, _input_adapter, store, _sid = _make_emitter(tmp)
-        await emitter.emit_turn_event(TurnTextEvent(text="Let me check."))
-        await emitter.emit_stream_end()
-        await emitter.emit_turn_event(
+        await emitter.emit(TurnTextEvent(text="Let me check."))
+        await emitter.emit(IterationFinishedEvent(iteration=0, has_tool_calls=False))
+        await emitter.emit(
             TurnToolCallEvent(
                 tool_name="bash", arguments={"cmd": "ls"}, call_id="tc-1"
             )
         )
-        await emitter.emit_turn_event(
+        await emitter.emit(
             TurnToolResultEvent(
                 tool_name="bash", call_id="tc-1", output="file.txt"
             )
         )
-        await emitter.emit_complete(AgentResult(content="done"))
+        await emitter.emit(turn_finished_event(AgentResult(content="done")))
 
         turns = await store.load_materialized_by_prefix("conv1")
         assert len(turns) == 1
@@ -243,25 +239,25 @@ async def test_external_full_turn_history_restores_text_reasoning_tool_and_final
     """
     with tempfile.TemporaryDirectory() as tmp:
         emitter, _input_adapter, store, _sid = _make_emitter(tmp)
-        await emitter.emit_turn_event(TurnTextEvent(text="I will inspect."))
-        await emitter.emit_stream_end()
-        await emitter.emit_turn_event(
+        await emitter.emit(TurnTextEvent(text="I will inspect."))
+        await emitter.emit(IterationFinishedEvent(iteration=0, has_tool_calls=False))
+        await emitter.emit(
             TurnReasoningEvent(text="Need repository context.")
         )
-        await emitter.emit_turn_event(
+        await emitter.emit(
             TurnToolCallEvent(
                 tool_name="read",
                 arguments={"path": "README.md"},
                 call_id="call-1",
             )
         )
-        await emitter.emit_turn_event(
+        await emitter.emit(
             TurnToolResultEvent(
                 tool_name="read", call_id="call-1", output="contents"
             )
         )
-        await emitter.emit_turn_event(TurnTextEvent(text="Inspection complete."))
-        await emitter.emit_complete(AgentResult(content="I will inspect.Inspection complete."))
+        await emitter.emit(TurnTextEvent(text="Inspection complete."))
+        await emitter.emit(turn_finished_event(AgentResult(content="I will inspect.Inspection complete.")))
 
         turns = await store.load_materialized_by_prefix("conv1")
         assert len(turns) == 1
@@ -288,12 +284,12 @@ async def test_external_tool_result_without_use_persists_result_only() -> None:
     ToolResultEvent and does not crash the projection."""
     with tempfile.TemporaryDirectory() as tmp:
         emitter, _input_adapter, store, _sid = _make_emitter(tmp)
-        await emitter.emit_turn_event(
+        await emitter.emit(
             TurnToolResultEvent(
                 tool_name="bash", call_id="orphan-1", output="late"
             )
         )
-        await emitter.emit_complete(AgentResult(content="done"))
+        await emitter.emit(turn_finished_event(AgentResult(content="done")))
 
         events = await store.load("conv1.opencode")
         assert any(isinstance(e, ToolResultEvent) for e in events)
@@ -301,35 +297,36 @@ async def test_external_tool_result_without_use_persists_result_only() -> None:
 
 # ---------------------------------------------------------------------------
 # Text ordering: text emitted before non-text events must appear before them
-# in the transcript (ExternalAgent does NOT call emit_stream_end between
-# text and tool events — the emitter must flush text in-order itself).
+# in the transcript (ExternalAgent emits no IterationFinishedEvent between
+# text and tool events — the sink must flush text in-order itself).
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_text_before_tool_call_preserves_order_in_transcript() -> None:
-    """Text emitted via TurnTextEvent (without an intervening emit_stream_end)
-    must appear BEFORE the subsequent tool_call in the persisted transcript.
+    """Text emitted via TurnTextEvent (without an intervening
+    IterationFinishedEvent) must appear BEFORE the subsequent tool_call in
+    the persisted transcript.
 
     This simulates the real ExternalAgent._handle_emission flow: it
-    emits TurnTextEvent then TurnToolCallEvent with no emit_stream_end call
-    between them.  The emitter must flush its text buffer before persisting
-    the tool event so chronological order is preserved.
+    emits TurnTextEvent then TurnToolCallEvent with no iteration-finished
+    event between them.  The sink must flush its text segment before
+    persisting the tool event so chronological order is preserved.
     """
     with tempfile.TemporaryDirectory() as tmp:
         emitter, _input_adapter, store, _sid = _make_emitter(tmp)
-        await emitter.emit_turn_event(TurnTextEvent(text="Let me check the file."))
-        await emitter.emit_turn_event(
+        await emitter.emit(TurnTextEvent(text="Let me check the file."))
+        await emitter.emit(
             TurnToolCallEvent(
                 tool_name="read", arguments={"path": "a.txt"}, call_id="c1"
             )
         )
-        await emitter.emit_turn_event(
+        await emitter.emit(
             TurnToolResultEvent(
                 tool_name="read", call_id="c1", output="contents"
             )
         )
-        await emitter.emit_complete(AgentResult(content="done"))
+        await emitter.emit(turn_finished_event(AgentResult(content="done")))
 
         events = await store.load("conv1.opencode")
         event_types = [str(e.event) for e in events]
@@ -361,21 +358,21 @@ async def test_text_between_tool_calls_preserves_position_in_transcript() -> Non
     """
     with tempfile.TemporaryDirectory() as tmp:
         emitter, _input_adapter, store, _sid = _make_emitter(tmp)
-        await emitter.emit_turn_event(TurnTextEvent(text="Starting."))
-        await emitter.emit_turn_event(
+        await emitter.emit(TurnTextEvent(text="Starting."))
+        await emitter.emit(
             TurnToolCallEvent(tool_name="read", arguments={"path": "a"}, call_id="c1")
         )
-        await emitter.emit_turn_event(
+        await emitter.emit(
             TurnToolResultEvent(tool_name="read", call_id="c1", output="ra")
         )
-        await emitter.emit_turn_event(TurnTextEvent(text="Now the second file."))
-        await emitter.emit_turn_event(
+        await emitter.emit(TurnTextEvent(text="Now the second file."))
+        await emitter.emit(
             TurnToolCallEvent(tool_name="read", arguments={"path": "b"}, call_id="c2")
         )
-        await emitter.emit_turn_event(
+        await emitter.emit(
             TurnToolResultEvent(tool_name="read", call_id="c2", output="rb")
         )
-        await emitter.emit_complete(AgentResult(content="done"))
+        await emitter.emit(turn_finished_event(AgentResult(content="done")))
 
         events = await store.load("conv1.opencode")
         event_types = [str(e.event) for e in events]
@@ -403,18 +400,18 @@ async def test_react_reasoning_and_tool_projection_unchanged() -> None:
     unaffected by the external projection additions."""
     with tempfile.TemporaryDirectory() as tmp:
         emitter, _input_adapter, store, sid = _make_emitter(tmp, "conv1.main")
-        await emitter.emit(ReActEvent.MODEL_REASONING, "think")
-        tc = ToolCall(tool_name="read_file", arguments={"path": "/x"}, call_id="call_0")
-        await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
+        await emitter.emit(TurnReasoningEvent(text="think"))
         await emitter.emit(
-            ReActEvent.TOOL_CALL_END,
-            ToolCallEndPayload(
-                tool_call=tc,
-                result=ToolResult.from_text("read_file", "content"),
-                seq=0,
-            ),
+            TurnToolCallEvent(
+                tool_name="read_file", call_id="call_0", arguments={"path": "/x"}
+            )
         )
-        await emitter.emit_complete(AgentResult(content="done"))
+        await emitter.emit(
+            TurnToolResultEvent(
+                tool_name="read_file", call_id="call_0", output="content", seq=0
+            )
+        )
+        await emitter.emit(turn_finished_event(AgentResult(content="done")))
 
         events = await store.load(sid)
         assert any(isinstance(e, AssistantReasoningEvent) for e in events)
@@ -446,19 +443,19 @@ class _RecordingOutputAdapter(OutputAdapter):
 
 @pytest.mark.asyncio
 async def test_default_emitter_noops_structured_external_events() -> None:
-    """A plain StreamingAwareEmitter (the IM base) does not forward structured
+    """A plain BufferingSink (the IM base) does not forward structured
     external events and does not error on them. IM keeps receiving only text
-    via emit_delta / emit_complete, matching existing ReAct tool behavior."""
+    via the buffered text path, matching existing ReAct tool behavior."""
     adapter = _RecordingOutputAdapter()
-    emitter: ContentEmitter = StreamingAwareEmitter(
+    emitter: TurnEventSink = BufferingSink(
         output_adapter=adapter,
         session_id="im1.main",
     )
-    await emitter.emit_turn_event(TurnReasoningEvent(text="hmm"))
-    await emitter.emit_turn_event(
+    await emitter.emit(TurnReasoningEvent(text="hmm"))
+    await emitter.emit(
         TurnToolCallEvent(tool_name="bash", arguments={}, call_id="x")
     )
-    await emitter.emit_turn_event(
+    await emitter.emit(
         TurnToolResultEvent(tool_name="bash", call_id="x", output="ok")
     )
 

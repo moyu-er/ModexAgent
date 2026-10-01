@@ -10,7 +10,7 @@ Verifies:
 from unittest.mock import AsyncMock, MagicMock
 
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import AgentResult, TurnEventSink
 from modex_agent.core.turn_events import StopReason
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn.enums import AgentKind, TurnPhase
@@ -64,7 +64,7 @@ class FakeAgent:
         self._tool_calls = tool_calls or []
         self.max_iterations = 5
 
-    async def run(self, context: AgentContext, emitter: ContentEmitter) -> AgentResult:
+    async def run(self, context: AgentContext, emitter: TurnEventSink) -> AgentResult:
         hook_runner = None
         if context.runtime is not None and context.runtime.services is not None:
             hook_runner = context.runtime.services.hooks
@@ -204,7 +204,7 @@ class TestHookCollaboration:
             identity=identity,
         )
         await FakeAgent(tool_calls=[FakeToolCall("search", "tc_1", {"q": "foo"})]).run(
-            ctx, MagicMock(spec=ContentEmitter)
+            ctx, MagicMock(spec=TurnEventSink)
         )
 
         bus.send.assert_awaited_once()
@@ -242,7 +242,7 @@ class TestHookCollaboration:
         # Even though send_to_agent was called, the hook still fires
         await FakeAgent(
             tool_calls=[FakeToolCall("send_to_agent", "tc_1", {"target_agent": "main"})]
-        ).run(ctx, MagicMock(spec=ContentEmitter))
+        ).run(ctx, MagicMock(spec=TurnEventSink))
 
         bus.send.assert_awaited_once()
         _inbox_key, envelope = bus.send.call_args.args
@@ -335,7 +335,7 @@ class TestHookCollaboration:
             identity=identity,
         )
 
-        await FakeAgent().run(ctx, MagicMock(spec=ContentEmitter))
+        await FakeAgent().run(ctx, MagicMock(spec=TurnEventSink))
 
         # All hooks should have been invoked
         assert custom_hook.before_turn_called

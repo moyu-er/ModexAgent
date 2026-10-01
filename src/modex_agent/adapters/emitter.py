@@ -1,79 +1,111 @@
-"""Streaming-aware emitter base — bridges ``ContentEmitter`` to ``OutputAdapter``.
+"""BufferingSink — delivery-policy sink bridging ``TurnEventSink`` to
+``OutputAdapter``.
 
-``StreamingAwareEmitter`` buffers or forwards content depending on the
-adapter's ``StreamingMode`` (NATIVE / PSEUDO / NONE). Moved from
-``core/emitter.py`` (B4); the ``ContentEmitter`` contract stays in core.
+Text/reasoning events are delivered or buffered according to the
+:class:`DeliveryPolicy` derived from the adapter's ``StreamingMode``
+(NATIVE / PSEUDO / NONE):
+
+- STREAMING — forward every text delta immediately (true streaming only).
+- SEGMENT — buffer, flush on ``IterationFinishedEvent`` (pseudo streaming:
+  one message per model segment).
+- TURN — buffer, flush on ``TurnFinishedEvent`` (no streaming support).
+
+Terminal events close the turn: ``TurnFinishedEvent`` flushes any residual
+buffer, delivers attachments, and clears state; ``TurnErroredEvent`` sends
+the error message. Reasoning accumulates into the flush message's metadata,
+preserving the historical buffering semantics.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from enum import Enum
-from typing import Any, TypeVar
+from enum import StrEnum
 
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.events import AgentEvent, EmitterConfig
-from modex_agent.core.turn_events import TurnEvent, TurnTextEvent
+from modex_agent.core.emitter import KindGate, TurnEventSink
+from modex_agent.core.turn_events import (
+    IterationFinishedEvent,
+    StopReason,
+    TurnErroredEvent,
+    TurnEvent,
+    TurnFinishedEvent,
+    TurnReasoningEvent,
+    TurnTextEvent,
+)
 from modex_agent.messaging.models import OutputMessage
 
 logger = logging.getLogger(__name__)
 
-E = TypeVar("E", bound=AgentEvent)
+
+class DeliveryPolicy(StrEnum):
+    """When buffered text is pushed onto the output adapter."""
+
+    STREAMING = "streaming"
+    SEGMENT = "segment"
+    TURN = "turn"
+
+    @classmethod
+    def of_streaming_mode(cls, mode: StreamingMode) -> DeliveryPolicy:
+        """Map an adapter ``StreamingMode`` onto the delivery policy.
+
+        Anything that is not explicitly NATIVE (true streaming) or NONE
+        (no streaming support) falls back to SEGMENT — the ``OutputAdapter``
+        base's PSEUDO default.
+        """
+        if mode == StreamingMode.NATIVE:
+            return cls.STREAMING
+        if mode == StreamingMode.NONE:
+            return cls.TURN
+        return cls.SEGMENT
 
 
-class StreamingAwareEmitter(ContentEmitter[E]):
-    """支持流式/非流式的 Emitter 基类
+class BufferingSink(TurnEventSink):
+    """Sinks an ``OutputAdapter`` onto the turn-event stream.
 
-    业务方应继承此类并实现具体的事件处理方法，
-    决定如何处理各类事件（发送给用户、写日志、过滤等）。
-
-    该类自动处理流式/非流式逻辑：
-    - 如果 adapter 支持流式：立即转发增量
-    - 如果 adapter 不支持流式：缓冲内容，最后一次性发送
-
-    Example:
-        class QQBotEmitter(StreamingAwareEmitter[ReActEvent]):
-            async def emit_delta(self, delta: str) -> None:
-                # 发送给用户
-                await self.output_adapter.send(
-                    OutputMessage(content=delta), self.session_id
-                )
-
-            async def _on_event(self, event, data) -> None:
-                if event.value == "model_reasoning":
-                    logger.info(f"[Reasoning] {data}")
+    Business channels subclass this and add their own projections (logs,
+    transcripts, wire frames) by overriding ``_dispatch`` extensions; the
+    base owns content buffering, flush boundaries, attachments delivery,
+    and the error path.
     """
 
     def __init__(
         self,
         output_adapter: OutputAdapter,
         session_id: str,
-        config: EmitterConfig | None = None,
+        gate: KindGate | None = None,
         *,
+        policy: DeliveryPolicy | None = None,
         send_timeout: float | None = None,
     ) -> None:
-        super().__init__(config)
+        super().__init__(gate)
         self.output_adapter = output_adapter
         self.session_id = session_id
+        # Duck-typed adapters may omit ``streaming_mode`` — the OutputAdapter
+        # base's PSEUDO default applies (adapter extension boundary).
+        mode = getattr(output_adapter, "streaming_mode", StreamingMode.PSEUDO)
+        self._policy = policy or DeliveryPolicy.of_streaming_mode(mode)
         self._send_timeout = send_timeout
         self._content_buffer = ""
         self._reasoning_buffer = ""
+        # Per-turn flag: a mid-flight turn_errored already carried the
+        # user-facing error message, so the terminal render is suppressed.
+        self._error_delivered = False
 
     def wants_streaming(self) -> bool:
-        return self.output_adapter.streaming_mode in (
-            StreamingMode.NATIVE,
-            StreamingMode.PSEUDO,
-        )
+        return self._policy in (DeliveryPolicy.STREAMING, DeliveryPolicy.SEGMENT)
 
     @property
     def is_true_streaming(self) -> bool:
-        """是否是真流式（Adapter 支持 NATIVE 模式）"""
-        return self.output_adapter.streaming_mode == StreamingMode.NATIVE
+        """是否是真流式（每个 delta 立即转发，无缓冲）。"""
+        return self._policy is DeliveryPolicy.STREAMING
 
-    async def _safe_adapter_send(self, message: Any, log_label: str = "send") -> None:
+    @property
+    def policy(self) -> DeliveryPolicy:
+        return self._policy
+
+    async def _safe_adapter_send(self, message: OutputMessage, log_label: str = "send") -> None:
         """通过 output_adapter 发送消息，带 timeout 保护。"""
         if self._send_timeout is None:
             await self.output_adapter.send(message, self.session_id)
@@ -99,92 +131,63 @@ class StreamingAwareEmitter(ContentEmitter[E]):
                 log_label,
             )
 
-    async def emit_delta(self, delta: str) -> None:
-        """处理内容片段
-
-        真流式下立即转发；伪流式/非流式下缓冲。
-        """
-        if not delta:
-            return
-
-        if self.is_true_streaming:
-            # 真流式：立即发送到 OutputAdapter
-            await self.output_adapter.send_delta(delta, self.session_id)
-        else:
-            # 伪流式/非流式：缓存
-            self._content_buffer += delta
-
-    async def emit_turn_event(self, event: TurnEvent) -> None:
-        """Forward canonical text while rich structured events remain opt-in."""
+    async def _dispatch(self, event: TurnEvent) -> None:
         match event:
             case TurnTextEvent(text=text):
-                await self.emit_delta(text)
-            case _:
-                return
+                if not text:
+                    return
+                if self.is_true_streaming:
+                    await self.output_adapter.send_delta(text, self.session_id)
+                else:
+                    self._content_buffer += text
+            case TurnReasoningEvent(text=text):
+                if text:
+                    self._reasoning_buffer += text
+            case IterationFinishedEvent():
+                if self._policy is DeliveryPolicy.SEGMENT:
+                    await self._flush_buffers()
+            case TurnFinishedEvent(stop_reason=stop_reason, error=error, attachments=attachments):
+                # Ordering preserved from the retired emitter channels: the
+                # error message (when the mid-flight path did not already
+                # deliver one), then the residual text flush, then
+                # attachments.
+                if (
+                    stop_reason is StopReason.ERROR
+                    and error
+                    and not self._error_delivered
+                ):
+                    self._error_delivered = True
+                    await self._safe_adapter_send(
+                        OutputMessage(content=f"Error: {error}"),
+                        log_label="turn_finished_error",
+                    )
+                if not self.is_true_streaming:
+                    await self._flush_buffers()
+                await self._deliver_attachments(attachments)
+                self._content_buffer = ""
+                self._reasoning_buffer = ""
+                self._error_delivered = False
+            case TurnErroredEvent(message=message):
+                self._error_delivered = True
+                await self._safe_adapter_send(
+                    OutputMessage(content=f"Error: {message}"),
+                    log_label="emit_error",
+                )
 
-    async def emit_content(self, full_content: str) -> None:
-        """处理完整内容
+    async def _deliver_attachments(self, attachments: tuple[str, ...]) -> None:
+        """Forward turn attachments (sent explicitly, even in streaming mode)."""
+        if attachments:
+            await self._safe_adapter_send(
+                OutputMessage(content="", attachments=list(attachments)),
+                log_label="attachments",
+            )
 
-        与 emit_delta 分离，避免语义污染。
-        完整内容直接进入缓冲区。
-        """
-        if full_content:
-            self._content_buffer += full_content
-
-    async def emit_stream_end(self, resuming: bool = False) -> None:
-        """处理一轮 LLM 输出结束
-
-        伪流式/非流式下 flush 缓冲区，使中间输出能立即到达用户。
-        """
+    async def flush(self) -> None:
         if not self.is_true_streaming:
             await self._flush_buffers()
 
-    async def emit_complete(self, result: AgentResult) -> None:
-        """处理完成事件
-
-        非流式模式下，确保残留缓冲区被发送。
-        流式模式下，清理缓冲区。
-        如果 result 包含 attachments，一并转发到 OutputAdapter。
-        """
-        if not self.is_true_streaming and self._content_buffer:
-            await self._flush_buffers()
-        # 转发 result 中的 attachments（即使在流式模式下也需显式发送）
-        if result.attachments:
-            await self._safe_adapter_send(
-                OutputMessage(content="", attachments=result.attachments),
-                log_label="attachments",
-            )
-        # 清理缓冲区
-        self._content_buffer = ""
-        self._reasoning_buffer = ""
-
-    async def emit_error(self, error: str) -> None:
-        """处理错误事件
-
-        默认实现：通过 OutputAdapter 发送错误消息。
-        """
-        await self._safe_adapter_send(
-            OutputMessage(content=f"Error: {error}"),
-            log_label="emit_error",
-        )
-
-    async def _on_event(self, event: E, data: Any = None) -> None:
-        """默认事件处理：缓存 reasoning，在 final_output 时 flush。"""
-        event_name = event.value if isinstance(event, Enum) else str(event)
-        if event_name == "model_reasoning":
-            if isinstance(data, str):
-                self._reasoning_buffer += data
-        elif event_name == "final_output":
-            if not self.is_true_streaming:
-                await self._flush_buffers()
-        elif event_name == "error":
-            await self._safe_adapter_send(
-                OutputMessage(content=f"Error: {data}"),
-                log_label="on_event_error",
-            )
-
     async def _flush_buffers(self) -> None:
-        """刷新缓冲区，发送收集的内容"""
+        """刷新缓冲区，发送收集的内容。"""
         if self._content_buffer or self._reasoning_buffer:
             await self._safe_adapter_send(
                 OutputMessage(
@@ -197,3 +200,9 @@ class StreamingAwareEmitter(ContentEmitter[E]):
             )
             self._content_buffer = ""
             self._reasoning_buffer = ""
+
+
+__all__ = [
+    "BufferingSink",
+    "DeliveryPolicy",
+]

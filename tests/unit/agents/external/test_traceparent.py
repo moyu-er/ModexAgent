@@ -34,10 +34,10 @@ from modex_agent.agents.external.scripted_backend import (
 from modex_agent.agents.external.session_store import LocalFileExternalSessionMapStore
 from modex_agent.agents.external.types import Emission, ExternalEnvSpec
 from modex_agent.core.agent import AgentContext, ProviderKind
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import AgentResult, TurnEvent, TurnEventSink
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.turn_events import TurnEvent
+from modex_agent.core.turn_events import TurnErroredEvent, TurnEvent, TurnFinishedEvent
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.tools.manager import InMemoryToolManager
 
@@ -63,7 +63,7 @@ class _PiCompatibleParser(ProviderEventParser):
         return iter(())
 
 
-class _RecordingEmitter(ContentEmitter[ExternalEvent]):  # type: ignore[type-arg]
+class _RecordingEmitter(TurnEventSink):
     def __init__(self) -> None:
         super().__init__()
         self.completed: AgentResult | None = None
@@ -72,26 +72,12 @@ class _RecordingEmitter(ContentEmitter[ExternalEvent]):  # type: ignore[type-arg
     def wants_streaming(self) -> bool:
         return False
 
-    async def emit(self, event: ExternalEvent, data: object | None = None) -> None:
-        pass
-
-    async def emit_delta(self, delta: str) -> None:
-        pass
-
-    async def emit_turn_event(self, event: TurnEvent) -> None:
-        pass
-
-    async def emit_content(self, full_content: str) -> None:
-        pass
-
-    async def emit_stream_end(self, resuming: bool = False) -> None:
-        pass
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        self.completed = result
-
-    async def emit_error(self, error: str) -> None:
-        self.errors.append(error)
+    async def _dispatch(self, event: TurnEvent) -> None:
+        match event:
+            case TurnErroredEvent(message=message):
+                self.errors.append(message)
+            case TurnFinishedEvent(stop_reason=stop_reason, error=error):
+                self.completed = AgentResult(error=error, stop_reason=stop_reason)
 
     async def flush(self) -> None:
         pass

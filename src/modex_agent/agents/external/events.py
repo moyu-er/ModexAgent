@@ -1,21 +1,20 @@
 """External coding agent event kinds.
 
-`ExternalEvent` is the closed-set of event kinds emitted through
-`ContentEmitter` by the `ExternalAgent` harness. The set is
-intentionally small on day one (text / thinking / tool_use / tool_result /
-error) but the parser interface admits additional kinds (status / log /
-usage) later without breaking emit call sites.
+`ExternalEvent` is the closed set of event kinds the provider-event parser
+produces from the external CLI's stdout JSONL; the `ExternalAgent` harness
+fans them onto the core `TurnEvent` stream through the turn sink. The set
+is intentionally small on day one (text / thinking / tool_use / tool_result
+/ error) but the parser interface admits additional kinds (status / log /
+usage) later without breaking parse call sites.
 """
 
 from __future__ import annotations
 
 from enum import StrEnum
 
-from modex_agent.core.events import AgentEvent
 
-
-class ExternalEvent(AgentEvent, StrEnum):
-    """The five day-one event kinds emitted by `ExternalAgent`.
+class ExternalEvent(StrEnum):
+    """The five day-one event kinds parsed from provider stdout.
 
     The enum is closed for day-one callers; the parser interface
     (``ProviderEventParser``) emits zero or more of these values per

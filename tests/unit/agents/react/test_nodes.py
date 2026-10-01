@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.context import ReActGraphContext
 from modex_agent.agents.react.injection_drainer import InjectionDrainer
@@ -17,8 +16,13 @@ from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult
-from modex_agent.core.turn_events import StopReason
+from modex_agent.core.emitter import AgentResult, TurnEvent, TurnEventSink
+from modex_agent.core.turn_events import (
+    StopReason,
+    TurnFinishedEvent,
+    TurnToolCallEvent,
+    TurnToolResultEvent,
+)
 from modex_agent.core.llm_struct import FinishReason
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.session_id import SessionInfo
@@ -35,27 +39,27 @@ def _make_llm_client() -> ReactLlmClient:
     return ReactLlmClient(provider=object())  # type: ignore[arg-type]
 
 
-class _MockEmitter:
+class _MockSink(TurnEventSink):
+    """Records every emitted turn event."""
+
     def __init__(self):
-        self.events: list = []
-
-    async def emit(self, event, data=None):
-        self.events.append((event, data))
-
-    async def emit_complete(self, result):
-        self.events.append(("complete", result))
-
-    async def emit_delta(self, delta):
-        pass
-
-    async def emit_content(self, content):
-        pass
-
-    async def emit_stream_end(self, resuming=False):
-        pass
+        super().__init__()
+        self.events: list[TurnEvent] = []
 
     def wants_streaming(self):
         return False
+
+    async def _dispatch(self, event: TurnEvent):
+        self.events.append(event)
+
+    def finished_events(self) -> list[TurnFinishedEvent]:
+        return [e for e in self.events if isinstance(e, TurnFinishedEvent)]
+
+    def tool_call_events(self) -> list[TurnToolCallEvent]:
+        return [e for e in self.events if isinstance(e, TurnToolCallEvent)]
+
+    def tool_result_events(self) -> list[TurnToolResultEvent]:
+        return [e for e in self.events if isinstance(e, TurnToolResultEvent)]
 
 
 class _MockHistory:
@@ -75,7 +79,7 @@ class TestStartNode:
         node = StartNode()
         runtime = make_runtime()
         ctx = make_graph_ctx(runtime=runtime)
-        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        ctx.agent_ctx.emitter = _MockSink()
 
         await node.run(ctx)
         delivers = ctx.coordinator.collect_consumable_delivers(ReActNode.BEFORE, 0)
@@ -117,15 +121,18 @@ class TestEndNode:
         node = EndNode()
         runtime = make_runtime()
         ctx = make_graph_ctx(runtime=runtime)
-        emitter = _MockEmitter()
-        ctx.agent_ctx.emitter = emitter  # type: ignore[assignment]
+        emitter = _MockSink()
+        ctx.agent_ctx.emitter = emitter
         result = AgentResult(content="Done!", stop_reason=StopReason.COMPLETED)
         ctx.state.result = result
 
         await node.run(ctx)
         assert ctx.coordinator.collect_consumable_delivers(GraphNode.END, 0)
         assert ctx.state.result is result
-        assert ("complete", result) in emitter.events
+        finished = emitter.finished_events()
+        assert len(finished) == 1
+        assert finished[0].stop_reason == StopReason.COMPLETED
+        assert finished[0].attachments == tuple(result.attachments)
         assert ctx.state.phase == TurnPhase.COMPLETED
 
     @pytest.mark.asyncio
@@ -133,103 +140,86 @@ class TestEndNode:
         node = EndNode()
         runtime = make_runtime()
         ctx = make_graph_ctx(runtime=runtime)
-        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        ctx.agent_ctx.emitter = _MockSink()
 
         with pytest.raises(RuntimeError, match="AfterTurnNode must set state.result"):
             await node.run(ctx)
 
     @pytest.mark.asyncio
-    async def test_emits_final_output_on_completed_result(
+    async def test_completed_result_classified_on_turn_finished(
         self, make_runtime, make_graph_ctx
     ):
         node = EndNode()
         runtime = make_runtime()
         ctx = make_graph_ctx(runtime=runtime)
-        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        emitter = _MockSink()
+        ctx.agent_ctx.emitter = emitter
         result = AgentResult(content="Done!", stop_reason=StopReason.COMPLETED)
         ctx.state.result = result
-        emitted: list = []
-
-        async def _spy(event_type, data, _ctx):  # noqa: ANN001
-            emitted.append((event_type, data))
-
-        ctx.runtime.emit = _spy  # type: ignore[method-assign]
 
         await node.run(ctx)
-        assert ("final_output", result) in emitted
-        assert not any(e[0] == "error" for e in emitted)
+        finished = emitter.finished_events()
+        assert len(finished) == 1
+        assert finished[0].stop_reason == StopReason.COMPLETED
+        assert finished[0].error is None
 
     @pytest.mark.asyncio
-    async def test_emits_error_event_on_error_stop_reason(
+    async def test_error_classification_rides_turn_finished(
         self, make_runtime, make_graph_ctx
     ):
         node = EndNode()
         runtime = make_runtime()
         ctx = make_graph_ctx(runtime=runtime)
-        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        emitter = _MockSink()
+        ctx.agent_ctx.emitter = emitter
         result = AgentResult(error="boom", stop_reason=StopReason.ERROR)
         ctx.state.result = result
-        emitted: list = []
-
-        async def _spy(event_type, data, _ctx):  # noqa: ANN001
-            emitted.append((event_type, data))
-
-        ctx.runtime.emit = _spy  # type: ignore[method-assign]
 
         await node.run(ctx)
-        assert ("error", "boom") in emitted
-        assert not any(e[0] == "final_output" for e in emitted)
+        finished = emitter.finished_events()
+        assert len(finished) == 1
+        assert finished[0].stop_reason == StopReason.ERROR
+        assert finished[0].error == "boom"
 
     @pytest.mark.asyncio
-    async def test_no_completion_event_on_cancelled(
+    async def test_cancelled_result_still_emits_terminal(
         self, make_runtime, make_graph_ctx
     ):
         node = EndNode()
         runtime = make_runtime()
         ctx = make_graph_ctx(runtime=runtime)
-        emitter = _MockEmitter()
-        ctx.agent_ctx.emitter = emitter  # type: ignore[assignment]
+        emitter = _MockSink()
+        ctx.agent_ctx.emitter = emitter
         result = AgentResult(
             content="turn cancelled", stop_reason=StopReason.TURN_CANCELLED
         )
         ctx.state.result = result
-        emitted: list = []
-
-        async def _spy(event_type, data, _ctx):  # noqa: ANN001
-            emitted.append((event_type, data))
-
-        ctx.runtime.emit = _spy  # type: ignore[method-assign]
 
         await node.run(ctx)
-        assert not any(
-            e[0] in ("final_output", "error") for e in emitted
-        )
-        assert ("complete", result) in emitter.events
+        finished = emitter.finished_events()
+        assert len(finished) == 1
+        assert finished[0].stop_reason == StopReason.TURN_CANCELLED
+        assert finished[0].error is None
 
     @pytest.mark.asyncio
-    async def test_no_completion_event_on_max_iterations(
+    async def test_max_iterations_classified_on_turn_finished(
         self, make_runtime, make_graph_ctx
     ):
         node = EndNode()
         runtime = make_runtime()
         ctx = make_graph_ctx(runtime=runtime)
-        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        emitter = _MockSink()
+        ctx.agent_ctx.emitter = emitter
         result = AgentResult(
             content="max iterations reached",
             stop_reason=StopReason.MAX_ITERATIONS,
         )
         ctx.state.result = result
-        emitted: list = []
-
-        async def _spy(event_type, data, _ctx):  # noqa: ANN001
-            emitted.append((event_type, data))
-
-        ctx.runtime.emit = _spy  # type: ignore[method-assign]
 
         await node.run(ctx)
-        assert not any(
-            e[0] in ("final_output", "error") for e in emitted
-        )
+        finished = emitter.finished_events()
+        assert len(finished) == 1
+        assert finished[0].stop_reason == StopReason.MAX_ITERATIONS
 
 
 class TestLLMNode:
@@ -260,7 +250,7 @@ class TestLLMNode:
             )
         )
         ctx = make_graph_ctx(runtime=runtime)
-        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        ctx.agent_ctx.emitter = _MockSink()
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
 
         deadline = DispatchDeadline(initial_timeout=0.05, max_ahead_seconds=600.0)
@@ -293,7 +283,7 @@ class TestLLMNode:
 
         runtime = make_runtime()
         ctx = make_graph_ctx(runtime=runtime)
-        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        ctx.agent_ctx.emitter = _MockSink()
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
 
         hook_payloads: list = []
@@ -336,7 +326,7 @@ class TestLLMNode:
 
         runtime = make_runtime()
         ctx = make_graph_ctx(runtime=runtime)
-        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        ctx.agent_ctx.emitter = _MockSink()
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
 
         await node.run(ctx)
@@ -355,7 +345,7 @@ class TestLLMNode:
 
         runtime = make_runtime()
         ctx = make_graph_ctx(runtime=runtime)
-        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        ctx.agent_ctx.emitter = _MockSink()
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
 
         await node.run(ctx)
@@ -371,7 +361,7 @@ class TestLLMNode:
         runtime = make_runtime()
         runtime.state.iteration = 5
         ctx = make_graph_ctx(runtime=runtime)
-        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        ctx.agent_ctx.emitter = _MockSink()
         ctx.agent_ctx.max_iterations = 5
 
         await node.run(ctx)
@@ -394,7 +384,7 @@ class TestLLMNode:
 
         runtime = make_runtime()
         ctx = make_graph_ctx(runtime=runtime)
-        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        ctx.agent_ctx.emitter = _MockSink()
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
 
         await node.run(ctx)
@@ -447,7 +437,7 @@ class TestToolNode:
         runtime = make_runtime()
         runtime.state.iteration = 1
         ctx = make_graph_ctx(runtime=runtime)
-        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        ctx.agent_ctx.emitter = _MockSink()
         ctx.agent_ctx.history = history  # type: ignore[assignment]
         await history.append(
             ChatMessage(role=MessageRole.ASSISTANT, content="", tool_calls=[tc1, tc2])
@@ -483,7 +473,7 @@ class TestToolNode:
 
         runtime = make_runtime()
         runtime.state.iteration = 1
-        emitter = _MockEmitter()
+        emitter = _MockSink()
         agent_ctx = AgentContext(
             system_prompt="test",
             history=ListMessageHistory(),
@@ -492,9 +482,10 @@ class TestToolNode:
             runtime=runtime,
             session=SessionInfo.from_str("test.agent"),
         )
+        agent_ctx.emitter = emitter
         ctx = ReActGraphContext(
             state=runtime.state,  # type: ignore[arg-type]
-            runtime=ReactGraphRuntime(emitter=emitter),  # type: ignore[arg-type]
+            runtime=ReactGraphRuntime(),
             user_data=agent_ctx,
             coordinator=make_coordinator(),
         )
@@ -507,12 +498,12 @@ class TestToolNode:
 
         call_id = captured["call_id"]
         assert call_id  # assigned, non-empty
-        starts = [d for e, d in emitter.events if e == ReActEvent.TOOL_CALL_START]
-        ends = [d for e, d in emitter.events if e == ReActEvent.TOOL_CALL_END]
+        starts = emitter.tool_call_events()
+        ends = emitter.tool_result_events()
         assert len(starts) == 1
         assert len(ends) == 1
         assert starts[0].call_id == call_id
-        assert ends[0].tool_call.call_id == call_id
+        assert ends[0].call_id == call_id
         assert history.msgs[1].tool_call_id == call_id
 
     @pytest.mark.asyncio
@@ -544,7 +535,7 @@ class TestToolNode:
             default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN,
         )
         ctx = make_graph_ctx(runtime=runtime)
-        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        ctx.agent_ctx.emitter = _MockSink()
         ctx.agent_ctx.history = history  # type: ignore[assignment]
         await history.append(
             ChatMessage(role=MessageRole.ASSISTANT, content="", tool_calls=[tc1, tc2])
@@ -579,7 +570,7 @@ class TestToolNode:
             default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN,
         )
         ctx = make_graph_ctx(runtime=runtime)
-        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        ctx.agent_ctx.emitter = _MockSink()
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
         await ctx.agent_ctx.history.append(
             ChatMessage(role=MessageRole.ASSISTANT, content="", tool_calls=[tc])
@@ -618,7 +609,7 @@ class TestToolNode:
         runtime.services.approval = ApprovalRuntime(
             classifier=_TierByNameClassifier(),
         )
-        emitter = _MockEmitter()
+        emitter = _MockSink()
         agent_ctx = AgentContext(
             system_prompt="test",
             history=ListMessageHistory(),
@@ -627,9 +618,10 @@ class TestToolNode:
             runtime=runtime,
             session=SessionInfo.from_str("test.agent"),
         )
+        agent_ctx.emitter = emitter
         ctx = ReActGraphContext(
             state=runtime.state,  # type: ignore[arg-type]
-            runtime=ReactGraphRuntime(emitter=emitter),  # type: ignore[arg-type]
+            runtime=ReactGraphRuntime(),
             user_data=agent_ctx,
             coordinator=make_coordinator(),
         )
@@ -641,9 +633,9 @@ class TestToolNode:
 
         await node.run(ctx)
 
-        ends = [d for e, d in emitter.events if e == ReActEvent.TOOL_CALL_END]
-        assert [payload.result.call_id for payload in ends] == ["c1", "c2"]
-        assert [payload.seq for payload in ends] == [0, 1]
+        ends = emitter.tool_result_events()
+        assert [event.call_id for event in ends] == ["c1", "c2"]
+        assert [event.seq for event in ends] == [0, 1]
         # History tool messages pair with the same canonical ids.
         tool_msgs = [m for m in history.msgs if m.role == MessageRole.TOOL]
         assert [m.tool_call_id for m in tool_msgs] == ["c1", "c2"]
@@ -660,7 +652,7 @@ class TestToolNode:
         runtime = make_runtime()
         runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = 3
         ctx = make_graph_ctx(runtime=runtime)
-        ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+        ctx.agent_ctx.emitter = _MockSink()
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
         await ctx.agent_ctx.history.append(
             ChatMessage(role=MessageRole.ASSISTANT, content="", tool_calls=tc_list)

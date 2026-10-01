@@ -11,16 +11,13 @@ from bot.webui.events import SessionMeta, WebUIEventType
 from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.agents.react.constants import ToolArgsDeltaPayload, ToolCallEndPayload
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.app.models.provider import ModelSelectionProvider
 from modex_agent.app.models.registry import ModelRegistry
-from modex_agent.core.events import EmitterConfig
 from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import FinishReason
-from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
+from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.stream_events import (
     Finish,
@@ -28,9 +25,13 @@ from modex_agent.core.stream_events import (
     ToolCallComplete,
     ToolCallDelta,
 )
-from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.turn.enums import AgentKind, TurnPhase
 from modex_agent.core.turn.models import TurnIdentity
+from modex_agent.core.turn_events import (
+    ToolArgsDeltaEvent,
+    TurnToolCallEvent,
+    TurnToolResultEvent,
+)
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.manager import InMemoryToolManager
@@ -44,13 +45,12 @@ async def test_parallel_batches_round_trip_in_model_order(tmp_path: Path) -> Non
     emitter = WebBotEmitter(
         output_adapter=output,
         session_id="conv.main",
-        config=EmitterConfig(),
         pool="main",
         transcript_store=store,
         session_meta_resolver=lambda: SessionMeta(parent_session_id=None),
     )
     calls = [
-        ToolCall(
+        TurnToolCallEvent(
             tool_name="read_file",
             arguments={"path": label},
             call_id=f"call-{label}",
@@ -58,35 +58,23 @@ async def test_parallel_batches_round_trip_in_model_order(tmp_path: Path) -> Non
         for label in ("A", "B", "C", "D")
     ]
     results = [
-        ToolResult.from_text(
-            "read_file", f"result-{label}", call_id=f"call-{label}"
+        TurnToolResultEvent(
+            tool_name="read_file",
+            call_id=f"call-{label}",
+            output=f"result-{label}",
         )
         for label in ("A", "B", "C", "D")
     ]
 
     with bind_workspace_root(tmp_path):
         for call in calls[:2]:
-            await emitter.emit(ReActEvent.TOOL_CALL_START, call)
+            await emitter.emit(call)
         for index in (1, 0):
-            await emitter.emit(
-                ReActEvent.TOOL_CALL_END,
-                ToolCallEndPayload(
-                    tool_call=calls[index],
-                    result=results[index],
-                    seq=index,
-                ),
-            )
+            await emitter.emit(results[index].model_copy(update={"seq": index}))
         for call in calls[2:]:
-            await emitter.emit(ReActEvent.TOOL_CALL_START, call)
+            await emitter.emit(call)
         for index in (3, 2):
-            await emitter.emit(
-                ReActEvent.TOOL_CALL_END,
-                ToolCallEndPayload(
-                    tool_call=calls[index],
-                    result=results[index],
-                    seq=index,
-                ),
-            )
+            await emitter.emit(results[index].model_copy(update={"seq": index}))
 
     transcript = JSONLTranscriptStore(tmp_path / ".modex" / "sessions" / "main")
     turns = await transcript.load_materialized_by_prefix("conv")
@@ -147,10 +135,10 @@ async def test_parallel_batches_round_trip_in_model_order(tmp_path: Path) -> Non
 async def test_tool_args_delta_seam_reaches_ws_and_skips_transcript(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A↔B 接缝贯通: ReactLlmClient 以 ``emit(TOOL_ARGS_DELTA,
-    ToolArgsDeltaPayload)`` 的形态发出的参数增量, 真实 WebBotEmitter 必须
+    """A↔B 接缝贯通: ReactLlmClient 以 ``emit(ToolArgsDeltaEvent)``
+    的形态发出的参数增量, 真实 WebBotEmitter 必须
     投影为 ToolArgsDeltaEvent 信封且不污染 transcript; 随后的
-    tool_call_start/end 配对不受预热信号影响。节流窗口置 0 保证逐条确定性。
+    tool_call/tool_result 配对不受预热信号影响。节流窗口置 0 保证逐条确定性。
     """
     monkeypatch.setattr(
         "bot.webui.emitter.web_bot._TOOL_ARGS_THROTTLE_SECONDS", 0.0
@@ -161,32 +149,30 @@ async def test_tool_args_delta_seam_reaches_ws_and_skips_transcript(
     emitter = WebBotEmitter(
         output_adapter=output,
         session_id="conv.main",
-        config=EmitterConfig(),
         pool="main",
         transcript_store=store,
         session_meta_resolver=lambda: SessionMeta(parent_session_id=None),
     )
-    call = ToolCall(
+    call = TurnToolCallEvent(
         tool_name="write_file",
         arguments={"path": "a.txt", "content": "x" * 500},
         call_id="call-1",
     )
-    result = ToolResult.from_text("write_file", "ok", call_id="call-1")
 
     with bind_workspace_root(tmp_path):
         for fragment in ('{"path": "a.t', 'xt", "content": "', "xxx"):
             await emitter.emit(
-                ReActEvent.TOOL_ARGS_DELTA,
-                ToolArgsDeltaPayload(
+                ToolArgsDeltaEvent(
                     call_id="call-1",
                     tool_name="write_file",
                     args_fragment=fragment,
                 ),
             )
-        await emitter.emit(ReActEvent.TOOL_CALL_START, call)
+        await emitter.emit(call)
         await emitter.emit(
-            ReActEvent.TOOL_CALL_END,
-            ToolCallEndPayload(tool_call=call, result=result, seq=0),
+            TurnToolResultEvent(
+                tool_name="write_file", call_id="call-1", output="ok", seq=0
+            ),
         )
 
     envelopes = [call_args.args[0] for call_args in output.send_envelope.await_args_list]
@@ -282,7 +268,6 @@ async def test_tool_args_delta_composition_provider_client_emitter_ws(
     emitter = WebBotEmitter(
         output_adapter=output,
         session_id="conv.main",
-        config=EmitterConfig(),
         pool="main",
         transcript_store=store,
         session_meta_resolver=lambda: SessionMeta(parent_session_id=None),

@@ -8,7 +8,7 @@ from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.runtime import ApprovalRuntime
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import TurnEvent, TurnEventSink
 from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
@@ -69,15 +69,9 @@ class _RecordTool(Tool):
         return kwargs["value"]
 
 
-class _Emitter(ContentEmitter):
-    event_enum = object
+class _Sink(TurnEventSink):
+    async def _dispatch(self, event: TurnEvent): ...
 
-    async def emit(self, event, data=None): ...
-    async def emit_delta(self, delta: str): ...
-    async def emit_content(self, content: str): ...
-    async def emit_stream_end(self, *, resuming: bool = False): ...
-    async def emit_complete(self, result: AgentResult): ...
-    async def emit_error(self, error_msg: str): ...
     def wants_streaming(self) -> bool: return False
 
 
@@ -132,7 +126,7 @@ async def test_multi_tool_approves_one_by_one_then_resumes_from_start() -> None:
     ctx = _context(store, executed)
 
     with pytest.raises(GraphInterrupt):
-        await agent.run(ctx, _Emitter())
+        await agent.run(ctx, _Sink())
 
     snapshot = await _load_snapshot(store)
     approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
@@ -154,7 +148,7 @@ async def test_multi_tool_approves_one_by_one_then_resumes_from_start() -> None:
     resume_ctx.identity = snapshot.identity
     resume_ctx.runtime.state = ReActSnapshotPolicy.state_from_snapshot(snapshot)
 
-    result = await agent.run(resume_ctx, _Emitter())
+    result = await agent.run(resume_ctx, _Sink())
 
     assert result.content == "done"
     assert executed == ["a", "b"]
@@ -168,7 +162,7 @@ async def test_partial_approval_then_deny_preempts_whole_batch_on_start_resume()
     ctx = _context(store, executed, default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN)
 
     with pytest.raises(GraphInterrupt):
-        await agent.run(ctx, _Emitter())
+        await agent.run(ctx, _Sink())
 
     snapshot = await _load_snapshot(store)
     approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
@@ -182,7 +176,7 @@ async def test_partial_approval_then_deny_preempts_whole_batch_on_start_resume()
         ReActSnapshotPolicy.replace_approval(snapshot, approval)
     )
 
-    result = await agent.run(resume_ctx, _Emitter())
+    result = await agent.run(resume_ctx, _Sink())
 
     assert result.stop_reason == "turn_cancelled"
     assert executed == []

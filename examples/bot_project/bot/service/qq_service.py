@@ -14,6 +14,7 @@ from bot.adapters.qq import (
 from bot.service.core import BotService
 from bot.utils.config_loader import ConfigLoader
 from modex_agent.app.config import AppConfig
+from modex_agent.core.emitter import TurnBinding
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +47,11 @@ class QQBotService(BotService):
         qq_output_adapter = QQOutputAdapter(input_adapter)
         output_adapter = qq_output_adapter
 
-        def emitter_factory(session_id: str, pool: str) -> QQBotEmitter:
-            _ = pool
+        def emitter_factory(binding: TurnBinding) -> QQBotEmitter:
             return QQBotEmitter(
                 output_adapter=qq_output_adapter,
-                session_id=session_id,
-                config=QQEmitterConfig.minimal(),
+                session_id=binding.session_id,
+                gate=QQEmitterConfig.minimal(),
             )
 
         super().__init__(

@@ -2,10 +2,10 @@
 
 ``PlainTextTurnRenderer`` (below, ~45 lines) consumes ONLY
 ``modex_agent.presentation`` types — no bot code, no ReAct types, no
-emitter subclassing. Driving a scripted ReAct turn through the recording
-emitter + ``DefaultTurnEventProjector`` and rendering the resulting
-presentation events end-to-end is the mechanical proof that a second UI
-needs nothing from the example layer.
+sink subclassing. Driving a scripted ReAct turn through a recording
+turn-event sink + ``DefaultTurnEventProjector`` and rendering the
+resulting presentation events end-to-end is the mechanical proof that a
+second UI needs nothing from the example layer.
 """
 
 from __future__ import annotations
@@ -48,8 +48,7 @@ from modex_agent.presentation import (
 )
 from modex_agent.tools.manager import InMemoryToolManager
 from tests.unit.presentation.test_default_projector_coverage import (
-    RecordingEmitter,
-    _translate,
+    RecordingSink,
 )
 
 # ── The renderer: framework presentation types ONLY ────────────────────────
@@ -120,7 +119,7 @@ async def _scripted_presentation_events() -> list[PresentationEvent]:
             [StreamTextDelta(text=" done"), Finish(finish_reason=FinishReason.STOP)],
         ]
     )
-    emitter = RecordingEmitter()
+    sink = RecordingSink()
     tool_manager = InMemoryToolManager()
     tool_manager.register(_EchoTool())
     ctx = AgentContext(
@@ -129,13 +128,12 @@ async def _scripted_presentation_events() -> list[PresentationEvent]:
         tool_manager=tool_manager,
         session=SessionInfo.from_str("conv.main"),
     )
-    await ReActAgent(provider).run(ctx, emitter)
+    await ReActAgent(provider).run(ctx, sink)
 
     projector = DefaultTurnEventProjector(session_id="conv.main")
     rendered: list[PresentationEvent] = []
-    for call in emitter.calls:
-        runtime_event = _translate(call)
-        if runtime_event is not None:
+    for runtime_event in sink.events:
+        if runtime_event.kind not in DefaultTurnEventProjector.IGNORED_TURN_EVENT_KINDS:
             rendered.extend(projector.feed(runtime_event))
     return rendered
 

@@ -25,6 +25,10 @@ from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.emitter import CompositeEmitter, WebBotEmitter
 from bot.webui.events import AssistantTextEvent
 
+from modex_agent.core.turn_events import (
+    IterationFinishedEvent,
+    TurnTextEvent,
+)
 from modex_agent.workspace.runtime import is_workspace_root_bound
 
 _DATA_DIR_NAME = ".modex"
@@ -122,8 +126,8 @@ async def test_emitter_with_provider_writes_to_cell_workspace(
     # ctxvar binding).
     async def consumer_turn() -> None:
         assert not is_workspace_root_bound()
-        await emitter.emit_content("hello from cell")
-        await emitter.emit_stream_end(resuming=False)
+        await emitter.emit(TurnTextEvent(text="hello from cell"))
+        await emitter.emit(IterationFinishedEvent(iteration=0, has_tool_calls=False))
 
     await asyncio.create_task(consumer_turn())
 
@@ -147,8 +151,8 @@ async def test_emitter_without_provider_still_falls_back_to_ctxvar(
     )
     with caplog.at_level(logging.WARNING, logger="bot.service.workspace_store"):
         async def consumer_turn() -> None:
-            await emitter.emit_content("fallback")
-            await emitter.emit_stream_end(resuming=False)
+            await emitter.emit(TurnTextEvent(text="fallback"))
+            await emitter.emit(IterationFinishedEvent(iteration=0, has_tool_calls=False))
 
         await asyncio.create_task(consumer_turn())
     assert any("[ws-partition]" in r.message for r in caplog.records)
@@ -180,8 +184,8 @@ async def test_composite_emitter_forwards_provider_to_web_child(
 
     async def consumer_turn() -> None:
         assert not is_workspace_root_bound()
-        await composite.emit_content("via composite")
-        await composite.emit_stream_end(resuming=False)
+        await composite.emit(TurnTextEvent(text="via composite"))
+        await composite.emit(IterationFinishedEvent(iteration=0, has_tool_calls=False))
 
     await asyncio.create_task(consumer_turn())
 

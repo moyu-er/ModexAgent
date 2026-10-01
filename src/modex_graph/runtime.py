@@ -145,9 +145,10 @@ class GraphRuntime(ABC):  # noqa: B024
     ) -> None:
         """Emit a streaming event.
 
-        `event_type` is a `str` (business modules pass `StrEnum` values like
-        `ReActEvent.MODEL_OUTPUT`). `data` is the event payload — typed by
-        the business module. Default: no-op.
+        `event_type` is a `str` (business modules pass their own `StrEnum`
+        values). `data` is the event payload — typed by the business module.
+        Default: no-op. (Business runtimes that stream through a typed event
+        sink do not route events through this method.)
         """
         # noqa: B027
         # Default: no-op.

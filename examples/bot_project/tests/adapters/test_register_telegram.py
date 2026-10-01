@@ -6,6 +6,8 @@ import pytest
 from bot.adapters.channels import AdapterBuildContext
 from bot.adapters.register_telegram import _telegram_enabled, build_telegram
 
+from modex_agent.core.emitter import TurnBinding
+
 try:
     import telegram.ext  # noqa: F401
 except ModuleNotFoundError:
@@ -141,8 +143,8 @@ def test_build_returns_triple_when_enabled(monkeypatch: pytest.MonkeyPatch) -> N
     assert fake_app.handler_added
     # lifecycle hooks were captured but NOT awaited during build
     assert fake_app.initialize_calls == 0
-    # emitter factory yields a constructible emitter
-    emitter = em_factory("4242.main", pool="main")
+    # emitter factory yields a constructible emitter (TurnBinding seam)
+    emitter = em_factory(TurnBinding(session_id="4242.main", agent_name="main", pool="main"))
     assert emitter is not None
 
 

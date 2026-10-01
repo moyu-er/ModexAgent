@@ -116,7 +116,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/webui/server.py` | aiohttp REST+WS server (sessions, pools, workspace APIs) |
 | `bot/webui/transcript_store.py` | Per-agent transcript persistence (JSONL) for history replay |
 | `bot/webui/events.py` | WebUI event types (model deltas, tool calls, turn lifecycle) |
-| `bot/webui/emitter/` | Emits WebUI events via fan-in adapter — split into 4 modules |
+| `bot/webui/emitter/` | Bot turn-event sinks over the core `TurnEventSink` seam — `BotTranscriptEmitter` (shared transcript/segment lifecycle + `DefaultTurnEventProjector` projection), `WebBotEmitter` (WS projection), `CompositeEmitter` (framework composite fan-out) — split into 4 modules |
 | `bot/graph/` | Graph scheduling bridge — `BotAgentNode` (agent-backed graph node), `BotAgentNodeFactory` (spec → node), `GraphSpecLoader` (YAML → compiled spec store), `WebUIGraphOutputAdapter` (dual-channel event emission: REST store + WS fan-out) |
 | `bot/webui/routes/graph_routes.py` | Graph REST API — specs CRUD, instance lifecycle (run/pause/resume/stop), events, deliver, topology endpoint |
 | `modexbot/cli.py` | CLI entry point — 3-layer process discovery for start/stop/restart |

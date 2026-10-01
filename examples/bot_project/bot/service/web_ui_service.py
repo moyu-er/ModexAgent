@@ -36,9 +36,8 @@ from bot.webui.workspace_providers import (
     workspace_transcript_store_for_sessions,
 )
 from modex_agent.adapters.output import OutputAdapter
-from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.app.config import AppConfig
-from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.emitter import TurnBinding, TurnEventSink, TurnEventSinkFactory
 from modex_agent.core.media import MediaConfig
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.session_store import SessionStore
@@ -229,10 +228,8 @@ class WebUIService(BotService):
         self._channel_inputs: list[InputAdapter] = []
         self._channel_outputs: list[OutputAdapter] = []
         self._channel_outputs_by_name: dict[str, OutputAdapter] = {}
-        self._emitter_factories: list[
-            Callable[[str, str], ContentEmitter[ReActEvent]]
-        ] = []
-        """Per-channel factories with the ``(session_id, pool)`` contract."""
+        self._emitter_factories: list[TurnEventSinkFactory] = []
+        """Per-channel turn-event sink factories (TurnBinding contract)."""
 
         for name in self._channel_registry.names():
             try:
@@ -272,12 +269,12 @@ class WebUIService(BotService):
             merged_input = fan_in
         self._merged_input = merged_input
 
-        # ── 5. Unified emitter factory (CompositeEmitter fan-out) ─────
-        def emitter_factory(session_id: str, pool: str) -> CompositeEmitter[ReActEvent]:
-            emitters: list[ContentEmitter[ReActEvent]] = [
-                ef(session_id, pool) for ef in self._emitter_factories
+        # ── 5. Unified sink factory (CompositeEmitter fan-out) ─────
+        def emitter_factory(binding: TurnBinding) -> CompositeEmitter:
+            children: list[TurnEventSink] = [
+                ef(binding) for ef in self._emitter_factories
             ]
-            return CompositeEmitter(emitters=emitters)
+            return CompositeEmitter(children=tuple(children))
 
         # ── 6. Delegate to BotService ──────────────────────────────────
         # merged_input is the single InputAdapter for PoolRouter.

@@ -16,14 +16,13 @@ from bot.eval.harbor.entry import (
     execute_entry,
 )
 
-from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.turn_events import StopReason
+from modex_agent.core.emitter import AgentResult, TurnEventSink
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.turn.models import JsonValue
+from modex_agent.core.turn_events import StopReason
 from modex_agent.tools.terminal.persistent_bash import persistent_bash_supported
 from modex_agent.trace.experiment_attrs import ExperimentAttribute
 from modex_agent.trace.semconv import GenAiAttr, SpanName
@@ -141,7 +140,7 @@ async def test_bare_tools_resolve_relative_paths_against_task_workspace(
 
     async def write_marker(
         context: AgentContext,
-        emitter: ContentEmitter[ReActEvent],
+        emitter: TurnEventSink,
     ) -> AgentResult:
         _ = emitter
         write = context.tool_manager.get_tool("write")
@@ -174,7 +173,7 @@ async def test_entry_turn_context_pins_tool_denial_and_iteration_budget(
 
     async def capture_turn(
         context: AgentContext,
-        emitter: ContentEmitter[ReActEvent],
+        emitter: TurnEventSink,
     ) -> AgentResult:
         _ = emitter
         assert context.max_iterations == 4
@@ -287,7 +286,7 @@ async def test_agent_turn_exception_records_failure_and_trace_mapping(tmp_path: 
 
     async def fail_turn(
         context: AgentContext,
-        emitter: ContentEmitter[ReActEvent],
+        emitter: TurnEventSink,
     ) -> AgentResult:
         _ = context, emitter
         raise RuntimeError("scripted turn failure")

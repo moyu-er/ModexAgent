@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.control.channel import InMemoryControlChannel
-from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.emitter import TurnBinding, TurnEventSink, TurnEventSinkFactory
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionIdFactory
@@ -278,23 +278,23 @@ class _WorkspaceEmitterFactory:
 
     def __init__(
         self,
-        orig: Callable[[str], Any],
+        orig: TurnEventSinkFactory,
         provider: Callable[[], Path | None],
     ) -> None:
         self._orig = orig
         self._provider = provider
 
-    def __call__(self, session_id: str) -> Any:
-        emitter = self._orig(session_id)
-        # The concrete emitter may be a channel emitter or a CompositeEmitter
-        # wrapping one. Both shapes expose set_sessions_dir_provider as a
-        # public setter - CompositeEmitter forwards to its children, so the
-        # provider reaches every leaf. Emitters without the setter are
-        # passed through unchanged (emitter extension boundary).
-        setter = getattr(emitter, "set_sessions_dir_provider", None)
+    def __call__(self, binding: TurnBinding) -> TurnEventSink:
+        sink = self._orig(binding)
+        # The concrete sink may be a channel sink or a composite wrapping
+        # one. Both shapes expose set_sessions_dir_provider as a public
+        # setter - the composite forwards to its children, so the provider
+        # reaches every leaf. Sinks without the setter are passed through
+        # unchanged (sink extension boundary).
+        setter = getattr(sink, "set_sessions_dir_provider", None)
         if setter is not None:
             setter(self._provider)
-        return emitter
+        return sink
 
 
 def _resolve_trace_enabled(app_config: AppConfig | None) -> bool:
@@ -328,7 +328,7 @@ def _build_agent_factory(
     control_channel: Any,
     workspace_resolver: WorkspaceManager | None,
     pool_name: str,
-    emitter_factory: Callable | None,
+    emitter_factory: TurnEventSinkFactory | None,
     *,
     media_store_resolver: Callable[[], MediaStore] | None = None,
     runtime_constructor: AgentFactory | None = None,
@@ -400,7 +400,7 @@ def _build_assembly_context(
     retention: SessionRetentionPolicy,
     workspace_handle: WorkspaceHandle | None,
     workspace_resolver: WorkspaceManager | None,
-    emitter_factory: Callable[[str], ContentEmitter[Any]] | None,
+    emitter_factory: TurnEventSinkFactory | None,
     app_config: Any | None,
     persistence: Any | None,
     mcp_registry: McpConnectionRegistry | None,
@@ -561,8 +561,8 @@ async def create_pool(
     workspace_handle: WorkspaceHandle | None = None,
     workspace_resolver: WorkspaceManager | None = None,
     media_store_resolver: Callable[[], MediaStore] | None = None,
-    # Business factory: (session_id, pool); pool-bound below for the framework.
-    emitter_factory: Callable[[str, str], ContentEmitter[Any]] | None = None,
+    # Business sink factory (TurnBinding face); pool name injected below.
+    emitter_factory: TurnEventSinkFactory | None = None,
     output_adapter_factory: Callable[[], OutputAdapter] | None = None,
     # Business callback: (child_id, parent_id, pool); pool-bound below.
     on_subagent_created: Callable[[str, str, str], Awaitable[None]] | None = None,
@@ -659,11 +659,13 @@ async def create_pool(
     strategy = registry.resolve(strategy_name)
     strategy.validate_pool_spec(pool_spec)
 
-    _pool_bound_emitter: Callable[[str], ContentEmitter[Any]] | None = None
+    _pool_bound_emitter: TurnEventSinkFactory | None = None
     if emitter_factory is not None:
 
-        def pool_bound_emitter(session_id: str) -> ContentEmitter[Any]:
-            return emitter_factory(session_id, pool_name)
+        def pool_bound_emitter(binding: TurnBinding) -> TurnEventSink:
+            # The pool assembly layer owns the pool name — stamp it into
+            # the binding so channel factories see a complete identity.
+            return emitter_factory(binding.model_copy(update={"pool": pool_name}))
 
         _pool_bound_emitter = pool_bound_emitter
 

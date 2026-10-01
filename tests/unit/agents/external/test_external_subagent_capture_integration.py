@@ -61,7 +61,18 @@ from modex_agent.agents.external.types import (
     ExternalEnvSpec,
 )
 from modex_agent.core.agent import AgentContext, ProviderKind
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import (
+    AgentResult,
+    TurnBinding,
+    TurnEventSink,
+    TurnEventSinkFactory,
+)
+from modex_agent.core.turn_events import (
+    TurnErroredEvent,
+    TurnEvent,
+    TurnFinishedEvent,
+    TurnTextEvent,
+)
 from modex_agent.core.turn_events import StopReason
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
@@ -90,8 +101,8 @@ _PARENT_MODEX_SID = "pool1.agent1"
 # ---------------------------------------------------------------------------
 
 
-class _RecordingEmitter(ContentEmitter[ExternalEvent]):  # type: ignore[type-arg]
-    """Main-session emitter capturing turn events, deltas, completes, errors."""
+class _RecordingEmitter(TurnEventSink):
+    """Main-session sink capturing turn events, terminal, errors."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -103,21 +114,19 @@ class _RecordingEmitter(ContentEmitter[ExternalEvent]):  # type: ignore[type-arg
     def wants_streaming(self) -> bool:
         return False
 
-    async def emit_delta(self, delta: str) -> None:
-        self.deltas.append(delta)
-
-    async def emit_turn_event(self, event: TurnEvent) -> None:
+    async def _dispatch(self, event: TurnEvent) -> None:
         self.turn_events.append(event)
+        match event:
+            case TurnTextEvent(text=text):
+                self.deltas.append(text)
+            case TurnErroredEvent(message=message):
+                self.errors.append(message)
+            case TurnFinishedEvent(stop_reason=stop_reason, error=error):
+                self.completed = AgentResult(error=error, stop_reason=stop_reason)
 
-    async def emit_complete(self, result: AgentResult) -> None:
-        self.completed = result
 
-    async def emit_error(self, error: str) -> None:
-        self.errors.append(error)
-
-
-class _RecordingChildEmitter(ContentEmitter[ExternalEvent]):  # type: ignore[type-arg]
-    """Child-session emitter — records the modex_sid it was created for."""
+class _RecordingChildEmitter(TurnEventSink):
+    """Child-session sink — records the modex_sid it was created for."""
 
     def __init__(self, modex_sid: str) -> None:
         super().__init__()
@@ -126,17 +135,13 @@ class _RecordingChildEmitter(ContentEmitter[ExternalEvent]):  # type: ignore[typ
         self.errors: list[str] = []
         self.deltas: list[str] = []
 
-    async def emit_delta(self, delta: str) -> None:
-        self.deltas.append(delta)
-
-    async def emit_turn_event(self, event: TurnEvent) -> None:
+    async def _dispatch(self, event: TurnEvent) -> None:
         self.turn_events.append(event)
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        pass
-
-    async def emit_error(self, error: str) -> None:
-        self.errors.append(error)
+        match event:
+            case TurnTextEvent(text=text):
+                self.deltas.append(text)
+            case TurnErroredEvent(message=message):
+                self.errors.append(message)
 
 
 # ---------------------------------------------------------------------------
@@ -227,10 +232,10 @@ def _make_ctx(session_id: str = _PARENT_MODEX_SID) -> AgentContext:
 
 def _make_child_emitter_factory(
     emitters: dict[str, _RecordingChildEmitter],
-) -> Callable[[str], ContentEmitter[ExternalEvent]]:
-    def factory(modex_sid: str) -> ContentEmitter[ExternalEvent]:
-        emitter = _RecordingChildEmitter(modex_sid)
-        emitters[modex_sid] = emitter
+) -> TurnEventSinkFactory:
+    def factory(binding: TurnBinding) -> TurnEventSink:
+        emitter = _RecordingChildEmitter(binding.session_id)
+        emitters[binding.session_id] = emitter
         return emitter
 
     return factory
@@ -263,7 +268,7 @@ def _build_agent(
     sink: ExternalChildSessionDiscoverySink,
     registry: InMemorySessionRegistry,
     session_store: LocalFileSessionStore,
-    emitter_factory: Callable[[str], ContentEmitter[ExternalEvent]],
+    emitter_factory: TurnEventSinkFactory,
 ) -> ExternalAgent:
     return ExternalAgent(
         backend_provider=PoolScopedBackendProvider(adapter),

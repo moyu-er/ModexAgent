@@ -243,8 +243,8 @@ originates from a provider-discovered child session. The first time a
 child is seen, discovery runs synchronously in the same call:
 
 1. `resolve_child_modex_session_id` → deterministic modex session_id
-2. Populate `_child_sid_to_modex_sid[provider_child_sid] = modex_sid`
-3. Create child emitter via `child_emitter_factory(modex_sid)`
+2. Populate `turn_ctx.child_sid_to_modex_sid[provider_child_sid] = modex_sid`
+3. Create child sink via `child_emitter_factory(TurnBinding(session_id=child_modex_sid, agent_name=...))`
 4. Schedule `on_child_discovered` as a tracked background task
 
 Steps 1-3 are sync so the first child emission is routed to the newly

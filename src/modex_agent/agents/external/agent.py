@@ -12,7 +12,7 @@ backend (OpenCode, future Claude Code / Codex / Cursor):
 4. Render the system prompt (from ``MODEX_TARGETS``) and the
    ``AGENTS.md`` marker block into the workdir.
 5. Drive the backend's streaming ``execute_streaming`` once, fanning
-   parsed emissions through the :class:`ContentEmitter` and
+   parsed emissions through the :class:`TurnEventSink` and
    accumulating text for transcript persistence.
 6. Stale-session recovery: a :class:`StaleSessionError` from the
    backend invalidates the stored mapping and retries once with a fresh
@@ -63,10 +63,18 @@ from modex_agent.core.agent import (
     ProviderKind,
     current_agent_context,
 )
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import (
+    AgentResult,
+    TurnBinding,
+    TurnEventSink,
+    TurnEventSinkFactory,
+    turn_finished_event,
+)
+from modex_agent.core.session_id import agent_of
 from modex_agent.core.turn.dispatch import renew_dispatch_deadline
 from modex_agent.core.turn_events import (
     StopReason,
+    TurnErroredEvent,
     TurnReasoningEvent,
     TurnTextEvent,
     TurnToolCallEvent,
@@ -124,7 +132,7 @@ class _TurnEmissionContext:
     paths: ExternalPaths
     spec: ExternalEnvSpec
     child_sid_to_modex_sid: dict[str, str] = field(default_factory=dict)
-    child_emitters: dict[str, ContentEmitter[ExternalEvent]] = field(default_factory=dict)
+    child_emitters: dict[str, TurnEventSink] = field(default_factory=dict)
     child_accumulators: dict[str, _EmissionAccumulator] = field(default_factory=dict)
     pending_child_tasks: set[asyncio.Task[str]] = field(default_factory=set)
 
@@ -375,7 +383,7 @@ class ScriptedStreamingAdapter(StreamingProviderBackend):
         )
 
 
-class ExternalAgent(Agent[ExternalEvent]):
+class ExternalAgent(Agent):
     """Framework harness wrapping any :class:`StreamingProviderBackend`.
 
     The agent owns the per-turn lifecycle described in the module
@@ -393,8 +401,6 @@ class ExternalAgent(Agent[ExternalEvent]):
     fixed spec is supplied directly.
     """
 
-    event_enum = ExternalEvent
-
     def __init__(
         self,
         *,
@@ -410,7 +416,7 @@ class ExternalAgent(Agent[ExternalEvent]):
         child_discovery_sink: ChildSessionDiscoverySink | None = None,
         session_registry: SessionRegistry | None = None,
         session_id_factory: SessionIdFactory | None = None,
-        child_emitter_factory: Callable[[str], ContentEmitter[ExternalEvent]] | None = None,
+        child_emitter_factory: TurnEventSinkFactory | None = None,
     ) -> None:
         self._backend_provider = backend_provider
         self._session_store = session_store
@@ -430,16 +436,16 @@ class ExternalAgent(Agent[ExternalEvent]):
 
     def set_child_emitter_factory(
         self,
-        factory: Callable[[str], ContentEmitter[ExternalEvent]] | None,
+        factory: TurnEventSinkFactory | None,
     ) -> None:
-        """Override the child emitter factory.
+        """Override the child sink factory.
 
         Called by ``ExternalTurnRunner.set_emitter_factory`` so the WebUI-
-        injected emitter factory (which creates ``WebBotEmitter`` with
+        injected sink factory (which creates ``WebBotEmitter`` with
         transcript persistence) is used for child sessions too, not just
         the main session. Without this, child emissions would only reach
-        the WebSocket (via ``StreamingAwareEmitter``) but never persist
-        to the transcript store.
+        the WebSocket (via ``BufferingSink``) but never persist to the
+        transcript store.
         """
         self._child_emitter_factory = factory
 
@@ -470,22 +476,22 @@ class ExternalAgent(Agent[ExternalEvent]):
     async def run(
         self,
         context: AgentContext,
-        emitter: ContentEmitter[ExternalEvent],
+        emitter: TurnEventSink,
     ) -> AgentResult:
         ctx_token = current_agent_context.set(context)
         context.emitter = emitter
         try:
             result = await self._run_turn(context, emitter)
-            await emitter.emit_complete(result)
+            await emitter.emit(turn_finished_event(result))
             return result
         except Exception as exc:
             logger.exception("ExternalAgent turn failed")
-            await emitter.emit_error(str(exc))
+            await emitter.emit(TurnErroredEvent(message=str(exc)))
             error_result = AgentResult(
                 error=str(exc),
                 stop_reason=StopReason.ERROR,
             )
-            await emitter.emit_complete(error_result)
+            await emitter.emit(turn_finished_event(error_result))
             return error_result
         finally:
             context.emitter = None
@@ -494,7 +500,7 @@ class ExternalAgent(Agent[ExternalEvent]):
     async def _run_turn(
         self,
         ctx: AgentContext,
-        emitter: ContentEmitter[ExternalEvent],
+        emitter: TurnEventSink,
     ) -> AgentResult:
         modex_sid = self._modex_session_id(ctx)
 
@@ -607,7 +613,7 @@ class ExternalAgent(Agent[ExternalEvent]):
     async def _handle_emission(
         self,
         emission: Emission,
-        emitter: ContentEmitter[ExternalEvent],
+        emitter: TurnEventSink,
         accumulator: _EmissionAccumulator,
         turn_ctx: _TurnEmissionContext,
     ) -> None:
@@ -639,7 +645,13 @@ class ExternalAgent(Agent[ExternalEvent]):
                     provider_child_sid
                 )
                 turn_ctx.child_sid_to_modex_sid[provider_child_sid] = child_modex_sid
-                turn_ctx.child_emitters[child_modex_sid] = self._child_emitter_factory(child_modex_sid)
+                child_binding = TurnBinding(
+                    session_id=child_modex_sid,
+                    agent_name=agent_of(child_modex_sid, default="external-child"),
+                )
+                turn_ctx.child_emitters[child_modex_sid] = self._child_emitter_factory(
+                    child_binding
+                )
                 parent_sid = turn_ctx.modex_sid
                 task = asyncio.create_task(
                     self._child_discovery_sink.on_child_discovered(provider_child_sid, parent_sid)
@@ -665,12 +677,12 @@ class ExternalAgent(Agent[ExternalEvent]):
             case ExternalEvent.TEXT_DELTA:
                 if emission.text:
                     target_accumulator.text.append(emission.text)
-                    await target_emitter.emit_turn_event(
+                    await target_emitter.emit(
                         TurnTextEvent(text=emission.text, part_id=emission.part_id)
                     )
             case ExternalEvent.THINKING:
                 if emission.text:
-                    await target_emitter.emit_turn_event(
+                    await target_emitter.emit(
                         TurnReasoningEvent(text=emission.text, part_id=emission.part_id)
                     )
             case ExternalEvent.TOOL_USE:
@@ -682,7 +694,7 @@ class ExternalAgent(Agent[ExternalEvent]):
                         arguments = _TOOL_ARGUMENTS_ADAPTER.validate_json(raw_arguments)
                     except ValidationError:
                         arguments = {"input": raw_arguments}
-                    await target_emitter.emit_turn_event(
+                    await target_emitter.emit(
                         TurnToolCallEvent(
                             tool_name=emission.tool_name,
                             call_id=emission.call_id,
@@ -694,7 +706,7 @@ class ExternalAgent(Agent[ExternalEvent]):
                 if emission.call_id:
                     tool_name = target_accumulator.tool_names.pop(emission.call_id, None)
                     if tool_name:
-                        await target_emitter.emit_turn_event(
+                        await target_emitter.emit(
                             TurnToolResultEvent(
                                 tool_name=tool_name,
                                 call_id=emission.call_id,
@@ -708,7 +720,9 @@ class ExternalAgent(Agent[ExternalEvent]):
                             emission.call_id,
                         )
             case ExternalEvent.ERROR:
-                await target_emitter.emit_error(emission.message or "")
+                await target_emitter.emit(
+                    TurnErroredEvent(message=emission.message or "")
+                )
 
     # ------------------------------------------------------------------
     # Helpers

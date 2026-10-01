@@ -43,9 +43,12 @@ from typing import Any, assert_never
 import httpx
 import pytest
 
-from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.agents.react.constants import ToolArgsDeltaPayload
 from modex_agent.agents.react.llm_client import ReactLlmClient
+from modex_agent.core.turn_events import (
+    ToolArgsDeltaEvent,
+    TurnReasoningEvent,
+    TurnTextEvent,
+)
 from modex_agent.agents.react.media_injection import inject_multimodal
 from modex_agent.agents.react.message_builder import build_assistant_message
 from modex_agent.agents.react.state import ReActTurnState
@@ -523,31 +526,16 @@ def _make_ctx(services: AgentRuntimeServices | None = None) -> AgentContext:
 
 
 class _RecordingEmitter:
-    """Records every emitter call as (method, *args) tuples."""
+    """Records every emitted turn event in order."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[object, ...]] = []
+        self.calls: list[object] = []
 
     def wants_streaming(self) -> bool:
         return True
 
-    async def emit(self, event: object, data: object = None) -> None:
-        self.calls.append(("emit", event, data))
-
-    async def emit_delta(self, delta: str) -> None:
-        self.calls.append(("emit_delta", delta))
-
-    async def emit_content(self, full_content: str) -> None:
-        self.calls.append(("emit_content", full_content))
-
-    async def emit_stream_end(self, resuming: bool = False) -> None:
-        self.calls.append(("emit_stream_end", resuming))
-
-    async def emit_complete(self, result: object) -> None:
-        self.calls.append(("emit_complete", result))
-
-    async def emit_error(self, error: str) -> None:
-        self.calls.append(("emit_error", error))
+    async def emit(self, event: object) -> None:
+        self.calls.append(event)
 
 
 async def test_react_llm_client_drives_emitter_over_full_transport(
@@ -562,20 +550,17 @@ async def test_react_llm_client_drives_emitter_over_full_transport(
     response = await ReactLlmClient(provider).call([{"role": "user", "content": "hi"}], ctx)
 
     assert emitter.calls == [
-        ("emit", ReActEvent.MODEL_REASONING, "Let me think"),
-        ("emit_delta", "Hello"),
-        ("emit", ReActEvent.MODEL_OUTPUT, "Hello"),
-        ("emit_delta", " world"),
-        ("emit", ReActEvent.MODEL_OUTPUT, " world"),
+        TurnReasoningEvent(text="Let me think"),
+        TurnTextEvent(text="Hello"),
+        TurnTextEvent(text=" world"),
         # 参数流式增量: 首 fragment 携带身份(arguments 为空的通告), 第二个
-        # fragment 是参数原文 —— 均先于 emit_stream_end / TOOL_CALL_START。
-        ("emit", ReActEvent.TOOL_ARGS_DELTA, ToolArgsDeltaPayload(
+        # fragment 是参数原文 —— display-only, never folded into the response.
+        ToolArgsDeltaEvent(
             call_id="call_a", tool_name="get_weather", args_fragment=""
-        )),
-        ("emit", ReActEvent.TOOL_ARGS_DELTA, ToolArgsDeltaPayload(
+        ),
+        ToolArgsDeltaEvent(
             call_id="call_a", tool_name="get_weather", args_fragment='{"city": "Beijing"}'
-        )),
-        ("emit_stream_end", True),
+        ),
     ]
     assert response.error is None
     assert response.content == "Hello world"

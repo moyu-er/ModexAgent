@@ -1,86 +1,95 @@
-"""QQ Bot Emitter + EmitterConfig.
+"""QQ Bot Sink + KindGate.
 
 Split from ``bot/adapters/qq.py``. Logic unchanged; only the module boundary
-moved.
+moved (and the emitter face migrated to the turn-event sink).
 """
 
 from __future__ import annotations
 
 import logging
-from enum import Enum
-from typing import Any
 
-from modex_agent.adapters.emitter import StreamingAwareEmitter
-from modex_agent.agents.react import ReActEvent
-from modex_agent.core.events import EmitterConfig
+from modex_agent.adapters.emitter import BufferingSink
+from modex_agent.core.emitter import KindGate
+from modex_agent.core.turn_events import (
+    TurnEvent,
+    TurnReasoningEvent,
+    TurnToolCallEvent,
+    TurnToolResultEvent,
+)
 
 
 class QQEmitterConfig:
-    """QQ Bot 的 Emitter 配置工厂"""
+    """QQ Bot 的 KindGate 配置工厂。
+
+    Kind 字面量是核心 ``TurnEvent`` 的 kind（旧枚举事件名迁移：
+    model_output→text, tool_call_start→tool_call, tool_call_end→tool_result,
+    final_output→turn_finished, error→turn_errored）。``iteration_finished``
+    不在旧集合中，但它是缓冲投递策略（SEGMENT）的 flush 边界，必须启用。
+    """
 
     @staticmethod
-    def minimal() -> EmitterConfig:
+    def minimal() -> KindGate:
         """最小配置 - 接收模型内容、工具调用日志和最终结果"""
-        return EmitterConfig(
-            enabled_events={
-                "model_output",
-                "tool_call_start",
-                "tool_call_end",
-                "final_output",
-                "error",
-            }
-        )
+        return QQEmitterConfig.custom()
 
     @staticmethod
-    def with_tools() -> EmitterConfig:
+    def with_tools() -> KindGate:
         """带工具调用配置"""
-        return EmitterConfig(
-            enabled_events={
-                "model_output",
-                "tool_call_start",
-                "tool_call_end",
-                "final_output",
-                "error",
-            }
-        )
+        return QQEmitterConfig.custom()
 
     @staticmethod
-    def debug() -> EmitterConfig:
+    def debug() -> KindGate:
         """调试配置 - 接收所有事件"""
-        return EmitterConfig()  # 默认启用所有
+        return KindGate()  # 默认启用所有
 
     @staticmethod
-    def custom(enabled: set | None = None, disabled: set | None = None) -> EmitterConfig:
+    def custom(enabled: set | None = None, disabled: set | None = None) -> KindGate:
         """自定义配置"""
-        return EmitterConfig(
-            enabled_events=enabled,
-            disabled_events=disabled or set(),
+        if enabled is None:
+            enabled = {
+                "text",
+                "tool_call",
+                "tool_result",
+                "turn_finished",
+                "turn_errored",
+                "iteration_finished",
+            }
+        return KindGate(
+            enabled_kinds=frozenset(enabled),
+            disabled_kinds=frozenset(disabled or set()),
         )
 
 
-class QQBotEmitter(StreamingAwareEmitter[ReActEvent]):
+class QQBotEmitter(BufferingSink):
     """QQ Bot 事件处理器
 
     业务逻辑：
-    - 模型内容：通过 emit_delta 缓冲/发送给用户
+    - 模型内容：按投递策略缓冲/发送给用户
     - 思维链：只记日志，不发用户
     - 工具调用：记录到日志，不发给用户
     """
 
-    async def _on_event(self, event: ReActEvent, data: Any = None) -> None:
-        """处理业务事件。
+    async def _dispatch(self, event: TurnEvent) -> None:
+        """处理业务事件：先做 kind 级日志，再交由基类完成缓冲、flush、
+        附件和错误发送等通用逻辑。"""
+        match event:
+            case TurnReasoningEvent(text=text):
+                logging.getLogger("bot.reasoning").info(f"[Reasoning] {text}")
+            case TurnToolCallEvent(
+                tool_name=tool_name, call_id=call_id, arguments=arguments
+            ):
+                logging.getLogger("bot.tools").info(
+                    f"[Tool Call] {tool_name} args={dict(arguments)} call_id={call_id}"
+                )
+            case TurnToolResultEvent(
+                tool_name=tool_name, error=error, seq=seq
+            ):
+                logging.getLogger("bot.tools").info(
+                    f"[Tool Result] {tool_name} error={error} seq={seq}"
+                )
+            case _:
+                pass
 
-        MODEL_OUTPUT 的内容传输由 emit_delta/emit_content 负责，
-        此处不重复处理。日志记录后交由基类完成缓冲、flush 和错误发送。
-        """
-        event_name = event.value if isinstance(event, Enum) else str(event)
-
-        if event_name == "model_reasoning":
-            logging.getLogger("bot.reasoning").info(f"[Reasoning] {data}")
-        elif event_name == "tool_call_start":
-            logging.getLogger("bot.tools").info(f"[Tool Call] {data}")
-        elif event_name == "tool_call_end":
-            logging.getLogger("bot.tools").info(f"[Tool Result] {data}")
-
-        # 基类负责 reasoning 缓存、final_output flush、error 发送等通用逻辑
-        await super()._on_event(event, data)
+        # 基类负责 text 缓冲、iteration_finished/turn_finished flush、
+        # attachments 转发和 turn_errored 错误发送等通用逻辑
+        await super()._dispatch(event)

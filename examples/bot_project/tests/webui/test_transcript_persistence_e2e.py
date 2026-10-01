@@ -17,13 +17,14 @@ from bot.webui.emitter import WebBotEmitter
 from bot.webui.events import ServerEvent, ToolResultEvent
 from bot.webui.transcript_store import JSONLTranscriptStore
 
-from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.agents.react.constants import ToolCallEndPayload
-from modex_agent.core.emitter import AgentResult
-from modex_agent.core.turn_events import StopReason
-from modex_agent.core.events import EmitterConfig
-from modex_agent.core.message import ToolCall
-from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.emitter import AgentResult, turn_finished_event
+from modex_agent.core.turn_events import (
+    IterationFinishedEvent,
+    StopReason,
+    TurnTextEvent,
+    TurnToolCallEvent,
+    TurnToolResultEvent,
+)
 from modex_agent.workspace.runtime import bind_workspace_root
 
 
@@ -47,7 +48,6 @@ def _build_emitter(session_id: str, store: WorkspaceScopedTranscriptStore) -> We
     return WebBotEmitter(
         output_adapter=output,
         session_id=session_id,
-        config=EmitterConfig(),
         pool=pool,
         transcript_store=transcript_store,
         session_meta_resolver=lambda: SessionMeta(parent_session_id=None),
@@ -67,8 +67,8 @@ class TestTranscriptPersistence:
 
             # Simulate a turn (text is buffered and flushed at stream/turn end).
             with bind_workspace_root(root):
-                await emitter.emit_content("Hello world")
-                await emitter.emit_stream_end(resuming=False)
+                await emitter.emit(TurnTextEvent(text="Hello world"))
+                await emitter.emit(IterationFinishedEvent(iteration=0, has_tool_calls=False))
 
             # Read back — TurnStartEvent/TurnEndEvent are WebSocket-only,
             # not persisted. AssistantTextEvent is the only persisted event here.
@@ -95,8 +95,8 @@ class TestTranscriptPersistence:
             emitter = _build_emitter(session_id, store)
 
             with bind_workspace_root(root):
-                await emitter.emit_content("test")
-                await emitter.emit_stream_end(resuming=False)
+                await emitter.emit(TurnTextEvent(text="test"))
+                await emitter.emit(IterationFinishedEvent(iteration=0, has_tool_calls=False))
 
             file = root / ".modex" / "sessions" / expected_pool / f"{session_id}.jsonl"
             assert file.exists(), (
@@ -120,13 +120,13 @@ class TestTranscriptPersistence:
             store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
             emitter = _build_emitter("s1.main", store)
             with bind_workspace_root(ws_a_root):
-                await emitter.emit_content("in-A")
-                await emitter.emit_stream_end(resuming=False)
+                await emitter.emit(TurnTextEvent(text="in-A"))
+                await emitter.emit(IterationFinishedEvent(iteration=0, has_tool_calls=False))
 
             emitter2 = _build_emitter("s2.main", store)
             with bind_workspace_root(ws_b_root):
-                await emitter2.emit_content("in-B")
-                await emitter2.emit_stream_end(resuming=False)
+                await emitter2.emit(TurnTextEvent(text="in-B"))
+                await emitter2.emit(IterationFinishedEvent(iteration=0, has_tool_calls=False))
 
             # Verify A has s1
             assert (ws_a / "main" / "s1.main.jsonl").exists(), "A must still have s1"
@@ -153,24 +153,24 @@ class TestTranscriptPersistence:
             store = _build_store()
             emitter = _build_emitter("conv.main", store)
 
-            tc = ToolCall(
-                tool_name="read_file",
-                arguments={"path": "/x"},
-                call_id="c1",
-            )
-            tr = ToolResult.from_text("read_file", "contents", call_id="c1")
-
             with bind_workspace_root(root):
-                await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
-                await emitter.emit_content("Checking...")
                 await emitter.emit(
-                    ReActEvent.TOOL_CALL_END,
-                    ToolCallEndPayload(tool_call=tc, result=tr, seq=7),
+                    TurnToolCallEvent(
+                        tool_name="read_file",
+                        call_id="c1",
+                        arguments={"path": "/x"},
+                    )
                 )
-                await emitter.emit_content("Done!")
+                await emitter.emit(TurnTextEvent(text="Checking..."))
+                await emitter.emit(
+                    TurnToolResultEvent(
+                        tool_name="read_file", call_id="c1", output="contents", seq=7
+                    )
+                )
+                await emitter.emit(TurnTextEvent(text="Done!"))
 
                 result = AgentResult(stop_reason=StopReason.COMPLETED, content="Done!")
-                await emitter.emit_complete(result)
+                await emitter.emit(turn_finished_event(result))
 
             events = await JSONLTranscriptStore(base / "main").load("conv.main")
             event_types = [e.__class__.__name__ for e in events]
@@ -197,8 +197,8 @@ class TestTranscriptPersistence:
 
             with bind_workspace_root(root):
                 for text in ["First", "Second", "Third"]:
-                    await emitter.emit_content(text)
-                    await emitter.emit_stream_end(resuming=False)
+                    await emitter.emit(TurnTextEvent(text=text))
+                    await emitter.emit(IterationFinishedEvent(iteration=0, has_tool_calls=False))
 
             file_path = root / ".modex" / "sessions" / "main" / "s.main.jsonl"
             lines = file_path.read_text(encoding="utf-8").strip().split("\n")

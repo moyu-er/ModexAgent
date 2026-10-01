@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from modex_agent.commands.skill import SkillResolver
-    from modex_agent.core.emitter import AgentResult, ContentEmitter
+    from modex_agent.core.emitter import AgentResult, TurnEventSinkFactory
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.core.turn.models import TurnSnapshot
@@ -197,9 +197,10 @@ class TurnRunner(ABC):
         return None
 
     def set_emitter_factory(
-        self, emitter_factory: Callable[..., ContentEmitter[Any]] | None
+        self, emitter_factory: TurnEventSinkFactory | None
     ) -> None:
-        """Set the emitter factory after construction (called by pool_builder).
+        """Set the turn-event sink factory after construction (called by
+        pool_builder).
 
         Default is a no-op. ReActTurnRunner delegates to its
         :class:`TurnContextBuilder`'s ``emitter_factory`` setter.

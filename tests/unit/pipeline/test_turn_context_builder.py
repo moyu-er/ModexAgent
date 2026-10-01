@@ -26,6 +26,7 @@ from modex_agent.commands.models import (
     SlashCommandInvocation,
 )
 from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrategyKind
+from modex_agent.core.emitter import TurnBinding
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn.approval_decision import ApprovalAuditStore
 from modex_agent.media.store import LocalFileMediaStore
@@ -405,7 +406,12 @@ async def test_build_runtime_and_context_emitter_factory_used_when_wired() -> No
     )
 
     assert emitter is sentinel
-    emitter_factory.assert_called_once_with("s:main")
+    binding = emitter_factory.call_args.args[0]
+    assert isinstance(binding, TurnBinding)
+    assert binding.session_id == "s:main"
+    assert binding.agent_name == "agent"
+    assert binding.resumed is False
+    assert binding.turn_id
 
 
 @pytest.mark.asyncio

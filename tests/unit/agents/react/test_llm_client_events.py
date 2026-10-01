@@ -1,9 +1,10 @@
-"""ReactLlmClient single event loop — emitter timing equivalence + assembly.
+"""ReactLlmClient single event loop — sink emission timing + assembly.
 
-Locks the ADR-0046 event-loop contract (PRD §10):
-- the emitter call sequence is equivalent to the legacy callback loop:
-  emit_delta + emit(MODEL_OUTPUT) per content delta, emit(MODEL_REASONING)
-  per reasoning delta, emit_stream_end(resuming=has_tool_calls) at the tail;
+Locks the ADR-0046 event-loop contract (PRD §10) on the turn-event sink:
+- one ``TurnTextEvent`` per content delta, one ``TurnReasoningEvent`` per
+  reasoning delta, one ``ToolArgsDeltaEvent`` per streamed tool-argument
+  fragment (streaming sinks only; the flush boundary lives in the sink's
+  delivery policy, not the loop);
 - bridged legacy mocks (only chat_stream overridden) keep tool_calls alive
   so the ReAct loop never breaks on a bridged path;
 - stream-native event sequences assemble into LLMResponse, replay
@@ -11,7 +12,8 @@ Locks the ADR-0046 event-loop contract (PRD §10):
 - mid-stream cancels stash INTERRUPTED_PARTIAL with the streamed content
   and re-raise;
 - LlmCancelInterceptor's hard cancel propagates out of the chain;
-- non-streaming emitters ride the same loop with zero emitter calls.
+- non-streaming sinks ride the same loop: the folded response is emitted
+  once at end-of-call.
 """
 
 from __future__ import annotations
@@ -21,8 +23,6 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.agents.react.constants import ToolArgsDeltaPayload
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.control.channel import InMemoryControlChannel
@@ -57,6 +57,11 @@ from modex_agent.core.stream_events import (
 )
 from modex_agent.core.turn.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.core.turn.models import TurnIdentity
+from modex_agent.core.turn_events import (
+    ToolArgsDeltaEvent,
+    TurnReasoningEvent,
+    TurnTextEvent,
+)
 from modex_agent.hook.builtin.control_drain import LlmCancelInterceptor
 from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.memory.history import ListMessageHistory
@@ -85,7 +90,7 @@ def _make_ctx():
 
 
 class _RecordingEmitter:
-    """Records every emitter call as (method, *args) tuples."""
+    """Records every emitted turn event."""
 
     def __init__(self, streaming: bool = True):
         self._streaming = streaming
@@ -94,23 +99,8 @@ class _RecordingEmitter:
     def wants_streaming(self) -> bool:
         return self._streaming
 
-    async def emit(self, event, data=None):
-        self.calls.append(("emit", event, data))
-
-    async def emit_delta(self, delta: str) -> None:
-        self.calls.append(("emit_delta", delta))
-
-    async def emit_content(self, full_content: str) -> None:
-        self.calls.append(("emit_content", full_content))
-
-    async def emit_stream_end(self, resuming: bool = False) -> None:
-        self.calls.append(("emit_stream_end", resuming))
-
-    async def emit_complete(self, result) -> None:
-        self.calls.append(("emit_complete", result))
-
-    async def emit_error(self, error: str) -> None:
-        self.calls.append(("emit_error", error))
+    async def emit(self, event) -> None:
+        self.calls.append(("emit", event))
 
 
 class _LegacyCallbackProvider(CallbackStreamProvider):
@@ -175,12 +165,9 @@ class TestEmitterTimingEquivalence:
         result = await ReactLlmClient(provider).call([], ctx)
 
         assert emitter.calls == [
-            ("emit_delta", "Hello"),
-            ("emit", ReActEvent.MODEL_OUTPUT, "Hello"),
-            ("emit_delta", " World"),
-            ("emit", ReActEvent.MODEL_OUTPUT, " World"),
-            ("emit", ReActEvent.MODEL_REASONING, "thinking"),
-            ("emit_stream_end", False),
+            ("emit", TurnTextEvent(text="Hello")),
+            ("emit", TurnTextEvent(text=" World")),
+            ("emit", TurnReasoningEvent(text="thinking")),
         ]
         assert result.content == "Hello World"
         assert result.reasoning_content == "thinking"
@@ -200,8 +187,7 @@ class TestEmitterTimingEquivalence:
 
         result = await ReactLlmClient(provider).call([], ctx)
 
-        assert emitter.calls[-1] == ("emit_stream_end", True)
-        assert emitter.calls[0] == ("emit_delta", "Let me check...")
+        assert emitter.calls == [("emit", TurnTextEvent(text="Let me check..."))]
         assert result.tool_calls is not None and len(result.tool_calls) == 1
 
 
@@ -225,7 +211,7 @@ class TestBridgedToolCallsFidelity:
 
         assert [tc.tool_name for tc in result.tool_calls] == ["read_file"]
         assert result.tool_calls[0].arguments == {"path": "a"}
-        assert emitter.calls[-1] == ("emit_stream_end", True)
+        assert emitter.calls == []
 
 
 class TestStreamNativeProviderAssembly:
@@ -278,8 +264,8 @@ class TestStreamNativeProviderAssembly:
         assert result.usage == TokenUsage(input_tokens=5, output_tokens=2)
         assert result.finish_reason == FinishReason.TOOL_CALLS
         # Reasoning delta emitted before its content delta, per event order.
-        assert emitter.calls[0] == ("emit", ReActEvent.MODEL_REASONING, "step 1")
-        assert emitter.calls[1] == ("emit_delta", "Hi")
+        assert emitter.calls[0] == ("emit", TurnReasoningEvent(text="step 1"))
+        assert emitter.calls[1] == ("emit", TurnTextEvent(text="Hi"))
 
     async def test_stream_failure_assembles_error_response(self):
         class _FailingEventProvider(LLMProvider):
@@ -331,25 +317,16 @@ class TestToolArgsDeltaEmission:
 
         return _DirectEventProvider()
 
-    async def test_streaming_emitter_receives_tool_args_delta_payloads(self):
+    async def test_streaming_emitter_receives_tool_args_delta_events(self):
         ctx = _make_ctx()
         emitter = _RecordingEmitter()
         ctx.emitter = emitter
 
         result = await ReactLlmClient(self._provider()).call([], ctx)
 
-        delta_calls = [call for call in emitter.calls if call[1] is ReActEvent.TOOL_ARGS_DELTA]
-        assert delta_calls == [
-            (
-                "emit",
-                ReActEvent.TOOL_ARGS_DELTA,
-                ToolArgsDeltaPayload(call_id="c1", tool_name="bash", args_fragment='{"cmd":'),
-            ),
-            (
-                "emit",
-                ReActEvent.TOOL_ARGS_DELTA,
-                ToolArgsDeltaPayload(call_id="c1", tool_name="bash", args_fragment=' "ls"}'),
-            ),
+        assert emitter.calls == [
+            ("emit", ToolArgsDeltaEvent(call_id="c1", tool_name="bash", args_fragment='{"cmd":')),
+            ("emit", ToolArgsDeltaEvent(call_id="c1", tool_name="bash", args_fragment=' "ls"}')),
         ]
         # No ToolCallComplete was fed — the folded response stays tool-free.
         assert result.tool_calls == []
@@ -362,7 +339,7 @@ class TestToolArgsDeltaEmission:
 
         result = await ReactLlmClient(self._provider()).call([], ctx)
 
-        assert emitter.calls == [("emit_stream_end", False)]
+        assert emitter.calls == []
         assert result.tool_calls == []
 
 
@@ -522,9 +499,5 @@ class TestNonStreamingEmitterRidesSameLoop:
 
         result = await ReactLlmClient(provider).call([], ctx)
 
-        assert emitter.calls == [
-            ("emit_content", "ab"),
-            ("emit", ReActEvent.MODEL_OUTPUT, "ab"),
-            ("emit_stream_end", False),
-        ]
+        assert emitter.calls == [("emit", TurnTextEvent(text="ab"))]
         assert result.content == "ab"

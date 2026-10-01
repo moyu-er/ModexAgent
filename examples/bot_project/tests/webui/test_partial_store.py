@@ -213,22 +213,23 @@ async def test_materialize_partial_deltas_carries_turn_id() -> None:
     assert result["turn_id"] == "turn_42"
 
 
-# ── End-to-end: WebBotEmitter clears partial on emit_complete ───────────────
+# ── End-to-end: WebBotEmitter clears partial on turn_finished ────────────────
 
 
-async def test_emit_complete_clears_partial_buffer() -> None:
-    """Verify _clear_partial is actually called when emit_complete runs.
+async def test_turn_finished_clears_partial_buffer() -> None:
+    """Verify _clear_partial is actually called when turn_finished runs.
 
     Uses a real WebBotEmitter + WorkspaceScopedTranscriptStore to exercise
-    the full turn lifecycle: emit_delta (writes partial) → emit_complete
-    (must clear partial). If _clear_partial is never wired or skipped,
-    the buffer will still hold the delta after emit_complete.
+    the full turn lifecycle: TurnTextEvent emit (writes partial) →
+    TurnFinishedEvent (must clear partial). If _clear_partial is never
+    wired or skipped, the buffer will still hold the delta after
+    turn_finished.
     """
     from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
 
-    from modex_agent.core.emitter import AgentResult
-    from modex_agent.core.events import EmitterConfig
+    from modex_agent.core.emitter import AgentResult, turn_finished_event
+    from modex_agent.core.turn_events import TurnTextEvent
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     sessions_dir = Path(__file__).parent / "_tmp_e2e_clear"
@@ -240,36 +241,35 @@ async def test_emit_complete_clears_partial_buffer() -> None:
 
     emitter = WebBotEmitter(
         output_adapter, sid,
-        config=EmitterConfig(),
         transcript_store=store,
     )
     # Wire the sessions_dir provider so partial writes route to the right workspace
     emitter.set_sessions_dir_provider(lambda: sessions_dir)
 
     try:
-        await emitter.emit_delta("Hello")
+        await emitter.emit(TurnTextEvent(text="Hello"))
         # Partial buffer should hold the delta mid-turn
         partials = await store.load_partial(sid, sessions_dir=sessions_dir)
         assert len(partials) == 1, "partial buffer should hold delta mid-turn"
         assert partials[0].text == "Hello"
 
-        await emitter.emit_complete(AgentResult(content="Hello"))
-        # After emit_complete, partial buffer MUST be empty
+        await emitter.emit(turn_finished_event(AgentResult(content="Hello")))
+        # After turn_finished, partial buffer MUST be empty
         after = await store.load_partial(sid, sessions_dir=sessions_dir)
-        assert after == [], f"partial buffer must be cleared after emit_complete, got {after}"
+        assert after == [], f"partial buffer must be cleared after turn_finished, got {after}"
     finally:
         import shutil
         shutil.rmtree(sessions_dir, ignore_errors=True)
 
 
-async def test_emit_complete_clears_partial_even_on_error() -> None:
+async def test_turn_finished_clears_partial_even_on_error() -> None:
     """Verify _clear_partial runs in the finally block — even when
-    emit_complete's main body raises, the buffer is still cleared."""
+    turn_finished's main body raises, the buffer is still cleared."""
     from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
 
-    from modex_agent.core.emitter import AgentResult
-    from modex_agent.core.events import EmitterConfig
+    from modex_agent.core.emitter import AgentResult, turn_finished_event
+    from modex_agent.core.turn_events import TurnTextEvent
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     sessions_dir = Path(__file__).parent / "_tmp_e2e_error"
@@ -281,23 +281,22 @@ async def test_emit_complete_clears_partial_even_on_error() -> None:
 
     emitter = WebBotEmitter(
         output_adapter, sid,
-        config=EmitterConfig(),
         transcript_store=store,
     )
     emitter.set_sessions_dir_provider(lambda: sessions_dir)
 
     try:
-        await emitter.emit_delta("Hello")
+        await emitter.emit(TurnTextEvent(text="Hello"))
         assert len(await store.load_partial(sid, sessions_dir=sessions_dir)) == 1
 
         import unittest.mock as mock
         emitter._flush_active_segment = mock.AsyncMock(side_effect=RuntimeError("flush broken"))
 
         with pytest.raises(RuntimeError):
-            await emitter.emit_complete(AgentResult(content="Hello"))
+            await emitter.emit(turn_finished_event(AgentResult(content="Hello")))
 
         after = await store.load_partial(sid, sessions_dir=sessions_dir)
-        assert after == [], "partial buffer must be cleared even when emit_complete raises"
+        assert after == [], "partial buffer must be cleared even when turn_finished raises"
     finally:
         import shutil
         shutil.rmtree(sessions_dir, ignore_errors=True)
@@ -318,12 +317,12 @@ async def test_flush_active_segment_clears_partial_buffer() -> None:
     from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
 
-    from modex_agent.agents.react.agent import ReActEvent
-    from modex_agent.agents.react.constants import ToolCallEndPayload
-    from modex_agent.core.emitter import AgentResult
-    from modex_agent.core.events import EmitterConfig
-    from modex_agent.core.message import ToolCall
-    from modex_agent.core.tool_manager import ToolResult
+    from modex_agent.core.emitter import AgentResult, turn_finished_event
+    from modex_agent.core.turn_events import (
+        TurnTextEvent,
+        TurnToolCallEvent,
+        TurnToolResultEvent,
+    )
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     sessions_dir = Path(__file__).parent / "_tmp_flush_clear"
@@ -335,21 +334,23 @@ async def test_flush_active_segment_clears_partial_buffer() -> None:
 
     emitter = WebBotEmitter(
         output_adapter, sid,
-        config=EmitterConfig(),
         transcript_store=store,
     )
     emitter.set_sessions_dir_provider(lambda: sessions_dir)
 
     try:
-        await emitter.emit_delta("text before tool")
+        await emitter.emit(TurnTextEvent(text="text before tool"))
         assert len(await store.load_partial(sid, sessions_dir=sessions_dir)) == 1
 
-        tc = ToolCall(tool_name="read_file", arguments={"path": "/x"}, call_id="c0")
-        result = ToolResult.from_text("read_file", "ok")
-        await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
         await emitter.emit(
-            ReActEvent.TOOL_CALL_END,
-            ToolCallEndPayload(tool_call=tc, result=result, seq=0),
+            TurnToolCallEvent(
+                tool_name="read_file", call_id="c0", arguments={"path": "/x"}
+            )
+        )
+        await emitter.emit(
+            TurnToolResultEvent(
+                tool_name="read_file", call_id="c0", output="ok", seq=0
+            )
         )
 
         partials = await store.load_partial(sid, sessions_dir=sessions_dir)
@@ -358,10 +359,10 @@ async def test_flush_active_segment_clears_partial_buffer() -> None:
             f"got {len(partials)} stale deltas"
         )
 
-        await emitter.emit_delta("text after tool")
+        await emitter.emit(TurnTextEvent(text="text after tool"))
         assert len(await store.load_partial(sid, sessions_dir=sessions_dir)) == 1
 
-        await emitter.emit_complete(AgentResult(content="done"))
+        await emitter.emit(turn_finished_event(AgentResult(content="done")))
         assert await store.load_partial(sid, sessions_dir=sessions_dir) == []
     finally:
         import shutil
@@ -373,9 +374,11 @@ async def test_flush_clears_partial_with_reasoning_then_text() -> None:
     from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
 
-    from modex_agent.agents.react.agent import ReActEvent
-    from modex_agent.core.emitter import AgentResult
-    from modex_agent.core.events import EmitterConfig
+    from modex_agent.core.emitter import AgentResult, turn_finished_event
+    from modex_agent.core.turn_events import (
+        IterationFinishedEvent,
+        TurnReasoningEvent,
+    )
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     sessions_dir = Path(__file__).parent / "_tmp_flush_reasoning"
@@ -387,24 +390,23 @@ async def test_flush_clears_partial_with_reasoning_then_text() -> None:
 
     emitter = WebBotEmitter(
         output_adapter, sid,
-        config=EmitterConfig(),
         transcript_store=store,
     )
     emitter.set_sessions_dir_provider(lambda: sessions_dir)
 
     try:
-        await emitter.emit(ReActEvent.MODEL_REASONING, "thinking")
+        await emitter.emit(TurnReasoningEvent(text="thinking"))
         assert len(await store.load_partial(sid, sessions_dir=sessions_dir)) == 1
 
-        await emitter.emit_stream_end(resuming=False)
+        await emitter.emit(IterationFinishedEvent(iteration=0, has_tool_calls=False))
 
         partials = await store.load_partial(sid, sessions_dir=sessions_dir)
         assert partials == [], (
-            "partial buffer must be empty after emit_stream_end flush; "
+            "partial buffer must be empty after iteration_finished segment flush; "
             f"got {len(partials)} stale deltas"
         )
 
-        await emitter.emit_complete(AgentResult(content="done"))
+        await emitter.emit(turn_finished_event(AgentResult(content="done")))
     finally:
         import shutil
         shutil.rmtree(sessions_dir, ignore_errors=True)

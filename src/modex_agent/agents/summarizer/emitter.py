@@ -1,7 +1,8 @@
-"""SummarizerTrajectoryEmitter — logs ReAct loop events and writes JSONL trace.
+"""SummarizerTrajectorySink — logs ReAct loop events and writes JSONL trace.
 
 Used by ArchiveSummarizer and CoreMemoryConsolidator so their execution
-is observable even though they run silently in the background.
+is observable even though they run silently in the background. Observes
+the core ``TurnEvent`` stream (the same union every sink consumes).
 """
 
 from __future__ import annotations
@@ -9,26 +10,34 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
-from enum import Enum
 from pathlib import Path
-from typing import Any
 
-from modex_agent.agents.react.constants import ToolCallEndPayload
-from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.events import EmitterConfig
+from modex_agent.core.emitter import TurnEvent, TurnEventSink
+from modex_agent.core.turn_events import (
+    IterationFinishedEvent,
+    IterationStartedEvent,
+    TurnErroredEvent,
+    TurnFinishedEvent,
+    TurnReasoningEvent,
+    TurnTextEvent,
+    TurnToolCallEvent,
+    TurnToolResultEvent,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class SummarizerTrajectoryEmitter(ContentEmitter[Any]):
-    """Emitter that logs ReAct trajectory to Python logging and optional JSONL file.
+class SummarizerTrajectoryEmitter(TurnEventSink):
+    """Sink that logs the ReAct trajectory to Python logging and an
+    optional JSONL file.
 
-    Events emitted:
-      - iteration_start / iteration_end
-      - llm_response (with tool names and finish reason)
-      - tool_execution_start / tool_execution_end
-      - turn_complete / turn_max_iterations / turn_error / turn_cancelled
-      - error
+    Events observed:
+      - iteration_started / iteration_finished
+      - text / reasoning content
+      - tool_call / tool_result
+      - turn_finished (turn_complete / turn_max_iterations / turn_error /
+        turn_cancelled)
+      - turn_errored
 
     The JSONL trace lands at ``trace_path`` if provided; each line is a
     timestamped JSON object.  Logs are emitted at INFO level so they are
@@ -41,7 +50,7 @@ class SummarizerTrajectoryEmitter(ContentEmitter[Any]):
         agent_name: str,
         trace_path: Path | None = None,
     ) -> None:
-        super().__init__(EmitterConfig())
+        super().__init__()
         self._session_id = session_id
         self._agent_name = agent_name
         self._trace_path = trace_path
@@ -51,7 +60,7 @@ class SummarizerTrajectoryEmitter(ContentEmitter[Any]):
         if trace_path is not None:
             trace_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def _write_trace(self, payload: dict[str, Any]) -> None:
+    def _write_trace(self, payload: dict[str, str | int | None]) -> None:
         if self._trace_path is None:
             return
         try:
@@ -66,142 +75,119 @@ class SummarizerTrajectoryEmitter(ContentEmitter[Any]):
         except Exception:
             logger.debug("Failed to write summarizer trace", exc_info=True)
 
-    async def emit_delta(self, delta: str) -> None:
-        # Streamed content is accumulated but not logged per-delta to avoid noise.
-        if delta:
-            self._current_content += delta
+    async def _dispatch(self, event: TurnEvent) -> None:
+        match event:
+            case IterationStartedEvent(iteration=iteration):
+                self._iteration = iteration
+                self._current_content = ""
+                self._current_reasoning = ""
+                logger.info(
+                    "[%s] iteration=%d session=%s",
+                    self._agent_name,
+                    self._iteration,
+                    self._session_id,
+                )
+                self._write_trace({"phase": "iteration_start", "iteration": self._iteration})
 
-    async def emit_content(self, full_content: str) -> None:
-        if full_content:
-            self._current_content += full_content
+            case IterationFinishedEvent(iteration=iteration, has_tool_calls=has_tools):
+                logger.info(
+                    "[%s] iteration=%d ended has_tools=%s session=%s",
+                    self._agent_name,
+                    iteration,
+                    has_tools,
+                    self._session_id,
+                )
+                self._write_trace(
+                    {
+                        "phase": "iteration_end",
+                        "iteration": iteration,
+                        "has_tool_calls": has_tools,
+                    }
+                )
 
-    async def _on_event(self, event: Any, data: Any = None) -> None:
-        from modex_agent.core.message import ToolCall
+            case TurnTextEvent(text=text):
+                self._current_content += text
 
-        event_name = event.value if isinstance(event, Enum) else str(event)
+            case TurnReasoningEvent(text=text):
+                self._current_reasoning += text
 
-        if event_name == "iteration_start":
-            self._iteration += 1
-            self._current_content = ""
-            self._current_reasoning = ""
-            logger.info(
-                "[%s] iteration=%d session=%s",
-                self._agent_name,
-                self._iteration,
-                self._session_id,
-            )
-            self._write_trace({"phase": "iteration_start", "iteration": self._iteration})
+            case TurnToolCallEvent(tool_name=tool_name, arguments=arguments):
+                logger.info(
+                    "[%s] tool start: %s args=%s session=%s",
+                    self._agent_name,
+                    tool_name,
+                    dict(arguments),
+                    self._session_id,
+                )
+                self._write_trace(
+                    {
+                        "phase": "tool_call_start",
+                        "iteration": self._iteration,
+                        "tool_name": tool_name,
+                        "arguments": json.dumps(arguments, ensure_ascii=False),
+                    }
+                )
 
-        elif event_name == "iteration_end":
-            has_tools = isinstance(data, dict) and data.get("has_tool_calls")
-            logger.info(
-                "[%s] iteration=%d ended has_tools=%s session=%s",
-                self._agent_name,
-                self._iteration,
-                has_tools,
-                self._session_id,
-            )
-            self._write_trace(
-                {
-                    "phase": "iteration_end",
-                    "iteration": self._iteration,
-                    "has_tool_calls": has_tools,
-                }
-            )
+            case TurnToolResultEvent(tool_name=tool_name, error=error, output=output):
+                logger.info(
+                    "[%s] tool end: %s success=%s session=%s",
+                    self._agent_name,
+                    tool_name,
+                    error is None,
+                    self._session_id,
+                )
+                self._write_trace(
+                    {
+                        "phase": "tool_call_end",
+                        "iteration": self._iteration,
+                        "tool_name": tool_name,
+                        "success": error is None,
+                        "error": error,
+                        "result_preview": output[:200],
+                    }
+                )
 
-        elif event_name == "model_output":
-            if isinstance(data, str):
-                self._current_content += data
+            case TurnFinishedEvent(stop_reason=stop_reason, error=error):
+                phase = "turn_complete"
+                if stop_reason == "max_iterations":
+                    phase = "turn_max_iterations"
+                elif stop_reason == "error":
+                    phase = "turn_error"
+                elif stop_reason == "turn_cancelled":
+                    phase = "turn_cancelled"
 
-        elif event_name == "model_reasoning":
-            if isinstance(data, str):
-                self._current_reasoning += data
+                content_preview = (self._current_content or "")[:200]
+                logger.info(
+                    "[%s] turn complete: phase=%s stop_reason=%s session=%s content_preview=%r",
+                    self._agent_name,
+                    phase,
+                    stop_reason,
+                    self._session_id,
+                    content_preview,
+                )
+                self._write_trace(
+                    {
+                        "phase": phase,
+                        "stop_reason": str(stop_reason),
+                        "error": error,
+                        "content_preview": content_preview,
+                        "reasoning_preview": self._current_reasoning[:200],
+                    }
+                )
 
-        elif event_name == "tool_call_start":
-            tc: ToolCall | None = data if isinstance(data, ToolCall) else None
-            tool_name = tc.tool_name if tc else ""
-            arguments = dict(tc.arguments) if tc else {}
-            logger.info(
-                "[%s] tool start: %s args=%s session=%s",
-                self._agent_name,
-                tool_name,
-                arguments,
-                self._session_id,
-            )
-            self._write_trace(
-                {
-                    "phase": "tool_call_start",
-                    "iteration": self._iteration,
-                    "tool_name": tool_name,
-                    "arguments": arguments,
-                }
-            )
+            case TurnErroredEvent(message=message):
+                logger.error(
+                    "[%s] error: %s session=%s",
+                    self._agent_name,
+                    message,
+                    self._session_id,
+                )
+                self._write_trace({"phase": "error", "error": message})
 
-        elif event_name == "tool_call_end":
-            payload: ToolCallEndPayload = data
-            tool_name = payload.tool_call.tool_name
-            success = payload.result.error is None
-            error = payload.result.error
-            result_preview = payload.result.message_content()[:200]
-            logger.info(
-                "[%s] tool end: %s success=%s session=%s",
-                self._agent_name,
-                tool_name,
-                success,
-                self._session_id,
-            )
-            self._write_trace(
-                {
-                    "phase": "tool_call_end",
-                    "iteration": self._iteration,
-                    "tool_name": tool_name,
-                    "success": success,
-                    "error": error,
-                    "result_preview": result_preview,
-                }
-            )
+    @property
+    def current_content(self) -> str:
+        """Accumulated turn content (read by the scoped file agent)."""
+        return self._current_content
 
-        elif event_name == "max_iterations":
-            logger.warning(
-                "[%s] max iterations reached session=%s",
-                self._agent_name,
-                self._session_id,
-            )
-            self._write_trace({"phase": "max_iterations", "iteration": self._iteration})
 
-    async def emit_complete(self, result: AgentResult) -> None:
-        phase = "turn_complete"
-        if result.stop_reason == "max_iterations":
-            phase = "turn_max_iterations"
-        elif result.stop_reason == "error":
-            phase = "turn_error"
-        elif result.stop_reason == "turn_cancelled":
-            phase = "turn_cancelled"
-
-        content_preview = (result.content or self._current_content)[:200]
-        logger.info(
-            "[%s] turn complete: phase=%s stop_reason=%s session=%s content_preview=%r",
-            self._agent_name,
-            phase,
-            result.stop_reason,
-            self._session_id,
-            content_preview,
-        )
-        self._write_trace(
-            {
-                "phase": phase,
-                "stop_reason": result.stop_reason,
-                "error": result.error,
-                "content_preview": content_preview,
-                "reasoning_preview": self._current_reasoning[:200],
-            }
-        )
-
-    async def emit_error(self, error: str) -> None:
-        logger.error(
-            "[%s] error: %s session=%s",
-            self._agent_name,
-            error,
-            self._session_id,
-        )
-        self._write_trace({"phase": "error", "error": error})
+__all__ = ["SummarizerTrajectoryEmitter"]

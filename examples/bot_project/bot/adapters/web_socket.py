@@ -237,7 +237,7 @@ class WebSocketInputAdapter(InputAdapter):
         buffers whose conversation tree nobody is watching (e.g. IM-driven
         turns) are dropped, keeping registry entries bounded. The genealogy
         link itself is retained (append-only); a subagent that dies without
-        ever emitting turn_end still leaves its buffer — rare (emit_complete
+        ever emitting turn_end still leaves its buffer — rare (turn_finished
         runs in a finally) and bounded per entry.
         """
         queues = self._delta_queues.get(session_id)

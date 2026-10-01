@@ -7,9 +7,6 @@
 - 推理内容处理流程
 """
 
-from enum import Enum
-from typing import Any, TypeVar
-
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -20,66 +17,16 @@ from unittest.mock import AsyncMock, MagicMock
 # Add framework path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from modex_agent.adapters.emitter import BufferingSink
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.turn_events import StopReason
-from modex_agent.core.events import AgentEvent, EmitterConfig
+from modex_agent.core.emitter import KindGate, TurnEventSink
 from modex_agent.core.session_id import SessionInfo
-
-E = TypeVar("E", bound=AgentEvent)
-
-
-class _BufferingEmitter(ContentEmitter[E]):
-    """Minimal test emitter that captures output for assertions."""
-
-    def __init__(self, config: EmitterConfig | None = None):
-        super().__init__(config)
-        self._buffer = ""
-        self._reasoning_buffer = ""
-        self._result: AgentResult | None = None
-        self._events: list[tuple[E, Any]] = []
-
-    async def emit(self, event: E, data: Any = None) -> None:
-        event_name = event.value if isinstance(event, Enum) else str(event)
-        if self.config.is_enabled(event_name):
-            self._events.append((event, data))
-        await super().emit(event, data)
-
-    async def _on_event(self, event: E, data: Any = None) -> None:
-        event_name = event.value if isinstance(event, Enum) else str(event)
-        if event_name == "model_reasoning":
-            if isinstance(data, str):
-                self._reasoning_buffer += data
-
-    async def emit_delta(self, delta: str) -> None:
-        self._buffer += delta
-
-    async def emit_content(self, full_content: str) -> None:
-        self._buffer += full_content
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        self._result = result
-
-    async def emit_error(self, error: str) -> None:
-        self._result = AgentResult(error=error, stop_reason=StopReason.ERROR)
-
-    def get_content(self) -> str:
-        return self._buffer
-
-    def get_reasoning(self) -> str:
-        return self._reasoning_buffer
-
-    def get_events(self, event_type: E | None = None) -> list[tuple[E, Any]]:
-        if event_type is not None:
-            return [(e, d) for e, d in self._events if e == event_type]
-        return list(self._events)
-
-    def get_events_by_name(self, name: str) -> list[tuple[E, Any]]:
-        result = []
-        for e, d in self._events:
-            if isinstance(e, Enum) and e.name == name or isinstance(e, str) and e == name:
-                result.append((e, d))
-        return result
+from modex_agent.core.turn_events import (
+    StopReason,
+    TurnFinishedEvent,
+    TurnReasoningEvent,
+    TurnTextEvent,
+)
 
 
 class TestQQBotServiceIntegration:
@@ -122,23 +69,18 @@ class TestQQBotServiceIntegration:
         client.api.post_c2c_message = AsyncMock()
         return client
 
-    def test_streaming_aware_emitter_import(self):
-        """Test that StreamingAwareEmitter can be imported."""
-        from modex_agent import ReActEvent, StreamingAwareEmitter
+    def test_buffering_sink_import(self):
+        """Test that BufferingSink can be imported and subclassed."""
 
-        # Should be able to create a subclass
-        class TestEmitter(StreamingAwareEmitter[ReActEvent]):
-            async def emit_delta(self, delta: str) -> None:
-                pass
+        class TestSink(BufferingSink):
+            pass
 
-        assert TestEmitter is not None
+        assert TestSink is not None
 
-    def test_react_event_has_model_reasoning(self):
-        """Test that ReActEvent includes MODEL_REASONING."""
-        from modex_agent.agents.react import ReActEvent
-
-        assert hasattr(ReActEvent, "MODEL_REASONING")
-        assert ReActEvent.MODEL_REASONING.value == "model_reasoning"
+    def test_turn_events_have_reasoning_kind(self):
+        """Test that the TurnEvent union carries the reasoning kind."""
+        assert TurnReasoningEvent(text="x").kind == "reasoning"
+        assert TurnTextEvent(text="x").kind == "text"
 
     def test_agent_result_has_reasoning_field(self):
         """Test that AgentResult has reasoning field."""
@@ -157,9 +99,8 @@ class TestQQBotServiceIntegration:
         try:
             from bot.adapters.qq import QQBotEmitter
 
-            from modex_agent.agents.react import ReActEvent
-            from modex_agent.core.emitter import AgentResult
-            from modex_agent.core.message import ToolCall
+            from modex_agent.core.emitter import AgentResult, turn_finished_event
+            from modex_agent.core.turn_events import TurnToolCallEvent
 
             # Create mock adapter
             mock_adapter = MagicMock()
@@ -174,9 +115,9 @@ class TestQQBotServiceIntegration:
                 session_id="test_session",
             )
 
-            # Test content is buffered (pseudo-streaming)
-            await emitter.emit_delta("Hello ")
-            await emitter.emit_delta("World")
+            # Test content is buffered (NONE mode -> TURN policy)
+            await emitter.emit(TurnTextEvent(text="Hello "))
+            await emitter.emit(TurnTextEvent(text="World"))
             assert emitter._content_buffer == "Hello World"
             assert len(mock_adapter.send_delta.call_args_list) == 0
 
@@ -184,17 +125,18 @@ class TestQQBotServiceIntegration:
             import logging
 
             with caplog.at_level(logging.INFO, logger="bot.reasoning"):
-                await emitter.emit(ReActEvent.MODEL_REASONING, "Thinking...")
+                await emitter.emit(TurnReasoningEvent(text="Thinking..."))
                 assert "[Reasoning]" in caplog.text
 
-            # Test tool calls are ignored
-            tool_call = ToolCall(tool_name="test", arguments={})
-            await emitter.emit(ReActEvent.TOOL_CALL_START, tool_call)
+            # Test tool calls are ignored (logged only)
+            await emitter.emit(
+                TurnToolCallEvent(tool_name="test", call_id="call_0", arguments={})
+            )
             # No additional calls to adapter
 
-            # Test complete flushes buffer via send()
+            # Test turn_finished flushes buffer via send()
             result = AgentResult(content="Hello World", reasoning="Some reasoning")
-            await emitter.emit_complete(result)
+            await emitter.emit(turn_finished_event(result))
             assert mock_adapter.send.called
 
         except ImportError as e:
@@ -207,11 +149,11 @@ class TestQQBotServiceIntegration:
         Since the single event loop converged (commit 49860c84), every provider
         call goes through chat_stream regardless of the emitter's streaming
         preference; emitter driving is gated at the event dispatch point. What
-        differs is what the emitter receives: per-delta emits during the call
-        (streaming emitter) vs the folded content once at end-of-call
-        (non-streaming emitter).
+        differs is what the emitter receives: one ``TurnTextEvent`` per delta
+        during the call (streaming sink) vs the folded content once at
+        end-of-call (non-streaming sink).
         """
-        from modex_agent.agents.react import ReActAgent, ReActEvent
+        from modex_agent.agents.react import ReActAgent
         from modex_agent.core.agent import AgentContext
         from modex_agent.core.llm_struct import LLMResponse
         from modex_agent.core.provider import CallbackStreamProvider
@@ -228,29 +170,30 @@ class TestQQBotServiceIntegration:
                 self.chat_stream_called = True
                 if on_content_delta:
                     await on_content_delta("Hello")
-                return LLMResponse(content="Hello")
+                    await on_content_delta(" world")
+                return LLMResponse(content="Hello world")
 
             async def chat(self, messages=None, **kwargs):
                 self.chat_called = True
-                return LLMResponse(content="Hello")
+                return LLMResponse(content="Hello world")
 
             def get_default_model(self):
                 return "mock-model"
 
-        # Records HOW content reached the emitter: per-delta or end-of-call.
-        class DeliveryRecorder(_BufferingEmitter[ReActEvent]):
-            def __init__(self):
+        class DeliveryRecorder(TurnEventSink):
+            """Records every text event that reaches the sink."""
+
+            def __init__(self, *, streaming: bool):
                 super().__init__()
-                self.deltas: list[str] = []
-                self.full_contents: list[str] = []
+                self._streaming = streaming
+                self.texts: list[str] = []
 
-            async def emit_delta(self, delta: str) -> None:
-                self.deltas.append(delta)
-                await super().emit_delta(delta)
+            def wants_streaming(self) -> bool:
+                return self._streaming
 
-            async def emit_content(self, full_content: str) -> None:
-                self.full_contents.append(full_content)
-                await super().emit_content(full_content)
+            async def _dispatch(self, event) -> None:
+                if isinstance(event, TurnTextEvent):
+                    self.texts.append(event.text)
 
         provider = MockProvider()
         agent = ReActAgent(provider=provider)
@@ -264,34 +207,24 @@ class TestQQBotServiceIntegration:
             session=SessionInfo.from_str("test.agent"),
         )
 
-        # Test streaming mode (emitter wants streaming): deltas are driven
-        # into the emitter during the event loop.
-        class StreamingEmitter(DeliveryRecorder):
-            def wants_streaming(self):
-                return True
-
-        emitter = StreamingEmitter()
+        # Streaming sink: per-delta text events during the event loop.
+        emitter = DeliveryRecorder(streaming=True)
         await agent.run(context, emitter)
         assert provider.chat_stream_called is True
         assert provider.chat_called is False
-        assert emitter.deltas == ["Hello"]
-        assert emitter.full_contents == []
-        assert emitter.get_content() == "Hello"
+        assert emitter.texts == ["Hello", " world"]
 
         # Reset
         provider.chat_stream_called = False
         provider.chat_called = False
 
-        # Test non-streaming mode (emitter doesn't want streaming): the same
-        # chat_stream call happens, but no per-delta emits — the folded
-        # response is delivered once at end-of-call via emit_content.
-        emitter2 = DeliveryRecorder()
+        # Non-streaming sink: the same chat_stream call happens, but the
+        # folded response is delivered once at end-of-call.
+        emitter2 = DeliveryRecorder(streaming=False)
         await agent.run(context, emitter2)
         assert provider.chat_stream_called is True
         assert provider.chat_called is False
-        assert emitter2.deltas == []
-        assert emitter2.full_contents == ["Hello"]
-        assert emitter2.get_content() == "Hello"
+        assert emitter2.texts == ["Hello world"]
 
     def test_output_adapter_send_delta_interface(self):
         """Test that OutputAdapter has the send_delta interface."""
@@ -305,9 +238,8 @@ class TestQQBotServiceIntegration:
     @pytest.mark.asyncio
     async def test_end_to_end_event_flow(self):
         """Test complete event flow from Agent to QQ Output."""
-        from modex_agent.adapters.emitter import StreamingAwareEmitter
         from modex_agent.adapters.output import OutputAdapter
-        from modex_agent.agents.react import ReActAgent, ReActEvent
+        from modex_agent.agents.react import ReActAgent
         from modex_agent.core.agent import AgentContext
 
         # Track events
@@ -334,20 +266,15 @@ class TestQQBotServiceIntegration:
             async def flush_deltas(self, session_id):
                 events_received.append(("flush",))
 
-        class TestEmitter(StreamingAwareEmitter[ReActEvent]):
-            async def emit_delta(self, delta: str) -> None:
-                events_received.append(("emit_delta", delta))
-                await self.output_adapter.send_delta(delta, self.session_id)
-
-            async def _on_event(self, event: ReActEvent, data=None) -> None:
-                event_name = event.value if hasattr(event, "value") else str(event)
-                if event_name == "model_reasoning":
-                    events_received.append(("model_reasoning", data))
-                await super()._on_event(event, data)
+        class TestSink(BufferingSink):
+            async def _dispatch(self, event) -> None:
+                if isinstance(event, TurnReasoningEvent):
+                    events_received.append(("model_reasoning", event.text))
+                await super()._dispatch(event)
 
         # Setup
         adapter = MockAdapter()
-        emitter = TestEmitter(adapter, "test_session")
+        emitter = TestSink(adapter, "test_session")
 
         # Create mock provider
         from modex_agent.core.llm_struct import LLMResponse
@@ -365,6 +292,8 @@ class TestQQBotServiceIntegration:
                 on_reasoning_delta=None,
                 **kwargs,
             ):
+                if on_reasoning_delta:
+                    await on_reasoning_delta("My reasoning")
                 return LLMResponse(
                     content="Final answer",
                     reasoning_content="My reasoning",

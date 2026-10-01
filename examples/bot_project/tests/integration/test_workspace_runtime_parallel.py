@@ -54,11 +54,12 @@ from bot.workspace.dynamic_workspaces import (
     create_workspace,
 )
 
-from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import BufferingSink
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.app.config import AppConfig
 from modex_agent.app.roots import AppAssemblyRoots
+from modex_agent.core.emitter import TurnBinding
 from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
@@ -389,9 +390,9 @@ async def _boot(
     input_adapter = WebSocketInputAdapter()
     output_adapter = _RecordingOutputAdapter()
 
-    def emitter_factory(session_id: str, pool: str) -> StreamingAwareEmitter:
-        assert pool == _MAIN_POOL
-        return StreamingAwareEmitter(output_adapter, session_id)
+    def emitter_factory(binding: TurnBinding) -> BufferingSink:
+        assert binding.pool == _MAIN_POOL
+        return BufferingSink(output_adapter, binding.session_id)
 
     service = BotService(
         config_dir=tmp_path / "config",

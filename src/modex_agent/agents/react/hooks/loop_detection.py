@@ -43,7 +43,8 @@ reminder visible and unheeded, raise
 :class:`~modex_agent.core.control.LoopDetectedError` with a
 plain-text, user-facing explanation. The existing ``AgentControlError``
 exit path renders it as a LOOP_DETECTED ``AgentResult`` (main agent → user
-via ``emit_complete``; subagent → parent via ``SubagentAutoSendHook``).
+via the terminal ``turn_finished`` event; subagent → parent via
+``SubagentAutoSendHook``).
 
 Interaction with ``ToolCallDeduplicator`` (ToolNode streak guard): the
 deduplicator escalates on a single repeated key per consecutive tool step

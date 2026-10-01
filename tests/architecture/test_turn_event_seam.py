@@ -1,20 +1,21 @@
-"""Architecture guards for the canonical TurnEvent seam (Scheme C convergence).
+"""Architecture guards for the unified TurnEvent sink seam (W2 cutover).
 
 These AST-based guards lock the provider-neutral turn-event contract so a
-future external provider (Pi, OpenCode, Claude Code, Codex, Cursor, ...)
+future external provider (OpenCode, Claude Code, Codex, Cursor, ...)
 cannot accidentally regress the convergence by:
 
 1. Importing external types into the WebUI layer (the original
    partial-implementation defect the convergence replaced).
 2. Importing WebUI / example-layer types from provider modules (the
    inverse leak).
-3. Importing ``ReActEvent`` from provider modules (the coupling the
-   convergence removed).
-4. Making ``ContentEmitter.emit_turn_event`` abstract (it MUST stay
-   concrete with a no-op default so every existing emitter subclass
-   remains source-compatible).
-5. Importing concrete agent packages from ``core.events`` (core must
-   not depend on agent strategies).
+3. Importing plane-private event types from provider modules (the
+   coupling the convergence removed — there is no ``ReActEvent`` anymore,
+   and no new enum may take its place).
+4. Leaving dead emitter machinery behind: no production import of the
+   retired ``ContentEmitter`` / ``EmitterConfig`` / ``StreamingAwareEmitter``
+   faces, and ``agents/react`` defines no event enum.
+5. Importing concrete agent packages from ``core`` (core must not depend
+   on agent strategies).
 6. Defining provider-name branches in the WebUI emitter (the projection
    must consume canonical ``TurnEvent`` only).
 
@@ -31,13 +32,14 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEBUI_ROOT = REPO_ROOT / "examples" / "bot_project" / "bot" / "webui"
+BOT_ROOT = REPO_ROOT / "examples" / "bot_project" / "bot"
 EXTERNAL_PROVIDERS_ROOT = (
     REPO_ROOT / "src" / "modex_agent" / "agents" / "external" / "providers"
 )
-EXTERNAL_ROOT = REPO_ROOT / "src" / "modex_agent" / "agents" / "external"
-CORE_EVENTS_PATH = REPO_ROOT / "src" / "modex_agent" / "core" / "events.py"
 CORE_EMITTER_PATH = REPO_ROOT / "src" / "modex_agent" / "core" / "emitter.py"
+REACT_ROOT = REPO_ROOT / "src" / "modex_agent" / "agents" / "react"
 WEBUI_EMITTER_DIR = WEBUI_ROOT / "emitter"
+SRC_ROOT = REPO_ROOT / "src"
 
 
 def _imports_from(tree: ast.Module, target_prefix: str) -> list[str]:
@@ -119,68 +121,101 @@ def test_providers_do_not_import_webui_or_examples() -> None:
     )
 
 
-# ── Guard 3: provider modules do not import ReActEvent ─────────────────────
+# ── Guard 3: react defines no event enum (the union is the only vocabulary) ─
 
 
-def test_providers_do_not_import_react_event() -> None:
-    """Provider parsers must not couple to ``ReActEvent`` — the canonical
-    ``TurnEvent`` seam is the only structured-event contract they feed.
+def test_react_package_defines_no_event_enum() -> None:
+    """``agents/react`` must not define a streaming-event enum — the core
+    ``TurnEvent`` union is the only event vocabulary; nodes construct its
+    variants directly.
     """
-    offenders: dict[str, list[str]] = {}
-    for path in sorted(EXTERNAL_PROVIDERS_ROOT.rglob("*.py")):
+    offenders: list[str] = []
+    for path in sorted(REACT_ROOT.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
         tree = _parse(path)
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module and (
-                node.module.endswith("react.agent")
-                or node.module.endswith("react")
-            ):
-                for alias in node.names:
-                    if alias.name == "ReActEvent":
-                        offenders.setdefault(alias.name, []).append(
-                            path.relative_to(EXTERNAL_PROVIDERS_ROOT).as_posix()
+            if isinstance(node, ast.ClassDef) and node.name.endswith("Event"):
+                for base in node.bases:
+                    if "Enum" in ast.unparse(base) or "agent.AgentEvent" in ast.unparse(base):
+                        offenders.append(
+                            f"{path.relative_to(REACT_ROOT).as_posix()}::{node.name}"
                         )
     assert not offenders, (
-        f"provider modules must not import ReActEvent (canonical seam): {offenders}"
+        f"agents/react must not define event enums (use core TurnEvent): {offenders}"
     )
 
 
-# ── Guard 4: emit_turn_event stays concrete on ContentEmitter ──────────────
+# ── Guard 4: the retired emitter faces are gone from production ────────────
+
+RETIRED_EMITTER_SYMBOLS = ("ContentEmitter", "EmitterConfig", "StreamingAwareEmitter")
 
 
-def test_content_emitter_emit_turn_event_is_concrete() -> None:
-    """``ContentEmitter.emit_turn_event`` MUST be a concrete method with a
-    no-op default (not ``@abstractmethod``) so every existing emitter
-    subclass remains source-compatible.
+def test_no_production_imports_of_retired_emitter_faces() -> None:
+    """No ``src/`` or bot production module may import the retired
+    ``ContentEmitter`` / ``EmitterConfig`` / ``StreamingAwareEmitter``
+    symbols — the single sink face (``TurnEventSink`` + ``BufferingSink``)
+    replaced them (dead-path anchor, ``test_dead_code_gone.py`` style).
+    """
+    offenders: dict[str, list[str]] = {}
+    for root in (SRC_ROOT, BOT_ROOT):
+        for path in sorted(root.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            tree = _parse(path)
+            for node in ast.walk(tree):
+                imported: list[str] = []
+                if isinstance(node, ast.ImportFrom):
+                    imported = [alias.name for alias in node.names]
+                elif isinstance(node, ast.Import):
+                    imported = [alias.name for alias in node.names]
+                for name in imported:
+                    if name in RETIRED_EMITTER_SYMBOLS:
+                        offenders.setdefault(name, []).append(
+                            str(path.relative_to(REPO_ROOT))
+                        )
+    assert not offenders, (
+        f"retired emitter faces must not be imported in production: {offenders}"
+    )
+
+
+def test_core_emitter_module_defines_the_sink_face() -> None:
+    """``core/emitter.py`` owns the unified sink face: ``TurnEventSink``
+    with exactly one abstract data method, the gate-applied ``emit``, and
+    a concrete no-op ``flush``.
     """
     tree = _parse(CORE_EMITTER_PATH)
     for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == "ContentEmitter":
+        if isinstance(node, ast.ClassDef) and node.name == "TurnEventSink":
+            abstract_methods = []
             for item in node.body:
-                if (
-                    isinstance(item, ast.AsyncFunctionDef)
-                    and item.name == "emit_turn_event"
-                ):
-                    # Must NOT be decorated with @abstractmethod.
-                    for dec in item.decorator_list:
-                        dec_src = ast.unparse(dec)
-                        assert "abstractmethod" not in dec_src, (
-                            "ContentEmitter.emit_turn_event must NOT be abstract "
-                            "(concrete no-op default preserves emitter compatibility)"
-                        )
-                    return
-    pytest.fail("ContentEmitter.emit_turn_event method not found")
+                if isinstance(item, ast.AsyncFunctionDef):
+                    is_abstract = any(
+                        "abstractmethod" in ast.unparse(dec) for dec in item.decorator_list
+                    )
+                    if is_abstract:
+                        abstract_methods.append(item.name)
+            assert abstract_methods == ["_dispatch"], (
+                "TurnEventSink must have exactly one abstract data method (_dispatch)"
+            )
+            return
+    pytest.fail("TurnEventSink class not found in core/emitter.py")
 
 
-# ── Guard 5: core.events has no import of concrete agent packages ──────────
+# ── Guard 5: core does not import concrete agent packages ──────────────────
 
 
-def test_core_events_does_not_import_concrete_agents() -> None:
-    """``core.events`` (and by extension ``core.turn_events``) must not
-    import any concrete agent strategy — core is the foundation.
+@pytest.mark.parametrize(
+    "core_module",
+    sorted(str(p.relative_to(SRC_ROOT)) for p in (SRC_ROOT / "modex_agent" / "core").glob("*.py")),
+)
+def test_core_modules_do_not_import_concrete_agents(core_module: str) -> None:
+    """``core`` must not import any concrete agent strategy — core is the
+    foundation.
     """
-    tree = _parse(CORE_EVENTS_PATH)
+    tree = _parse(SRC_ROOT / core_module)
     for mod in _imports_from(tree, "modex_agent.agents"):
-        pytest.fail(f"core.events must not import agent strategies: {mod}")
+        pytest.fail(f"{core_module} must not import agent strategies: {mod}")
 
 
 # ── Guard 6: WebBotEmitter does not branch on provider names ───────────────

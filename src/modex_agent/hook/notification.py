@@ -56,7 +56,7 @@ class TurnOutcomeNotifyHook(OutcomeFinallyHook):
     the user through their own path, so this hook must NOT duplicate them:
 
     - Pause / cancel (CANCELLED, TURN_CANCELLED): the control channel already
-      acks the user and ``emit_complete`` fires.
+      acks the user and the terminal ``turn_finished`` event fires.
     - Approval suspension (GraphInterrupt): ``turn_runner`` already renders the
       approval prompt. The suspend leg (``result=None``) never reaches
       ``on_outcome`` — skipped by ``OutcomeFinallyHook``.

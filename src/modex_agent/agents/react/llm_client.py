@@ -19,8 +19,6 @@ import asyncio
 import logging
 from collections.abc import Sequence
 
-from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.agents.react.constants import ToolArgsDeltaPayload
 from modex_agent.agents.react.error_recovery import (
     ErrorRecoveryConfig,
     attempt_recovery,
@@ -47,6 +45,11 @@ from modex_agent.core.stream_events import (
 )
 from modex_agent.core.turn.dispatch import renew_dispatch_deadline
 from modex_agent.core.turn.enums import TurnCustomKey
+from modex_agent.core.turn_events import (
+    ToolArgsDeltaEvent,
+    TurnReasoningEvent,
+    TurnTextEvent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +115,8 @@ class ReactLlmClient:
         """The single LLMStreamEvent loop (ADR-0046 PRD §10)."""
         emitter = ctx.emitter
         streaming_emitter = emitter if emitter is not None and emitter.wants_streaming() else None
+        # streaming_emitter: the sink that observes per-delta events. Every
+        # emission below goes through ``emit`` (the sink's own gate applies).
 
         # TODO(model-config-convergence): 模型调用参数 temperature/max_output_tokens 应只由
         # LLMProvider 持有；此处经 descriptor/context 透传属冗余复制。待 ReactLlmClient
@@ -160,27 +165,27 @@ class ReactLlmClient:
                         if event.text:
                             streamed_content += event.text
                             if streaming_emitter is not None:
-                                await streaming_emitter.emit_delta(event.text)
-                                await streaming_emitter.emit(ReActEvent.MODEL_OUTPUT, event.text)
+                                await streaming_emitter.emit(TurnTextEvent(text=event.text))
                         await assembler.feed(event)
                     case ReasoningDelta():
                         await self._drain_control(ctx)
                         renew_dispatch_deadline()
                         if streaming_emitter is not None and event.text:
-                            await streaming_emitter.emit(ReActEvent.MODEL_REASONING, event.text)
+                            await streaming_emitter.emit(
+                                TurnReasoningEvent(text=event.text)
+                            )
                         await assembler.feed(event)
                     case ToolCallDelta():
                         await self._drain_control(ctx)
                         renew_dispatch_deadline()
-                        # 显示性增量不进组装器; 非流式 emitter 走折叠路径, 由 TOOL_CALL_START 覆盖
+                        # 显示性增量不进组装器; 非流式 emitter 走折叠路径, 由 tool_call 覆盖
                         if streaming_emitter is not None:
                             await streaming_emitter.emit(
-                                ReActEvent.TOOL_ARGS_DELTA,
-                                ToolArgsDeltaPayload(
+                                ToolArgsDeltaEvent(
                                     call_id=event.call_id,
                                     tool_name=event.tool_name,
                                     args_fragment=event.args_fragment,
-                                ),
+                                )
                             )
                     case ToolCallComplete():
                         tool_names.append(event.tool_name)
@@ -218,19 +223,18 @@ class ReactLlmClient:
             raise
 
         response = assembler.result()
-        if streaming_emitter is not None:
-            await streaming_emitter.emit_stream_end(resuming=bool(response.tool_calls))
-        elif emitter is not None:
+        if emitter is not None and streaming_emitter is None:
             # Non-streaming emitter: the folded response is delivered once at
             # end-of-call — the legacy plain-chat path's contract, preserved
-            # verbatim so non-delta consumers (summarizer emitters, buffering
-            # test emitters) keep seeing content/reasoning/stream_end.
+            # so non-delta consumers (summarizer emitters, buffering
+            # test sinks) keep seeing the full content/reasoning.
             if response.content:
-                await emitter.emit_content(response.content)
-                await emitter.emit(ReActEvent.MODEL_OUTPUT, response.content)
+                await emitter.emit(TurnTextEvent(text=response.content))
             if response.reasoning_content:
-                await emitter.emit(ReActEvent.MODEL_REASONING, response.reasoning_content)
-            await emitter.emit_stream_end(resuming=bool(response.tool_calls))
+                await emitter.emit(TurnReasoningEvent(text=response.reasoning_content))
+        # The retired emit_stream_end flush boundary is owned by the sink's
+        # delivery policy (SEGMENT flushes on iteration_finished, TURN on
+        # turn_finished) — no per-call flush signal here anymore.
         return response
 
     @staticmethod

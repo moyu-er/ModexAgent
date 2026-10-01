@@ -25,6 +25,7 @@ from modex_agent.agents.react.nodes.before_turn import BeforeTurnNode
 from modex_agent.agents.react.nodes.llm import LLMNode
 from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.tool_executor import ToolExecutor
+from modex_agent.core.emitter import TurnEvent, TurnEventSink
 from modex_agent.core.message import ToolCall
 from modex_agent.core.tool_manager import ToolResult
 
@@ -33,27 +34,15 @@ def _make_llm_client() -> ReactLlmClient:
     return ReactLlmClient(provider=object())  # type: ignore[arg-type]
 
 
-class _MockEmitter:
+class _NullSink(TurnEventSink):
+    """Records emitted events; hook timing only needs a live sink."""
+
     def __init__(self) -> None:
-        self.events: list = []
+        super().__init__()
+        self.events: list[TurnEvent] = []
 
-    async def emit(self, event, data=None) -> None:
-        self.events.append((event, data))
-
-    async def emit_complete(self, result) -> None:
-        pass
-
-    async def emit_delta(self, delta) -> None:
-        pass
-
-    async def emit_content(self, content) -> None:
-        pass
-
-    async def emit_stream_end(self, resuming=False) -> None:
-        pass
-
-    def wants_streaming(self) -> bool:
-        return False
+    async def _dispatch(self, event: TurnEvent) -> None:
+        self.events.append(event)
 
 
 async def test_four_level_hook_ordering_in_normal_turn(
@@ -106,7 +95,7 @@ async def test_four_level_hook_ordering_in_normal_turn(
 
     runtime = make_runtime()
     ctx = make_graph_ctx(runtime=runtime)
-    ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+    ctx.agent_ctx.emitter = _NullSink()
 
     # Record dispatch_hook calls without actually dispatching (no hooks
     # registered — we only verify the firing order, not hook side-effects).

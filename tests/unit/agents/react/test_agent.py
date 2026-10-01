@@ -3,6 +3,7 @@ import pytest
 
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.emitter import TurnEvent, TurnEventSink
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.tools.manager import InMemoryToolManager
@@ -10,6 +11,13 @@ from modex_agent.tools.manager import InMemoryToolManager
 
 class _MockProvider:
     pass
+
+
+class _NullSink(TurnEventSink):
+    """Discards every event — the mock provider fails before any emission."""
+
+    async def _dispatch(self, event: TurnEvent) -> None:
+        _ = event
 
 
 class TestReActAgent:
@@ -30,25 +38,21 @@ class TestReActAgent:
         """Clean mode should run start->llm->end without errors (mock provider fails but gracefully)."""
         agent = ReActAgent(_MockProvider(), mode="clean")  # type: ignore[arg-type]
 
-        class _Emitter:
-            def wants_streaming(self):
-                return False
-
         ctx = AgentContext(
             system_prompt="Hi",
             history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
             session=SessionInfo.from_str("test.agent"),
         )
-        emitter = _Emitter()
+        sink = _NullSink()
         try:
-            result = await agent.run(ctx, emitter)  # type: ignore[arg-type]
+            result = await agent.run(ctx, sink)
             # Clean mode should complete (LLMNode will error without real provider, caught by ReActAgent)
             assert result is not None
         except Exception:
             pass
 
-        # contextvar should be reset
+        # contextvar-held emitter should be reset
         assert ctx.emitter is None
 
 
@@ -57,34 +61,15 @@ class TestReActAgentRuntime:
     async def test_clean_mode_sets_clean_runtime(self):
         agent = ReActAgent(_MockProvider(), mode="clean")  # type: ignore[arg-type]
 
-        class _Emitter:
-            def wants_streaming(self):
-                return False
-
-            async def emit(self, *args, **kwargs):
-                pass
-
-            async def emit_delta(self, *args, **kwargs):
-                pass
-
-            async def emit_content(self, *args, **kwargs):
-                pass
-
-            async def emit_stream_end(self, *args, **kwargs):
-                pass
-
-            async def emit_complete(self, *args, **kwargs):
-                pass
-
         ctx = AgentContext(
             system_prompt="test",
             history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
             session=SessionInfo.from_str("test.agent"),
         )
-        emitter = _Emitter()
+        sink = _NullSink()
         try:
-            await agent.run(ctx, emitter)  # type: ignore[arg-type]
+            await agent.run(ctx, sink)
         except Exception:
             pass
         assert ctx.runtime is not None
@@ -94,34 +79,15 @@ class TestReActAgentRuntime:
     async def test_full_mode_preserves_hooks(self):
         agent = ReActAgent(_MockProvider(), mode="full")  # type: ignore[arg-type]
 
-        class _Emitter:
-            def wants_streaming(self):
-                return False
-
-            async def emit(self, *a, **kw):
-                pass
-
-            async def emit_delta(self, *a, **kw):
-                pass
-
-            async def emit_content(self, *a, **kw):
-                pass
-
-            async def emit_stream_end(self, *a, **kw):
-                pass
-
-            async def emit_complete(self, *a, **kw):
-                pass
-
         ctx = AgentContext(
             system_prompt="test",
             history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
             session=SessionInfo.from_str("test.agent"),
         )
-        emitter = _Emitter()
+        sink = _NullSink()
         try:
-            await agent.run(ctx, emitter)  # type: ignore[arg-type]
+            await agent.run(ctx, sink)
         except Exception:
             pass
         assert ctx.runtime is not None

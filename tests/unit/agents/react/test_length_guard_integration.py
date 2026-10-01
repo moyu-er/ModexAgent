@@ -32,32 +32,18 @@ from modex_agent.agents.react.nodes.before_turn import BeforeTurnNode
 from modex_agent.agents.react.nodes.llm import LLMNode
 from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.core.turn_events import StopReason
+from modex_agent.core.emitter import TurnEvent, TurnEventSink
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import MessageRole
 from modex_agent.hook import HookRunner, HookSpec
 
 
-class _MockEmitter:
-    def __init__(self) -> None:
-        self.events: list = []
-
-    async def emit(self, event, data=None) -> None:
-        self.events.append((event, data))
-
-    async def emit_complete(self, result) -> None:
-        pass
-
-    async def emit_delta(self, delta) -> None:
-        pass
-
-    async def emit_content(self, content) -> None:
-        pass
-
-    async def emit_stream_end(self, resuming=False) -> None:
-        pass
-
+class _NullSink(TurnEventSink):
     def wants_streaming(self) -> bool:
         return False
+
+    async def _dispatch(self, event: TurnEvent) -> None:
+        _ = event
 
 
 def _make_llm_client(responses: list[LLMResponse]) -> ReactLlmClient:
@@ -98,7 +84,7 @@ async def test_degenerate_length_turn_continues_then_recovers(
     runner.add(HookSpec(hook=LengthGuardHook()))
     ctx = make_graph_ctx()
     ctx.runtime = ReactGraphRuntime(hook_runner=runner)
-    ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+    ctx.agent_ctx.emitter = _NullSink()  # type: ignore[assignment]
 
     # Attempt 1: degenerate ending — guard nudges and the gate routes to BEFORE.
     await before_node.run(ctx)
@@ -139,7 +125,7 @@ async def test_always_degenerate_provider_fails_honestly_after_exhaustion(
     runner.add(HookSpec(hook=LengthGuardHook()))
     ctx = make_graph_ctx()
     ctx.runtime = ReactGraphRuntime(hook_runner=runner)
-    ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
+    ctx.agent_ctx.emitter = _NullSink()  # type: ignore[assignment]
 
     for _ in range(MAX_NUDGES + 1):
         await before_node.run(ctx)

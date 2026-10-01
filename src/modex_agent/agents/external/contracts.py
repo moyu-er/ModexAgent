@@ -62,8 +62,8 @@ class ProviderEventParser(ABC):
             line: A single JSONL line (without trailing newline).
 
         Yields:
-            Zero or more `Emission` records consumers fan out through
-            `ContentEmitter`. The caller must consume the iterator
+            Zero or more `Emission` records consumers fan onto the
+            turn-event stream through the turn sink. The caller must consume the iterator
             fully before passing the next line — parsers are free to
             keep incremental state (e.g. a delta-stripping buffer)
             across calls.

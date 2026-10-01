@@ -38,7 +38,6 @@ from modex_agent.workspace.runtime import resolve_workspace_root
 if TYPE_CHECKING:
     from modex_agent.approval.ui import ApprovalUserInterface
     from modex_agent.core.agent import Agent
-    from modex_agent.core.events import AgentEvent
     from modex_agent.core.turn.store import TurnStateStore
 
 logger = logging.getLogger(__name__)
@@ -79,7 +78,7 @@ class ApprovalResumer:
     def __init__(
         self,
         *,
-        agent: Agent[AgentEvent],
+        agent: Agent,
         turn_store: TurnStateStore | None,
         user_interface: ApprovalUserInterface | None,
     ) -> None:

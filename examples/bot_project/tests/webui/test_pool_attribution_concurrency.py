@@ -9,7 +9,7 @@ from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapte
 from bot.webui.emitter import WebBotEmitter
 from bot.webui.events import _unwrap_envelope
 
-from modex_agent.core.events import EmitterConfig
+from modex_agent.core.turn_events import IterationFinishedEvent, TurnTextEvent
 from modex_agent.multi_agent.session_tree.models import (
     NodeVersionStatus,
     SessionTreeRecord,
@@ -34,8 +34,8 @@ _NOW = 1_700_000_000_000
 
 
 async def _emit_turn(emitter: WebBotEmitter, content: str) -> None:
-    await emitter.emit_content(content)
-    await emitter.emit_stream_end()
+    await emitter.emit(TurnTextEvent(text=content))
+    await emitter.emit(IterationFinishedEvent(iteration=0, has_tool_calls=False))
 
 
 def _tree_record(tree_id: str, session_id: str, pool: str) -> SessionTreeRecord:
@@ -72,14 +72,12 @@ async def test_same_prefix_concurrent_emitters_keep_transcript_pool_ownership() 
     default_emitter = WebBotEmitter(
         output_adapter,
         _DEFAULT_SESSION_ID,
-        config=EmitterConfig(),
         transcript_store=transcript_store,
         pool=_DEFAULT_POOL,
     )
     peer_emitter = WebBotEmitter(
         output_adapter,
         _PEER_SESSION_ID,
-        config=EmitterConfig(),
         transcript_store=transcript_store,
         pool=_OWNING_POOL,
     )

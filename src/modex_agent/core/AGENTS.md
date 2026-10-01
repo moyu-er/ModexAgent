@@ -16,8 +16,7 @@ The `core/` module defines foundational contracts and values used directly acros
 | `__init__.py` | Exact foundational facade; concrete implementations are not re-exported. |
 | `agent.py` | `Agent[E]`, `AgentContext`, agent identity/implementation enums, and `current_agent_context`. |
 | `capabilities.py` | `Modality`, `ModelCapabilities`, and `ModelInfo`. |
-| `emitter.py` | `ContentEmitter[E]` and `AgentResult`; concrete emitter behavior lives in `adapters/`. |
-| `events.py` | `AgentEvent` and `EmitterConfig`. |
+| `emitter.py` | The unified turn-observation seam: `TurnEventSink` (async `emit(event)` + `flush()`, `wants_streaming()` override point, `KindGate` filtering in the base `emit`), `CompositeTurnEventSink` (sequential fan-out, no silent drops), `TurnBinding` (typed sink-factory identity — `turn_id` survives approval suspend/resume with `resumed=True`), and `AgentResult`. |
 | `history.py` | `MessageHistory` ABC, the async history seam used directly by `AgentContext`; concrete histories live in `memory/history.py`. |
 | `llm_request.py` | Canonical `LLMRequest` and `ReasoningEffort`. |
 | `llm_struct.py` | LLM response, usage, error, finish, timeout, and runtime-safety values. |
@@ -41,13 +40,12 @@ The `core/` module defines foundational contracts and values used directly acros
 ### Working In This Directory
 - New pluggable contracts use `ABC` + `@abstractmethod`, not `Protocol`.
 - `AgentContext` is a dataclass — new fields must have `None` defaults
-- Event enums: `class MyEvent(AgentEvent, Enum)`
 - **`Tool` is in `tool_manager.py` (not `tool.py` — deleted in C2)**. Dual-mode: pass args to `__init__` OR define `@property` name/description/parameters
 - A `ToolGroupSpec` is a candidate manifest, not a runtime selection report. A runtime `ToolGroup` must match one declared variant exactly; its resource has one lifecycle owner outside the tool manager.
 - `from __future__ import annotations` in all modules
 
 ### Type Safety
-- `Agent[E]`, `ContentEmitter[E]` with `TypeVar("E", bound=AgentEvent)`
+- `Agent.run(context, emitter: TurnEventSink)` — one sink face, no per-method event channels
 - Enums/constants over raw strings — `MessageRole`, `AgentRole`, `FinishReason`, `StopReason`
 - Typed structures over loose dicts — `ChatMessage`, `ToolCall`, `LLMResponse`
 - Typed signatures — no bare `Any`, `list`, `dict`, `object` in framework-facing APIs

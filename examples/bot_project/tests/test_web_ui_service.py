@@ -168,7 +168,7 @@ async def test_production_style_resolver_does_not_crash_emitter() -> None:
     from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
 
-    from modex_agent.core.events import EmitterConfig
+    from modex_agent.core.turn_events import TurnTextEvent
 
     input_adapter = WebSocketInputAdapter()
     output_adapter = WebSocketOutputAdapter(input_adapter)
@@ -180,12 +180,11 @@ async def test_production_style_resolver_does_not_crash_emitter() -> None:
     emitter = WebBotEmitter(
         output_adapter=output_adapter,
         session_id="conv.coder",
-        config=EmitterConfig(),
         pool="coder",
         session_meta_resolver=_parent_meta_for(input_adapter, "conv.coder"),
     )
     # Fire a content delta — must not raise.
-    await emitter.emit_delta("hello world")
+    await emitter.emit(TurnTextEvent(text="hello world"))
 
     # The envelope must have reached the delta queue.
     q = input_adapter.get_delta_queue("conv.coder", None)
@@ -398,7 +397,7 @@ async def test_cross_pool_same_name_subagent_emitter_partitioning() -> None:
     from bot.webui.emitter import WebBotEmitter
     from bot.webui.events import SessionMeta
 
-    from modex_agent.core.events import EmitterConfig
+    from modex_agent.core.turn_events import IterationFinishedEvent, TurnTextEvent
 
     data_dir = Path(tempfile.mkdtemp())
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
@@ -417,7 +416,6 @@ async def test_cross_pool_same_name_subagent_emitter_partitioning() -> None:
         emitter = WebBotEmitter(
             output_adapter=output,
             session_id=session_id,
-            config=EmitterConfig(),
             pool="review",
             transcript_store=store,
             session_meta_resolver=_no_parent_meta,
@@ -425,8 +423,8 @@ async def test_cross_pool_same_name_subagent_emitter_partitioning() -> None:
         )
 
         # Emit a content delta + stream end to trigger _persist()
-        await emitter.emit_delta("hello from review")
-        await emitter.emit_stream_end(resuming=False)
+        await emitter.emit(TurnTextEvent(text="hello from review"))
+        await emitter.emit(IterationFinishedEvent(iteration=0, has_tool_calls=False))
 
     # The transcript file MUST be under sessions/review/
     review_file = data_dir / ".modex" / "sessions" / "review" / f"{session_id}.jsonl"

@@ -1,11 +1,11 @@
 """ReActAgent 实现
 
-提供 ReActEvent 枚举和 ReActAgent 类，实现 Thought → Action → Observation 循环。
+提供 ReActAgent 类，实现 Thought → Action → Observation 循环。
+所有运行时观察都以核心 ``TurnEvent`` 流的形式经 ``TurnEventSink`` 发出。
 """
 
 import asyncio
 import logging
-from enum import Enum
 from typing import Any, Literal
 
 from modex_agent.agents.react.constants import InterruptReason
@@ -21,61 +21,13 @@ from modex_agent.core.turn.enums import TurnCustomKey, TurnPhase
 from modex_agent.hook import HookPayload, HookPoint
 
 from ...core.agent import Agent, AgentContext, current_agent_context
-from ...core.emitter import AgentResult, ContentEmitter
-from ...core.events import AgentEvent
+from ...core.emitter import AgentResult, TurnEventSink, turn_finished_event
 from ...core.provider import LLMProvider
-from ...core.turn_events import StopReason
+from ...core.turn_events import StopReason, TurnErroredEvent, TurnTextEvent
 from .message_builder import build_interrupted_assistant_message
 from .tool_dedup import ToolCallDeduplicator
 
 logger = logging.getLogger(__name__)
-
-class ReActEvent(AgentEvent, Enum):
-    """ReActAgent 特有的事件类型
-
-    说明：
-    - MODEL_OUTPUT: 模型生成的最终文本输出（流式片段）。
-      **注意**：在 ReAct 流式输出过程中，无法预知这是否是最终结果，
-      因为模型可能在输出后决定调用工具。
-      外部应根据后续是否有 TOOL_CALL 事件来判断。
-
-    - MODEL_REASONING: 模型的推理/思考过程（新增，DeepSeek R1、Kimi 等模型）。
-      与 MODEL_OUTPUT 分开，业务层决定如何展示。
-
-    - TOOL_ARGS_DELTA: 工具参数流式增量（TOOL_CALL_START 之前、参数仍在累积时直发）。
-
-    - TOOL_CALL_START: 准备调用工具
-    - TOOL_CALL_END: 工具调用完成（包含结果）
-    - ITERATION_START/END: 单次 Thought-Action-Observation 循环
-    - FINAL_OUTPUT: 确定是最终输出（无后续工具调用）
-    """
-
-    # 模型输出（流式，最终输出内容）
-    MODEL_OUTPUT = "model_output"
-
-    # 模型推理/思考过程（DeepSeek R1, Kimi 等模型）
-    MODEL_REASONING = "model_reasoning"
-
-    # 参数流式增量(在 TOOL_CALL_START 之前、参数仍在累积时经 emitter.emit 直发, 不走图运行时)
-    TOOL_ARGS_DELTA = "tool_args_delta"
-
-    # 工具相关
-    TOOL_CALL_START = "tool_call_start"
-    TOOL_CALL_END = "tool_call_end"
-
-    # 执行状态
-    ITERATION_START = "iteration_start"
-    ITERATION_END = "iteration_end"
-
-    # 最终结果（确定无后续工具调用）
-    FINAL_OUTPUT = "final_output"
-
-    # 生命周期（可选，如果需要）
-    START = "start"
-    ERROR = "error"
-    MAX_ITERATIONS = "max_iterations"
-    PROGRESS = "progress"
-
 
 def _get_turn_messages(ctx: AgentContext) -> list[dict[str, Any]]:
     """Extract current-turn messages from typed state or metadata fallback."""
@@ -130,32 +82,21 @@ async def _persist_interrupted_partial(ctx: AgentContext, reason: str) -> None:
     state.message_delta.append(MessageDelta(message=msg, source=MessageDeltaSource.ASSISTANT))
 
 
-class ReActAgent(Agent[ReActEvent]):
+class ReActAgent(Agent):
     """ReAct 推理模式实现
 
     执行 Thought → Action → Observation 循环。
-    所有输出通过 ContentEmitter。
-
-    触发的事件（由 ReActEvent 枚举定义）：
-    - MODEL_OUTPUT: LLM 生成的文本内容（流式）
-    - TOOL_CALL_START: 准备调用工具
-    - TOOL_CALL_END: 工具执行结果
-    - ITERATION_START/ITERATION_END: 每次 ReAct 迭代的开始和结束
-    - FINAL_OUTPUT: 确认的最终回复（无后续工具调用）
-    - ERROR: 发生错误
-    - MAX_ITERATIONS: 达到最大迭代次数
+    所有输出通过 ``TurnEventSink``（核心 ``TurnEvent`` 流）。
 
     事件流示例（单次工具调用）：
-    1. MODEL_OUTPUT (流式) -> "让我查一下天气..."
-    2. TOOL_CALL_START -> {"tool": "weather", "args": {"city": "北京"}}
-    3. TOOL_CALL_END -> {"tool": "weather", "result": "晴天 25°C"}
-    4. ITERATION_END
-    5. MODEL_OUTPUT (流式) -> "北京的天气是..."
-    6. FINAL_OUTPUT -> "北京的天气是晴天，25°C"
+    1. turn_started
+    2. iteration_started / text (流式) -> "让我查一下天气..."
+    3. tool_call -> {"tool": "weather", "args": {"city": "北京"}}
+    4. tool_result -> {"tool": "weather", "result": "晴天 25°C"}
+    5. iteration_finished
+    6. text (流式) -> "北京的天气是..."
+    7. turn_finished (stop_reason=completed)
     """
-
-    # 该 Agent 使用的事件类型枚举
-    event_enum = ReActEvent
 
     def __init__(
         self,
@@ -180,13 +121,13 @@ class ReActAgent(Agent[ReActEvent]):
     async def run(
         self,
         context: AgentContext,
-        emitter: ContentEmitter[ReActEvent],
+        emitter: TurnEventSink,
     ) -> AgentResult:
         """Delegate to GraphEngine (thin shell).
 
         Args:
             context: Agent execution context
-            emitter: content emitter
+            emitter: turn-event sink
 
         Returns:
             AgentResult: execution result
@@ -233,8 +174,9 @@ class ReActAgent(Agent[ReActEvent]):
             control_channel=runtime.services.control_channel,
             snapshot_policy=ReActSnapshotPolicy(),
             turn_state_store=runtime.services.turn_store,
-            emitter=emitter,
         )
+        # The turn sink reaches the nodes through ``context.emitter``
+        # (set above) — the graph runtime no longer carries its own copy.
 
         ctx_token = current_agent_context.set(context)
 
@@ -343,16 +285,16 @@ class ReActAgent(Agent[ReActEvent]):
             # emitter considers the stream already ended.
             if user_content and emitter is not None:
                 try:
-                    await emitter.emit_content(user_content)
+                    await emitter.emit(TurnTextEvent(text=user_content))
                 except Exception:
-                    logger.exception("emit_content of control-exit content failed")
+                    logger.exception("emit of control-exit content failed")
             result = AgentResult(
                 content=user_content,
                 stop_reason=stop_reason,
                 messages=all_new,
                 attachments=context.attachments,
             )
-            await emitter.emit_complete(result)
+            await emitter.emit(turn_finished_event(result))
             return result
         except asyncio.CancelledError:
             # Task cancellation (e.g. from control-channel CANCEL_TURN that
@@ -368,11 +310,11 @@ class ReActAgent(Agent[ReActEvent]):
                 messages=all_new,
                 attachments=context.attachments,
             )
-            await emitter.emit_complete(result)
+            await emitter.emit(turn_finished_event(result))
             return result
         except Exception as e:
             logger.exception("Agent execution error")
-            await emitter.emit(ReActEvent.ERROR, str(e))
+            await emitter.emit(TurnErroredEvent(message=str(e)))
             await _persist_interrupted_partial(context, "error")
             all_new = _get_turn_messages(context)
             result = AgentResult(
@@ -381,7 +323,7 @@ class ReActAgent(Agent[ReActEvent]):
                 messages=all_new,
                 attachments=context.attachments,
             )
-            await emitter.emit_complete(result)
+            await emitter.emit(turn_finished_event(result))
             return result
         finally:
             # FINALLY_GRAPH: fires regardless of success/error/cancel.

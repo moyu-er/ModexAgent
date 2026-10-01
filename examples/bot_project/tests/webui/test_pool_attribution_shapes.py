@@ -13,10 +13,11 @@ from bot.service.web_ui_service import WebUIService
 from bot.webui.emitter import WebBotEmitter
 from bot.workspace.handle import PoolWorkspaceResources, WorkspaceResolverCell
 
-from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import BufferingSink
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.app.models.assembly import ModelRegistryAssembly
 from modex_agent.app.models.choice import ModelChoiceRegistry
+from modex_agent.core.emitter import TurnBinding
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
@@ -54,8 +55,8 @@ async def test_graph_node_resolves_pool_assembled_emitter_with_node_pool(
     web_output = WebSocketOutputAdapter(input_adapter)
     output_adapter = MagicMock(spec=OutputAdapter)
 
-    def emitter_factory(session_id: str, pool: str) -> WebBotEmitter:
-        return WebBotEmitter(web_output, session_id, pool=pool)
+    def emitter_factory(binding: TurnBinding) -> WebBotEmitter:
+        return WebBotEmitter(web_output, binding.session_id, pool=binding.pool)
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -111,7 +112,9 @@ async def test_graph_node_resolves_pool_assembled_emitter_with_node_pool(
         materialize_deps = pool_instance.pool.materialize_deps
         assert materialize_deps is not None
         assert materialize_deps.emitter_factory is not None
-        emitter = materialize_deps.emitter_factory(_SESSION_ID)
+        emitter = materialize_deps.emitter_factory(
+            TurnBinding(session_id=_SESSION_ID, agent_name="main")
+        )
         assert isinstance(emitter, WebBotEmitter)
         assert emitter._pool == _POOL_NAME
     finally:
@@ -130,9 +133,9 @@ def test_unified_factory_forwards_same_pool_to_qq_and_telegram_leaves(
         input_adapter = WebSocketInputAdapter()
         output_adapter = WebSocketOutputAdapter(input_adapter)
 
-        def emitter_factory(session_id: str, pool: str) -> StreamingAwareEmitter:
-            received.append(("qq", pool))
-            return StreamingAwareEmitter(output_adapter, session_id)
+        def emitter_factory(binding: TurnBinding) -> BufferingSink:
+            received.append(("qq", binding.pool))
+            return BufferingSink(output_adapter, binding.session_id)
 
         return input_adapter, output_adapter, emitter_factory
 
@@ -140,9 +143,9 @@ def test_unified_factory_forwards_same_pool_to_qq_and_telegram_leaves(
         input_adapter = WebSocketInputAdapter()
         output_adapter = WebSocketOutputAdapter(input_adapter)
 
-        def emitter_factory(session_id: str, pool: str) -> StreamingAwareEmitter:
-            received.append(("telegram", pool))
-            return StreamingAwareEmitter(output_adapter, session_id)
+        def emitter_factory(binding: TurnBinding) -> BufferingSink:
+            received.append(("telegram", binding.pool))
+            return BufferingSink(output_adapter, binding.session_id)
 
         return input_adapter, output_adapter, emitter_factory
 
@@ -154,7 +157,9 @@ def test_unified_factory_forwards_same_pool_to_qq_and_telegram_leaves(
         emitter_factory,
         **_kwargs,
     ) -> None:
-        emitter_factory(_SESSION_ID, _POOL_NAME)
+        emitter_factory(
+            TurnBinding(session_id=_SESSION_ID, agent_name="main", pool=_POOL_NAME)
+        )
         raise _UnifiedFactoryCapturedError
 
     config_dir = tmp_path / "config"

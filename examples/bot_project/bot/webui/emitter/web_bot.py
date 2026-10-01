@@ -1,8 +1,8 @@
 """WebBotEmitter — WebUI WebSocket projection of the bot transcript emitter.
 
-Streaming phase:
-  - ``emit_delta`` / ``_on_event`` → push incremental JSON events via WebSocket.
-  - Deltas are NOT persisted individually — they are transient UI updates.
+Streaming phase: every content/tool turn event is projected as incremental
+JSON frames via WebSocket. Deltas are NOT persisted individually — they are
+transient UI updates.
 
 Recording lifecycle (segments, transcript persistence, partial buffers, turn
 identity) lives on :class:`BotTranscriptEmitter`; this subclass only projects
@@ -18,8 +18,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-from modex_agent.core.events import EmitterConfig
 
 from ...adapters.web_socket import WebSocketOutputAdapter
 from ..events import (
@@ -77,7 +75,6 @@ class WebBotEmitter(BotTranscriptEmitter):
         self,
         output_adapter: WebSocketOutputAdapter,
         session_id: str,
-        config: EmitterConfig | None = None,
         *,
         pool: str | None = None,
         send_timeout: float | None = None,
@@ -88,7 +85,6 @@ class WebBotEmitter(BotTranscriptEmitter):
         super().__init__(
             output_adapter,
             session_id,
-            config,
             send_timeout=send_timeout,
             pool=pool,
             transcript_store=transcript_store,

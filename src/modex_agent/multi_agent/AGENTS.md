@@ -272,7 +272,7 @@ reference is not constructible.
 
 ## Dependencies
 
-- `modex_agent.core.agent` — `Agent[E]`, `ContentEmitter[E]`
+- `modex_agent.core.agent` — `Agent`, `AgentContext`
 - `modex_agent.runtime` — `AgentRuntime`, `TurnStateStore`
 - `modex_agent.pipeline` — `AgentPipeline` for execution orchestration
 - `modex_agent.messaging` — `MessageBroker` (cross-process wakeup only)

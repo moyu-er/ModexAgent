@@ -1,11 +1,11 @@
-"""Adapters — platform I/O contracts and emitter bridge.
+"""Adapters — platform I/O contracts and the buffering turn-event sink.
 
 Facade (ADR-0005): ``StreamingMode`` / ``PlatformAdapter`` / ``AdapterRegistry``
-(platform), ``OutputAdapter`` family (output), ``StreamingAwareEmitter``
-(emitter), and the ``ContentFilter`` family (filters).
+(platform), ``OutputAdapter`` family (output), ``BufferingSink`` /
+``DeliveryPolicy`` (emitter), and the ``ContentFilter`` family (filters).
 """
 
-from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import BufferingSink, DeliveryPolicy
 from modex_agent.adapters.filters import (
     ChainedContentFilter,
     ContentFilter,
@@ -35,7 +35,8 @@ __all__ = [
     "NullOutputAdapter",
     "OutputAdapter",
     # emitter
-    "StreamingAwareEmitter",
+    "BufferingSink",
+    "DeliveryPolicy",
     # filters
     "ChainedContentFilter",
     "ContentFilter",

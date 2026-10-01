@@ -5,9 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import BufferingSink
+from modex_agent.adapters.platform import StreamingMode
 from modex_agent.agents.external.builder import ExternalAgentBuilder
 from modex_agent.agents.external.types import ExternalEnvSpec
+from modex_agent.core.emitter import TurnBinding
 
 
 def _make_spec(workdir: Path, session_id: str = "pool1.agent1") -> ExternalEnvSpec:
@@ -25,16 +27,17 @@ def _make_spec(workdir: Path, session_id: str = "pool1.agent1") -> ExternalEnvSp
 
 
 class TestExternalAgentBuilderPoolRegistration:
-    def test_build_emitter_factory_returns_streaming_aware_emitter(self) -> None:
-        adapter = MagicMock()
+    def test_build_emitter_factory_returns_buffering_sink(self) -> None:
+        adapter = MagicMock(streaming_mode=StreamingMode.PSEUDO)
         factory = ExternalAgentBuilder.build_emitter_factory(adapter)
-        emitter = factory("session-1")
-        assert isinstance(emitter, StreamingAwareEmitter)
+        emitter = factory(TurnBinding(session_id="session-1", agent_name="agent1"))
+        assert isinstance(emitter, BufferingSink)
         assert emitter.session_id == "session-1"
         assert emitter.output_adapter is adapter
 
-    def test_build_emitter_factory_uses_external_event(self) -> None:
-        adapter = MagicMock()
+    def test_build_emitter_factory_binds_session(self) -> None:
+        adapter = MagicMock(streaming_mode=StreamingMode.PSEUDO)
         factory = ExternalAgentBuilder.build_emitter_factory(adapter)
-        emitter = factory("session-2")
+        emitter = factory(TurnBinding(session_id="session-2", agent_name="agent1"))
         assert emitter is not None
+        assert emitter.session_id == "session-2"

@@ -2,7 +2,8 @@
 import pytest
 
 from modex_agent.agents.react.agent import ReActAgent
-from modex_agent.core.turn_events import StopReason
+from modex_agent.core.emitter import AgentResult, TurnEvent, TurnEventSink
+from modex_agent.core.turn_events import StopReason, TurnFinishedEvent, TurnTextEvent
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
@@ -31,32 +32,19 @@ def _make_ctx():
     )
 
 
-class _FakeEmitter:
+class _FakeSink(TurnEventSink):
     def __init__(self):
-        self.completed = None
-        self.contents = []
+        super().__init__()
+        self.completed: AgentResult | None = None
+        self.contents: list[str] = []
 
-    def wants_streaming(self):
-        return False
-
-    async def emit(self, *a, **k):
-        pass
-
-    async def emit_delta(self, d):
-        pass
-
-    async def emit_content(self, full):
-        if full:
-            self.contents.append(full)
-
-    async def emit_stream_end(self, resuming=False):
-        pass
-
-    async def emit_complete(self, result):
-        self.completed = result
-
-    async def emit_error(self, error):
-        pass
+    async def _dispatch(self, event: TurnEvent):
+        match event:
+            case TurnTextEvent(text=text):
+                if text:
+                    self.contents.append(text)
+            case TurnFinishedEvent(stop_reason=stop_reason, error=error):
+                self.completed = AgentResult(error=error, stop_reason=stop_reason)
 
 
 class _ScriptedProvider(CallbackStreamProvider):
@@ -101,11 +89,11 @@ async def test_loop_detected_renders_loop_result(monkeypatch):
         HookSpec(hook=LoopDetectionHook(window_size=2, observation_rounds=2),
                  on_error=HookErrorPolicy.LOG)
     )
-    emitter = _FakeEmitter()
+    emitter = _FakeSink()
 
     result = await agent.run(ctx, emitter)
 
     assert result.stop_reason == StopReason.LOOP_DETECTED
     assert "Loop detected" in (result.content or "")
     assert "read" in (result.content or "")
-    assert emitter.completed is result
+    assert emitter.completed is not None

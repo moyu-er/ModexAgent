@@ -339,8 +339,8 @@ class TestRoutesToTurnChannel:
     @pytest.mark.asyncio
     async def test_does_not_register_for_emitter_reforward(self) -> None:
         """The tool self-delivers (direct send on the turn's adapter). It must
-        NOT also register the file on the agent context: the emitter's
-        ``emit_complete`` re-forwards ``result.attachments`` through the output
+        NOT also register the file on the agent context: the sink's
+        ``turn_finished`` re-forwards ``result.attachments`` through the output
         adapter, so a non-empty registration double-delivers the file (the IM
         "two files via IM" bug). Single delivery path only — webui and IM
         unified through the tool's direct send."""
@@ -361,7 +361,7 @@ class TestRoutesToTurnChannel:
         fixed_adapter.send.assert_awaited_once()
         # …and NOT registered for the emitter to re-forward.
         assert ctx.attachments == [], (
-            "tool must not add_attachment — emit_complete would re-send it "
+            "tool must not add_attachment — turn_finished would re-send it "
             "(double delivery / the IM two-files bug)"
         )
 

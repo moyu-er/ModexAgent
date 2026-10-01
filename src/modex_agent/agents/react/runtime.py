@@ -4,10 +4,11 @@
 ``modex_agent``'s AOP services.
 
 Per ADR-0033 D5 + D13 Stage 1: the ReAct-side adapter that maps business
-``StrEnum`` values (``ReActHookPoint`` / ``ReActScope`` / ``ReActEvent``) to
-``modex_agent`` enums (``HookPoint`` / ``InterceptorScope`` /
-``ReActEvent``) and bridges ``GraphContext`` to ``AgentContext`` for the
-underlying services.
+``StrEnum`` values (``ReActHookPoint`` / ``ReActScope``) to ``modex_agent``
+enums (``HookPoint`` / ``InterceptorScope``) and bridges ``GraphContext``
+to ``AgentContext`` for the underlying services. Turn events do NOT route
+through this bridge: nodes emit core ``TurnEvent`` objects through the
+agent context's turn sink directly.
 
 CRITICAL design rules (ADR-0033 D5):
 
@@ -58,9 +59,7 @@ from modex_agent.hook.abc import HookPayload, HookPoint
 from modex_graph.runtime import GraphRuntime
 
 if TYPE_CHECKING:
-    from modex_agent.agents.react.agent import ReActEvent
     from modex_agent.control.channel import InMemoryControlChannel
-    from modex_agent.core.emitter import ContentEmitter
     from modex_agent.core.turn.models import TurnStateBase
     from modex_agent.core.turn.store import TurnStateStore
     from modex_agent.hook import HookRunner
@@ -106,7 +105,6 @@ class ReactGraphRuntime(GraphRuntime):
         control_channel: InMemoryControlChannel | None = None,
         snapshot_policy: SnapshotPolicy | None = None,
         turn_state_store: TurnStateStore | None = None,
-        emitter: ContentEmitter[ReActEvent] | None = None,
     ) -> None:
         self._hook_runner = hook_runner
         self._interceptor_chain = interceptor_chain
@@ -114,7 +112,6 @@ class ReactGraphRuntime(GraphRuntime):
         self._control_channel = control_channel
         self._snapshot_policy = snapshot_policy
         self._turn_state_store = turn_state_store
-        self._emitter = emitter
 
     # ── Engine-auto-invoked (2, node-level universal) ──────────────────
 
@@ -263,24 +260,6 @@ class ReactGraphRuntime(GraphRuntime):
         state = agent_ctx.runtime.state
         snapshot = self._snapshot_policy.capture(state, SnapshotReason(reason))
         await self._turn_state_store.save_turn(snapshot)
-
-    async def emit(self, event_type: str, data: Any, ctx: GraphContext[Any]) -> None:
-        """Emit a streaming event via ``ContentEmitter``.
-
-        Maps ``event_type`` string (a ``ReActEvent`` value from
-        ``constants.py``) to the existing ``ReActEvent`` enum (from
-        ``agent.py``) and calls ``emitter.emit``. Unknown event types are
-        silently skipped.
-        """
-        if self._emitter is None:
-            return
-        from modex_agent.agents.react.agent import ReActEvent
-
-        try:
-            react_event = ReActEvent(event_type)
-        except ValueError:
-            return
-        await self._emitter.emit(react_event, data)
 
 
 __all__ = ["ReactGraphRuntime"]

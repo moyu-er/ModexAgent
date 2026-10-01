@@ -24,10 +24,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import AgentResult, TurnEvent, TurnEventSink
 from modex_agent.core.message import MessageRole
-from modex_agent.core.turn_events import StopReason
+from modex_agent.core.turn_events import StopReason, TurnFinishedEvent, TurnTextEvent
 from modex_agent.memory.scope import MemoryContext
 
 if TYPE_CHECKING:
@@ -69,28 +68,43 @@ class RootResultCapture:
         return self._result
 
 
-class RootResultCaptureEmitter(ContentEmitter[ReActEvent]):
-    """Session-aware terminal emitter routing every event into the capture."""
+class RootResultCaptureEmitter(TurnEventSink):
+    """Session-aware terminal sink routing every event into the capture.
+
+    Content arrives as text events (the retired ``emit_complete`` channel
+    carried the whole ``AgentResult``); the terminal ``turn_finished``
+    closes the turn with the accumulated content and classification.
+    """
 
     def __init__(self, capture: RootResultCapture, session_id: str) -> None:
         super().__init__()
         self._capture = capture
         self._session_id = session_id
+        self._content_parts: list[str] = []
 
     def wants_streaming(self) -> bool:
-        # The emitter discards deltas, but streaming activates chunk-level
+        # The sink discards deltas, but streaming activates chunk-level
         # DispatchDeadline renewal — without it a healthy max-effort LLM call
         # slower than dispatch_timeout dies like a hung one (tb21-full-bm1).
         return True
 
-    async def emit_delta(self, delta: str) -> None:
-        _ = delta
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        self._capture.record(self._session_id, result)
-
-    async def emit_error(self, error: str) -> None:
-        self._capture.record(self._session_id, AgentResult(error=error))
+    async def _dispatch(self, event: TurnEvent) -> None:
+        match event:
+            case TurnTextEvent(text=text):
+                self._content_parts.append(text)
+            case TurnFinishedEvent(stop_reason=stop_reason, error=error):
+                self._capture.record(
+                    self._session_id,
+                    AgentResult(
+                        content="".join(self._content_parts) or None,
+                        stop_reason=stop_reason,
+                        error=error,
+                    ),
+                )
+                self._content_parts = []
+            case _:
+                # Non-terminal observations (reasoning, tools) are discarded.
+                return
 
 
 async def read_back_root_result(

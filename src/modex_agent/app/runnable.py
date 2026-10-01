@@ -35,10 +35,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Final
 
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.app.config import AppConfig
@@ -48,7 +48,7 @@ from modex_agent.app.roots import AppAssemblyRoots
 from modex_agent.app.service import AppService
 from modex_agent.approval.ui import IMUserInterface
 from modex_agent.control.channel import InMemoryControlChannel
-from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.emitter import TurnBinding, TurnEventSink, TurnEventSinkFactory
 from modex_agent.core.llm_struct import (
     LLMTimeoutPolicy,
     RuntimeSafetyPolicy,
@@ -57,6 +57,7 @@ from modex_agent.core.llm_struct import (
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn_events import TurnEvent
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
@@ -110,8 +111,8 @@ _MAIN_AGENT_TYPES = frozenset({AgentType.native_main, AgentType.external_main})
 _SUPPLIED_WORKSPACE_RESOURCES: Final[object] = object()
 
 
-class NullEmitter(ContentEmitter[Any]):
-    """The no-op content emitter — drops every emission.
+class NullTurnEventSink(TurnEventSink):
+    """The no-op turn-event sink — drops every event.
 
     The headless runnable default has no streaming UI; final replies reach
     the caller through :meth:`RunnableAppService.turn`'s result and the
@@ -119,19 +120,13 @@ class NullEmitter(ContentEmitter[Any]):
     their own ``emitter_factory``.
     """
 
-    async def emit_delta(self, delta: str) -> None:
-        _ = delta
-
-    async def emit_complete(self, result: Any) -> None:
-        _ = result
-
-    async def emit_error(self, error: str) -> None:
-        _ = error
+    async def _dispatch(self, event: TurnEvent) -> None:
+        _ = event
 
 
-def _null_emitter_factory(session_id: str, pool_name: str) -> ContentEmitter[Any]:
-    _ = session_id, pool_name
-    return NullEmitter()
+def _null_sink_factory(binding: TurnBinding) -> TurnEventSink:
+    _ = binding
+    return NullTurnEventSink()
 
 
 def _safety_policy_of(config: AppConfig) -> RuntimeSafetyPolicy:
@@ -400,7 +395,7 @@ class RunnableAppService(AppService):
         config_dir: Path,
         input_adapter: InputAdapter,
         output_adapter: OutputAdapter,
-        emitter_factory: Callable[[str, str], ContentEmitter[Any]] | None = None,
+        emitter_factory: TurnEventSinkFactory | None = None,
         *,
         roots: AppAssemblyRoots | None = None,
         resource_root: Path | None = None,
@@ -413,7 +408,7 @@ class RunnableAppService(AppService):
             config_dir,
             input_adapter,
             output_adapter,
-            emitter_factory or _null_emitter_factory,
+            emitter_factory or _null_sink_factory,
             roots=roots,
             resource_root=resource_root if resource_root is not None else config_dir.parent,
         )

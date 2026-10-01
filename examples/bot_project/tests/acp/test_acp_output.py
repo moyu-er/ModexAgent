@@ -418,8 +418,8 @@ def _build_pipeline(
         hook_runner=None,
         interceptor_chain=None,
         control_channel=None,
-        emitter_factory=lambda session_id: AcpTurnEmitter(
-            hub, session_id, transcript_store=transcript_store, pool="main"
+        emitter_factory=lambda binding: AcpTurnEmitter(
+            hub, binding.session_id, transcript_store=transcript_store, pool="main"
         ),
         output_adapter=output,
         turn_store=turn_store,

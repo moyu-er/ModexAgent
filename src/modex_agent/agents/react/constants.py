@@ -1,41 +1,20 @@
-"""ReAct graph constants — node names, hook/scope/event enums.
+"""ReAct graph constants — node names, hook/scope enums.
 
 Per ADR-0033 D9.2: business modules define their own ``StrEnum`` values for
-graph-runtime string parameters (``hook_point``/``scope``/``event_type``).
+graph-runtime string parameters (``hook_point``/``scope``).
 ``StrEnum`` values are ``str`` subclasses, so they satisfy the engine's
 ``str`` parameter types without engine-side imports.
 
-``ReActHookPoint`` / ``ReActScope`` / ``ReActEvent`` are the business-side
-typed enums consumed by ``ReactGraphRuntime`` (Stage 1, ADR-0033 D13).
+``ReActHookPoint`` / ``ReActScope`` are the business-side typed enums
+consumed by ``ReactGraphRuntime`` (Stage 1, ADR-0033 D13).
 ``ReActNode`` remains as the graph topology identifier. The former
 ``ReActReason`` enum was removed (P3.4b convergence — edges are plain
-topology, routing is deliver-only).
+topology, routing is deliver-only); the former ``ReActEvent`` enum and its
+payload models were removed with the unified ``TurnEvent`` stream cutover
+(nodes emit core ``TurnEvent`` objects through the turn sink directly).
 """
 
 from enum import StrEnum
-
-from pydantic import BaseModel, ConfigDict
-
-from modex_agent.core.message import ToolCall
-from modex_agent.core.tool_manager import ToolResult
-
-
-class ToolCallEndPayload(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    tool_call: ToolCall
-    result: ToolResult
-    seq: int
-
-
-class ToolArgsDeltaPayload(BaseModel):
-    """``TOOL_ARGS_DELTA`` 事件载荷(与 ToolCallEndPayload 同级)。"""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    call_id: str
-    tool_name: str
-    args_fragment: str
 
 
 class ReActNode(StrEnum):
@@ -104,28 +83,3 @@ class ReActScope(StrEnum):
     LLM_CALL = "llm_call"
     LLM_STREAM = "llm_stream"
     TOOL_CALL = "tool_call"
-
-
-class ReActEvent(StrEnum):
-    """ReAct streaming events for the graph runtime.
-
-    These are the events dispatched via ``ctx.runtime.emit(ReActEvent.X,
-    data, ctx)``. They map to the existing ``ReActEvent`` enum in
-    ``modex_agent.agents.react.agent`` (which inherits ``AgentEvent`` and
-    includes additional events like ``MODEL_REASONING`` / ``ITERATION_START``
-    that are emitted directly via ``ctx.emitter.emit()``, not through the
-    graph runtime).
-
-    The 9 values here are the subset that goes through the graph runtime's
-    ``emit`` method. The existing ``agent.ReActEvent`` enum is a superset.
-    """
-
-    START = "start"
-    MAX_ITERATIONS = "max_iterations"
-    MODEL_OUTPUT = "model_output"
-    TOOL_CALL_START = "tool_call_start"
-    TOOL_CALL_END = "tool_call_end"
-    ITERATION_END = "iteration_end"
-    PROGRESS = "progress"
-    FINAL_OUTPUT = "final_output"
-    ERROR = "error"

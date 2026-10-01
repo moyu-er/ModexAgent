@@ -62,12 +62,14 @@ from modex_agent.core.agent import (
     ProviderKind,
     current_agent_context,
 )
-from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.turn_events import StopReason
+from modex_agent.core.emitter import AgentResult, TurnEventSink
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn_events import (
+    StopReason,
+    TurnErroredEvent,
     TurnEvent,
+    TurnFinishedEvent,
     TurnTextEvent,
     TurnToolCallEvent,
     TurnToolResultEvent,
@@ -135,13 +137,12 @@ class _PiCompatibleParser(ProviderEventParser):
         return iter(())
 
 
-class RecordingEmitter(ContentEmitter[ExternalEvent]):  # type: ignore[type-arg]
-    """Duck-typed emitter capturing deltas, events, completes, errors."""
+class RecordingEmitter(TurnEventSink):
+    """Duck-typed sink capturing every emitted turn event + the terminal."""
 
     def __init__(self) -> None:
         super().__init__()
         self.deltas: list[str] = []
-        self.events: list[tuple[ExternalEvent, object]] = []
         self.turn_events: list[TurnEvent] = []
         self.completed: AgentResult | None = None
         self.errors: list[str] = []
@@ -149,26 +150,15 @@ class RecordingEmitter(ContentEmitter[ExternalEvent]):  # type: ignore[type-arg]
     def wants_streaming(self) -> bool:
         return False
 
-    async def emit(self, event: ExternalEvent, data: object | None = None) -> None:
-        self.events.append((event, data))
-
-    async def emit_delta(self, delta: str) -> None:
-        self.deltas.append(delta)
-
-    async def emit_turn_event(self, event: TurnEvent) -> None:
+    async def _dispatch(self, event: TurnEvent) -> None:
         self.turn_events.append(event)
-
-    async def emit_content(self, full_content: str) -> None:
-        self.deltas.append(full_content)
-
-    async def emit_stream_end(self, resuming: bool = False) -> None:
-        pass
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        self.completed = result
-
-    async def emit_error(self, error: str) -> None:
-        self.errors.append(error)
+        match event:
+            case TurnTextEvent(text=text):
+                self.deltas.append(text)
+            case TurnErroredEvent(message=message):
+                self.errors.append(message)
+            case TurnFinishedEvent(stop_reason=stop_reason, error=error):
+                self.completed = AgentResult(error=error, stop_reason=stop_reason)
 
     async def flush(self) -> None:
         pass

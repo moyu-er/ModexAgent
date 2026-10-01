@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 from modex_agent.agents.external.agent import StreamingProviderBackend
@@ -39,7 +39,6 @@ from modex_agent.agents.external.child_discovery import (
 )
 from modex_agent.agents.external.cli_resolver import resolve_modexctl_bin_dir
 from modex_agent.agents.external.contracts import ProviderEventParser
-from modex_agent.agents.external.events import ExternalEvent
 from modex_agent.agents.external.providers.opencode.server_backend import (
     OpenCodeServerBackend,
 )
@@ -51,7 +50,7 @@ from modex_agent.agents.external.types import (
 )
 from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import ProviderKind
-from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.emitter import TurnEventSinkFactory
 from modex_agent.core.external_session import ExternalSessionMapStore
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.scope import RecordScope
@@ -121,7 +120,7 @@ def _build_child_discovery_collaborators(
     session_factory: SessionIdFactory,
 ) -> tuple[
     ExternalChildSessionDiscoverySink | None,
-    Callable[[str], ContentEmitter[ExternalEvent]] | None,
+    TurnEventSinkFactory | None,
 ]:
     """Build child-session discovery sink + emitter factory.
 

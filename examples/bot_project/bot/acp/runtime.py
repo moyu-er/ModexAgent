@@ -6,7 +6,7 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import yaml
 from pydantic import BaseModel, ConfigDict
@@ -15,7 +15,7 @@ from bot.service.core import BotService
 from modex_agent.acp.backend import AcpSessionBackend, AcpSessionHandle
 from modex_agent.acp.types import AcpBackendError, AcpBackendErrorCode, AcpOpenKind, AcpOpenRequest
 from modex_agent.core.agent import ExecutionStrategyKind
-from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.emitter import TurnBinding, TurnEventSink
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.messaging.models import InputMessage
@@ -211,11 +211,11 @@ class AcpRuntime(AcpSessionBackend):
         self._lifecycle_stack = contextlib.AsyncExitStack()
         await self._lifecycle_stack.enter_async_context(OpenCodeServerManager.lifecycle())
 
-        def emitter_factory(session_id: str, pool: str) -> ContentEmitter[Any]:
+        def emitter_factory(binding: TurnBinding) -> TurnEventSink:
             return AcpTurnEmitter(
                 hub,
-                session_id,
-                pool=pool,
+                binding.session_id,
+                pool=binding.pool,
                 transcript_store=self._transcript,
             )
 

@@ -103,7 +103,7 @@ def _build_pipeline(
         command_processor=None, skill_resolver=None, context_builder=None, agent_descriptor=None,
         max_iterations=5, safety=safety, runtime_services=services, runtime_context_manager=None,
         governance=None, hook_runner=None, interceptor_chain=None, control_channel=None,
-                emitter_factory=lambda sid: AcpTurnEmitter(runtime.hub, sid, pool="main", transcript_store=transcript),
+                emitter_factory=lambda binding: AcpTurnEmitter(runtime.hub, binding.session_id, pool="main", transcript_store=transcript),
         output_adapter=output, turn_store=turn_store, registry=registry,
     )
     runner = ReActTurnRunner(

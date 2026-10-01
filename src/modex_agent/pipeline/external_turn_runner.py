@@ -22,8 +22,8 @@ Kept (WebUI ``is_active`` / ``get_active_turn_uuid`` + ``/stop`` depend on them)
   task + turn-UUID registration.
 * Turn UUID generation.
 * ``on_session_start`` / ``on_session_end`` hooks (timeout-guarded).
-* Emitter creation (factory or default
-  :class:`~modex_agent.core.emitter.StreamingAwareEmitter`).
+* Turn-event sink creation (factory or the default
+  :class:`~modex_agent.adapters.emitter.BufferingSink`).
 * ``asyncio.CancelledError`` propagation (for ``/stop`` via ``task.cancel()``).
 
 Lives under ``agents/external/`` (not ``pipeline/``) because the
@@ -49,9 +49,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import BufferingSink
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult
+from modex_agent.core.emitter import AgentResult, TurnEventSinkFactory, turn_finished_event
 from modex_agent.core.message_utils import sanitize_reminder_content, wrap_system_reminder
 from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.core.turn_events import StopReason
@@ -65,8 +65,6 @@ from modex_agent.workspace.runtime import bind_workspace_root
 if TYPE_CHECKING:
     from modex_agent.adapters.output import OutputAdapter
     from modex_agent.agents.external.agent import ExternalAgent
-    from modex_agent.agents.external.events import ExternalEvent
-    from modex_agent.core.emitter import ContentEmitter
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.hook.runner import HookRunner
@@ -100,7 +98,7 @@ class ExternalTurnRunner(TurnRunner):
         self,
         *,
         agent: ExternalAgent,
-        emitter_factory: Callable[[str], ContentEmitter[ExternalEvent]] | None,
+        emitter_factory: TurnEventSinkFactory | None,
         output_adapter: OutputAdapter,
         registry: TurnSessionRegistry,
         on_session_start: Callable[[str], Awaitable[None]] | None = None,
@@ -145,7 +143,7 @@ class ExternalTurnRunner(TurnRunner):
             return None
 
     def set_emitter_factory(
-        self, emitter_factory: Callable[..., ContentEmitter[ExternalEvent]] | None
+        self, emitter_factory: TurnEventSinkFactory | None
     ) -> None:
         self._emitter_factory = emitter_factory
         self._agent.set_child_emitter_factory(emitter_factory)
@@ -213,11 +211,19 @@ class ExternalTurnRunner(TurnRunner):
         else:
             agent_context.current_input = input_msg.content
 
-        # 4. Emitter — factory wins, else default StreamingAwareEmitter.
+        # 4. Sink — factory wins, else the buffering default.
         if self._emitter_factory is not None:
-            emitter = self._emitter_factory(session.session_id)
+            from modex_agent.core.emitter import TurnBinding
+
+            emitter = self._emitter_factory(
+                TurnBinding(
+                    session_id=session.session_id,
+                    agent_name=agent_name,
+                    turn_id=turn_identity.turn_id,
+                )
+            )
         else:
-            emitter = StreamingAwareEmitter(
+            emitter = BufferingSink(
                 output_adapter=self._output_adapter,
                 session_id=session.session_id,
                 send_timeout=turn.output_send_timeout_seconds,
@@ -257,7 +263,7 @@ class ExternalTurnRunner(TurnRunner):
             # signature is reserved for GraphInterrupt approval suspension
             # (mirrors the ReAct cancel path in agents/react/agent.py).
             result = AgentResult(stop_reason=StopReason.CANCELLED)
-            await emitter.emit_complete(result)
+            await emitter.emit(turn_finished_event(result))
             raise
         except Exception as exc:
             # Defensive: ExternalAgent.run() catches its own exceptions

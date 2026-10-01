@@ -170,7 +170,7 @@ class SendFileToUserTool(ExclusiveTool):
 
         # NOTE: do NOT call ``agent_ctx.add_attachment``. This tool self-delivers
         # (the direct send above is the single unified path for webui and IM);
-        # registering the path would make the emitter's ``emit_complete`` re-send
+        # registering the path would make the terminal turn_finished delivery re-send
         # ``result.attachments`` and the user would receive the file twice.
         return f"File sent successfully: {path.name}"
 

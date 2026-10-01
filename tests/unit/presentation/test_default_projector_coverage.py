@@ -1,11 +1,10 @@
 """T-P1 — DefaultTurnEventProjector coverage anchor + JSONL round-trip.
 
 Drives scripted turns through the REAL ``ReActAgent`` (scripted stream
-provider, real graph nodes, real tool execution) with a recording emitter
-that captures every runtime event the emitter seam produces — enum
-``ReActEvent`` emissions, ``TurnEvent``s, streaming deltas, completion —
-then translates each onto the core ``TurnEvent`` union and feeds it
-through ``DefaultTurnEventProjector``.
+provider, real graph nodes, real tool execution) with a recording sink
+that captures every runtime turn event the emitter seam produces — the
+runtime emits the core ``TurnEvent`` union directly — then feeds each
+event through ``DefaultTurnEventProjector``.
 
 Anchors:
 
@@ -13,7 +12,8 @@ Anchors:
    mapped (``MAPPED_TURN_EVENT_KINDS``) or listed in the documented
    ignore-list (``IGNORED_TURN_EVENT_KINDS``). No silent drops are
    possible: a runtime kind outside both sets fails the test.
-2. **Coverage** — the scripted turns exercise ALL ``ReActEvent`` values.
+2. **Coverage** — the scripted turns exercise every content-bearing core
+   kind the runtime emits on these paths.
 3. **Mapping** — feeding any mapped runtime event yields >= 1 presentation
    event.
 4. **Round-trip** — every presentation event appended to the JSONL
@@ -26,15 +26,12 @@ from __future__ import annotations
 
 import typing
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import pytest
-
-from modex_agent.agents.react.agent import ReActAgent, ReActEvent
+from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import TurnEvent, TurnEventSink
 from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import FinishReason
 from modex_agent.core.provider import LLMProvider
@@ -50,15 +47,8 @@ from modex_agent.core.stream_events import (
 from modex_agent.core.tool_manager import Tool
 from modex_agent.core.turn_events import (
     StopReason,
-    ToolArgsDeltaEvent,
-    TurnErroredEvent,
-    TurnEvent,
     TurnFinishedEvent,
-    TurnReasoningEvent,
-    TurnStartedEvent,
     TurnTextEvent,
-    TurnToolCallEvent,
-    TurnToolResultEvent,
 )
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.presentation import (
@@ -73,19 +63,10 @@ from modex_agent.presentation import (
 )
 from modex_agent.tools.manager import InMemoryToolManager
 
-# ReAct enum values with no core-event translation in this harness: text
-# arrives via the delta/content entries, terminal facts via
-# ``TurnFinishedEvent``, loop bookkeeping is declared projector-ignored.
-_IGNORED_ENUM_VALUES = frozenset(
-    {
-        ReActEvent.MODEL_OUTPUT.value,
-        ReActEvent.ITERATION_START.value,
-        ReActEvent.ITERATION_END.value,
-        ReActEvent.FINAL_OUTPUT.value,
-        ReActEvent.MAX_ITERATIONS.value,
-        ReActEvent.PROGRESS.value,
-    }
-)
+# Core kinds with no presentation mapping (declared projector ignore-list):
+# loop bookkeeping has no generic UI meaning; the terminal facts ride
+# ``turn_finished``.
+_IGNORED_RUNTIME_KINDS = frozenset({"iteration_started", "iteration_finished", "progress"})
 
 # ── Scripted fixtures ──────────────────────────────────────────────────────
 
@@ -132,57 +113,27 @@ class EchoTool(Tool):
         return f"echo: {kwargs.get('text', '')}"
 
 
-@dataclass
-class RecordedCall:
-    """One emitter-seam call as the presentation consumer sees it."""
-
-    kind: str  # "emit" | "delta" | "turn_event" | "complete" | "error" | "stream_end"
-    name: str  # enum value / TurnEvent kind / "" for lifecycle entries
-    data: Any = None
-
-
-class RecordingEmitter(ContentEmitter[ReActEvent]):
-    """Records every runtime event the emitter seam receives."""
+class RecordingSink(TurnEventSink):
+    """Records every runtime turn event the emitter seam receives."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.calls: list[RecordedCall] = []
+        self.events: list[TurnEvent] = []
 
     def wants_streaming(self) -> bool:
         return True
 
-    async def emit(self, event: ReActEvent, data: Any = None) -> None:
-        await super().emit(event, data)
-        self.calls.append(
-            RecordedCall("emit", event.value if isinstance(event, ReActEvent) else str(event), data)
-        )
-
-    async def emit_delta(self, delta: str) -> None:
-        self.calls.append(RecordedCall("delta", "", delta))
-
-    async def emit_content(self, full_content: str) -> None:
-        self.calls.append(RecordedCall("content", "", full_content))
-
-    async def emit_turn_event(self, event: Any) -> None:
-        self.calls.append(RecordedCall("turn_event", event.kind, event))
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        self.calls.append(RecordedCall("complete", "", result))
-
-    async def emit_error(self, error: str) -> None:
-        self.calls.append(RecordedCall("error", "", error))
-
-    async def emit_stream_end(self, resuming: bool = False) -> None:
-        self.calls.append(RecordedCall("stream_end", "", resuming))
+    async def _dispatch(self, event: TurnEvent) -> None:
+        self.events.append(event)
 
 
 async def _run_turn(
     rounds: list[list[LLMStreamEvent] | Exception],
     *,
     max_iterations: int = 10,
-) -> tuple[list[RecordedCall], AgentResult]:
+) -> tuple[list[TurnEvent], Any]:
     provider = ScriptedProvider(rounds)
-    emitter = RecordingEmitter()
+    sink = RecordingSink()
     tool_manager = InMemoryToolManager()
     tool_manager.register(EchoTool())
     ctx = AgentContext(
@@ -193,68 +144,15 @@ async def _run_turn(
         max_iterations=max_iterations,
     )
     agent = ReActAgent(provider)
-    result = await agent.run(ctx, emitter)
-    return emitter.calls, result
+    result = await agent.run(ctx, sink)
+    return sink.events, result
 
 
-def _translate(call: RecordedCall) -> TurnEvent | None:
-    """Consumer-side translation: recorded seam call -> core runtime event.
-
-    Returns ``None`` for inputs with no presentation meaning (declared
-    ignore-list members and emitter-internal lifecycle entries like
-    ``stream_end``).
-    """
-    match call.kind:
-        case "delta":
-            return TurnTextEvent(text=call.data)
-        case "turn_event":
-            return call.data
-        case "emit":
-            match call.name:
-                case ReActEvent.MODEL_REASONING.value:
-                    return TurnReasoningEvent(text=call.data)
-                case ReActEvent.TOOL_ARGS_DELTA.value:
-                    return ToolArgsDeltaEvent(
-                        call_id=call.data.call_id,
-                        tool_name=call.data.tool_name,
-                        args_fragment=call.data.args_fragment,
-                    )
-                case ReActEvent.TOOL_CALL_START.value:
-                    return TurnToolCallEvent(
-                        tool_name=call.data.tool_name,
-                        call_id=call.data.call_id,
-                        arguments=call.data.arguments,
-                    )
-                case ReActEvent.TOOL_CALL_END.value:
-                    payload = call.data
-                    return TurnToolResultEvent(
-                        tool_name=payload.tool_call.tool_name,
-                        call_id=payload.tool_call.call_id,
-                        output=payload.result.message_content(),
-                        error=payload.result.error,
-                        seq=payload.seq,
-                        arguments=payload.tool_call.arguments,
-                    )
-                case ReActEvent.START.value:
-                    return TurnStartedEvent()
-                case ReActEvent.ERROR.value:
-                    return TurnErroredEvent(message=str(call.data))
-                case _:
-                    return None
-        case "complete":
-            return TurnFinishedEvent(
-                stop_reason=call.data.stop_reason, error=call.data.error
-            )
-        case "error":
-            return TurnErroredEvent(message=call.data)
-    return None
-
-
-async def _record_all_turns() -> list[RecordedCall]:
-    calls_a, _ = await _run_turn(
+async def _record_all_turns() -> list[TurnEvent]:
+    events_a, _ = await _run_turn(
         [[TextDelta(text="Hello "), TextDelta(text="world"), Finish(finish_reason=FinishReason.STOP)]]
     )
-    calls_b, _ = await _run_turn(
+    events_b, _ = await _run_turn(
         [
             [
                 ReasoningDelta(text="let me think"),
@@ -268,7 +166,7 @@ async def _record_all_turns() -> list[RecordedCall]:
             [TextDelta(text="all done"), Finish(finish_reason=FinishReason.STOP)],
         ]
     )
-    calls_c, _ = await _run_turn(
+    events_c, _ = await _run_turn(
         [
             [
                 ToolCallComplete(
@@ -280,8 +178,8 @@ async def _record_all_turns() -> list[RecordedCall]:
         * 3,
         max_iterations=1,
     )
-    calls_d, _ = await _run_turn([RuntimeError("provider exploded")])
-    return calls_a + calls_b + calls_c + calls_d
+    events_d, _ = await _run_turn([RuntimeError("provider exploded")])
+    return events_a + events_b + events_c + events_d
 
 
 # ── Anchor 1 + 2: disposition completeness and scripted coverage ───────────
@@ -306,11 +204,23 @@ def test_turn_event_kind_dispositions_are_complete() -> None:
     assert not (mapped & ignored), "a kind cannot be both mapped and ignored"
 
 
-async def test_scripted_turns_exercise_every_react_event_value() -> None:
-    calls = await _record_all_turns()
-    seen = {call.name for call in calls if call.kind == "emit"}
-    expected = {event.value for event in ReActEvent}
-    assert seen == expected, f"script missed: {sorted(expected - seen)}"
+async def test_scripted_turns_exercise_every_content_bearing_kind() -> None:
+    """The scripted paths cover every runtime-produced mapped kind plus the
+    declared ignore-list members (never a silent drop)."""
+    events = await _record_all_turns()
+    seen = {event.kind for event in events}
+    assert {
+        "turn_started",
+        "turn_finished",
+        "turn_errored",
+        "text",
+        "reasoning",
+        "tool_args_delta",
+        "tool_call",
+        "tool_result",
+        "iteration_started",
+        "iteration_finished",
+    } <= seen
 
 
 # ── Anchor 3 + 4: every mapped event projects; JSONL round-trip ────────────
@@ -319,25 +229,19 @@ async def test_scripted_turns_exercise_every_react_event_value() -> None:
 async def test_projector_maps_every_runtime_event_and_round_trips(
     tmp_path: Path,
 ) -> None:
-    calls = await _record_all_turns()
+    events = await _record_all_turns()
     projector = DefaultTurnEventProjector(session_id="conv.main")
     store = PresentationTranscriptStore(tmp_path)
 
     ignored_kinds = DefaultTurnEventProjector.IGNORED_TURN_EVENT_KINDS
     assert {"iteration_started", "iteration_finished", "progress"} == ignored_kinds
-    for call in calls:
-        runtime_event = _translate(call)
-        if runtime_event is None:
-            # Never a silent drop: the untranslated call must be a declared
-            # ignore-list member or an emitter-internal lifecycle entry.
-            assert call.name in _IGNORED_ENUM_VALUES or call.kind in {
-                "stream_end",
-                "content",
-            }, f"silent drop: {call}"
+    for runtime_event in events:
+        produced: list[PresentationEvent] = projector.feed(runtime_event)
+        if runtime_event.kind in ignored_kinds:
+            assert not produced, f"ignored kind produced output: {runtime_event}"
             continue
-        events: list[PresentationEvent] = projector.feed(runtime_event)
-        assert events, f"mapped runtime event produced nothing: {call}"
-        for presentation in events:
+        assert produced, f"mapped runtime event produced nothing: {runtime_event}"
+        for presentation in produced:
             await store.append("conv.main", presentation)
 
     reloaded = await store.load("conv.main")
@@ -405,6 +309,11 @@ def test_projector_lazy_turn_identity_and_latency() -> None:
 
 
 def test_projector_merges_tool_call_arguments_into_result_card() -> None:
+    from modex_agent.core.turn_events import (
+        TurnToolCallEvent,
+        TurnToolResultEvent,
+    )
+
     projector = DefaultTurnEventProjector(session_id="conv.main")
     projector.feed(
         TurnToolCallEvent(tool_name="echo", call_id="c1", arguments={"text": "hi"})
@@ -429,22 +338,23 @@ def test_projector_merges_tool_call_arguments_into_result_card() -> None:
     assert orphan_results[0].arguments is None
 
 
-@pytest.mark.parametrize(
-    ("runtime_event", "expected_kind"),
-    [
+def test_streaming_inputs_project_deltas() -> None:
+    from modex_agent.core.turn_events import (
+        ToolArgsDeltaEvent,
+        TurnReasoningEvent,
+    )
+
+    cases: list[tuple[TurnEvent, str]] = [
         (TurnTextEvent(text="x"), "text_delta"),
         (TurnReasoningEvent(text="x"), "thinking_delta"),
         (
             ToolArgsDeltaEvent(call_id="c", tool_name="t", args_fragment='{"'),
             "tool_args_delta",
         ),
-    ],
-)
-def test_streaming_inputs_project_deltas(
-    runtime_event: TurnEvent, expected_kind: str
-) -> None:
-    projector = DefaultTurnEventProjector(session_id="conv.main")
-    events = projector.feed(runtime_event)
-    deltas = [e for e in events if type(e).__name__ != "TurnStarted"]
-    assert len(deltas) == 1
-    assert deltas[0].kind == expected_kind
+    ]
+    for runtime_event, expected_kind in cases:
+        projector = DefaultTurnEventProjector(session_id="conv.main")
+        events = projector.feed(runtime_event)
+        deltas = [e for e in events if type(e).__name__ != "TurnStarted"]
+        assert len(deltas) == 1
+        assert deltas[0].kind == expected_kind

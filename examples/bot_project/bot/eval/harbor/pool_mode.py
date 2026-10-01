@@ -35,7 +35,7 @@ from bot.workspace.handle import WorkspaceHandle
 from modex_agent.app.models.assembly import ModelRegistryAssembly
 from modex_agent.app.models.choice import ModelChoiceRegistry
 from modex_agent.app.models.provider import ModelSelectionProvider
-from modex_agent.core.emitter import AgentResult
+from modex_agent.core.emitter import AgentResult, TurnBinding
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.messaging.agent_messages import (
@@ -164,12 +164,13 @@ async def execute_pool_entry(
     child_sessions: list[str] = []
     session_turn_counts: dict[str, int] = {}
 
-    def emitter_factory(session_id: str, pool_name: str) -> RootResultCaptureEmitter:
-        _ = pool_name
-        # The framework creates one emitter per agent turn, so this counts
+    def emitter_factory(binding: TurnBinding) -> RootResultCaptureEmitter:
+        # The framework creates one sink per agent turn, so this counts
         # turns for the delegation metrics in usage.json.
-        session_turn_counts[session_id] = session_turn_counts.get(session_id, 0) + 1
-        return RootResultCaptureEmitter(capture, session_id)
+        session_turn_counts[binding.session_id] = (
+            session_turn_counts.get(binding.session_id, 0) + 1
+        )
+        return RootResultCaptureEmitter(capture, binding.session_id)
 
     async def on_subagent_created(child_id: str, parent_id: str, pool_name: str) -> None:
         _ = parent_id, pool_name

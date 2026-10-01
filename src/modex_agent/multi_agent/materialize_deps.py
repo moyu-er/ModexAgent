@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from modex_graph.context import GraphContext
 
 from modex_agent.core.capabilities import ModelInfo
-from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.emitter import TurnEventSinkFactory
 from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.scope import RecordScope
 
@@ -112,7 +112,7 @@ class AgentMaterializeDeps:
         app_config: Any | None = None,
         persistence: Any | None = None,
         memory_store_registry: MemoryStoreRegistry | None = None,
-        emitter_factory: Callable[[str], ContentEmitter] | None = None,
+        emitter_factory: TurnEventSinkFactory | None = None,
         control_origin: str = "",
         component_registry: ComponentRegistry | None = None,
         pool_assembly_ctx: PoolAssemblyContext | None = None,
@@ -241,7 +241,7 @@ class AgentMaterializeDeps:
     backend (or file backend) instead of defaulting to a separate
     ``DefaultMemoryStoreRegistry``. ``None`` for framework tests / non-bot
     callers — falls back to file-based per-workspace registry."""
-    emitter_factory: Callable[[str], ContentEmitter] | None
+    emitter_factory: TurnEventSinkFactory | None
     """WebUI (or other channel) emitter factory for transcript persistence.
 
     Injected post-build via ``turn_runner.set_emitter_factory``. The

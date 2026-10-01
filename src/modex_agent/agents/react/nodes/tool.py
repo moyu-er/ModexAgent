@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from uuid import uuid4
 
-from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
 from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.context import get_agent_ctx
 from modex_agent.agents.react.ids import next_call_id
@@ -40,6 +39,7 @@ from modex_agent.core.turn.models import (
     ToolBatchState,
     ToolCallState,
 )
+from modex_agent.core.turn_events import TurnErroredEvent, TurnToolCallEvent
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
@@ -108,11 +108,10 @@ class ToolNode(Node[ReActTurnState]):
             and isinstance(max_tools, int | float)
             and len(tool_calls) > max_tools
         ):
-            await ctx.runtime.emit(
-                GraphReActEvent.ERROR,
-                f"Exceeded max_tools_per_turn ({max_tools})",
-                ctx,
-            )
+            if agent_ctx.emitter is not None:
+                await agent_ctx.emitter.emit(
+                    TurnErroredEvent(message=f"Exceeded max_tools_per_turn ({max_tools})")
+                )
             state.phase = TurnPhase.FAILED
             self.deliver(None, ReActNode.AFTER, ctx)
             return None
@@ -123,7 +122,7 @@ class ToolNode(Node[ReActTurnState]):
         classifications = self._classify_all(tool_calls, agent_ctx)
         decisions = decisions_of(classifications)
         await record_guard_audit(classifications, tool_calls, ctx)
-        await self._emit_batch(ctx, GraphReActEvent.TOOL_CALL_START, tool_calls)
+        await self._emit_tool_calls(ctx, tool_calls)
         # A hard denial is already a result; persist it before any sibling suspends.
         call_states = [
             ToolCallState(
@@ -336,20 +335,28 @@ class ToolNode(Node[ReActTurnState]):
         names = ", ".join(tc.tool_name for tc in tool_calls)
         return f"calling tools: {names}..."
 
-    async def _emit_batch(
+    async def _emit_tool_calls(
         self,
         ctx: GraphContext[ReActTurnState],
-        event: GraphReActEvent,
         items: list[ToolCall],
     ) -> None:
-        """Emit ``event`` once per item in ``items`` through ``ctx.runtime.emit``.
+        """Emit one ``tool_call`` event per call, preserving batch order.
 
-        Preserves the previous ``for tc in tool_calls: await ctx.emitter.emit(...)``
-        ordering — ``ctx.runtime.emit`` is async and awaited in a loop, so emit
-        order matches the prior direct-emitter path.
+        The per-call ordering contract is inherited from the previous
+        ``for tc in tool_calls: await emitter.emit(...)`` loop — awaited
+        sequentially, so consumers observe the model's call order.
         """
+        emitter = get_agent_ctx(ctx).emitter
+        if emitter is None:
+            return
         for item in items:
-            await ctx.runtime.emit(event, item, ctx)
+            await emitter.emit(
+                TurnToolCallEvent(
+                    tool_name=item.tool_name,
+                    call_id=item.call_id or next_call_id(),
+                    arguments=item.arguments or {},
+                )
+            )
 
 
 __all__ = ["ToolNode"]

@@ -23,7 +23,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 
 | Module | Subdirectories | Purpose |
 |--------|----------------|---------|
-| `core/` | `turn/` | Foundational contracts and values: agents, emitters, `MessageHistory`, system-prompt seams, messages, LLMs, tools, media, session identity, canonical `RecordScope`, the inbox/control/interceptor/terminal/guard/storage contracts, and the turn-execution vocabulary in `core/turn/`. Session persistence lives in `persistence/` (see `core/AGENTS.md`). |
+| `core/` | `turn/` | Foundational contracts and values: agents, the turn-event sink seam (`TurnEventSink`/`KindGate`/`TurnBinding`), `MessageHistory`, system-prompt seams, messages, LLMs, tools, media, session identity, canonical `RecordScope`, the inbox/control/interceptor/terminal/guard/storage contracts, and the turn-execution vocabulary in `core/turn/`. Session persistence lives in `persistence/` (see `core/AGENTS.md`). |
 | `agents/` | `react/`, `external/`, `summarizer/` | Agent implementations — `ReActAgent`, `ExternalAgent`, and `SessionCompactorAgent` (see `agents/AGENTS.md`). |
 | `memory/` | `consolidation/`, `core/`, `injection/`, `layers/`, `prompt_pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Context management, configurable memory scopes, governance, concrete message histories, session/archive/core memory with pluggable split stores, and the domain-owned assembly face (`assembly.py` governance-chain builders; `summarizer.py` session summarizer; `config.py`/`presets.py` memory config + presets) (see `memory/AGENTS.md`). |
 | `persistence/` | `adapters/`, `managers/`, `migrations/`, `session_artifacts/` | Hybrid persistence layer (ADR-0023, ADR-0028~0031). Owns `SessionStore`, `SessionRegistry`, file/SQLite adapters, migrations, and session artifact cleanup. |
@@ -46,7 +46,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `workspace/` | — | Workspace identity, paths, resource lookup, and routing (see `workspace/AGENTS.md`) |
 | `trace/` | — | Tracing and observability — `TraceStore`, `TraceHooks`, `TraceType` |
 | `utils/` | — | Shared tokenizer, frontmatter, XML, file, process, and time helpers |
-| `adapters/` | — | Platform I/O contracts, output adapters, content filters, and the emitter bridge (see `adapters/AGENTS.md`) |
+| `adapters/` | — | Platform I/O contracts, output adapters, content filters, and the `BufferingSink` delivery-policy bridge onto `OutputAdapter` (STREAMING/SEGMENT/TURN) (see `adapters/AGENTS.md`) |
 | `presentation/` | — | Neutral presentation projection over the runtime event seam (ADR-0053, ADR-0054): the closed `PresentationEvent` vocabulary, `TurnEventProjector` ABC + `DefaultTurnEventProjector` (consuming the core `TurnEvent` union directly; eager/lazy turn identity, tool-card pairing, documented ignore-list), and the generic `TranscriptStore` contract with a JSONL implementation + presentation codec and turn-view materialization. Bot WebUI ServerEvents/transcripts are consumer implementations of this contract. |
 | `acp/` | — | ACP (Agent Client Protocol) agent-server surface over editor-spawned stdio — SDK-free backend/handle/interaction seam, `ModexAcpAgent` wire mapping, once-only permission round-trip, scripted backend; NOT in the `@register` channel registry (ADR-0049, see `acp/AGENTS.md`) |
 | `media/` | — | Concrete media storage, MIME classification, and security gates; contracts live in `core/media.py` (see `media/AGENTS.md`) |
@@ -61,7 +61,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 
 ### Working In This Directory
 - `from __future__ import annotations` in all modules
-- Generic type bindings: `Agent[E]`, `ContentEmitter[E]` via `TypeVar("E", bound=AgentEvent)`
+- The single emitter face: `Agent.run(context, emitter: TurnEventSink)` — `emit(TurnEvent)` + `flush()`, `wants_streaming()` override point, `KindGate` filtering in the base `emit`, `CompositeTurnEventSink` fan-out; sink factories take a `TurnBinding` (typed turn identity)
 - Enums/constants over raw strings, Pydantic BaseModels over dicts for config (rules 10-16)
 - Every cross-cutting concern needs an ABC or Protocol — prefer ABC per project rules
 - Frozen Pydantic BaseModels for config/value objects (rule 12); runtime objects hold state/connections

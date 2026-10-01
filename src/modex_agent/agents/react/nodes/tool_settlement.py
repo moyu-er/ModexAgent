@@ -16,11 +16,9 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
 from modex_agent.agents.react.constants import (
     ReActHookPoint,
     ReActNode,
-    ToolCallEndPayload,
 )
 from modex_agent.agents.react.message_builder import build_tool_message
 from modex_agent.agents.react.tool_dedup import (
@@ -41,6 +39,12 @@ from modex_agent.core.turn.enums import (
     TurnPhase,
 )
 from modex_agent.core.turn.models import MessageDelta, ToolBatchState
+from modex_agent.core.turn_events import (
+    IterationFinishedEvent,
+    ProgressEvent,
+    TurnEvent,
+    TurnToolResultEvent,
+)
 from modex_graph.context import GraphContext
 
 if TYPE_CHECKING:
@@ -143,10 +147,8 @@ class ToolBatchExecution:
     async def run(self) -> None:
         if self._node.deduplicator is not None:
             self._node.deduplicator.begin_step()
-        await self._ctx.runtime.emit(
-            GraphReActEvent.PROGRESS,
-            {"hint": self._node.format_hint(self._tool_calls), "tool_hint": True},
-            self._ctx,
+        await self._emit(
+            ProgressEvent(hint=self._node.format_hint(self._tool_calls), tool_hint=True)
         )
         await self._ctx.runtime.dispatch_hook(
             ReActHookPoint.BEFORE_TOOL_EXECUTION,
@@ -185,10 +187,8 @@ class ToolBatchExecution:
             self._ctx,
             data={"results": self._committed_results},
         )
-        await self._ctx.runtime.emit(
-            GraphReActEvent.ITERATION_END,
-            {"iteration": self._state.iteration, "has_tool_calls": True},
-            self._ctx,
+        await self._emit(
+            IterationFinishedEvent(iteration=self._state.iteration, has_tool_calls=True)
         )
 
         if self._denied_encountered:
@@ -207,6 +207,14 @@ class ToolBatchExecution:
         if approval is None:
             return ApprovalDenyPolicy.TOOL_RESULT_ONLY
         return approval.default_deny_policy
+
+    async def _emit(self, event: TurnEvent) -> None:
+        """Emit one turn event through the agent context's sink (no-op
+        when the turn has no sink)."""
+        emitter = self._agent_ctx.emitter
+        if emitter is None:
+            return
+        await emitter.emit(event)
 
     def _prune_same_step_duplicates(self) -> None:
         deduplicator = self._node.deduplicator
@@ -422,14 +430,15 @@ class ToolBatchExecution:
             call_state.status = status or (
                 ToolCallStatus.COMPLETED if stamped.error is None else ToolCallStatus.FAILED
             )
-        await self._ctx.runtime.emit(
-            GraphReActEvent.TOOL_CALL_END,
-            ToolCallEndPayload(
-                tool_call=tc,
-                result=stamped,
+        await self._emit(
+            TurnToolResultEvent(
+                tool_name=tc.tool_name,
+                call_id=tc.call_id,
+                output=stamped.message_content(),
+                error=stamped.error,
                 seq=self._seq_for_index[index],
-            ),
-            self._ctx,
+                arguments=tc.arguments,
+            )
         )
         if register_result and self._node.deduplicator is not None:
             self._node.deduplicator.register_result(
@@ -586,10 +595,8 @@ class ToolBatchExecution:
             self._ctx,
             data={"results": self._committed_results},
         )
-        await self._ctx.runtime.emit(
-            GraphReActEvent.ITERATION_END,
-            {"iteration": self._state.iteration, "has_tool_calls": True},
-            self._ctx,
+        await self._emit(
+            IterationFinishedEvent(iteration=self._state.iteration, has_tool_calls=True)
         )
         self._node.deliver(None, ReActNode.AFTER, self._ctx)
 

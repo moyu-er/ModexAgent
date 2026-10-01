@@ -60,8 +60,9 @@ async def test_compact_preserves_summary_content_in_outcome() -> None:
         session_id="baseline-compact",
     )
 
-    # Then
-    assert outcome.summary == "## Objective\nPinned summary## Objective\nPinned summary"
+    # Then — the folded response is emitted exactly once (the retired
+    # emitter channels double-counted content into the trace buffer).
+    assert outcome.summary == "## Objective\nPinned summary"
 
 
 async def test_consolidate_preserves_changed_flag_in_outcome(

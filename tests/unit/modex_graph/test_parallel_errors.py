@@ -43,25 +43,23 @@ was NOT modified):
 
 - ``ReactGraphRuntime.__init__`` stores 7 service references
   (``_hook_runner``, ``_interceptor_chain``, ``_governance``,
-  ``_control_channel``, ``_snapshot_policy``, ``_turn_state_store``,
-  ``_emitter``). These are set once at construction and never mutated
+  ``_control_channel``, ``_snapshot_policy``, ``_turn_state_store``).
+  These are set once at construction and never mutated
   afterward — they are effectively immutable references.
 - All methods (``before_node``, ``after_node``, ``dispatch_hook``,
   ``around``, ``apply_governance``, ``drain_control``,
-  ``capture_snapshot``, ``emit``) are read-only on ``self``: they only
+  ``capture_snapshot``) are read-only on ``self``: they only
   read the service references and delegate. No counters, lists, or
-  dicts on ``self`` are mutated.
+  dicts on ``self`` are mutated. (The former ``emit`` string wrapper
+  was removed with the unified turn-event stream cutover — nodes emit
+  core ``TurnEvent`` objects through the turn sink directly.)
 - ``before_node`` and ``after_node`` are empty no-ops for ReAct —
   trivially safe under concurrent invocation.
-- ``emit`` delegates to ``self._emitter.emit(...)``. The emitter is a
-  shared ``ContentEmitter`` instance; concurrent calls are independent
-  (each call emits one event). Safety depends on the emitter
-  implementation, not on ``ReactGraphRuntime``.
 - Conclusion: ``ReactGraphRuntime`` has NO shared mutable state on
   ``self``. It is safe for concurrent invocation of
-  ``before_node`` / ``after_node`` / ``emit`` as long as the
+  ``before_node`` / ``after_node`` as long as the
   underlying services (``HookRunner``, ``InterceptorChain``,
-  ``ContentEmitter``, etc.) are themselves safe. This is a
+  etc.) are themselves safe. This is a
   framework-wide assumption — the graph engine does not introduce
   new shared-state hazards.
 """
@@ -514,18 +512,18 @@ class TestReactGraphRuntimeAudit:
     def test_react_graph_runtime_has_no_mutable_instance_state(self) -> None:
         """ReactGraphRuntime stores only service references in __init__.
 
-        The constructor assigns 7 keyword-only arguments to private
+        The constructor assigns 6 keyword-only arguments to private
         attributes. None of these are mutable containers (lists, dicts,
         sets) that grow during execution — they are service handles
-        (HookRunner, InterceptorChain, etc.) whose own thread-safety is
-        a separate concern.
+        (HookRunner, InterceptorChain, etc.) whose own thread-safety is a
+        separate concern.
         """
         from modex_agent.agents.react.runtime import ReactGraphRuntime
 
         # Construct with all-None services — should succeed and store
-        # exactly the 7 service references.
+        # exactly the 6 service references.
         rt = ReactGraphRuntime()
-        # The 7 service attributes exist and are None.
+        # The 6 service attributes exist and are None.
         expected_attrs = {
             "_hook_runner",
             "_interceptor_chain",
@@ -533,7 +531,6 @@ class TestReactGraphRuntimeAudit:
             "_control_channel",
             "_snapshot_policy",
             "_turn_state_store",
-            "_emitter",
         }
         actual_attrs = {
             attr for attr in dir(rt) if attr.startswith("_") and not attr.startswith("__")

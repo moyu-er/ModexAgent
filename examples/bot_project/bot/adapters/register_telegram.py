@@ -29,12 +29,11 @@ from bot.adapters.channels import (
     get_conv_channel,
     set_conv_channel,
 )
-from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import BufferingSink
 from modex_agent.adapters.output import OutputAdapter
-from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.core.emitter import AgentResult
-from modex_agent.core.events import EmitterConfig
+from modex_agent.core.emitter import KindGate, TurnBinding, TurnEventSink
 from modex_agent.core.session_id import session_id_prefix_of
+from modex_agent.core.turn_events import TurnEvent
 
 if TYPE_CHECKING:
     from bot.adapters.telegram import TelegramInputAdapter, TelegramOutputAdapter
@@ -61,7 +60,7 @@ def build_telegram(
     tuple[
         TelegramInputAdapter,
         TelegramOutputAdapter,
-        Callable[[str, str], StreamingAwareEmitter[ReActEvent]],
+        Callable[[TurnBinding], TurnEventSink],
     ]
     | None
 ):
@@ -172,66 +171,52 @@ def build_telegram(
 
     out = TelegramOutputAdapter(bot=application.bot)
 
-    def emitter_factory(
-        session_id: str, pool: str
-    ) -> StreamingAwareEmitter[ReActEvent]:
-        """Create a channel-filtered Telegram emitter for *session_id*.
+    def emitter_factory(binding: TurnBinding) -> TurnEventSink:
+        """Create a channel-filtered Telegram sink for the bound turn.
 
-        Mirrors the QQ register's ``_ChannelFilteredQQEmitter``: the emitter
+        Mirrors the QQ register's ``_ChannelFilteredQQEmitter``: the sink
         silently drops all output when the conversation did not originate on
         Telegram (no cross-talk to WebUI/QQ users).
         """
-        _ = pool
+        session_id = binding.session_id
 
-        class _ChannelFilteredTelegramEmitter(StreamingAwareEmitter[ReActEvent]):
-            """Telegram emitter that only sends for Telegram-originated convs."""
+        class _ChannelFilteredTelegramEmitter(BufferingSink):
+            """Telegram sink that only sends for Telegram-originated convs."""
 
             def __init__(
                 self,
                 output_adapter: OutputAdapter,
                 sid: str,
-                config: EmitterConfig | None = None,
+                gate: KindGate | None = None,
             ) -> None:
-                super().__init__(output_adapter, sid, config)
+                super().__init__(output_adapter, sid, gate)
                 # session_id format: {conv_id}.{agent}[.{invocation_id}]
                 self._conv_id = session_id_prefix_of(sid)
 
-            async def emit_delta(self, delta: str) -> None:
+            async def _dispatch(self, event: TurnEvent) -> None:
                 if get_conv_channel(self._conv_id) != "telegram":
                     return
-                await super().emit_delta(delta)
-
-            async def emit_content(self, full_content: str) -> None:
-                if get_conv_channel(self._conv_id) != "telegram":
-                    return
-                await super().emit_content(full_content)
-
-            async def emit_stream_end(self, resuming: bool = False) -> None:
-                if get_conv_channel(self._conv_id) != "telegram":
-                    return
-                await super().emit_stream_end(resuming)
-
-            async def emit_complete(self, result: AgentResult) -> None:
-                if get_conv_channel(self._conv_id) != "telegram":
-                    return
-                await super().emit_complete(result)
-
-            async def emit_error(self, error: str) -> None:
-                if get_conv_channel(self._conv_id) != "telegram":
-                    return
-                await super().emit_error(error)
+                await super()._dispatch(event)
 
         return _ChannelFilteredTelegramEmitter(
             output_adapter=out,
             sid=session_id,
-            config=EmitterConfig(
-                enabled_events={
-                    "model_output",
-                    "tool_call_start",
-                    "tool_call_end",
-                    "final_output",
-                    "error",
-                }
+            gate=KindGate(
+                # Migrated from the old enabled_events set (model_output →
+                # text, tool_call_start → tool_call, tool_call_end →
+                # tool_result, final_output → turn_finished, error →
+                # turn_errored); iteration_finished added as the SEGMENT
+                # flush boundary.
+                enabled_kinds=frozenset(
+                    {
+                        "text",
+                        "tool_call",
+                        "tool_result",
+                        "turn_finished",
+                        "turn_errored",
+                        "iteration_finished",
+                    }
+                )
             ),
         )
 

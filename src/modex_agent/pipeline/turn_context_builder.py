@@ -32,10 +32,10 @@ if TYPE_CHECKING:
     from modex_agent.commands.skill import SkillResolver
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.agent import Agent, AgentContext
-    from modex_agent.core.emitter import ContentEmitter
+    from modex_agent.core.emitter import TurnEventSink, TurnEventSinkFactory
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.tool_manager import ToolManager
-    from modex_agent.core.turn.models import TurnSnapshot
+    from modex_agent.core.turn.models import TurnIdentity, TurnSnapshot
     from modex_agent.core.turn.store import TurnStateStore
     from modex_agent.hook.runner import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from modex_agent.utils.context_builder import MultiAgentContextBuilder
     from modex_graph.context import GraphContext
 
-from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import BufferingSink
 from modex_agent.approval.response import parse_input_command
 from modex_agent.commands.models import CommandContext
 from modex_agent.core.agent import AgentContext
@@ -150,7 +150,7 @@ class TurnContextBuilder:
         hook_runner: HookRunner | None,
         interceptor_chain: InterceptorChain | None,
         control_channel: InMemoryControlChannel | None,
-        emitter_factory: Callable[..., ContentEmitter] | None,
+        emitter_factory: TurnEventSinkFactory | None,
         output_adapter: OutputAdapter,
         turn_store: TurnStateStore | None,
         registry: TurnSessionRegistry,
@@ -213,11 +213,11 @@ class TurnContextBuilder:
         self._interceptor_chain = value
 
     @property
-    def emitter_factory(self) -> Callable[..., ContentEmitter[Any]] | None:
+    def emitter_factory(self) -> TurnEventSinkFactory | None:
         return self._emitter_factory
 
     @emitter_factory.setter
-    def emitter_factory(self, value: Callable[..., ContentEmitter[Any]] | None) -> None:
+    def emitter_factory(self, value: TurnEventSinkFactory | None) -> None:
         self._emitter_factory = value
 
     @property
@@ -429,14 +429,21 @@ class TurnContextBuilder:
         pool_data: PoolDataSnapshot | None = None,
         workspace: Path | None = None,
         turn_descriptor: TurnContextDescriptor | None = None,
-    ) -> tuple[AgentContext, ContentEmitter]:
-        """Build AgentContext and emitter for the turn.
+        resume_identity: TurnIdentity | None = None,
+    ) -> tuple[AgentContext, TurnEventSink]:
+        """Build AgentContext and the turn's event sink.
+
+        ``resume_identity`` restores the ORIGINAL turn identity on an
+        approval-resume attempt (the suspended snapshot's identity), so the
+        sink factory's :class:`TurnBinding` carries the same ``turn_id``
+        across suspend/resume with ``resumed=True``. ``None`` mints a fresh
+        turn identity.
         """
 
         # Ensure per-session injection queue exists
         self._registry.get_or_create_queue(session.session_id)
 
-        # ---- typed TurnIdentity (new) ----
+        # ---- typed TurnIdentity ----
         from uuid import uuid4
 
         from modex_agent.core.turn.models import TurnIdentity
@@ -446,11 +453,14 @@ class TurnContextBuilder:
             if self._agent_descriptor is not None
             else self._agent.name
         )
-        turn_identity = TurnIdentity(
-            agent_id=agent_id,
-            session=session,
-            turn_id=uuid4().hex,
-        )
+        if resume_identity is not None:
+            turn_identity = resume_identity
+        else:
+            turn_identity = TurnIdentity(
+                agent_id=agent_id,
+                session=session,
+                turn_id=uuid4().hex,
+            )
 
         agent_context = AgentContext(
             system_prompt=context_state.system_prompt,
@@ -540,11 +550,24 @@ class TurnContextBuilder:
                     parent_span_id
                 )
 
-        # Emitter selection
+        # Sink selection: the bound factory receives the typed turn identity
+        # (same turn id across an approval suspend/resume; ``resumed`` marks
+        # the resume attempt). No factory → the buffering default sink.
+        # ``pool`` stays ``None`` here — the pool assembly layer that knows
+        # the pool name injects it when it wraps the business factory.
+        from modex_agent.core.emitter import TurnBinding
+
+        binding = TurnBinding(
+            session_id=session.session_id,
+            agent_name=agent_id,
+            workspace=str(workspace) if workspace is not None else None,
+            turn_id=turn_identity.turn_id,
+            resumed=resume_identity is not None,
+        )
         if self._emitter_factory:
-            emitter = self._emitter_factory(session.session_id)
+            emitter = self._emitter_factory(binding)
         else:
-            emitter = StreamingAwareEmitter(
+            emitter = BufferingSink(
                 output_adapter=self._output_adapter,
                 session_id=session.session_id,
                 send_timeout=self._safety.turn.output_send_timeout_seconds,

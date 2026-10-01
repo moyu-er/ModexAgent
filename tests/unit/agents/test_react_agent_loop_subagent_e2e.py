@@ -20,30 +20,10 @@ from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
 
 class _FakeEmitter:
-    def __init__(self):
-        self.completed = None
-        self.contents = []
-
     def wants_streaming(self):
         return False
 
-    async def emit(self, *a, **k):
-        pass
-
-    async def emit_delta(self, d):
-        pass
-
-    async def emit_content(self, full):
-        if full:
-            self.contents.append(full)
-
-    async def emit_stream_end(self, resuming=False):
-        pass
-
-    async def emit_complete(self, result):
-        self.completed = result
-
-    async def emit_error(self, error):
+    async def emit(self, event):
         pass
 
 

@@ -17,7 +17,7 @@ from modex_agent.commands.models import (
     SlashCommandInvocation,
 )
 from modex_agent.core.agent import Agent, AgentContext
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import AgentResult, TurnEventSink
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolManager
@@ -202,8 +202,6 @@ class FakeCommandProcessor(CommandProcessor):
 
 
 class FakeAgent(Agent):
-    event_enum = None  # type: ignore[assignment]
-
     def __init__(self) -> None:
         self.runs = 0
         self.last_messages: list[dict[str, object]] = []
@@ -215,7 +213,7 @@ class FakeAgent(Agent):
     async def run(
         self,
         context: AgentContext,
-        emitter: ContentEmitter,
+        emitter: TurnEventSink,
     ) -> AgentResult:
         self.runs += 1
         self.last_messages = await context.to_messages()

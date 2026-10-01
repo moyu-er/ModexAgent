@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from modex_agent.agents.react.constants import ReActEvent, ReActHookPoint, ReActNode
+from modex_agent.agents.react.constants import ReActHookPoint, ReActNode
 from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.tool_dedup import ToolCallDeduplicator
@@ -18,6 +18,7 @@ from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.approval.runtime import ApprovalClassifier, ApprovalRuntime
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.emitter import TurnEvent, TurnEventSink
 from modex_agent.core.control import (
     AgentCancelledError,
     ControlCommand,
@@ -37,6 +38,12 @@ from modex_agent.core.turn.approval_types import (
     ClassificationSource,
     GuardAuditFact,
     ToolClassification,
+)
+from modex_agent.core.turn_events import (
+    IterationFinishedEvent,
+    ProgressEvent,
+    TurnToolCallEvent,
+    TurnToolResultEvent,
 )
 from modex_agent.core.turn.enums import (
     ToolBatchStatus,
@@ -171,6 +178,17 @@ class _CountingReactGraphRuntime(ReactGraphRuntime):
         await super().drain_control(ctx)
 
 
+class _CapturingSink(TurnEventSink):
+    """Appends every emitted turn event into the shared list."""
+
+    def __init__(self, events: list[TurnEvent]) -> None:
+        super().__init__()
+        self._events = events
+
+    async def _dispatch(self, event: TurnEvent) -> None:
+        self._events.append(event)
+
+
 async def _until(predicate: Callable[[], bool]) -> None:
     for _ in range(1000):
         if predicate():
@@ -221,12 +239,8 @@ async def _start_batch(
     await ctx.agent_ctx.history.append(
         ChatMessage(role=MessageRole.ASSISTANT, content="", tool_calls=calls)
     )
-    events: list[tuple[ReActEvent, Any]] = []
-
-    async def _capture(event_type, data, ctx) -> None:
-        events.append((event_type, data))
-
-    ctx.runtime.emit = _capture
+    events: list[TurnEvent] = []
+    ctx.agent_ctx.emitter = _CapturingSink(events)
     hooks: list[tuple[Any, Any]] = []
 
     async def _capture_hook(hook_point, ctx, data=None) -> None:
@@ -249,14 +263,14 @@ async def _assert_cancelled_batch(ctx, events, hooks, expected_ids: list[str]) -
     history = await ctx.agent_ctx.history.to_list()
     tool_messages = [message for message in history if message.role == MessageRole.TOOL]
     batch = ctx.state.tool_batches[-1]
-    end_payloads = [data for event, data in events if event == ReActEvent.TOOL_CALL_END]
+    end_payloads = [e for e in events if isinstance(e, TurnToolResultEvent)]
     after_payloads = [
         data for hook, data in hooks if hook == ReActHookPoint.AFTER_TOOL_EXECUTION
     ]
     assert [message.tool_call_id for message in tool_messages] == expected_ids
     assert len(tool_messages) == len(expected_ids)
-    assert [payload.tool_call.call_id for payload in end_payloads] == expected_ids
-    assert [payload.seq for payload in end_payloads] == list(range(len(expected_ids)))
+    assert [event.call_id for event in end_payloads] == expected_ids
+    assert [event.seq for event in end_payloads] == list(range(len(expected_ids)))
     assert all(call.result is not None for call in batch.calls)
     assert all(
         call.status
@@ -298,21 +312,18 @@ async def test_max_one_matches_recorded_serial_golden(make_runtime, make_graph_c
 
     history = await ctx.agent_ctx.history.to_list()
     tool_messages = [message for message in history if message.role == MessageRole.TOOL]
-    end_payloads = [data for event, data in events if event == ReActEvent.TOOL_CALL_END]
+    end_payloads = [e for e in events if isinstance(e, TurnToolResultEvent)]
     batch = ctx.state.tool_batches[-1]
     assert [(message.tool_call_id, message.content) for message in tool_messages] == [
         ("c1", [TextPart(text="done-1")]),
         ("c2", [TextPart(text="done-2")]),
     ]
     assert [delta.message.tool_call_id for delta in ctx.state.message_delta] == ["c1", "c2"]
-    assert [
-        (payload.tool_call.call_id, payload.result.call_id, payload.seq)
-        for payload in end_payloads
-    ] == [
-        ("c1", "c1", 0),
-        ("c2", "c2", 1),
+    assert [(event.call_id, event.seq) for event in end_payloads] == [
+        ("c1", 0),
+        ("c2", 1),
     ]
-    assert [payload.result.message_content() for payload in end_payloads] == [
+    assert [event.output for event in end_payloads] == [
         "done-1",
         "done-2",
     ]
@@ -393,14 +404,14 @@ async def test_tool_seq_counter_continues_across_batches(
 
     await ToolNode(ToolExecutor()).run(ctx)
 
-    end_payloads = [data for event, data in events if event == ReActEvent.TOOL_CALL_END]
-    assert [payload.tool_call.call_id for payload in end_payloads] == [
+    end_payloads = [e for e in events if isinstance(e, TurnToolResultEvent)]
+    assert [event.call_id for event in end_payloads] == [
         "c1",
         "c2",
         "c3",
         "c4",
     ]
-    assert [payload.seq for payload in end_payloads] == [0, 1, 2, 3]
+    assert [event.seq for event in end_payloads] == [0, 1, 2, 3]
     assert ctx.state.custom[TurnCustomKey.TOOL_SEQ_COUNTER] == 4
 
 
@@ -527,7 +538,7 @@ async def test_commit_cursor_waits_for_contiguous_model_order_slots(
     assert parallel_start
     tool.release("2")
     await _until(
-        lambda: any(event == ReActEvent.TOOL_CALL_END for event, _data in events)
+        lambda: any(isinstance(e, TurnToolResultEvent) for e in events)
     )
     before_first = [
         message
@@ -571,18 +582,18 @@ async def test_end_events_follow_completion_order(make_runtime, make_graph_ctx) 
     assert parallel_start
     tool.release("2")
     await _until(
-        lambda: len([event for event, _data in events if event == ReActEvent.TOOL_CALL_END])
+        lambda: len([e for e in events if isinstance(e, TurnToolResultEvent)])
         == 1
     )
     tool.release("1")
     await task
 
-    ends = [data for event, data in events if event == ReActEvent.TOOL_CALL_END]
-    assert [(payload.tool_call.call_id, payload.seq) for payload in ends] == [
+    ends = [e for e in events if isinstance(e, TurnToolResultEvent)]
+    assert [(event.call_id, event.seq) for event in ends] == [
         ("c2", 1),
         ("c1", 0),
     ]
-    assert [payload.result.message_content() for payload in ends] == [
+    assert [event.output for event in ends] == [
         "done-2",
         "done-1",
     ]
@@ -605,8 +616,8 @@ async def test_end_events_match_same_tick_worker_settlement_order(
     tool.release_all()
     await task
 
-    ends = [data for event, data in events if event == ReActEvent.TOOL_CALL_END]
-    assert [payload.tool_call.arguments["id"] for payload in ends] == log.finished
+    ends = [e for e in events if isinstance(e, TurnToolResultEvent)]
+    assert [event.arguments["id"] for event in ends] == log.finished
 
 
 async def test_duplicate_calls_execute_leader_once_and_complete_each_follower(
@@ -632,12 +643,11 @@ async def test_duplicate_calls_execute_leader_once_and_complete_each_follower(
     tool.release("same")
     await task
 
-    ends = [data for event, data in events if event == ReActEvent.TOOL_CALL_END]
+    ends = [e for e in events if isinstance(e, TurnToolResultEvent)]
     history = await ctx.agent_ctx.history.to_list()
     assert started_before_release == ["same"]
-    assert [payload.tool_call.call_id for payload in ends] == ["c1", "c2", "c3"]
-    assert [payload.result.call_id for payload in ends] == ["c1", "c2", "c3"]
-    assert [payload.seq for payload in ends] == [0, 1, 2]
+    assert [event.call_id for event in ends] == ["c1", "c2", "c3"]
+    assert [event.seq for event in ends] == [0, 1, 2]
     assert [message.tool_call_id for message in history if message.role == MessageRole.TOOL] == [
         "c1",
         "c2",
@@ -931,7 +941,7 @@ async def test_internal_scheduler_failure_drains_started_workers_then_rethrows(
     assert drained_before_rethrow
     assert not third_started
     assert [message for message in history if message.role == MessageRole.TOOL] == []
-    assert not any(event == ReActEvent.ITERATION_END for event, _data in events)
+    assert not any(isinstance(e, IterationFinishedEvent) for e in events)
     assert ctx.state.phase == TurnPhase.FAILED
     assert batch.status == ToolBatchStatus.FAILED
     assert batch.calls[0].status == ToolCallStatus.FAILED
@@ -989,7 +999,7 @@ async def test_failure_drain_cleans_up_cancelled_sibling_without_synthesis(
     batch = ctx.state.tool_batches[-1]
     assert log.cancelled == ["cancelled"]
     assert [message for message in history if message.role == MessageRole.TOOL] == []
-    assert not any(event == ReActEvent.TOOL_CALL_END for event, _data in events)
+    assert not any(isinstance(e, TurnToolResultEvent) for e in events)
     assert all(call.result is None for call in batch.calls)
     assert ctx.state.phase == TurnPhase.FAILED
     assert batch.status == ToolBatchStatus.FAILED
@@ -1012,11 +1022,12 @@ async def test_start_events_precede_batch_hooks_drain_and_invocation(
         ChatMessage(role=MessageRole.ASSISTANT, content="", tool_calls=calls)
     )
 
-    async def _emit(event, data, _ctx) -> None:
-        if event == ReActEvent.TOOL_CALL_START:
-            order.append(f"start:{data.call_id}")
-        elif event == ReActEvent.PROGRESS:
-            order.append("progress")
+    class _OrderSink(TurnEventSink):
+        async def _dispatch(self, event: TurnEvent) -> None:
+            if isinstance(event, TurnToolCallEvent):
+                order.append(f"start:{event.call_id}")
+            elif isinstance(event, ProgressEvent):
+                order.append("progress")
 
     async def _hook(hook_point, _ctx, data=None) -> None:
         order.append(hook_point.value)
@@ -1029,7 +1040,7 @@ async def test_start_events_precede_batch_hooks_drain_and_invocation(
         return ToolResult.from_text(tool_call.tool_name, "done")
 
     executor = _InjectedToolExecutor(_execute)
-    ctx.runtime.emit = _emit
+    ctx.agent_ctx.emitter = _OrderSink()
     ctx.runtime.dispatch_hook = _hook
     ctx.runtime.drain_control = _drain
 
@@ -1065,15 +1076,14 @@ async def test_same_key_with_different_decisions_is_not_pruned(
 
     await task
 
-    ends = [data for event, data in events if event == ReActEvent.TOOL_CALL_END]
+    ends = [e for e in events if isinstance(e, TurnToolResultEvent)]
     history = await ctx.agent_ctx.history.to_list()
     tool_messages = [message for message in history if message.role == MessageRole.TOOL]
-    assert [payload.tool_call.call_id for payload in ends] == ["c1", "c2"]
+    assert [event.call_id for event in ends] == ["c1", "c2"]
     assert [call.decision for call in ctx.state.tool_batches[-1].calls] == [
         ApprovalDecision.DENIED,
         ApprovalDecision.PREEMPTED,
     ]
-    assert [payload.result.call_id for payload in ends] == ["c1", "c2"]
     assert "Denied by policy" in str(tool_messages[0].content)
     assert "Skipped" in str(tool_messages[1].content)
     assert log.started == []

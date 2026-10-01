@@ -15,7 +15,6 @@ Key verification points:
 - ``apply_governance`` delegates to ``ContextGovernance.apply``.
 - ``drain_control`` calls ``drain_control_channel`` helper.
 - ``capture_snapshot`` calls ``SnapshotPolicy.capture`` + ``TurnStateStore.save_turn``.
-- ``emit`` maps event_type string to ``ReActEvent`` enum and calls ``emitter.emit``.
 - ``before_node`` / ``after_node`` are no-ops.
 """
 
@@ -25,7 +24,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.constants import ReActHookPoint, ReActScope
 from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.state import ReActTurnState
@@ -85,7 +83,6 @@ class TestReactGraphRuntimeConstruction:
         assert rt._control_channel is None
         assert rt._snapshot_policy is None
         assert rt._turn_state_store is None
-        assert rt._emitter is None
 
     def test_hook_point_map_covers_all_react_hook_points(self) -> None:
         for hp in ReActHookPoint:
@@ -342,53 +339,14 @@ class TestCaptureSnapshot:
         mock_policy.capture.assert_not_called()
 
 
-class TestEmit:
-    async def test_emits_known_event(self) -> None:
-        from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
+class TestNoEmitChannel:
+    async def test_runtime_does_not_override_emit(self) -> None:
+        """The retired string→enum→emitter bridge is gone: nodes emit core
+        TurnEvent objects through the agent context's sink directly. The
+        engine ABC's no-op default is inherited unchanged."""
+        from modex_graph.runtime import GraphRuntime
 
-        mock_emitter = MagicMock()
-        mock_emitter.emit = AsyncMock()
-        rt = ReactGraphRuntime(emitter=mock_emitter)
-        agent_ctx = _make_agent_ctx()
-        ctx = _make_graph_ctx(agent_ctx, rt)
-
-        payload = {"content": "hello"}
-        await rt.emit(GraphReActEvent.MODEL_OUTPUT, payload, ctx)
-
-        mock_emitter.emit.assert_awaited_once_with(ReActEvent.MODEL_OUTPUT, payload)
-
-    async def test_emits_all_known_events(self) -> None:
-        from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
-
-        mock_emitter = MagicMock()
-        mock_emitter.emit = AsyncMock()
-        rt = ReactGraphRuntime(emitter=mock_emitter)
-        agent_ctx = _make_agent_ctx()
-        ctx = _make_graph_ctx(agent_ctx, rt)
-
-        for graph_ev in GraphReActEvent:
-            mock_emitter.emit.reset_mock()
-            await rt.emit(graph_ev, None, ctx)
-            mock_emitter.emit.assert_awaited_once()
-            emitted_event = mock_emitter.emit.call_args.args[0]
-            assert isinstance(emitted_event, ReActEvent)
-            assert emitted_event.value == graph_ev.value
-
-    async def test_noop_when_no_emitter(self) -> None:
-        rt = ReactGraphRuntime()
-        agent_ctx = _make_agent_ctx()
-        ctx = _make_graph_ctx(agent_ctx, rt)
-        await rt.emit("model_output", {"data": 1}, ctx)
-
-    async def test_skips_unknown_event_type(self) -> None:
-        mock_emitter = MagicMock()
-        mock_emitter.emit = AsyncMock()
-        rt = ReactGraphRuntime(emitter=mock_emitter)
-        agent_ctx = _make_agent_ctx()
-        ctx = _make_graph_ctx(agent_ctx, rt)
-
-        await rt.emit("nonexistent_event", None, ctx)
-        mock_emitter.emit.assert_not_awaited()
+        assert ReactGraphRuntime.emit is GraphRuntime.emit
 
 
 class TestEngineAutoMethods:

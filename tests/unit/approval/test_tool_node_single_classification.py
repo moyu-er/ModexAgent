@@ -27,7 +27,7 @@ from modex_agent.agents.react.state import (
 from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.approval.runtime import ApprovalClassifier, ApprovalRuntime
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import TurnEvent, TurnEventSink
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo
@@ -84,15 +84,8 @@ class _CountingClassifier(ApprovalClassifier):
         return self._inner.classify(tool_call, ctx)
 
 
-class _Emitter(ContentEmitter):
-    event_enum = object
-
-    async def emit(self, event, data=None): ...
-    async def emit_delta(self, delta: str): ...
-    async def emit_content(self, full_content: str): ...
-    async def emit_stream_end(self, resuming: bool = False): ...
-    async def emit_complete(self, result: AgentResult): ...
-    async def emit_error(self, error: str): ...
+class _Sink(TurnEventSink):
+    async def _dispatch(self, event: TurnEvent): ...
 
     def wants_streaming(self) -> bool:
         return False
@@ -201,10 +194,10 @@ def _make_graph_ctx(
     )
     for node_id in ("tool", "llm", "after", "start"):
         coordinator.register_node(node_id)
+    agent_ctx.emitter = _Sink()
     return ReActGraphContext(
         state=state,
         runtime=ReactGraphRuntime(
-            emitter=_Emitter(),  # type: ignore[arg-type]
             snapshot_policy=ReActSnapshotPolicy(),
             turn_state_store=services.turn_store,
         ),

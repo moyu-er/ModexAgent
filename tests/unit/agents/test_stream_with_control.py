@@ -8,49 +8,45 @@ tests/unit/agents/react/test_llm_client.py; this file covers full-turn behavior.
 """
 
 import asyncio
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.core.emitter import AgentResult, TurnEvent, TurnEventSink
 from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
+from modex_agent.core.turn_events import (
+    IterationFinishedEvent,
+    TurnFinishedEvent,
+    TurnTextEvent,
+)
 
 
-class _StreamingEmitter:
-    """Emitter that wants streaming and captures events."""
+class _StreamingSink(TurnEventSink):
+    """Sink that wants streaming and captures events."""
 
     def __init__(self):
-        self.events: list = []
+        super().__init__()
+        self.events: list[TurnEvent] = []
         self.deltas: list[str] = []
-        self._stream_end_resuming: bool | None = None
-        self.completed: Any = None
-        self.error: str | None = None
+        self.completed: AgentResult | None = None
 
     def wants_streaming(self) -> bool:
         return True
 
-    async def emit(self, event, data=None):
-        self.events.append((event, data))
+    async def _dispatch(self, event: TurnEvent):
+        self.events.append(event)
+        match event:
+            case TurnTextEvent(text=text):
+                if text:
+                    self.deltas.append(text)
+            case TurnFinishedEvent(stop_reason=stop_reason, error=error):
+                self.completed = AgentResult(error=error, stop_reason=stop_reason)
 
-    async def emit_delta(self, delta: str):
-        if delta:
-            self.deltas.append(delta)
-
-    async def emit_content(self, full: str):
-        if full:
-            self.deltas.append(full)
-
-    async def emit_stream_end(self, resuming: bool = False):
-        self._stream_end_resuming = resuming
-
-    async def emit_complete(self, result):
-        self.completed = result
-
-    async def emit_error(self, error: str):
-        self.error = error
+    def iteration_finished_events(self) -> list[IterationFinishedEvent]:
+        return [e for e in self.events if isinstance(e, IterationFinishedEvent)]
 
 
 def _make_fake_ctx(*, interceptor_chain=None, control_channel=None):
@@ -133,7 +129,7 @@ class TestStreamWithControlPreservesToolCalls:
 
         provider = StreamingProvider()
         agent = ReActAgent(provider=provider)
-        emitter = _StreamingEmitter()
+        emitter = _StreamingSink()
         ctx = _make_fake_ctx(interceptor_chain=fake_chain)
 
         # Act
@@ -148,10 +144,11 @@ class TestStreamWithControlPreservesToolCalls:
             f"Expected assistant message with tool_calls, got: {result.messages}"
         )
 
-        # Assert: emitter should know this is a tool-call turn (not final)
-        assert emitter._stream_end_resuming is True, (
-            f"emit_stream_end should be called with resuming=True when tool_calls exist, "
-            f"got resuming={emitter._stream_end_resuming}"
+        # Assert: the sink should observe the tool-call iteration boundary
+        iteration_events = emitter.iteration_finished_events()
+        assert iteration_events and any(e.has_tool_calls for e in iteration_events), (
+            "iteration_finished should carry has_tool_calls=True when tool_calls exist, "
+            f"got: {iteration_events}"
         )
 
     async def test_no_tool_calls_when_llm_returns_none(self):
@@ -197,13 +194,16 @@ class TestStreamWithControlPreservesToolCalls:
 
         provider = StreamingProviderNoTools()
         agent = ReActAgent(provider=provider)
-        emitter = _StreamingEmitter()
+        emitter = _StreamingSink()
         ctx = _make_fake_ctx(interceptor_chain=fake_chain)
 
         result = await agent.run(ctx, emitter)
 
         assert result.content == "Hello!"
-        assert emitter._stream_end_resuming is False
+        iteration_events = emitter.iteration_finished_events()
+        assert iteration_events and all(
+            not e.has_tool_calls for e in iteration_events
+        )
 
 
 class TestMidTurnCancelViaInterceptor:
@@ -261,7 +261,7 @@ class TestMidTurnCancelViaInterceptor:
 
         provider = CancellableStreamProvider()
         agent = ReActAgent(provider=provider)
-        emitter = _StreamingEmitter()
+        emitter = _StreamingSink()
         ctx = _make_fake_ctx(interceptor_chain=chain, control_channel=channel)
 
         result = await agent.run(ctx, emitter)
@@ -314,7 +314,7 @@ class TestMidTurnCancelViaInterceptor:
 
         provider = SlowStreamingProvider()
         agent = ReActAgent(provider=provider)
-        emitter = _StreamingEmitter()
+        emitter = _StreamingSink()
         ctx = _make_fake_ctx(interceptor_chain=chain, control_channel=channel)
 
         # Kick off the turn (it will block inside chat_stream at chunk_gate).
@@ -339,7 +339,7 @@ class TestMidTurnCancelViaInterceptor:
 
         assert emitter.completed is not None, (
             "LlmCancelInterceptor must raise AgentCancelledError after draining the "
-            "channel, and ReActAgent must emit turn_end (emit_complete). "
+            "channel, and ReActAgent must emit the terminal turn_finished event. "
             "Currently the CANCEL_TURN is silently consumed OR the turn "
             "completes normally — the pause button has no effect."
         )

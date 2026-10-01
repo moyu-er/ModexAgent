@@ -13,7 +13,7 @@ The `agents/` module provides concrete agent implementations: `ReActAgent`, the 
 
 | File | Description |
 |------|-------------|
-| `__init__.py` | Exports `ReActAgent`, `ReActEvent` |
+| `__init__.py` | Exports `ReActAgent`, `ReActAgentBuilder`, `ReactGraphRuntime`, `next_call_id` |
 | `graph_deliver.py` | Graph-aware delivery targets and the agent-facing `GraphDeliverTool`; owned here because it operates on `AgentNode` topology |
 
 ## Subdirectories
@@ -30,13 +30,13 @@ The ReAct module is the primary agent runtime. Key components:
 
 | File | Description |
 |------|-------------|
-| `agent.py` | `ReActAgent(Agent[ReActEvent])` — event enum, turn context setup, constructs `Graph` + `GraphEngine` + `ReActGraphContext`, delegates to `engine.run_async()` |
+| `agent.py` | `ReActAgent(Agent)` — turn context setup, constructs `Graph` + `GraphEngine` + `ReActGraphContext`, delegates to `engine.run_async()`; nodes emit core `TurnEvent` objects through the turn sink |
 | `graph.py` | `build_react_graph()` — builds `Graph[ReActTurnState]` with 6 nodes + 11 edges using `modex_graph.Graph` API |
 | `context.py` | `ReActGraphContext(GraphContext[ReActTurnState])` — type-safe accessors (`agent_ctx`, `tool_manager`, `context_manager`) |
-| `runtime.py` | `ReactGraphRuntime(GraphRuntime)` — AOP bridge: maps ReAct StrEnums to `HookPoint`/`InterceptorScope`/`ReActEvent`, bridges `GraphContext.user_data` → `AgentContext` for all AOP services |
+| `runtime.py` | `ReactGraphRuntime(GraphRuntime)` — AOP bridge: maps ReAct StrEnums to `HookPoint`/`InterceptorScope`, bridges `GraphContext.user_data` → `AgentContext` for all AOP services |
 | `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy`, `ReActRuntimeStateCodec` |
 | `builder.py` | `ReActAgentBuilder` — `build_agent()` + `build_emitter_factory()` from `AgentDescriptor` |
-| `constants.py` | `ReActNode`, `ReActHookPoint`, `ReActScope`, `ReActEvent` StrEnums |
+| `constants.py` | `ReActNode`, `ReActHookPoint`, `ReActScope`, `InterruptReason` StrEnums |
 | `ids.py` | `next_call_id()` — Snowflake-based fallback tool-call IDs, exported by `agents.react`. |
 | `nodes/start.py` | `StartNode` — routes to BEFORE (fresh) or TOOL (resume from approval). Dispatches `START_NODE_TURN` hook on fresh-turn path only. |
 | `nodes/before_turn.py` | `BeforeTurnNode` — increments `turn_attempt`, resets `iteration`, dispatches `BEFORE_TURN` hook, routes to LLM. |
@@ -130,7 +130,7 @@ ToolNode._classify_all() → TieredToolApprovalClassifier
 class MyAgent(Agent[MyEvent]):
     event_enum = MyEvent
 
-    async def run(self, context: AgentContext, emitter: ContentEmitter[MyEvent]) -> AgentResult:
+    async def run(self, context: AgentContext, emitter: TurnEventSink) -> AgentResult:
         ...
 ```
 
@@ -141,7 +141,7 @@ class MyAgent(Agent[MyEvent]):
 - `modex_graph` — `Graph[S]`, `Node[S]`, `GraphEngine`, `GraphInterrupt`, `GraphContext`, `GraphRuntime` (ADR-0033)
 - `modex_agent.core.tool_manager` — `Tool`, `ToolManager`, `ToolResult`
 - `modex_agent.core.provider` — `LLMProvider`, `CallbackStreamProvider`
-- `modex_agent.core.emitter` — `ContentEmitter`, `AgentResult`
+- `modex_agent.core.emitter` — `TurnEventSink`, `AgentResult`
 - `modex_agent.core.message` — `ChatMessage`, `MessageRole`, `ToolCall`
 - `modex_agent.core.session_id` — `SessionInfo`
 - `modex_agent.runtime` — `AgentRuntime`, `AgentRuntimeServices`, and shared turn-state contracts

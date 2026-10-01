@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from modex_agent.approval.ui import ApprovalUserInterface
     from modex_agent.core.agent import Agent
-    from modex_agent.core.emitter import ContentEmitter
+    from modex_agent.core.emitter import TurnEventSink, TurnEventSinkFactory
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.turn.store import TurnStateStore
@@ -154,7 +154,7 @@ class ReActTurnRunner(TurnRunner):
             self._pool_name = pool_name
 
     def set_emitter_factory(
-        self, emitter_factory: Callable[..., ContentEmitter[Any]] | None
+        self, emitter_factory: TurnEventSinkFactory | None
     ) -> None:
         self._builder.emitter_factory = emitter_factory
 
@@ -294,7 +294,7 @@ class ReActTurnRunner(TurnRunner):
     async def execute_turn(
         self,
         agent_context: AgentContext,
-        emitter: ContentEmitter,
+        emitter: TurnEventSink,
         session_id: str,
         context_state: ContextState,
         input_metadata: dict[str, Any],
@@ -418,7 +418,7 @@ class ReActTurnRunner(TurnRunner):
         action: ApprovalAction | None,
         snapshot: TurnSnapshot,
         agent_context: AgentContext,
-        emitter: ContentEmitter,
+        emitter: TurnEventSink,
         session_id: str,
         context_state: ContextState,
         input_metadata: dict[str, Any],
@@ -628,6 +628,11 @@ class ReActTurnRunner(TurnRunner):
             pool_data=pool_data,
             workspace=input_msg.workspace,
             turn_descriptor=turn_descriptor,
+            # An approval decision resumes the suspended turn: restore the
+            # ORIGINAL turn identity so the sink factory binds the same
+            # turn id (TurnBinding.resumed=True). A plain message arriving
+            # while a snapshot is pending is NOT a resume — fresh identity.
+            resume_identity=approval_state.identity if approval_state is not None else None,
         )
         agent_context.current_input = sanitized_content
 

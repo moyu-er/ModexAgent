@@ -27,8 +27,7 @@ import pytest
 
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.agent import Agent, AgentContext
-from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.events import AgentEvent
+from modex_agent.core.emitter import AgentResult, TurnEventSink
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.hook import HookRunner
@@ -78,13 +77,11 @@ CANNED_MARKER = "canned-loop-ran"
 class _CannedAgent(Agent):
     """Trivial Agent — never calls an LLM."""
 
-    event_enum = AgentEvent
-
     @property
     def name(self) -> str:
         return "canned_agent"
 
-    async def run(self, context: AgentContext, emitter: ContentEmitter[Any]) -> AgentResult:
+    async def run(self, context: AgentContext, emitter: TurnEventSink) -> AgentResult:
         return AgentResult(content=CANNED_MARKER)
 
 

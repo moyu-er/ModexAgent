@@ -31,11 +31,12 @@ import pytest
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.core import BotService
 
-from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import BufferingSink
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.app.config import AppConfig
 from modex_agent.app.roots import AppAssemblyRoots
+from modex_agent.core.emitter import TurnBinding
 from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.provider import CallbackStreamProvider
@@ -243,9 +244,9 @@ async def test_every_materialized_workspace_delivers_output(
     input_adapter = WebSocketInputAdapter()
     output_adapter = _RecordingOutputAdapter()
 
-    def emitter_factory(session_id: str, pool: str) -> StreamingAwareEmitter:
-        assert pool == "main"
-        return StreamingAwareEmitter(output_adapter, session_id)
+    def emitter_factory(binding: TurnBinding) -> BufferingSink:
+        assert binding.pool == "main"
+        return BufferingSink(output_adapter, binding.session_id)
 
     service = BotService(
         config_dir=config_dir,

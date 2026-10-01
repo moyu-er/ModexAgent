@@ -77,12 +77,6 @@ class _FakeEmitter:
     async def emit(self, event, data=None):
         pass
 
-    async def emit_delta(self, delta: str):
-        pass
-
-    async def emit_stream_end(self, resuming: bool = False):
-        pass
-
 
 class _RenewCountingDeadline(DispatchDeadline):
     """Wraps DispatchDeadline to count renew() calls and their arguments."""

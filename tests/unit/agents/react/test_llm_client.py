@@ -26,6 +26,7 @@ import pytest
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.control import AgentCancelledError
+from modex_agent.core.emitter import TurnEvent, TurnEventSink
 from modex_agent.core.interceptor import InterceptorScope
 from modex_agent.core.llm_struct import LLMResponse, TokenUsage
 from modex_agent.core.message import ToolCall
@@ -157,26 +158,17 @@ class _FakeStreamProvider(CallbackStreamProvider):
         return self._response
 
 
-class _FakeEmitter:
+class _FakeSink(TurnEventSink):
     def wants_streaming(self) -> bool:
         return True
 
-    async def emit(self, event, data=None):
-        pass
-
-    async def emit_delta(self, delta: str):
-        pass
-
-    async def emit_stream_end(self, resuming: bool = False):
+    async def _dispatch(self, event: TurnEvent) -> None:
         pass
 
 
-class _FakeNonStreamEmitter(_FakeEmitter):
+class _FakeNonStreamSink(_FakeSink):
     def wants_streaming(self) -> bool:
         return False
-
-    async def emit_content(self, content: str):
-        pass
 
 
 class _FakeNonStreamProvider(CallbackStreamProvider):
@@ -210,7 +202,7 @@ class TestReactLlmClientStreamCaptureStashesPartial:
         mid-stream. streamed_content (accumulated per-event in the loop)
         holds the partial and must be stashed."""
         ctx = _make_ctx()
-        ctx.emitter = _FakeEmitter()
+        ctx.emitter = _FakeSink()
         provider = _FakeStreamProvider(["partial ", "content"])
         ctx.runtime.services.interceptors = _CancelAfterTwoEventsChain(AgentCancelledError())
 
@@ -227,7 +219,7 @@ class TestReactLlmClientStreamCaptureStashesPartial:
         drain). streamed_content holds the content, the loop's tool_names
         hold the re-translated ToolCallComplete names."""
         ctx = _make_ctx()
-        ctx.emitter = _FakeEmitter()
+        ctx.emitter = _FakeSink()
         provider = _FakeStreamProvider(
             ["full ", "content"],
             response=LLMResponse(
@@ -246,7 +238,7 @@ class TestReactLlmClientStreamCaptureStashesPartial:
     @pytest.mark.asyncio
     async def test_no_stash_when_nothing_produced(self):
         ctx = _make_ctx()
-        ctx.emitter = _FakeEmitter()
+        ctx.emitter = _FakeSink()
 
         class _EmptyRaising:
             def has_scope(self, scope: InterceptorScope) -> bool:
@@ -280,7 +272,7 @@ class TestStreamWithControlPreservesUsage:
 
     async def test_usage_propagated_through_control_drain_path(self):
         ctx = _make_ctx()
-        ctx.emitter = _FakeEmitter()
+        ctx.emitter = _FakeSink()
         provider = _FakeStreamProvider(
             ["hello"],
             response=LLMResponse(
@@ -296,7 +288,7 @@ class TestStreamWithControlPreservesUsage:
 
     async def test_usage_propagated_through_plain_stream_path(self):
         ctx = _make_ctx()
-        ctx.emitter = _FakeEmitter()
+        ctx.emitter = _FakeSink()
         provider = _FakeStreamProvider(
             ["hello"],
             response=LLMResponse(
@@ -314,7 +306,7 @@ class TestStreamWithControlPreservesUsage:
     async def test_usage_propagated_through_non_streaming_path(self):
         ctx = _make_ctx()
         # Non-streaming: emitter.wants_streaming() must be False
-        ctx.emitter = _FakeNonStreamEmitter()
+        ctx.emitter = _FakeNonStreamSink()
         provider = _FakeNonStreamProvider(
             response=LLMResponse(
                 content="hello",
@@ -339,7 +331,7 @@ class TestCompletionStartTimePropagation:
 
     async def test_completion_start_time_through_control_drain_path(self):
         ctx = _make_ctx()
-        ctx.emitter = _FakeEmitter()
+        ctx.emitter = _FakeSink()
         provider = _FakeStreamProvider(
             ["hello"],
             response=LLMResponse(
@@ -355,7 +347,7 @@ class TestCompletionStartTimePropagation:
 
     async def test_completion_start_time_through_plain_stream_path(self):
         ctx = _make_ctx()
-        ctx.emitter = _FakeEmitter()
+        ctx.emitter = _FakeSink()
         provider = _FakeStreamProvider(
             ["hello"],
             response=LLMResponse(
@@ -374,7 +366,7 @@ class TestCompletionStartTimePropagation:
         when the provider response itself carries no completion_start_time
         (the legacy None case is gone: any event flow yields a timestamp)."""
         ctx = _make_ctx()
-        ctx.emitter = _FakeEmitter()
+        ctx.emitter = _FakeSink()
         provider = _FakeStreamProvider(
             ["hello"],
             response=LLMResponse(content="hello"),
@@ -417,7 +409,7 @@ class TestTemperaturePassThrough:
 
     async def test_plain_stream_path_passes_none(self):
         ctx = _make_ctx()
-        ctx.emitter = _FakeEmitter()
+        ctx.emitter = _FakeSink()
         ctx.runtime.services.interceptors = None
         provider = _RecordingProvider()
 
@@ -427,7 +419,7 @@ class TestTemperaturePassThrough:
 
     async def test_control_drain_path_passes_none(self):
         ctx = _make_ctx()
-        ctx.emitter = _FakeEmitter()
+        ctx.emitter = _FakeSink()
         ctx.runtime.services.interceptors = _PassthroughInterceptorChain()
         provider = _RecordingProvider()
 
@@ -440,7 +432,7 @@ class TestTemperaturePassThrough:
         provider rides the same event loop (via the bridge) — temperature
         reaches chat_stream verbatim instead of chat()."""
         ctx = _make_ctx()
-        ctx.emitter = _FakeNonStreamEmitter()
+        ctx.emitter = _FakeNonStreamSink()
         provider = _RecordingProvider()
 
         await ReactLlmClient(provider).call([], ctx)
@@ -449,7 +441,7 @@ class TestTemperaturePassThrough:
 
     async def test_per_turn_override_passes_through(self):
         ctx = _make_ctx()
-        ctx.emitter = _FakeEmitter()
+        ctx.emitter = _FakeSink()
         ctx.runtime.services.interceptors = None
         ctx.temperature = 0.3
         provider = _RecordingProvider()

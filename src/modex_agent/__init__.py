@@ -12,23 +12,24 @@ Agent Framework Core - 多Agent服务框架核心
 
 from ._version import __version__  # noqa: I001 - messaging must load before adapters
 from .messaging import InputMessage, MessageType, OutputMessage
-from .adapters import OutputAdapter, StreamingAwareEmitter
-from .agents.react import ReActAgent, ReActEvent
+from .adapters import BufferingSink, OutputAdapter
+from .agents.react import ReActAgent
 from .core import (
     Agent,
     AgentContext,
-    AgentEvent,
     AgentResult,
     CallbackStreamProvider,
-    ContentEmitter,
-    EmitterConfig,
+    CompositeTurnEventSink,
+    KindGate,
     LLMProvider,
     Tool,
     ToolCall,
     ToolConfig,
     ToolManager,
     ToolResult,
+    TurnBinding,
     TurnEvent,
+    TurnEventSink,
     TurnReasoningEvent,
     TurnTextEvent,
     TurnToolCallEvent,
@@ -48,18 +49,19 @@ __all__ = [
     "Tool",
     "LLMProvider",
     "CallbackStreamProvider",
-    # 事件和配置
-    "AgentEvent",
-    "EmitterConfig",
+    # 事件和 sink
     "TurnEvent",
     "TurnReasoningEvent",
     "TurnTextEvent",
     "TurnToolCallEvent",
     "TurnToolResultEvent",
+    "TurnEventSink",
+    "CompositeTurnEventSink",
+    "KindGate",
+    "TurnBinding",
     # Emitter
     "AgentResult",
-    "ContentEmitter",
-    "StreamingAwareEmitter",
+    "BufferingSink",
     # 工具管理
     "ToolManager",
     "InMemoryToolManager",
@@ -72,7 +74,6 @@ __all__ = [
     "ContextState",
     # Agent 实现
     "ReActAgent",
-    "ReActEvent",
     # Pipeline
     "AgentPipeline",
     "InputAdapter",

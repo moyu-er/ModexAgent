@@ -2,12 +2,12 @@
 
 Verifies that:
 - Main agent always uses factory emitter (regardless of source_agent)
-- Subagent agents (no emitter_factory) always use StreamingAwareEmitter
+- Subagent agents (no emitter_factory) always use BufferingSink
 """
 
 from unittest.mock import MagicMock
 
-from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import BufferingSink
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.memory.context import ContextState
@@ -111,7 +111,7 @@ class TestPipelineEmitterSelection:
         return pipeline, agent
 
     async def test_main_with_source_agent_uses_factory_emitter(self):
-        """Main agent + subagent message → factory emitter (NOT StreamingAwareEmitter).
+        """Main agent + subagent message → factory sink (NOT BufferingSink).
 
         Main agent should always use factory emitter so the LLM's assistant
         response (including tool outputs like SendFileToUser) reaches the user.
@@ -139,7 +139,7 @@ class TestPipelineEmitterSelection:
         assert agent.received_emitter is factory_emitter
 
     async def test_subagent_with_source_agent_uses_streaming_emitter(self):
-        """Subagent agent (no emitter_factory) + main message → StreamingAwareEmitter."""
+        """Subagent agent (no emitter_factory) + main message → BufferingSink."""
         pipeline, agent = self._make_pipeline(emitter_factory=None)
         msg = InputMessage(
             content="please help",
@@ -149,13 +149,13 @@ class TestPipelineEmitterSelection:
 
         await pipeline._turn_runner.process_locked(msg, "conv_001:main:office-expert", session=msg.session)
 
-        assert isinstance(agent.received_emitter, StreamingAwareEmitter)
+        assert isinstance(agent.received_emitter, BufferingSink)
 
     async def test_subagent_without_source_agent_uses_streaming_emitter(self):
-        """Subagent agent (no emitter_factory) + user message → StreamingAwareEmitter."""
+        """Subagent agent (no emitter_factory) + user message → BufferingSink."""
         pipeline, agent = self._make_pipeline(emitter_factory=None)
         msg = InputMessage(content="hello", session=SessionInfo.from_str("conv_001:main:office-expert"))
 
         await pipeline._turn_runner.process_locked(msg, "conv_001:main:office-expert", session=msg.session)
 
-        assert isinstance(agent.received_emitter, StreamingAwareEmitter)
+        assert isinstance(agent.received_emitter, BufferingSink)

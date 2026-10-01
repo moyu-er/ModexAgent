@@ -28,14 +28,10 @@ from bot.webui.events import (
 )
 from bot.webui.transcript_store import JSONLTranscriptStore, TranscriptStore
 
-from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.agents.react.constants import ToolCallEndPayload
-from modex_agent.core.emitter import AgentResult
-from modex_agent.core.events import EmitterConfig
-from modex_agent.core.message import ToolCall
-from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.emitter import AgentResult, turn_finished_event
 from modex_agent.core.turn_events import (
     TurnEvent,
+    TurnReasoningEvent,
     TurnTextEvent,
     TurnToolCallEvent,
     TurnToolResultEvent,
@@ -124,14 +120,13 @@ async def test_lifecycle_single_write_text_and_reasoning() -> None:
         emitter = WebBotEmitter(
             WebSocketOutputAdapter(WebSocketInputAdapter()),
             "conv1.main",
-            config=EmitterConfig(),
             transcript_store=store,
         )
 
-        await emitter.emit_delta("Hello ")
-        await emitter.emit_delta("world")
-        await emitter.emit(ReActEvent.MODEL_REASONING, "thinking")
-        await emitter.emit_complete(AgentResult(content="done"))
+        await emitter.emit(TurnTextEvent(text="Hello "))
+        await emitter.emit(TurnTextEvent(text="world"))
+        await emitter.emit(TurnReasoningEvent(text="thinking"))
+        await emitter.emit(turn_finished_event(AgentResult(content="done")))
 
         events = await store.load("conv1.main")
         texts = [
@@ -159,17 +154,16 @@ async def test_react_tool_pair_persisted_once_with_full_fidelity() -> None:
         emitter = WebBotEmitter(
             WebSocketOutputAdapter(WebSocketInputAdapter()),
             "conv1.main",
-            config=EmitterConfig(),
             transcript_store=store,
         )
         big_args = {"path": "a.txt", "blob": "x" * 600}
-        tc = ToolCall(tool_name="read", arguments=big_args, call_id="c1")
-        await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
         await emitter.emit(
-            ReActEvent.TOOL_CALL_END,
-            ToolCallEndPayload(
-                tool_call=tc, result=ToolResult.from_text("read", "r" * 1000), seq=7
-            ),
+            TurnToolCallEvent(tool_name="read", call_id="c1", arguments=big_args)
+        )
+        await emitter.emit(
+            TurnToolResultEvent(
+                tool_name="read", call_id="c1", output="r" * 1000, seq=7
+            )
         )
 
         events = await store.load("conv1.main")
@@ -195,13 +189,13 @@ async def test_acp_projection_full_fidelity_no_truncation_single_writer() -> Non
 
     big_args = {"path": "a.txt", "blob": "x" * 600}
     big_result = "r" * 1000
-    tc = ToolCall(tool_name="read", arguments=big_args, call_id="c1")
-    await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
     await emitter.emit(
-        ReActEvent.TOOL_CALL_END,
-        ToolCallEndPayload(
-            tool_call=tc, result=ToolResult.from_text("read", big_result), seq=3
-        ),
+        TurnToolCallEvent(tool_name="read", call_id="c1", arguments=big_args)
+    )
+    await emitter.emit(
+        TurnToolResultEvent(
+            tool_name="read", call_id="c1", output=big_result, seq=3
+        )
     )
 
     calls = [e for e in collector.events if isinstance(e, TurnToolCallEvent)]
@@ -221,16 +215,16 @@ async def test_acp_projection_full_fidelity_no_truncation_single_writer() -> Non
 @pytest.mark.asyncio
 async def test_acp_text_projected_once_without_duplicate() -> None:
     """Streamed text reaches the editor exactly once and the transcript
-    exactly once — emit_content/delta paths never double-project."""
+    exactly once — text/delta paths never double-project."""
     hub = AcpEmitterHub()
     collector = _Collector()
     hub.register("sess-1", collector)
     transcripts = _RecordingTranscriptStore()
     emitter = AcpTurnEmitter(hub, "sess-1", transcript_store=transcripts, pool="main")
 
-    await emitter.emit_delta("hello ")
-    await emitter.emit_delta("back")
-    await emitter.emit_complete(AgentResult(content="hello back"))
+    await emitter.emit(TurnTextEvent(text="hello "))
+    await emitter.emit(TurnTextEvent(text="back"))
+    await emitter.emit(turn_finished_event(AgentResult(content="hello back")))
 
     texts = [e for e in collector.events if isinstance(e, TurnTextEvent)]
     assert "".join(e.text for e in texts) == "hello back"
@@ -251,25 +245,22 @@ async def test_web_projection_dual_sink_order_preserved() -> None:
         emitter = WebBotEmitter(
             WebSocketOutputAdapter(input_adapter),
             "conv1.main",
-            config=EmitterConfig(),
             transcript_store=JSONLTranscriptStore(Path(tmp)),
         )
         input_adapter.register_connection("conv1.main", None)
 
-        await emitter.emit_delta("looking")
+        await emitter.emit(TurnTextEvent(text="looking"))
         await emitter.emit(
-            ReActEvent.TOOL_CALL_START,
-            ToolCall(tool_name="read", arguments={"path": "a"}, call_id="c1"),
+            TurnToolCallEvent(
+                tool_name="read", call_id="c1", arguments={"path": "a"}
+            )
         )
         await emitter.emit(
-            ReActEvent.TOOL_CALL_END,
-            ToolCallEndPayload(
-                tool_call=ToolCall(tool_name="read", arguments={"path": "a"}, call_id="c1"),
-                result=ToolResult.from_text("read", "ok"),
-                seq=0,
-            ),
+            TurnToolResultEvent(
+                tool_name="read", call_id="c1", output="ok", seq=0
+            )
         )
-        await emitter.emit_complete(AgentResult(content="done"))
+        await emitter.emit(turn_finished_event(AgentResult(content="done")))
 
         q = input_adapter.get_delta_queue("conv1.main", None)
         assert q is not None

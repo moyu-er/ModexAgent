@@ -21,8 +21,8 @@ from bot.webui.server import (
     _safe_send_json,
 )
 
-from modex_agent.core.emitter import AgentResult
-from modex_agent.core.events import EmitterConfig
+from modex_agent.core.emitter import AgentResult, turn_finished_event
+from modex_agent.core.turn_events import TurnTextEvent
 from modex_agent.multi_agent.pool_router import PoolSessionStore
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
@@ -1277,12 +1277,11 @@ async def test_subagent_streaming_delta_arrives_at_ws_client() -> None:
         emitter = WebBotEmitter(
             output_adapter,
             child_sid,
-            config=EmitterConfig(),
             session_meta_resolver=lambda: SessionMeta(parent_session_id=parent_sid),
         )
 
         # Emit a delta — this should enqueue into the delta queue
-        await emitter.emit_delta("subagent streaming test")
+        await emitter.emit(TurnTextEvent(text="subagent streaming test"))
 
         # The watcher should pick up the new queue within ~1.5s and start forwarding.
         # Wait for the delta to arrive at the WS client.
@@ -1333,9 +1332,8 @@ async def test_ws_full_stream_isolation_across_sessions() -> None:
         emitter_a = WebBotEmitter(
             output_adapter,
             "web:conv-a.main",
-            config=EmitterConfig()
-)
-        await emitter_a.emit_delta("hello from A")
+        )
+        await emitter_a.emit(TurnTextEvent(text="hello from A"))
 
         received = _unwrap_envelope(await ws.receive_json(timeout=2))
         assert received["event"] == "model_content_delta"
@@ -1348,7 +1346,7 @@ async def test_ws_full_stream_isolation_across_sessions() -> None:
         assert attached["event"] == "attached"
 
         # Emit another delta for A — it must NOT arrive on this WebSocket
-        await emitter_a.emit_delta("leaked from A")
+        await emitter_a.emit(TurnTextEvent(text="leaked from A"))
 
         # Because A is unregistered, the queue is gone and send_delta is a no-op,
         # so the next receive_json would timeout.  We assert the connection is
@@ -1359,9 +1357,8 @@ async def test_ws_full_stream_isolation_across_sessions() -> None:
         emitter_b = WebBotEmitter(
             output_adapter,
             "web:conv-b.main",
-            config=EmitterConfig()
-)
-        await emitter_b.emit_delta("hello from B")
+        )
+        await emitter_b.emit(TurnTextEvent(text="hello from B"))
 
         received = _unwrap_envelope(await ws.receive_json(timeout=2))
         assert received["event"] == "model_content_delta"
@@ -1399,9 +1396,8 @@ async def test_ws_turn_end_streaming_stop_is_isolated() -> None:
         emitter_a = WebBotEmitter(
             output_adapter,
             "web:conv-a.main",
-            config=EmitterConfig()
-)
-        await emitter_a.emit_delta("streaming in A...")
+        )
+        await emitter_a.emit(TurnTextEvent(text="streaming in A..."))
         delta = _unwrap_envelope(await ws.receive_json(timeout=2))
         assert delta["event"] == "model_content_delta"
 
@@ -1417,7 +1413,7 @@ async def test_ws_turn_end_streaming_stop_is_isolated() -> None:
         }))
 
         # The real turn_end for A should still end streaming correctly.
-        await emitter_a.emit_complete(AgentResult(content="done"))
+        await emitter_a.emit(turn_finished_event(AgentResult(content="done")))
         end = _unwrap_envelope(await ws.receive_json(timeout=2))
         assert end["event"] == "turn_end"
         assert end["session_id"] == "web:conv-a.main"
@@ -1900,11 +1896,11 @@ async def test_ws_attach_starts_forward_deltas_for_main_session() -> None:
         # Create a WebBotEmitter for the main session and emit a delta.
         from bot.webui.events import SessionMeta
         emitter = WebBotEmitter(
-            output, "web:main-sess.main", config=EmitterConfig(),
+            output, "web:main-sess.main",
             pool="main",
             session_meta_resolver=lambda: SessionMeta(parent_session_id=None),
         )
-        await emitter.emit_delta("streaming test for main session")
+        await emitter.emit(TurnTextEvent(text="streaming test for main session"))
 
         # The _forward_deltas task (started by _ws_attach) should drain the
         # queue and send the delta to this WS client.

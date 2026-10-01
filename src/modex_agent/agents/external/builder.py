@@ -18,7 +18,6 @@ backend in :class:`PoolScopedBackendProvider` before calling the builder.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from modex_agent.core.agent import ProviderKind
@@ -29,7 +28,7 @@ from .contracts import ProviderEventParser
 from .types import ExternalEnvSpec
 
 if TYPE_CHECKING:
-    from modex_agent.core.emitter import ContentEmitter
+    from modex_agent.core.emitter import TurnBinding, TurnEventSink, TurnEventSinkFactory
     from modex_agent.core.provider import LLMProvider
     from modex_agent.core.session_id import SessionIdFactory
     from modex_agent.multi_agent.descriptor import AgentDescriptor
@@ -37,7 +36,6 @@ if TYPE_CHECKING:
     from modex_agent.pipeline.adapters import OutputAdapter
 
     from .child_discovery import ChildSessionDiscoverySink
-    from .events import ExternalEvent
     from .session_store import ExternalSessionMapStore
 
 __all__ = ["ExternalAgentBuilder"]
@@ -74,7 +72,7 @@ class ExternalAgentBuilder:
         self._child_discovery_sink: ChildSessionDiscoverySink | None = None
         self._session_registry: SessionRegistry | None = None
         self._session_id_factory: SessionIdFactory | None = None
-        self._child_emitter_factory: Callable[[str], ContentEmitter[ExternalEvent]] | None = None
+        self._child_emitter_factory: TurnEventSinkFactory | None = None
 
     def with_backend_provider(self, backend_provider: BackendProvider) -> ExternalAgentBuilder:
         self._backend_provider = backend_provider
@@ -125,7 +123,7 @@ class ExternalAgentBuilder:
         return self
 
     def with_child_emitter_factory(
-        self, factory: Callable[[str], ContentEmitter[ExternalEvent]]
+        self, factory: TurnEventSinkFactory
     ) -> ExternalAgentBuilder:
         self._child_emitter_factory = factory
         return self
@@ -182,7 +180,7 @@ class ExternalAgentBuilder:
         child_discovery_sink: ChildSessionDiscoverySink | None = None,
         session_registry: SessionRegistry | None = None,
         session_id_factory: SessionIdFactory | None = None,
-        child_emitter_factory: Callable[[str], ContentEmitter[ExternalEvent]] | None = None,
+        child_emitter_factory: TurnEventSinkFactory | None = None,
     ) -> ExternalAgent:
         """Pool-registration entry point mirroring ReActAgentBuilder.
 
@@ -234,15 +232,13 @@ class ExternalAgentBuilder:
     @staticmethod
     def build_emitter_factory(
         emitter_output_adapter: OutputAdapter,
-    ) -> Callable[[str], ContentEmitter[ExternalEvent]]:
-        from modex_agent.adapters.emitter import StreamingAwareEmitter
+    ) -> TurnEventSinkFactory:
+        from modex_agent.adapters.emitter import BufferingSink
 
-        from .events import ExternalEvent
-
-        def _factory(session_id: str) -> ContentEmitter[ExternalEvent]:
-            return StreamingAwareEmitter[ExternalEvent](
+        def _factory(binding: TurnBinding) -> TurnEventSink:
+            return BufferingSink(
                 output_adapter=emitter_output_adapter,
-                session_id=session_id,
+                session_id=binding.session_id,
             )
 
         return _factory

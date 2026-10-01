@@ -29,13 +29,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.app.roots import AppAssemblyRoots
-from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.emitter import TurnEventSinkFactory
 from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.plugins.loader import ChannelAdapterRegistry
 from modex_agent.scope.component_registry import ComponentRegistry
@@ -67,7 +66,7 @@ class AppService(ABC):
         config_dir: Path,
         input_adapter: InputAdapter,
         output_adapter: OutputAdapter,
-        emitter_factory: Callable[[str, str], ContentEmitter[Any]],
+        emitter_factory: TurnEventSinkFactory,
         *,
         roots: AppAssemblyRoots | None = None,
         resource_root: Path | None = None,

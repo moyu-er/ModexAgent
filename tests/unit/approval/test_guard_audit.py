@@ -28,7 +28,7 @@ from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.approval.security import SecurityClassifier
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import AgentResult, TurnEvent, TurnEventSink
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo
@@ -74,15 +74,10 @@ class _FixedRoot:
         return self._root
 
 
-class _AuditEmitter(ContentEmitter):
-    event_enum = object
+class _AuditSink(TurnEventSink):
+    async def _dispatch(self, event: TurnEvent) -> None:
+        _ = event
 
-    async def emit(self, event, data=None): ...
-    async def emit_delta(self, delta: str): ...
-    async def emit_content(self, full_content: str): ...
-    async def emit_stream_end(self, resuming: bool = False): ...
-    async def emit_complete(self, result: AgentResult): ...
-    async def emit_error(self, error: str): ...
     def wants_streaming(self) -> bool:
         return False
 
@@ -165,6 +160,7 @@ def _make_graph_ctx(
         identity=identity,
         runtime=AgentRuntime(services=services, state=state),
         session=SessionInfo.from_str("s1.main"),
+        emitter=_AuditSink(),
     )
     agent_ctx.history = ListMessageHistory()
     coordinator: GraphPersistenceCoordinator = GraphPersistenceCoordinator(
@@ -177,7 +173,7 @@ def _make_graph_ctx(
         coordinator.register_node(node_id)
     ctx = ReActGraphContext(
         state=state,
-        runtime=ReactGraphRuntime(emitter=_AuditEmitter()),  # type: ignore[arg-type]
+        runtime=ReactGraphRuntime(),
         user_data=agent_ctx,
         coordinator=coordinator,
     )

@@ -1,10 +1,9 @@
-"""Tests for WebBotEmitter streaming event emitter and CompositeEmitter."""
+"""Tests for WebBotEmitter streaming event sink and CompositeEmitter."""
 
 from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import Any
 
 import pytest
 from bot.acp.emitter import AcpEmitterHub, AcpTurnEmitter
@@ -19,22 +18,44 @@ from bot.webui.events import (
 )
 from bot.webui.transcript_store import JSONLTranscriptStore
 
-from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.agents.react.constants import ToolArgsDeltaPayload, ToolCallEndPayload
-from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.events import EmitterConfig
-from modex_agent.core.message import ToolCall
-from modex_agent.core.tool_manager import ToolResult
-from modex_agent.core.turn_events import TurnEvent
+from modex_agent.core.emitter import AgentResult, TurnEventSink, turn_finished_event
+from modex_agent.core.turn_events import (
+    IterationFinishedEvent,
+    StopReason,
+    TurnEvent,
+    TurnFinishedEvent,
+    TurnReasoningEvent,
+    TurnTextEvent,
+    TurnToolCallEvent,
+    TurnToolResultEvent,
+)
+from modex_agent.core.turn_events import (
+    ToolArgsDeltaEvent as CoreToolArgsDeltaEvent,
+)
+
+
+def _text(text: str) -> TurnTextEvent:
+    return TurnTextEvent(text=text)
+
+
+def _segment_end() -> IterationFinishedEvent:
+    """The segment flush boundary (one LLM iteration closed)."""
+    return IterationFinishedEvent(iteration=0, has_tool_calls=False)
+
+
+def _turn_finished(result: AgentResult | None = None) -> TurnFinishedEvent:
+    if result is None:
+        return TurnFinishedEvent(stop_reason=StopReason.COMPLETED)
+    return turn_finished_event(result)
 
 
 @pytest.mark.asyncio
 async def test_emit_content_delta() -> None:
     input_adapter = WebSocketInputAdapter()
     output_adapter = WebSocketOutputAdapter(input_adapter)
-    emitter = WebBotEmitter(output_adapter, "web:abc.main", config=EmitterConfig())
+    emitter = WebBotEmitter(output_adapter, "web:abc.main")
     input_adapter.register_connection("web:abc.main", None)
-    await emitter.emit_delta("hello")
+    await emitter.emit(_text("hello"))
     q = input_adapter.get_delta_queue("web:abc.main", None)
     assert q is not None
     envelope = q.get_nowait()
@@ -47,12 +68,12 @@ async def test_emit_content_delta() -> None:
 
 
 @pytest.mark.asyncio
-async def test_emit_complete_sends_turn_end() -> None:
+async def test_turn_finished_sends_turn_end() -> None:
     input_adapter = WebSocketInputAdapter()
     output_adapter = WebSocketOutputAdapter(input_adapter)
-    emitter = WebBotEmitter(output_adapter, "web:abc.main", config=EmitterConfig())
+    emitter = WebBotEmitter(output_adapter, "web:abc.main")
     input_adapter.register_connection("web:abc.main", None)
-    await emitter.emit_complete(AgentResult(content="done"))
+    await emitter.emit(_turn_finished(AgentResult(content="done")))
     q = input_adapter.get_delta_queue("web:abc.main", None)
     assert q is not None
     envelope = q.get_nowait()
@@ -61,20 +82,19 @@ async def test_emit_complete_sends_turn_end() -> None:
 
 @pytest.mark.asyncio
 async def test_streaming_does_not_save_deltas() -> None:
-    """emit_delta pushes WS events but does NOT persist content to transcript."""
+    """Text deltas push WS events but do NOT persist content to transcript."""
     with tempfile.TemporaryDirectory() as tmp:
         input_adapter = WebSocketInputAdapter()
         output_adapter = WebSocketOutputAdapter(input_adapter)
         store = JSONLTranscriptStore(Path(tmp))
         emitter = WebBotEmitter(
             output_adapter, "conv1.main",
-            config=EmitterConfig(),
             transcript_store=store,
         )
         input_adapter.register_connection("conv1.main", None)
 
-        await emitter.emit_delta("hello")
-        await emitter.emit_delta(" world")
+        await emitter.emit(_text("hello"))
+        await emitter.emit(_text(" world"))
 
         events = await store.load("conv1.main")
         assert all(e.event != WebUIEventType.MODEL_CONTENT_DELTA.value for e in events)
@@ -100,17 +120,20 @@ async def test_subagent_emitter_preserves_full_session_id() -> None:
         full_sid = "conv1.reviewer.aa11bb22"
         emitter = WebBotEmitter(
             output_adapter, full_sid,
-            config=EmitterConfig(),
             transcript_store=store,
         )
         input_adapter.register_connection(full_sid, None)
 
-        await emitter.emit_content("review done")
-        await emitter.emit_complete(AgentResult(content="review done"))
+        await emitter.emit(_text("review done"))
+        await emitter.emit(_turn_finished(AgentResult(content="review done")))
 
         # WebSocket delta events carry the FULL session id + correct agent.
         q = input_adapter.get_delta_queue(full_sid, None)
         assert q is not None
+        delta_env = q.get_nowait()
+        assert delta_env.event_type == WebUIEventType.MODEL_CONTENT_DELTA.value
+        assert delta_env.session_id == full_sid
+        assert delta_env.agent_name == "reviewer"
         envelope = q.get_nowait()
         assert envelope.event_type == WebUIEventType.TURN_END.value
         assert envelope.session_id == full_sid
@@ -132,11 +155,10 @@ async def test_two_subagent_emitters_persist_to_separate_transcripts() -> None:
         for sid in ("conv1.reviewer.aa11", "conv1.reviewer.bb22"):
             em = WebBotEmitter(
                 output_adapter, sid,
-                config=EmitterConfig(),
                 transcript_store=store,
             )
-            await em.emit_content(sid)
-            await em.emit_complete(AgentResult(content=sid))
+            await em.emit(_text(sid))
+            await em.emit(_turn_finished(AgentResult(content=sid)))
 
         assert len(await store.load("conv1.reviewer.aa11")) >= 1
         assert len(await store.load("conv1.reviewer.bb22")) >= 1
@@ -150,16 +172,16 @@ async def test_two_subagent_emitters_persist_to_separate_transcripts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_emit_content_saves_assistant_text_to_transcript() -> None:
-    """Buffered text is flushed to the transcript store at stream/turn end."""
+async def test_segment_flush_saves_assistant_text_to_transcript() -> None:
+    """Buffered text is flushed to the transcript store at the segment boundary."""
     with tempfile.TemporaryDirectory() as tmp:
         input_adapter = WebSocketInputAdapter()
         output_adapter = WebSocketOutputAdapter(input_adapter)
         store = JSONLTranscriptStore(Path(tmp))
-        emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store)
+        emitter = WebBotEmitter(output_adapter, "conv1.main", transcript_store=store)
         input_adapter.register_connection("conv1.main", None)
-        await emitter.emit_content("Hello World")
-        await emitter.emit_stream_end(resuming=False)
+        await emitter.emit(_text("Hello World"))
+        await emitter.emit(_segment_end())
         events = await store.load("conv1.main")
         # TurnStartEvent is WebSocket-only (not persisted). Only AssistantTextEvent.
         assert len(events) == 1
@@ -167,16 +189,16 @@ async def test_emit_content_saves_assistant_text_to_transcript() -> None:
 
 
 @pytest.mark.asyncio
-async def test_emit_complete_flushes_remaining_text_buffer() -> None:
-    """If emit_stream_end is not called, emit_complete flushes the buffer."""
+async def test_turn_finished_flushes_remaining_text_buffer() -> None:
+    """If no segment boundary fired, turn_finished flushes the buffer."""
     with tempfile.TemporaryDirectory() as tmp:
         input_adapter = WebSocketInputAdapter()
         output_adapter = WebSocketOutputAdapter(input_adapter)
         store = JSONLTranscriptStore(Path(tmp))
-        emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store)
+        emitter = WebBotEmitter(output_adapter, "conv1.main", transcript_store=store)
         input_adapter.register_connection("conv1.main", None)
-        await emitter.emit_content("Hello World")
-        await emitter.emit_complete(AgentResult(content="done"))
+        await emitter.emit(_text("Hello World"))
+        await emitter.emit(_turn_finished(AgentResult(content="done")))
         events = await store.load("conv1.main")
         assert any(e.event == WebUIEventType.ASSISTANT_TEXT.value for e in events)
         assert not any(e.event == WebUIEventType.TURN_END.value for e in events)
@@ -188,14 +210,17 @@ async def test_tool_call_events_persisted_incrementally() -> None:
         input_adapter = WebSocketInputAdapter()
         output_adapter = WebSocketOutputAdapter(input_adapter)
         store = JSONLTranscriptStore(Path(tmp))
-        emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store)
+        emitter = WebBotEmitter(output_adapter, "conv1.main", transcript_store=store)
         input_adapter.register_connection("conv1.main", None)
-        tc = ToolCall(tool_name="read_file", arguments={"path": "/x"}, call_id="call_0")
-        result = ToolResult.from_text("read_file", "content")
-        await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
         await emitter.emit(
-            ReActEvent.TOOL_CALL_END,
-            ToolCallEndPayload(tool_call=tc, result=result, seq=7),
+            TurnToolCallEvent(
+                tool_name="read_file", call_id="call_0", arguments={"path": "/x"}
+            )
+        )
+        await emitter.emit(
+            TurnToolResultEvent(
+                tool_name="read_file", call_id="call_0", output="content", seq=7
+            )
         )
         events = await store.load("conv1.main")
         assert any(e.event == WebUIEventType.TOOL_CALL.value for e in events)
@@ -206,21 +231,24 @@ async def test_tool_call_events_persisted_incrementally() -> None:
 
 @pytest.mark.asyncio
 async def test_tool_call_events_stream_matching_call_id() -> None:
-    """Streamed tool_call_start/end carry the SAME call_id.
+    """Streamed tool_call/tool_result carry the SAME call_id.
 
     The frontend pairs a result with exactly one tool block by call_id —
     matching by tool name breaks when a turn runs parallel same-name calls.
     """
     input_adapter = WebSocketInputAdapter()
     output_adapter = WebSocketOutputAdapter(input_adapter)
-    emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig())
+    emitter = WebBotEmitter(output_adapter, "conv1.main")
     input_adapter.register_connection("conv1.main", None)
-    tc = ToolCall(tool_name="read_file", arguments={"path": "/x"}, call_id="call_0")
-    result = ToolResult.from_text("read_file", "content")
-    await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
     await emitter.emit(
-        ReActEvent.TOOL_CALL_END,
-        ToolCallEndPayload(tool_call=tc, result=result, seq=7),
+        TurnToolCallEvent(
+            tool_name="read_file", call_id="call_0", arguments={"path": "/x"}
+        )
+    )
+    await emitter.emit(
+        TurnToolResultEvent(
+            tool_name="read_file", call_id="call_0", output="content", seq=7
+        )
     )
     q = input_adapter.get_delta_queue("conv1.main", None)
     assert q is not None
@@ -234,26 +262,21 @@ async def test_tool_call_events_stream_matching_call_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_call_end_without_call_id_omits_wire_field() -> None:
-    input_adapter = WebSocketInputAdapter()
-    output_adapter = WebSocketOutputAdapter(input_adapter)
-    emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig())
-    input_adapter.register_connection("conv1.main", None)
-    tool_call = ToolCall(tool_name="read_file", arguments={})
+async def test_tool_result_requires_call_id_from_the_union() -> None:
+    """A tool result always carries a call_id (union constraint).
 
-    await emitter.emit(
-        ReActEvent.TOOL_CALL_END,
-        ToolCallEndPayload(
-            tool_call=tool_call,
-            result=ToolResult.from_text("read_file", "content"),
-            seq=0,
-        ),
-    )
+    The retired ``ToolCallEndPayload`` tolerated a tool call without a
+    call_id (the wire frame omitted the field). The core
+    ``TurnToolResultEvent`` union requires a non-empty ``call_id`` — the
+    runtime stamps canonical ids before emitting — so the omission path is
+    structurally impossible at the sink face now.
+    """
+    import pydantic
 
-    queue = input_adapter.get_delta_queue("conv1.main", None)
-    assert queue is not None
-    envelope = queue.get_nowait()
-    assert "call_id" not in envelope.payload
+    with pytest.raises(pydantic.ValidationError):
+        TurnToolResultEvent(
+            tool_name="read_file", call_id="", output="content", seq=0
+        )
 
 
 @pytest.mark.asyncio
@@ -262,10 +285,10 @@ async def test_reasoning_not_persisted_to_transcript() -> None:
         input_adapter = WebSocketInputAdapter()
         output_adapter = WebSocketOutputAdapter(input_adapter)
         store = JSONLTranscriptStore(Path(tmp))
-        emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store)
+        emitter = WebBotEmitter(output_adapter, "conv1.main", transcript_store=store)
         input_adapter.register_connection("conv1.main", None)
-        await emitter.emit(ReActEvent.MODEL_REASONING, "thinking...")
-        await emitter.emit_complete(AgentResult(content="done"))
+        await emitter.emit(TurnReasoningEvent(text="thinking..."))
+        await emitter.emit(_turn_finished(AgentResult(content="done")))
         events = await store.load("conv1.main")
         assert not any(e.event == WebUIEventType.MODEL_REASONING_DELTA.value for e in events)
 
@@ -276,17 +299,17 @@ async def test_emit_content_empty_skips_persist() -> None:
         input_adapter = WebSocketInputAdapter()
         output_adapter = WebSocketOutputAdapter(input_adapter)
         store = JSONLTranscriptStore(Path(tmp))
-        emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store)
+        emitter = WebBotEmitter(output_adapter, "conv1.main", transcript_store=store)
         input_adapter.register_connection("conv1.main", None)
-        await emitter.emit_content("   ")
+        await emitter.emit(_text("   "))
         events = await store.load("conv1.main")
         assert all(e.event != WebUIEventType.ASSISTANT_TEXT.value for e in events)
 
 
 @pytest.mark.asyncio
 async def test_streaming_delta_flush_persists_content() -> None:
-    """Regression: the control-interceptor stream path calls emit_delta +
-    emit_stream_end, not emit_content.  Assistant text must still reach the
+    """Regression: the control-interceptor stream path drives text deltas;
+    the segment boundary flushes them. Assistant text must still reach the
     transcript store.
     """
     with tempfile.TemporaryDirectory() as tmp:
@@ -294,12 +317,12 @@ async def test_streaming_delta_flush_persists_content() -> None:
         output_adapter = WebSocketOutputAdapter(input_adapter)
         store = JSONLTranscriptStore(Path(tmp))
         emitter = WebBotEmitter(
-            output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store
+            output_adapter, "conv1.main", transcript_store=store
         )
         input_adapter.register_connection("conv1.main", None)
-        await emitter.emit_delta("Hello ")
-        await emitter.emit_delta("world")
-        await emitter.emit_stream_end(resuming=False)
+        await emitter.emit(_text("Hello "))
+        await emitter.emit(_text("world"))
+        await emitter.emit(_segment_end())
         events = await store.load("conv1.main")
         assert any(e.event == WebUIEventType.ASSISTANT_TEXT.value for e in events), (
             f"Expected assistant text in transcript, got: {[e.event for e in events]}"
@@ -316,14 +339,15 @@ async def test_tool_args_delta_first_fragment_sent_immediately() -> None:
         input_adapter = WebSocketInputAdapter()
         output_adapter = WebSocketOutputAdapter(input_adapter)
         store = JSONLTranscriptStore(Path(tmp))
-        emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store)
+        emitter = WebBotEmitter(output_adapter, "conv1.main", transcript_store=store)
         input_adapter.register_connection("conv1.main", None)
 
-        await emitter.emit_delta("partial ")  # 打开中的文本段, 不得被预热信号 flush
+        await emitter.emit(_text("partial "))  # 打开中的文本段, 不得被预热信号 flush
         fragment = '{"path": "/tmp'
         await emitter.emit(
-            ReActEvent.TOOL_ARGS_DELTA,
-            ToolArgsDeltaPayload(call_id="call_0", tool_name="read_file", args_fragment=fragment),
+            CoreToolArgsDeltaEvent(
+                call_id="call_0", tool_name="read_file", args_fragment=fragment
+            )
         )
 
         q = input_adapter.get_delta_queue("conv1.main", None)
@@ -355,13 +379,14 @@ async def test_tool_args_delta_throttle_leading_edge(
 
     input_adapter = WebSocketInputAdapter()
     output_adapter = WebSocketOutputAdapter(input_adapter)
-    emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig())
+    emitter = WebBotEmitter(output_adapter, "conv1.main")
     input_adapter.register_connection("conv1.main", None)
 
     async def frag(fragment: str) -> None:
         await emitter.emit(
-            ReActEvent.TOOL_ARGS_DELTA,
-            ToolArgsDeltaPayload(call_id="call_0", tool_name="read_file", args_fragment=fragment),
+            CoreToolArgsDeltaEvent(
+                call_id="call_0", tool_name="read_file", args_fragment=fragment
+            )
         )
 
     await frag("a" * 5)  # t=1000.0: 首 fragment 立即外发(leading edge)
@@ -391,20 +416,24 @@ async def test_tool_args_delta_throttle_leading_edge(
 
 @pytest.mark.asyncio
 async def test_tool_call_start_clears_args_stream_state() -> None:
-    """tool_call_start 随后照常外发, 并清掉该 call_id 的预热账目。"""
+    """tool_call 随后照常外发, 并清掉该 call_id 的预热账目。"""
     input_adapter = WebSocketInputAdapter()
     output_adapter = WebSocketOutputAdapter(input_adapter)
-    emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig())
+    emitter = WebBotEmitter(output_adapter, "conv1.main")
     input_adapter.register_connection("conv1.main", None)
 
     await emitter.emit(
-        ReActEvent.TOOL_ARGS_DELTA,
-        ToolArgsDeltaPayload(call_id="call_0", tool_name="read_file", args_fragment='{"path"'),
+        CoreToolArgsDeltaEvent(
+            call_id="call_0", tool_name="read_file", args_fragment='{"path"'
+        )
     )
     assert emitter._args_stream_state  # 预热账目已在位
 
-    tc = ToolCall(tool_name="read_file", arguments={"path": "/x"}, call_id="call_0")
-    await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
+    await emitter.emit(
+        TurnToolCallEvent(
+            tool_name="read_file", call_id="call_0", arguments={"path": "/x"}
+        )
+    )
 
     q = input_adapter.get_delta_queue("conv1.main", None)
     assert q is not None
@@ -420,16 +449,17 @@ async def test_turn_end_clears_args_stream_state() -> None:
     """LENGTH 截断 / 规范 id 不一致的孤儿账目由回合结束清场。"""
     input_adapter = WebSocketInputAdapter()
     output_adapter = WebSocketOutputAdapter(input_adapter)
-    emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig())
+    emitter = WebBotEmitter(output_adapter, "conv1.main")
     input_adapter.register_connection("conv1.main", None)
 
     await emitter.emit(
-        ReActEvent.TOOL_ARGS_DELTA,
-        ToolArgsDeltaPayload(call_id="orphan_1", tool_name="read_file", args_fragment="x"),
+        CoreToolArgsDeltaEvent(
+            call_id="orphan_1", tool_name="read_file", args_fragment="x"
+        )
     )
     assert emitter._args_stream_state
 
-    await emitter.emit_complete(AgentResult(content="done"))
+    await emitter.emit(_turn_finished(AgentResult(content="done")))
     assert emitter._args_stream_state == {}
 
 
@@ -448,8 +478,9 @@ async def test_tool_args_delta_is_noop_for_acp_projection() -> None:
         emitter = AcpTurnEmitter(hub, "conv1.main", transcript_store=store)
 
         await emitter.emit(
-            ReActEvent.TOOL_ARGS_DELTA,
-            ToolArgsDeltaPayload(call_id="call_0", tool_name="read_file", args_fragment="x"),
+            CoreToolArgsDeltaEvent(
+                call_id="call_0", tool_name="read_file", args_fragment="x"
+            )
         )
         assert seen == []
         assert await store.load("conv1.main") == []
@@ -474,83 +505,67 @@ def test_tool_args_delta_event_roundtrip() -> None:
 # ── CompositeEmitter tests ────────────────────────────────────────────────
 
 
-class _StubEmitter(ContentEmitter[ReActEvent]):
-    """Recording emitter that tracks which methods were called."""
+class _StubSink(TurnEventSink):
+    """Recording sink that tracks the events it received."""
 
     def __init__(self) -> None:
-        super().__init__(EmitterConfig())
+        super().__init__()
         self.calls: list[str] = []
 
-    async def emit_delta(self, delta: str) -> None:
-        self.calls.append(f"delta:{delta}")
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        self.calls.append(f"complete:{result.content}")
-
-    async def emit_error(self, error: str) -> None:
-        self.calls.append(f"error:{error}")
+    async def _dispatch(self, event: TurnEvent) -> None:
+        match event:
+            case TurnTextEvent(text=text):
+                self.calls.append(f"delta:{text}")
+            case TurnFinishedEvent():
+                self.calls.append("complete")
 
     def wants_streaming(self) -> bool:
         return True
 
 
-class _FailingEmitter(ContentEmitter[ReActEvent]):
-    """Emitter that raises on every method."""
+class _FailingSink(TurnEventSink):
+    """Sink that raises on every event."""
 
-    async def emit_delta(self, delta: str) -> None:
-        raise RuntimeError("boom")
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        raise RuntimeError("boom")
-
-    async def emit_error(self, error: str) -> None:
+    async def _dispatch(self, event: TurnEvent) -> None:
         raise RuntimeError("boom")
 
 
-class _EventRecordingEmitter(ContentEmitter[ReActEvent]):
-    """Records every ``emit`` event name (for fan-out assertions)."""
+class _EventRecordingSink(TurnEventSink):
+    """Records every event kind (for fan-out assertions)."""
 
     def __init__(self) -> None:
-        super().__init__(EmitterConfig())
+        super().__init__()
         self.events: list[str] = []
 
-    async def emit(self, event: ReActEvent, data: Any = None) -> None:
-        self.events.append(event.value)
-
-    async def emit_delta(self, delta: str) -> None:
-        pass
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        pass
-
-    async def emit_error(self, error: str) -> None:
-        pass
+    async def _dispatch(self, event: TurnEvent) -> None:
+        self.events.append(event.kind)
 
 
 @pytest.mark.asyncio
 async def test_composite_fans_out_to_all_children() -> None:
     """CompositeEmitter delegates to all children."""
-    stub1 = _StubEmitter()
-    stub2 = _StubEmitter()
-    composite = CompositeEmitter[ReActEvent](emitters=[stub1, stub2])
+    stub1 = _StubSink()
+    stub2 = _StubSink()
+    composite = CompositeEmitter((stub1, stub2))
 
-    await composite.emit_delta("hello")
-    await composite.emit_complete(AgentResult(content="done"))
+    await composite.emit(_text("hello"))
+    await composite.emit(_turn_finished(AgentResult(content="done")))
 
-    assert stub1.calls == ["delta:hello", "complete:done"]
-    assert stub2.calls == ["delta:hello", "complete:done"]
+    assert stub1.calls == ["delta:hello", "complete"]
+    assert stub2.calls == ["delta:hello", "complete"]
 
 
 @pytest.mark.asyncio
 async def test_composite_fans_out_tool_args_delta() -> None:
-    """tool_args_delta 经 CompositeEmitter 扇出到所有子 emitter。"""
-    stub1 = _EventRecordingEmitter()
-    stub2 = _EventRecordingEmitter()
-    composite = CompositeEmitter[ReActEvent](emitters=[stub1, stub2])
+    """tool_args_delta 经 CompositeEmitter 扇出到所有子 sink。"""
+    stub1 = _EventRecordingSink()
+    stub2 = _EventRecordingSink()
+    composite = CompositeEmitter((stub1, stub2))
 
     await composite.emit(
-        ReActEvent.TOOL_ARGS_DELTA,
-        ToolArgsDeltaPayload(call_id="call_0", tool_name="read_file", args_fragment="x"),
+        CoreToolArgsDeltaEvent(
+            call_id="call_0", tool_name="read_file", args_fragment="x"
+        )
     )
 
     assert stub1.events == ["tool_args_delta"]
@@ -560,34 +575,24 @@ async def test_composite_fans_out_tool_args_delta() -> None:
 @pytest.mark.asyncio
 async def test_composite_error_isolation() -> None:
     """One failing child does not prevent others from receiving events."""
-    stub = _StubEmitter()
-    failing = _FailingEmitter()
-    composite = CompositeEmitter[ReActEvent](emitters=[failing, stub])
+    stub = _StubSink()
+    failing = _FailingSink()
+    composite = CompositeEmitter((failing, stub))
 
-    await composite.emit_delta("test")
+    await composite.emit(_text("test"))
     assert stub.calls == ["delta:test"]
 
 
 @pytest.mark.asyncio
 async def test_composite_wants_streaming_or_semantics() -> None:
     """wants_streaming returns True if ANY child wants streaming."""
-    no_stream = _StubEmitter()
-    no_stream.calls = []  # reset
 
-    class _NoStreaming(ContentEmitter[ReActEvent]):
-        async def emit_delta(self, delta: str) -> None:
-            pass
-        async def emit_complete(self, result: AgentResult) -> None:
-            pass
-        async def emit_error(self, error: str) -> None:
+    class _NoStreaming(TurnEventSink):
+        async def _dispatch(self, event: TurnEvent) -> None:
             pass
 
-    composite = CompositeEmitter[ReActEvent](
-        emitters=[_NoStreaming(), _StubEmitter()],
-    )
+    composite = CompositeEmitter((_NoStreaming(), _StubSink()))
     assert composite.wants_streaming() is True
 
-    composite2 = CompositeEmitter[ReActEvent](
-        emitters=[_NoStreaming(), _NoStreaming()],
-    )
+    composite2 = CompositeEmitter((_NoStreaming(), _NoStreaming()))
     assert composite2.wants_streaming() is False

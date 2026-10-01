@@ -15,7 +15,7 @@ from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapte
 from bot.webui.emitter import WebBotEmitter
 from bot.webui.events import SessionMeta
 from bot.webui.transcript_store import TranscriptStore
-from modex_agent.core.events import EmitterConfig
+from modex_agent.core.emitter import TurnBinding, TurnEventSink
 from modex_agent.core.session_id import SessionIdFactory
 
 # Module-level references so WebUIServer can access the WebSocket adapter
@@ -54,7 +54,6 @@ def build_websocket_emitter(
     return WebBotEmitter(
         output_adapter=output_adapter,
         session_id=session_id,
-        config=EmitterConfig(),
         pool=pool,
         transcript_store=transcript_store,
         session_meta_resolver=session_meta_resolver,
@@ -74,13 +73,13 @@ def build_websocket(ctx: AdapterBuildContext):
     store = ctx.transcript_store
     assert isinstance(store, TranscriptStore)
 
-    def emitter_factory(session_id: str, pool: str) -> WebBotEmitter:
+    def emitter_factory(binding: TurnBinding) -> TurnEventSink:
         return build_websocket_emitter(
-            session_id,
+            binding.session_id,
             output_adapter=ws_output,
             transcript_store=store,
-            pool=pool,
-            session_meta_resolver=_parent_meta_for(ws_input, session_id),
+            pool=binding.pool,
+            session_meta_resolver=_parent_meta_for(ws_input, binding.session_id),
         )
 
     return ws_input, ws_output, emitter_factory

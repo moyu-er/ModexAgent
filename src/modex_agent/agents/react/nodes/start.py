@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
 from modex_agent.agents.react.constants import ReActHookPoint, ReActNode
+from modex_agent.agents.react.context import get_agent_ctx
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.turn.enums import TurnPhase
+from modex_agent.core.turn_events import TurnStartedEvent
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
@@ -34,7 +35,9 @@ class StartNode(Node[ReActTurnState]):
         state.current_node = ReActNode.START
         state.iteration = 0
 
-        await ctx.runtime.emit(GraphReActEvent.START, None, ctx)
+        agent_ctx = get_agent_ctx(ctx)
+        if agent_ctx.emitter is not None:
+            await agent_ctx.emitter.emit(TurnStartedEvent())
         await ctx.runtime.dispatch_hook(ReActHookPoint.START_NODE_TURN, ctx)
         self.deliver(None, ReActNode.BEFORE, ctx)
         return None

@@ -14,9 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from bot.service.pool.declaration import boot_scope_spec
 from bot.workspace.handle import WorkspaceHandle
-from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import AgentResult, TurnEvent, TurnEventSink
 from modex_agent.core.llm_request import LLMRequest, ReasoningEffort
 from modex_agent.core.llm_struct import LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage, MessageRole
@@ -191,15 +190,9 @@ class EntryDependencies:
         self.turn_executor = turn_executor
 
 
-class _Emitter(ContentEmitter[ReActEvent]):
-    async def emit_delta(self, delta: str) -> None:
-        _ = delta
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        _ = result
-
-    async def emit_error(self, error: str) -> None:
-        _ = error
+class _Emitter(TurnEventSink):
+    async def _dispatch(self, event: TurnEvent) -> None:
+        _ = event
 
 
 class _UsageProvider(LLMProvider):

@@ -9,8 +9,12 @@ import pytest
 
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.core.emitter import AgentResult
-from modex_agent.core.turn_events import StopReason
+from modex_agent.core.emitter import AgentResult, TurnEvent, TurnEventSink
+from modex_agent.core.turn_events import (
+    StopReason,
+    TurnFinishedEvent,
+    TurnTextEvent,
+)
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
@@ -43,34 +47,20 @@ def _make_ctx(**kw):
     )
 
 
-class _FakeEmitter:
+class _FakeSink(TurnEventSink):
     def __init__(self):
-        self.events: list[tuple] = []
+        super().__init__()
+        self.events: list[TurnEvent] = []
         self.deltas: list[str] = []
         self.completed: AgentResult | None = None
-        self._streaming = False
 
-    def wants_streaming(self) -> bool:
-        return self._streaming
-
-    async def emit(self, event, data=None):
-        self.events.append((event, data))
-
-    async def emit_delta(self, delta: str):
-        self.deltas.append(delta)
-
-    async def emit_content(self, full: str):
-        if full:
-            self.deltas.append(full)
-
-    async def emit_stream_end(self, resuming: bool = False):
-        pass
-
-    async def emit_complete(self, result: AgentResult):
-        self.completed = result
-
-    async def emit_error(self, error: str):
-        self.events.append(("error", error))
+    async def _dispatch(self, event: TurnEvent):
+        self.events.append(event)
+        match event:
+            case TurnTextEvent(text=text):
+                self.deltas.append(text)
+            case TurnFinishedEvent(stop_reason=stop_reason, error=error):
+                self.completed = AgentResult(error=error, stop_reason=stop_reason)
 
 
 class _ScriptedProvider(CallbackStreamProvider):
@@ -100,7 +90,7 @@ class TestReActAgentErrorResponse:
             error="something went wrong",
         ))
         agent = ReActAgent(provider=provider)
-        emitter = _FakeEmitter()
+        emitter = _FakeSink()
         ctx = _make_ctx()
 
         result = await agent.run(ctx, emitter)
@@ -116,7 +106,7 @@ class TestReActAgentErrorResponse:
             finish_reason=FinishReason.STOP.value,
         ))
         agent = ReActAgent(provider=provider)
-        emitter = _FakeEmitter()
+        emitter = _FakeSink()
         ctx = _make_ctx()
         result = await agent.run(ctx, emitter)
         assert result is not None
@@ -137,12 +127,12 @@ class TestReActAgentCancelledError:
         """
         provider = _ScriptedProvider(error=asyncio.CancelledError())
         agent = ReActAgent(provider=provider)
-        emitter = _FakeEmitter()
+        emitter = _FakeSink()
         ctx = _make_ctx()
         result = await agent.run(ctx, emitter)
 
         assert emitter.completed is not None, (
-            "CancelledError must emit a terminal signal (emit_complete) "
+            "CancelledError must emit a terminal signal (turn_finished) "
             "so the frontend is not stuck streaming."
         )
         assert result is not None
@@ -155,8 +145,8 @@ class TestReActAgentControlCancel:
     turn_end event) learn the turn ended.
 
     Regression: the ``except AgentControlError`` branch re-raised without
-    calling ``emit_complete``, so a cancelled turn never produced turn_end and
-    the WebUI pause button appeared to do nothing (frontend stuck streaming).
+    a terminal event, so a cancelled turn never produced turn_end and the
+    WebUI pause button appeared to do nothing (frontend stuck streaming).
     """
 
     @pytest.mark.asyncio
@@ -183,7 +173,7 @@ class TestReActAgentControlCancel:
         ))
 
         agent = ReActAgent(provider=provider)
-        emitter = _FakeEmitter()
+        emitter = _FakeSink()
         ctx = _make_ctx()
         ctx.runtime.services.control_channel = channel
 
@@ -192,7 +182,7 @@ class TestReActAgentControlCancel:
         result = await agent.run(ctx, emitter)
 
         assert emitter.completed is not None, (
-            "CANCEL_TURN must emit a terminal signal (emit_complete) so the "
+            "CANCEL_TURN must emit a terminal signal (turn_finished) so the "
             "turn ends cleanly; otherwise the WebUI pause leaves the frontend "
             "stuck streaming."
         )
@@ -226,7 +216,7 @@ class TestReActAgentToolTimeout:
             turn=TurnTimeoutPolicy(tool_timeout_seconds=0.01),
         )
         agent = ReActAgent(provider=provider)
-        emitter = _FakeEmitter()
+        emitter = _FakeSink()
         result = await agent.run(ctx, emitter)
         assert result is not None
 
@@ -241,7 +231,7 @@ class TestReActAgentHookDispatch:
             async def before_turn(self, context):
                 await asyncio.sleep(0.5)
         agent = ReActAgent(provider=provider)
-        emitter = _FakeEmitter()
+        emitter = _FakeSink()
         ctx = _make_ctx()
         from modex_agent.hook import HookRunner
         ctx.runtime.services.hooks = HookRunner([SlowHook()])

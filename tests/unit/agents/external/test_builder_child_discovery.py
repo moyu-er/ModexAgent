@@ -33,7 +33,7 @@ from modex_agent.agents.external.scripted_backend import (
 from modex_agent.agents.external.session_store import LocalFileExternalSessionMapStore
 from modex_agent.agents.external.types import ExternalEnvSpec
 from modex_agent.core.agent import ProviderKind
-from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.emitter import TurnBinding, TurnEventSink, TurnEventSinkFactory
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.messaging.broker import AddressKind
@@ -67,9 +67,9 @@ def _required_collaborators(
     return PoolScopedBackendProvider(adapter), store, spec
 
 
-def _make_child_emitter_factory() -> Callable[[str], ContentEmitter]:
-    def _factory(session_id: str) -> ContentEmitter:
-        return MagicMock(spec=ContentEmitter)
+def _make_child_emitter_factory() -> TurnEventSinkFactory:
+    def _factory(binding: TurnBinding) -> TurnEventSink:
+        return MagicMock(spec=TurnEventSink)
 
     return _factory
 

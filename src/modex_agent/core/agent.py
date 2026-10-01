@@ -1,6 +1,6 @@
 """Agent 抽象基类和 AgentContext
 
-提供 Agent[E] 泛型抽象基类和 AgentContext 执行上下文。
+提供 Agent 抽象基类和 AgentContext 执行上下文。
 """
 
 from __future__ import annotations
@@ -12,13 +12,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from typing_extensions import TypeVar
-
 from modex_agent.core.history import MessageHistory
 from modex_agent.core.session_id import SessionInfo
 
-from .emitter import AgentResult, ContentEmitter
-from .events import AgentEvent
+from .emitter import AgentResult, TurnEventSink
 from .message_utils import normalize_agent_messages_for_llm
 from .tool_manager import ToolManager
 
@@ -123,7 +120,7 @@ class AgentContext:
     temperature: float | None = None
     max_output_tokens: int | None = None
     attachments: list[str] = field(default_factory=list)
-    emitter: ContentEmitter | None = None
+    emitter: TurnEventSink | None = None
     runtime: AgentRuntime | None = None
     graph_context: GraphContext[Any] | None = None
     graph_instance_id: int | None = None
@@ -212,37 +209,27 @@ current_agent_context: contextvars.ContextVar[AgentContext] = contextvars.Contex
     "current_agent_context"
 )
 
-E = TypeVar("E", bound=AgentEvent)
-
-
-class Agent[E: AgentEvent](ABC):
+class Agent(ABC):
     """Agent 推理模式抽象基类
 
     职责：执行特定的推理模式（ReAct、Plan 等）。
     不处理：消息路由、历史管理、输出发送。
 
-    通过 ContentEmitter 输出内容，不关心外部如何处理。
-
-    每个子类应定义 event_enum，说明该 Agent 会触发哪些事件类型。
-
-    泛型参数 E 是 Agent 特定的事件枚举类型。
+    通过 TurnEventSink 输出内容（统一的 runtime turn-event 流），
+    不关心外部如何处理。
     """
-
-    # 子类必须定义使用的事件类型枚举
-    # 例如：event_enum = ReActEvent
-    event_enum: type[E] = None  # type: ignore
 
     @abstractmethod
     async def run(
         self,
         context: AgentContext,
-        emitter: ContentEmitter[E],
+        emitter: TurnEventSink,
     ) -> AgentResult:
         """执行 Agent
 
         Args:
             context: 执行上下文
-            emitter: 内容发送器（类型参数与该 Agent 的事件枚举匹配）
+            emitter: turn-event sink
 
         Returns:
             AgentResult: 执行结果
@@ -254,17 +241,6 @@ class Agent[E: AgentEvent](ABC):
     def name(self) -> str:
         """Agent 名称"""
         pass
-
-    @classmethod
-    def get_event_enum(cls) -> type[E]:
-        """获取该 Agent 使用的事件类型枚举
-
-        外部可以根据这个信息配置 Emitter。
-
-        Returns:
-            该 Agent 的事件枚举类（如 ReActEvent）
-        """
-        return cls.event_enum
 
     async def stop(self) -> None:
         """释放 Agent 持有的资源（子进程、网络连接等）。

@@ -2,25 +2,21 @@
 
 验证 ReActAgent 的统一执行循环：
 - 流式与非流式共享同一主循环
-- _request_llm 根据 emitter.wants_streaming() 选择正确路径
-- 内容通过 get_content()、推理通过 get_reasoning() 被 _BufferingEmitter 收集
-- 生命周期事件 (MODEL_OUTPUT, MODEL_REASONING) 仍然被分发
+- 路径选择依据 sink.wants_streaming()
+- 内容通过 get_content()、推理通过 get_reasoning() 被 _BufferingSink 收集
+- 生命周期事件 (text, reasoning, turn_finished …) 以核心 TurnEvent 分发
 """
 
-from enum import Enum
-from typing import Any, TypeVar
 from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import BufferingSink
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.agents.react import ReActAgent, ReActEvent
+from modex_agent.agents.react import ReActAgent
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_agent.core.turn_events import StopReason
-from modex_agent.core.events import AgentEvent, EmitterConfig
+from modex_agent.core.emitter import AgentResult, TurnEvent, TurnEventSink
 from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
@@ -28,44 +24,42 @@ from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.turn.enums import AgentKind, TurnPhase
 from modex_agent.core.turn.models import TurnIdentity
+from modex_agent.core.turn_events import (
+    StopReason,
+    TurnFinishedEvent,
+    TurnReasoningEvent,
+    TurnTextEvent,
+)
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
-E = TypeVar('E', bound=AgentEvent)
 
+class _BufferingSink(TurnEventSink):
+    """Minimal test sink that captures output for assertions."""
 
-class _BufferingEmitter(ContentEmitter[E]):
-    """Minimal test emitter that captures output for assertions."""
-
-    def __init__(self, config: EmitterConfig | None = None):
-        super().__init__(config)
+    def __init__(self, streaming: bool = False):
+        super().__init__()
+        self._streaming = streaming
         self._buffer = ""
         self._reasoning_buffer = ""
         self._result: AgentResult | None = None
-        self._events: list[tuple[E, Any]] = []
+        self._events: list[TurnEvent] = []
 
-    async def emit(self, event: E, data: Any = None) -> None:
-        event_name = event.value if isinstance(event, Enum) else str(event)
-        if self.config.is_enabled(event_name):
-            self._events.append((event, data))
-        await super().emit(event, data)
+    def wants_streaming(self) -> bool:
+        return self._streaming
 
-    async def _on_event(self, event: E, data: Any = None) -> None:
-        event_name = event.value if isinstance(event, Enum) else str(event)
-        if event_name == "model_reasoning" and isinstance(data, str):
-            self._reasoning_buffer += data
-
-    async def emit_delta(self, delta: str) -> None:
-        self._buffer += delta
-
-    async def emit_content(self, full_content: str) -> None:
-        self._buffer += full_content
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        self._result = result
-
-    async def emit_error(self, error: str) -> None:
-        self._result = AgentResult(error=error, stop_reason=StopReason.ERROR)
+    async def _dispatch(self, event: TurnEvent) -> None:
+        self._events.append(event)
+        match event:
+            case TurnTextEvent(text=text):
+                self._buffer += text
+            case TurnReasoningEvent(text=text):
+                self._reasoning_buffer += text
+            case TurnFinishedEvent(stop_reason=stop_reason, error=error):
+                self._result = AgentResult(
+                    error=error,
+                    stop_reason=stop_reason,
+                )
 
     def get_content(self) -> str:
         return self._buffer
@@ -73,17 +67,13 @@ class _BufferingEmitter(ContentEmitter[E]):
     def get_reasoning(self) -> str:
         return self._reasoning_buffer
 
-    def get_events(self, event_type: E | None = None) -> list[tuple[E, Any]]:
-        if event_type is not None:
-            return [(e, d) for e, d in self._events if e == event_type]
-        return list(self._events)
+    def get_result(self) -> AgentResult | None:
+        return self._result
 
-    def get_events_by_name(self, name: str) -> list[tuple[E, Any]]:
-        result = []
-        for e, d in self._events:
-            if isinstance(e, Enum) and e.name == name or isinstance(e, str) and e == name:
-                result.append((e, d))
-        return result
+    def get_events(self, kind: str | None = None) -> list[TurnEvent]:
+        if kind is not None:
+            return [e for e in self._events if e.kind == kind]
+        return list(self._events)
 
 
 def _make_runtime():
@@ -146,9 +136,9 @@ class MockStreamingProvider(CallbackStreamProvider):
         return "mock-model"
 
 
-class StreamingEmitter(_BufferingEmitter[ReActEvent]):
-    def wants_streaming(self):
-        return True
+class StreamingEmitter(_BufferingSink):
+    def __init__(self):
+        super().__init__(streaming=True)
 
 
 class TestReActAgentUnifiedLoop:
@@ -176,14 +166,14 @@ class TestReActAgentUnifiedLoop:
 
     @pytest.fixture
     def emitter(self):
-        return _BufferingEmitter[ReActEvent]()
+        return _BufferingSink()
 
     @pytest.fixture
     def streaming_emitter(self):
         return StreamingEmitter()
 
     # ========================================================================
-    # Streaming mode (emitter wants streaming)
+    # Streaming mode (sink wants streaming)
     # ========================================================================
 
     @pytest.mark.asyncio
@@ -277,10 +267,8 @@ class TestReActAgentUnifiedLoop:
 
         await agent.run(context, streaming_emitter)
 
-        output_events = streaming_emitter.get_events_by_name("MODEL_OUTPUT")
-        assert len(output_events) == 2
-        assert output_events[0][1] == "Hello "
-        assert output_events[1][1] == "World"
+        output_events = streaming_emitter.get_events("text")
+        assert [e.text for e in output_events] == ["Hello ", "World"]
 
     @pytest.mark.asyncio
     async def test_streaming_reasoning_emitted_as_independent_chunks(self, streaming_provider, context, streaming_emitter):
@@ -290,10 +278,8 @@ class TestReActAgentUnifiedLoop:
 
         await agent.run(context, streaming_emitter)
 
-        reasoning_events = streaming_emitter.get_events_by_name("MODEL_REASONING")
-        assert len(reasoning_events) == 2
-        assert reasoning_events[0][1] == "Think "
-        assert reasoning_events[1][1] == "hard"
+        reasoning_events = streaming_emitter.get_events("reasoning")
+        assert [e.text for e in reasoning_events] == ["Think ", "hard"]
 
     @pytest.mark.asyncio
     async def test_streaming_max_iterations(self, streaming_provider, context, streaming_emitter):
@@ -367,9 +353,8 @@ class TestReActAgentUnifiedLoop:
 
         await agent.run(context, emitter)
 
-        events = emitter.get_events_by_name("MODEL_OUTPUT")
-        assert len(events) == 1
-        assert events[0][1] == "Complete response"
+        events = emitter.get_events("text")
+        assert [e.text for e in events] == ["Complete response"]
 
     @pytest.mark.asyncio
     async def test_non_streaming_calls_after_llm_response_hook(self, non_streaming_provider, context, emitter):
@@ -522,8 +507,8 @@ class TestReActAgentRegression:
         )
 
     @pytest.mark.asyncio
-    async def test_pseudo_streaming_flushes_on_emit_stream_end_resuming(self, streaming_provider, context):
-        """Regression: pseudo-streaming 模式下，emit_stream_end(resuming=True) 会刷新缓冲区。"""
+    async def test_pseudo_streaming_flushes_per_segment(self, streaming_provider, context):
+        """Regression: SEGMENT 策略在 iteration_finished 边界刷新缓冲区。"""
         tool_call = ToolCall(tool_name="weather", arguments={"city": "Beijing"}, call_id="call_1")
 
         async def mock_chat_stream(*args, **kwargs):
@@ -546,12 +531,8 @@ class TestReActAgentRegression:
             async def flush_deltas(self, session_id):
                 pass
 
-        class PseudoStreamingEmitter(StreamingAwareEmitter[ReActEvent]):
-            def wants_streaming(self):
-                return True
-
         adapter = MockAdapter()
-        emitter = PseudoStreamingEmitter(
+        emitter = BufferingSink(
             output_adapter=adapter,
             session_id="test_session",
         )
@@ -575,34 +556,19 @@ class TestReActAgentRegression:
         assert emitter.get_reasoning() == "Thinking..."
 
     @pytest.mark.asyncio
-    async def test_non_streaming_path_calls_emit_content_not_emit_delta(self, non_streaming_provider, context):
-        """Regression: 非流式路径调用 emit_content() 而不是 emit_delta()。"""
+    async def test_non_streaming_path_emits_one_folded_text_event(self, non_streaming_provider, context):
+        """Regression: 非流式路径将折叠响应作为单条完整 text 事件一次性发出。"""
         async def mock_chat(*args, **kwargs):
             return LLMResponse(content="Full response")
 
         non_streaming_provider.chat_stream = mock_chat
 
-        class TrackingEmitter(_BufferingEmitter[ReActEvent]):
-            def __init__(self):
-                super().__init__()
-                self.content_calls = []
-                self.delta_calls = []
-
-            async def emit_content(self, full_content: str) -> None:
-                self.content_calls.append(full_content)
-                await super().emit_content(full_content)
-
-            async def emit_delta(self, delta: str) -> None:
-                self.delta_calls.append(delta)
-                await super().emit_delta(delta)
-
-        emitter = TrackingEmitter()
+        emitter = _BufferingSink()
         agent = ReActAgent(provider=non_streaming_provider)
 
         await agent.run(context, emitter)
 
-        assert emitter.content_calls == ["Full response"]
-        assert emitter.delta_calls == []
+        assert [e.text for e in emitter.get_events("text")] == ["Full response"]
 
     @pytest.mark.asyncio
     async def test_history_persists_per_iteration(self, streaming_provider, context):
@@ -666,7 +632,7 @@ class TestReActAgentCheckpoint:
 
     @pytest.fixture
     def emitter(self):
-        return _BufferingEmitter[ReActEvent]()
+        return _BufferingSink()
 
     @pytest.mark.asyncio
     async def test_checkpoint_saved_after_assistant_and_tool_messages(self, streaming_provider, context, emitter):
@@ -771,3 +737,95 @@ class TestReActAgentCheckpoint:
         assert history[2]["role"] == "tool"
         assert history[3]["role"] == "assistant"
         assert "Sunny in Beijing" in (history[3]["content"] or "")
+
+
+class TestScriptedTurnValidatesClean:
+    """A scripted native turn's emission sequence must validate clean
+    through ``TurnEventValidator`` — exactly one ``turn_finished``,
+    nothing after it (the W2 invariant)."""
+
+    @pytest.mark.asyncio
+    async def test_tool_turn_stream_validates_clean(self):
+        from modex_agent.core.turn_validator import TurnEventValidator
+
+        provider = MockStreamingProvider()
+        tool_call = ToolCall(tool_name="weather", arguments={"city": "Beijing"}, call_id="call_1")
+        iteration = 0
+
+        async def mock_chat_stream(*args, **kwargs):
+            nonlocal iteration
+            iteration += 1
+            on_content_delta = kwargs.get("on_content_delta")
+            if iteration == 1:
+                if on_content_delta:
+                    await on_content_delta("")
+                return LLMResponse(content="", tool_calls=[tool_call])
+            if on_content_delta:
+                await on_content_delta("Sunny in Beijing")
+            return LLMResponse(content="Sunny in Beijing")
+
+        provider.chat_stream = mock_chat_stream
+
+        runtime = _make_runtime()
+        context = AgentContext(
+            system_prompt="You are a helpful assistant.",
+            history=ListMessageHistory([{"role": "user", "content": "Hello"}]),
+            tool_manager=_make_tool_manager(),
+            max_iterations=3,
+            identity=runtime.state.identity,
+            runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
+        )
+        context.tool_manager.execute = AsyncMock(
+            return_value=ToolResult.from_text("weather", "Sunny, 25C")
+        )
+        emitter = StreamingEmitter()
+        agent = ReActAgent(provider=provider)
+
+        result = await agent.run(context, emitter)
+
+        assert result.stop_reason == StopReason.COMPLETED
+        validator = TurnEventValidator()
+        for event in emitter.get_events():
+            validator.feed(event)
+        assert validator.violations == []
+        assert validator.finished is True
+        terminals = emitter.get_events("turn_finished")
+        assert len(terminals) == 1
+        # The terminal is the LAST event of the turn.
+        assert emitter.get_events()[-1] is terminals[0]
+
+    @pytest.mark.asyncio
+    async def test_error_turn_validates_clean(self):
+        from modex_agent.core.turn_validator import TurnEventValidator
+
+        provider = MockStreamingProvider()
+
+        async def mock_chat_stream(*args, **kwargs):
+            raise RuntimeError("model exploded")
+
+        provider.chat_stream = mock_chat_stream
+
+        runtime = _make_runtime()
+        context = AgentContext(
+            system_prompt="You are a helpful assistant.",
+            history=ListMessageHistory([{"role": "user", "content": "Hello"}]),
+            tool_manager=_make_tool_manager(),
+            max_iterations=3,
+            identity=runtime.state.identity,
+            runtime=runtime,
+            session=SessionInfo.from_str("test.agent"),
+        )
+        emitter = StreamingEmitter()
+        agent = ReActAgent(provider=provider)
+
+        result = await agent.run(context, emitter)
+
+        assert result.stop_reason == StopReason.ERROR
+        validator = TurnEventValidator()
+        for event in emitter.get_events():
+            validator.feed(event)
+        assert validator.violations == []
+        assert validator.finished is True
+        terminals = emitter.get_events("turn_finished")
+        assert len(terminals) == 1

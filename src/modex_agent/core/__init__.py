@@ -12,13 +12,12 @@ from .agent import (
 from .capabilities import Modality, ModelCapabilities, ModelInfo
 from .emitter import (
     AgentResult,
-    ContentEmitter,
-)
-
-# V2 新架构 - 核心抽象层
-from .events import (
-    AgentEvent,
-    EmitterConfig,
+    CompositeTurnEventSink,
+    KindGate,
+    TurnBinding,
+    TurnEventSink,
+    TurnEventSinkFactory,
+    turn_finished_event,
 )
 from .history import MessageHistory
 from .llm_request import LLMRequest, ReasoningEffort
@@ -104,11 +103,14 @@ __all__ = [
     "StreamFailure",
     "LLMStreamEvent",
     # V2 新架构 - 事件和配置
-    "AgentEvent",
-    "EmitterConfig",
+    "TurnEventSink",
+    "CompositeTurnEventSink",
+    "KindGate",
+    "TurnBinding",
+    "TurnEventSinkFactory",
+    "turn_finished_event",
     # V2 新架构 - Emitter
     "AgentResult",
-    "ContentEmitter",
     # V2 新架构 - 工具管理
     "ToolManager",
     "Tool",

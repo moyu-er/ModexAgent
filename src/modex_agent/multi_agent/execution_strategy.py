@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from modex_agent.app.models.registry import ModelRegistry
     from modex_agent.commands.models import CommandProcessor
     from modex_agent.control.channel import InMemoryControlChannel
-    from modex_agent.core.emitter import ContentEmitter
+    from modex_agent.core.emitter import TurnEventSinkFactory
     from modex_agent.core.inbox import InboxMQ
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.scope import RecordScope
@@ -345,7 +345,7 @@ class PoolAssemblyContext:
     services on it; subagent materialization threads the SAME object).
     ``None`` for hand-built contexts (framework tests)."""
 
-    emitter_factory: Callable[[str], ContentEmitter[Any]] | None = None
+    emitter_factory: TurnEventSinkFactory | None = None
 
     app_config: AppConfig | None = None
     persistence: WorkspacePersistenceManager | None = None

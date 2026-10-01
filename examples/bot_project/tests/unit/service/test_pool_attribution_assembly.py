@@ -24,8 +24,9 @@ pool:
 """
 from bot.workspace.handle import WorkspaceHandle, WorkspaceResolverCell
 
-from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import BufferingSink
 from modex_agent.adapters.output import OutputAdapter
+from modex_agent.core.emitter import TurnBinding
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.hook import HookRunner
@@ -98,9 +99,9 @@ async def test_create_pool_binds_pool_at_single_assembly_point(tmp_path: Path) -
     created_subagents: list[tuple[str, str, str]] = []
     output_adapter = MagicMock(spec=OutputAdapter)
 
-    def emitter_factory(session_id: str, pool: str) -> StreamingAwareEmitter:
-        emitter_pools.append(pool)
-        return StreamingAwareEmitter(output_adapter, session_id)
+    def emitter_factory(binding: TurnBinding) -> BufferingSink:
+        emitter_pools.append(binding.pool or "")
+        return BufferingSink(output_adapter, binding.session_id)
 
     async def on_subagent_created(child_id: str, parent_id: str, pool: str) -> None:
         created_subagents.append((child_id, parent_id, pool))
@@ -150,7 +151,9 @@ async def test_create_pool_binds_pool_at_single_assembly_point(tmp_path: Path) -
         assert materialize_deps.emitter_factory is not None
         assert materialize_deps.on_subagent_created is not None
 
-        materialize_deps.emitter_factory("conversation.main")
+        materialize_deps.emitter_factory(
+            TurnBinding(session_id="conversation.main", agent_name="main")
+        )
         await materialize_deps.on_subagent_created("child", "parent")
 
         assert emitter_pools == [pool_name]

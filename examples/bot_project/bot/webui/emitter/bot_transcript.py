@@ -1,4 +1,4 @@
-"""BotTranscriptEmitter — shared turn-record lifecycle for bot emitters.
+"""BotTranscriptEmitter — shared turn-record lifecycle for bot sinks.
 
 Owns the recording half of a bot turn so concrete projections (the WebUI
 WebSocket emitter, the ACP editor emitter) only translate fully-factual
@@ -8,17 +8,16 @@ flushed as single ``AssistantTextEvent`` / ``AssistantReasoningEvent`` at
 segment boundaries; a tool call/result pair is persisted TOGETHER so both
 share one ``turn_id`` and the materializer pairs them into one tool block
 (also the ONLY persistence point on a resumed approval turn, where the
-tool node re-emits just ``TOOL_CALL_END``).
+tool node re-emits just the tool result).
 
-ADR-0053 convergence: turn identity, tool-call argument pairing, and the
-runtime-event mapping live on the framework
-``DefaultTurnEventProjector``; this base feeds it the core ``TurnEvent``
-union (ADR-0054) and derives its recording + projection behavior from the
-resulting ``PresentationEvent``s. Segment accumulation for the bot's
-transcript format remains bot-side (the store's materialization detail).
-Projections receive full-fidelity facts (full tool args, full result,
-``seq``, ``part_id``) — display truncation is each projection's own
-concern.
+The input face is the core ``TurnEvent`` union (the framework's single
+event stream): this base feeds the framework
+``DefaultTurnEventProjector`` and derives its recording + projection
+behavior from the resulting ``PresentationEvent``s. Segment accumulation
+for the bot's transcript format remains bot-side (the store's
+materialization detail). Projections receive full-fidelity facts (full
+tool args, full result, ``seq``, ``part_id``) — display truncation is
+each projection's own concern.
 """
 
 from __future__ import annotations
@@ -29,23 +28,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import BufferingSink
 from modex_agent.adapters.output import OutputAdapter
-from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.agents.react.constants import ToolArgsDeltaPayload, ToolCallEndPayload
-from modex_agent.core.emitter import AgentResult
-from modex_agent.core.events import EmitterConfig
+from modex_agent.core.emitter import KindGate
 from modex_agent.core.session_id import agent_of
 from modex_agent.core.turn_events import (
-    ToolArgsDeltaEvent,
-    TurnErroredEvent,
+    IterationFinishedEvent,
+    StopReason,
     TurnEvent,
     TurnFinishedEvent,
-    TurnReasoningEvent,
-    TurnStartedEvent,
-    TurnTextEvent,
-    TurnToolCallEvent,
-    TurnToolResultEvent,
 )
 from modex_agent.messaging.models import OutputMessage
 from modex_agent.presentation import (
@@ -84,38 +75,7 @@ def _empty_session_meta() -> SessionMeta:
     return SessionMeta()
 
 
-_REACT_TO_TURN_KINDS: dict[str, str | None] = {
-    ReActEvent.MODEL_OUTPUT.value: None,
-    ReActEvent.MODEL_REASONING.value: "reasoning",
-    ReActEvent.TOOL_ARGS_DELTA.value: "tool_args_delta",
-    ReActEvent.TOOL_CALL_START.value: "tool_call",
-    ReActEvent.TOOL_CALL_END.value: "tool_result",
-    ReActEvent.ITERATION_START.value: None,
-    ReActEvent.ITERATION_END.value: None,
-    ReActEvent.FINAL_OUTPUT.value: None,
-    ReActEvent.START.value: "turn_started",
-    ReActEvent.ERROR.value: "turn_errored",
-    ReActEvent.MAX_ITERATIONS.value: None,
-    ReActEvent.PROGRESS.value: None,
-}
-"""Declarative ReAct-enum → core ``TurnEvent`` kind mapping (ADR-0054).
-
-Every ``ReActEvent`` value maps to exactly one core kind literal or
-``None`` (declared ignored). ``None`` entries fall through to the
-streaming base (``StreamingAwareEmitter._on_event``) unchanged:
-
-- ``model_output``: duplicates the streaming-delta / folded-content
-  entries carrying the same text (``TurnTextEvent``).
-- ``iteration_start`` / ``iteration_end`` / ``progress``: intra-turn
-  bookkeeping with no sink here.
-- ``final_output`` / ``max_iterations``: terminal facts arrive via
-  ``emit_complete`` (``TurnFinishedEvent.stop_reason``).
-
-The architecture anchor introspects this table — no silent drops.
-"""
-
-
-class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
+class BotTranscriptEmitter(BufferingSink, ABC):
     """Shared turn-record lifecycle with two concrete projections.
 
     This base owns recording (transcript writes, segment buffering); the
@@ -128,7 +88,7 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
         self,
         output_adapter: OutputAdapter,
         session_id: str,
-        config: EmitterConfig | None = None,
+        gate: KindGate | None = None,
         *,
         send_timeout: float | None = None,
         pool: str | None = None,
@@ -136,7 +96,12 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
         session_meta_resolver: Callable[[], SessionMeta] | None = None,
         sessions_dir_provider: Callable[[], Path | None] | None = None,
     ) -> None:
-        super().__init__(output_adapter, session_id, config, send_timeout=send_timeout)
+        super().__init__(
+            output_adapter,
+            session_id,
+            gate,
+            send_timeout=send_timeout,
+        )
         # session_id is the FULL receiver-owned identifier shared with the
         # memory system: {conv}.{agent}[.{invocation_id}].  Keep it verbatim so
         # every emitted event and the persisted transcript carry the complete
@@ -168,6 +133,9 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
         self._segments: dict[str, str] = {}
         self._segment_kinds: dict[str, str] = {}
         self._segment_order: list[str] = []
+        # Per-turn flag: a mid-flight turn_errored already carried the
+        # user-facing error message, so the terminal render is suppressed.
+        self._error_delivered = False
 
     # ------------------------------------------------------------------
     # Projection contract (subclass sink formats)
@@ -210,7 +178,7 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
         ...
 
     async def _project_tool_args_delta(self, tool_name: str, call_id: str, args_fragment: str) -> None:
-        """Project one streamed argument fragment (pre-``tool_call_start``).
+        """Project one streamed argument fragment (pre-``tool_call``).
 
         默认 no-op: 预热态是纯显示投影, 记录生命周期(段缓冲/持久化)不参与;
         WebUI 投影覆盖此钩子做节流外发, ACP 投影忽略。
@@ -357,7 +325,7 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
                 # Transient warm-up signal: do not flush the text segment (the
                 # body may still be semantically unfinished), do not persist to
                 # the transcript, do not enter the partial buffer — refresh
-                # recovery relies on the subsequent tool_call_start full
+                # recovery relies on the subsequent tool_call full
                 # arguments, so losing the warm-up state is harmless.
                 await self._project_tool_args_delta(tool_name, call_id, fragment)
             case ToolCallStarted(tool_name=tool_name, call_id=call_id, arguments=args):
@@ -375,7 +343,7 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
                 # Persist call + result TOGETHER so they share a turn_id and
                 # the materializer pairs them into one complete tool block.
                 # This is also the ONLY persistence point on a resumed
-                # approval turn (no preceding TOOL_CALL_START), where the
+                # approval turn (no preceding tool_call), where the
                 # result card carries the call args. ``arguments is None``
                 # marks an orphan result — persist the result alone, never a
                 # fabricated empty-args call.
@@ -405,51 +373,64 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
                     )
                 await self._project_tool_end(tool_name, call_id, output, seq)
             case TurnErrored(message=message):
+                self._error_delivered = True
                 await self._safe_adapter_send(
                     OutputMessage(content=f"Error: {message}"), log_label="emit_error"
                 )
             case TurnFinished():
-                # Handled inside emit_complete (flush + super + projection
-                # ordering); never dispatched here.
+                # Handled inside the terminal branch of ``_dispatch``; never
+                # dispatched here.
                 pass
             case _:
                 # TurnStarted / usage / approval cards: no bot sink today.
                 pass
 
     # ------------------------------------------------------------------
-    # Content entry points (single-write recording + projection)
+    # Turn-event dispatch (the sink face)
     # ------------------------------------------------------------------
 
-    async def emit_content(self, full_content: str) -> None:
-        text: str = full_content.strip()
-        if text:
-            self._accumulate_segment(text, "text", None)
+    async def _dispatch(self, event: TurnEvent) -> None:
+        match event:
+            case TurnFinishedEvent(
+                stop_reason=stop_reason, error=error, attachments=attachments
+            ):
+                await self._handle_turn_finished(stop_reason, error, attachments)
+            case IterationFinishedEvent():
+                # Segment boundary: the retired emit_stream_end flush now
+                # rides the iteration-finished signal (same boundary — after
+                # each LLM output's iteration closes).
+                await self._flush_active_segment()
+            case _:
+                await self._feed(event)
 
-    async def emit_delta(self, delta: str) -> None:
-        if not delta:
-            return
-        await self._feed(TurnTextEvent(text=delta))
+    async def _handle_turn_finished(
+        self,
+        stop_reason: StopReason,
+        error: str | None,
+        attachments: tuple[str, ...],
+    ) -> None:
+        """Terminal branch: error render, segment flush, attachments, projection.
 
-    async def emit_stream_end(self, resuming: bool = False) -> None:
-        await self._flush_active_segment()
-
-    async def emit_turn_event(self, event: TurnEvent) -> None:
-        await self._feed(event)
-
-    async def emit_complete(self, result: AgentResult) -> None:
+        Ordering preserved from the retired emitter channels: the error
+        message (when the mid-flight path did not already deliver one),
+        then the segment flush (while the turn identity is still active),
+        then attachments, then the terminal projection.
+        """
         try:
-            # Flush buffered segments FIRST — while the turn identity is
-            # still active — then feed the terminal event (which resets the
-            # projector), then forward completion and project turn end.
+            if (
+                stop_reason is StopReason.ERROR
+                and error
+                and not self._error_delivered
+            ):
+                self._error_delivered = True
+                await self._safe_adapter_send(
+                    OutputMessage(content=f"Error: {error}"), log_label="emit_error"
+                )
             await self._flush_active_segment()
             finished = self._projector.feed(
-                TurnFinishedEvent(
-                    stop_reason=result.stop_reason,
-                    error=result.error,
-                    attachments=tuple(result.attachments),
-                )
+                TurnFinishedEvent(stop_reason=stop_reason, error=error, attachments=attachments)
             )
-            await super().emit_complete(result)
+            await self._deliver_attachments(attachments)
             for presentation in finished:
                 if isinstance(presentation, TurnFinished):
                     await self._project_turn_end(
@@ -460,106 +441,7 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
             self._segments = {}
             self._segment_kinds = {}
             self._segment_order = []
-
-    async def emit_error(self, error: str) -> None:
-        await self._feed(TurnErroredEvent(message=error))
-
-    async def _on_event(self, event: ReActEvent, data: Any = None) -> None:
-        """Translate the ReAct enum stream onto the core ``TurnEvent`` union.
-
-        The disposition of every enum value is declared by
-        ``_REACT_TO_TURN_KINDS``: a kind literal is translated and fed to
-        the framework projector; ``None`` falls through to the streaming
-        base (buffer/flush semantics unchanged).
-        """
-        if _REACT_TO_TURN_KINDS.get(event.value) is None:
-            await super()._on_event(event, data)
-            return
-        match event:
-            case ReActEvent.MODEL_REASONING:
-                await self._feed(TurnReasoningEvent(text=data))
-            case ReActEvent.TOOL_ARGS_DELTA:
-                payload: ToolArgsDeltaPayload = data
-                await self._feed(
-                    ToolArgsDeltaEvent(
-                        call_id=payload.call_id,
-                        tool_name=payload.tool_name,
-                        args_fragment=payload.args_fragment,
-                    )
-                )
-            case ReActEvent.TOOL_CALL_START:
-                # The tool node canonicalizes call_id before emitting
-                # (assigning one when the provider omits it), so the id here
-                # is the SAME id the later END will carry — pass it through
-                # verbatim.
-                await self._feed(
-                    TurnToolCallEvent(
-                        tool_name=data.tool_name,
-                        call_id=data.call_id,
-                        arguments=data.arguments or {},
-                    )
-                )
-            case ReActEvent.TOOL_CALL_END:
-                end_payload: ToolCallEndPayload = data
-                tool_call = end_payload.tool_call
-                if tool_call.call_id:
-                    await self._feed(
-                        TurnToolResultEvent(
-                            tool_name=tool_call.tool_name,
-                            call_id=tool_call.call_id,
-                            output=end_payload.result.message_content(),
-                            error=end_payload.result.error,
-                            seq=end_payload.seq,
-                            arguments=tool_call.arguments,
-                        )
-                    )
-                else:
-                    # Degenerate call without identity (provider omitted the
-                    # id and canonicalization failed): the neutral seam
-                    # requires call identity, so record + project directly —
-                    # the legacy wire bytes (``call_id`` omitted) preserved.
-                    await self._flush_active_segment()
-                    if self._transcript_store is not None:
-                        self._projector.ensure_turn_started()
-                        await self._persist(
-                            TcEvent(
-                                session_id=self._session_id,
-                                agent_name=self._agent_name,
-                                turn_id=self._current_turn_id,
-                                call_id=tool_call.call_id,
-                                tool_name=tool_call.tool_name,
-                                args=tool_call.arguments or {},
-                            )
-                        )
-                        await self._persist(
-                            TrEvent(
-                                session_id=self._session_id,
-                                agent_name=self._agent_name,
-                                turn_id=self._current_turn_id,
-                                call_id=tool_call.call_id,
-                                tool_name=tool_call.tool_name,
-                                result=end_payload.result.message_content().strip(),
-                                error=end_payload.result.error,
-                                seq=end_payload.seq,
-                            )
-                        )
-                    await self._project_tool_end(
-                        tool_call.tool_name,
-                        tool_call.call_id,
-                        end_payload.result.message_content(),
-                        end_payload.seq,
-                    )
-            case ReActEvent.ERROR:
-                await self._feed(TurnErroredEvent(message=str(data)))
-            case ReActEvent.START:
-                # Eager turn identity: the projector assigns the turn id on
-                # turn_started instead of waiting for the first content
-                # event. No bot-side record or wire frame derives from it.
-                await self._feed(TurnStartedEvent())
-            case _:
-                # Unreachable: the table maps every value, None entries
-                # returned to the streaming base above.
-                await super()._on_event(event, data)
+            self._error_delivered = False
 
     # ------------------------------------------------------------------
     # Internal helpers

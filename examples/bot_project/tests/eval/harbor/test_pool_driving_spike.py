@@ -13,15 +13,15 @@ from bot.workspace.pool_data import PoolData, build_pool_data
 
 from examples.bot_project.tests.service._title_support import title_workspace
 from modex_agent.adapters.output import NullOutputAdapter
-from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.app.models.assembly import ModelRegistryAssembly
 from modex_agent.app.models.choice import ModelChoiceRegistry
-from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.emitter import AgentResult, TurnBinding, TurnEventSink
 from modex_agent.core.llm_struct import FinishReason, LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn.models import JsonValue
+from modex_agent.core.turn_events import TurnEvent, TurnFinishedEvent, TurnTextEvent
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.memory.presets import main_agent_memory
@@ -101,20 +101,32 @@ class _DelegatingProvider(CallbackStreamProvider):
         return "openai/harbor-delegating"
 
 
-class _FutureEmitter(ContentEmitter[ReActEvent]):
+class _FutureEmitter(TurnEventSink):
+    """Completes an asyncio.Future with the turn's AgentResult projection.
+
+    Content arrives as text events (the retired ``emit_complete`` channel
+    carried the whole result); the terminal ``turn_finished`` closes it.
+    """
+
     def __init__(self, completion: asyncio.Future[AgentResult]) -> None:
         super().__init__()
         self._completion = completion
+        self._content_parts: list[str] = []
 
-    async def emit_delta(self, delta: str) -> None:
-        _ = delta
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        self._completion.set_result(result)
-
-    async def emit_error(self, error: str) -> None:
-        if not self._completion.done():
-            self._completion.set_result(AgentResult(error=error))
+    async def _dispatch(self, event: TurnEvent) -> None:
+        match event:
+            case TurnTextEvent(text=text):
+                self._content_parts.append(text)
+            case TurnFinishedEvent(stop_reason=stop_reason, error=error):
+                if self._completion.done():
+                    return
+                self._completion.set_result(
+                    AgentResult(
+                        content="".join(self._content_parts) or None,
+                        stop_reason=stop_reason,
+                        error=error,
+                    )
+                )
 
 
 async def _scripted_registry(provider: LLMProvider) -> ComponentRegistry:
@@ -186,13 +198,12 @@ async def _create_scripted_pool(
     child_created: asyncio.Future[tuple[str, str]] = asyncio.get_running_loop().create_future()
     child_emitter_ready = asyncio.Event()
 
-    def emitter_factory(session_id: str, pool_name: str) -> _FutureEmitter:
-        _ = pool_name
+    def emitter_factory(binding: TurnBinding) -> _FutureEmitter:
         completion = completions.setdefault(
-            session_id,
+            binding.session_id,
             asyncio.get_running_loop().create_future(),
         )
-        if session_id != _ROOT_SESSION.session_id:
+        if binding.session_id != _ROOT_SESSION.session_id:
             child_emitter_ready.set()
         return _FutureEmitter(completion)
 

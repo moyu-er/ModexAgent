@@ -51,7 +51,7 @@ from typing import Any, ClassVar, cast
 from pydantic import BaseModel
 
 from modex_agent.adapters.output import OutputAdapter
-from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.emitter import TurnBinding, TurnEventSink
 from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.scope.capability import Capability
 from modex_agent.scope.component_registry import ComponentRegistry, PluginSource
@@ -97,7 +97,7 @@ class ChannelBuildResult:
 
     input_adapter: InputAdapter
     output_adapter: OutputAdapter
-    emitter_factory: Callable[[str, str], ContentEmitter[Any]]
+    emitter_factory: Callable[[TurnBinding], TurnEventSink]
 
 
 #: A channel factory returns ``None`` when the channel is configured off.

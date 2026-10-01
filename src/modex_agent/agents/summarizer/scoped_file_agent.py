@@ -209,7 +209,7 @@ class ScopedFileAgent:
             result = await react_agent.run(context, emitter)
             if result.stop_reason == StopReason.ERROR:
                 return None
-            return emitter._current_content
+            return emitter.current_content
         except Exception:
             logger.exception("%s execution error", agent_name)
             return None

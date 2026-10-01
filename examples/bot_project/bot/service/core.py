@@ -60,7 +60,7 @@ from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.app.roots import AppAssemblyRoots
 from modex_agent.app.service import AppService
 from modex_agent.control.channel import InMemoryControlChannel
-from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.emitter import TurnEventSinkFactory
 from modex_agent.core.llm_struct import (
     DeadlinePolicy,
     LLMTimeoutPolicy,
@@ -106,7 +106,7 @@ class BotService(AgentBuilderMixin, AppService):
         config_dir: Path,
         input_adapter: InputAdapter,
         output_adapter: OutputAdapter,
-        emitter_factory: Callable[[str, str], ContentEmitter[Any]],
+        emitter_factory: TurnEventSinkFactory,
         *,
         app_config: AppConfig | None = None,
         # ── Assembly roots (DESIGN §3.2): explicit config/resource/runtime ──

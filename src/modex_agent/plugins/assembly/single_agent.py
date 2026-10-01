@@ -5,9 +5,9 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.emitter import TurnEventSinkFactory
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.provider import LLMProvider
@@ -77,7 +77,7 @@ class SingleAgentInfra:
         tool_wrapper: Callable[[Tool], Tool] | None = None,
         extra_hooks: tuple[Hook, ...] = (),
         governance_enabled: bool = True,
-        emitter_factory: Callable[[str], ContentEmitter[Any]] | None = None,
+        emitter_factory: TurnEventSinkFactory | None = None,
         trace_store: OtelSpanTraceStore | None = None,
     ) -> None:
         self.llm_provider = llm_provider

@@ -31,11 +31,11 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Mapping
 
     from modex_agent.commands.models import CommandProcessor
     from modex_agent.control.channel import InMemoryControlChannel
-    from modex_agent.core.emitter import ContentEmitter
+    from modex_agent.core.emitter import TurnEventSinkFactory
     from modex_agent.core.provider import LLMProvider
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.workspace_root import WorkspaceRootProvider
@@ -118,7 +118,7 @@ class PoolRuntimeDeps:
     pool_assembly_ctx: PoolAssemblyContext | None = None
     root_provider: WorkspaceRootProvider | None = None
     mcp_registry: McpConnectionRegistry | None = None
-    emitter_factory: Callable[[str], ContentEmitter[Any]] | None = None
+    emitter_factory: TurnEventSinkFactory | None = None
     # Pool-level extensions resolved by PoolAssembleStage (ticket 10) from
     # the spec's INTERCEPTOR / COMMAND_HANDLER rosters against this
     # enriched context. ``None`` = no roster additions — the orchestrator

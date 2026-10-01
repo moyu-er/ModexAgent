@@ -16,8 +16,8 @@ from bot.webui.events import SessionMeta, WebUIEventType, _unwrap_envelope
 from bot.webui.server import WebUIServer
 from bot.workspace.handle import PoolWorkspaceResources
 
-from modex_agent.core.events import EmitterConfig
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn_events import IterationFinishedEvent, TurnTextEvent
 from modex_agent.multi_agent.pool_router import PoolSessionStore
 from modex_agent.multi_agent.session_tree.models import (
     NodeVersionStatus,
@@ -117,13 +117,12 @@ async def test_transcript_uses_emitter_owning_pool() -> None:
     emitter = emitter_constructor(
         output_adapter,
         _SESSION_ID,
-        config=EmitterConfig(),
         transcript_store=transcript_store,
         session_meta_resolver=SessionMeta,
         pool=_OWNING_POOL,
     )
-    await emitter.emit_content("owned by opencode")
-    await emitter.emit_stream_end()
+    await emitter.emit(TurnTextEvent(text="owned by opencode"))
+    await emitter.emit(IterationFinishedEvent(iteration=0, has_tool_calls=False))
 
     assert transcript_store.append.await_args.kwargs["pool"] == _OWNING_POOL
 
@@ -139,11 +138,10 @@ async def test_websocket_envelope_uses_emitter_owning_pool() -> None:
     emitter = emitter_constructor(
         output_adapter,
         _SESSION_ID,
-        config=EmitterConfig(),
         session_meta_resolver=SessionMeta,
         pool=_OWNING_POOL,
     )
-    await emitter.emit_delta("streamed by opencode")
+    await emitter.emit(TurnTextEvent(text="streamed by opencode"))
 
     queue = input_adapter.get_delta_queue(_SESSION_ID, None)
     assert queue is not None

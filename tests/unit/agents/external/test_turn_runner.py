@@ -16,7 +16,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from modex_agent.adapters.emitter import StreamingAwareEmitter
+from modex_agent.adapters.emitter import BufferingSink
+from modex_agent.adapters.output import NullOutputAdapter
+from modex_agent.core.emitter import TurnBinding
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.turn_events import StopReason
@@ -135,7 +137,7 @@ def _make_runner(
     return ExternalTurnRunner(
         agent=resolved_agent,
         emitter_factory=emitter_factory,
-        output_adapter=output_adapter or MagicMock(),
+        output_adapter=output_adapter or NullOutputAdapter(),
         registry=registry or TurnSessionRegistry(),
         on_session_start=on_session_start,
         on_session_end=on_session_end,
@@ -233,20 +235,18 @@ async def test_emitter_factory_override_takes_effect() -> None:
     """Post-construction reassignment of _emitter_factory is honored.
 
     This mirrors the pool_builder wiring: AgentPipeline is constructed with
-    a bare StreamingAwareEmitter factory, then pool_builder overrides
+    a bare BufferingSink factory, then pool_builder overrides
     pipeline.emitter_factory (and thus ExternalTurnRunner._emitter_factory)
     with the WebBotEmitter factory. The runner must use the overridden factory.
     """
-    from modex_agent.adapters.emitter import StreamingAwareEmitter
-
-    initial_factory = lambda sid: StreamingAwareEmitter(  # noqa: E731
-        output_adapter=MagicMock(), session_id=sid
+    initial_factory = lambda binding: BufferingSink(  # noqa: E731
+        output_adapter=MagicMock(), session_id=binding.session_id
     )
     agent = _RecordingAgent()
     runner = _make_runner(agent=agent, emitter_factory=initial_factory)
 
     overridden_emitter = MagicMock()
-    overridden_factory = lambda sid: overridden_emitter  # noqa: E731
+    overridden_factory = lambda binding: overridden_emitter  # noqa: E731
     runner._emitter_factory = overridden_factory
 
     await runner.process_locked(_make_input(), "s1", session=_session())
@@ -337,28 +337,29 @@ async def test_cancelled_propagates_and_cleans_up() -> None:
     assert registry.is_active("s1") is False
 
 
-async def test_cancelled_flushes_partial_text_exactly_once_then_reraises() -> None:
-    """On cancellation the buffered partial text is flushed exactly once via
-    emit_stream_end, then CancelledError re-raises (no swallowing)."""
+async def test_cancelled_emits_terminal_exactly_once_then_reraises() -> None:
+    """On cancellation the terminal event is emitted exactly once, then
+    CancelledError re-raises (no swallowing)."""
     completed: list[AgentResult] = []
 
-    class _FlushTrackingEmitter:
-        async def emit_delta(self, delta: str) -> None:
-            pass
+    class _FlushTrackingSink:
+        async def emit(self, event: Any) -> None:
+            from modex_agent.core.turn_events import TurnFinishedEvent
 
-        async def emit_complete(self, result: AgentResult) -> None:
-            completed.append(result)
+            if isinstance(event, TurnFinishedEvent):
+                completed.append(
+                    AgentResult(stop_reason=event.stop_reason, error=event.error)
+                )
 
     class _DeltaThenHangAgent:
         name = "delta-hang-agent"
 
-        async def run(self, context: AgentContext, emitter: _FlushTrackingEmitter) -> AgentResult:
-            await emitter.emit_delta("partial output")
+        async def run(self, context: AgentContext, emitter: _FlushTrackingSink) -> AgentResult:
             await asyncio.sleep(100)
             return AgentResult(content="unreachable")
 
-    def _factory(session_id: str) -> _FlushTrackingEmitter:
-        return _FlushTrackingEmitter()
+    def _factory(binding: TurnBinding) -> _FlushTrackingSink:
+        return _FlushTrackingSink()
 
     runner = _make_runner(agent=_DeltaThenHangAgent(), emitter_factory=_factory)
     task = asyncio.ensure_future(runner.process_locked(_make_input(), "s1", session=_session()))
@@ -419,8 +420,8 @@ async def test_emitter_factory_used_when_provided() -> None:
     factory_emitter = MagicMock()
     calls: list[str] = []
 
-    def _factory(session_id: str) -> Any:
-        calls.append(session_id)
+    def _factory(binding: TurnBinding) -> Any:
+        calls.append(binding.session_id)
         return factory_emitter
 
     agent = _RecordingAgent()
@@ -432,14 +433,14 @@ async def test_emitter_factory_used_when_provided() -> None:
     assert agent.received_emitter is factory_emitter
 
 
-async def test_default_streaming_emitter_when_no_factory() -> None:
-    """When emitter_factory is None, a StreamingAwareEmitter is constructed."""
+async def test_default_buffering_sink_when_no_factory() -> None:
+    """When emitter_factory is None, a BufferingSink is constructed."""
     agent = _RecordingAgent()
     runner = _make_runner(agent=agent, emitter_factory=None)
 
     await runner.process_locked(_make_input(), "s1", session=_session())
 
-    assert isinstance(agent.received_emitter, StreamingAwareEmitter)
+    assert isinstance(agent.received_emitter, BufferingSink)
 
 
 # ---------------------------------------------------------------------------

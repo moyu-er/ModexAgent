@@ -1,21 +1,33 @@
 """Tests for QQBotEmitter business logic.
 
 验证 QQBotEmitter 的业务处理逻辑：
-- 内容发送给用户
+- 内容按投递策略缓冲/发送给用户
 - 推理内容只记日志
-- 工具调用被忽略
+- 工具调用被忽略（仅日志）
 - 与 QQOutputAdapter 的集成
 """
 
 import logging
+import sys
+from pathlib import Path
 
 import pytest
 
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.agents.react import ReActEvent, ToolCallEndPayload
-from modex_agent.core.emitter import AgentResult
+from modex_agent.core.emitter import AgentResult, turn_finished_event
 from modex_agent.core.message import ToolCall
 from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.turn_events import (
+    IterationFinishedEvent,
+    TurnErroredEvent,
+    TurnReasoningEvent,
+    TurnTextEvent,
+    TurnToolCallEvent,
+    TurnToolResultEvent,
+)
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "examples" / "bot_project"))
+from bot.adapters.qq import QQBotEmitter  # noqa: E402
 
 
 class MockOutputAdapter:
@@ -39,6 +51,10 @@ class MockOutputAdapter:
             await self.send(OutputMessage(content=content), session_id)
             self.send_delta_calls.clear()
 
+    @property
+    def name(self) -> str:
+        return "mock"
+
 
 class TestQQBotEmitter:
     """QQBotEmitter tests."""
@@ -49,62 +65,58 @@ class TestQQBotEmitter:
 
     @pytest.fixture
     def emitter(self, mock_adapter):
-        """Create a QQBotEmitter instance."""
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "examples" / "bot_project"))
-        from bot.adapters.qq import QQBotEmitter
+        """Create a QQBotEmitter instance (default gate — every kind)."""
         return QQBotEmitter(
             output_adapter=mock_adapter,
             session_id="test_qq_session",
         )
 
     @pytest.mark.asyncio
-    async def test_emit_delta_buffers_in_pseudo_streaming(self, mock_adapter, emitter):
-        """Test that emit_delta buffers content in pseudo-streaming mode (QQ)."""
-        await emitter.emit_delta("Hello ")
-        await emitter.emit_delta("QQ User!")
+    async def test_text_buffers_in_segment_policy(self, mock_adapter, emitter):
+        """Text buffers under the SEGMENT policy (QQ adapter is PSEUDO)."""
+        await emitter.emit(TurnTextEvent(text="Hello "))
+        await emitter.emit(TurnTextEvent(text="QQ User!"))
 
-        # In pseudo-streaming mode, content is buffered internally, not sent immediately
         assert len(mock_adapter.send_delta_calls) == 0
         assert emitter._content_buffer == "Hello QQ User!"
 
     @pytest.mark.asyncio
-    async def test_model_reasoning_logs_only(self, mock_adapter, emitter, caplog):
-        """Test that model_reasoning only logs, doesn't send to user."""
+    async def test_reasoning_logs_only(self, mock_adapter, emitter, caplog):
+        """Reasoning only logs, never reaches the user."""
         with caplog.at_level(logging.INFO):
-            await emitter.emit(ReActEvent.MODEL_REASONING, "Let me think...")
-            await emitter.emit(ReActEvent.MODEL_REASONING, "This is my reasoning")
+            await emitter.emit(TurnReasoningEvent(text="Let me think..."))
+            await emitter.emit(TurnReasoningEvent(text="This is my reasoning"))
 
         # Should log reasoning
         assert "[Reasoning]" in caplog.text
         assert "Let me think..." in caplog.text
 
-        # Should NOT send to adapter
+        # Should NOT send to the adapter
         assert len(mock_adapter.send_delta_calls) == 0
+        assert mock_adapter.send_calls == []
 
     @pytest.mark.asyncio
-    async def test_tool_call_start_ignored(self, mock_adapter, emitter):
-        """Test that tool_call_start is ignored (not sent to user)."""
-        tool_call = ToolCall(tool_name="weather", arguments={"city": "Beijing"})
+    async def test_tool_call_ignored(self, mock_adapter, emitter, caplog):
+        """Tool calls are logged, not sent to the user."""
+        with caplog.at_level(logging.INFO):
+            await emitter.emit(
+                TurnToolCallEvent(
+                    tool_name="weather", call_id="call-1", arguments={"city": "Beijing"}
+                )
+            )
 
-        # Should not raise or send anything
-        await emitter.emit(ReActEvent.TOOL_CALL_START, tool_call)
-
+        assert "[Tool Call]" in caplog.text
         # No calls to adapter
         assert len(mock_adapter.send_delta_calls) == 0
         assert len(mock_adapter.send_calls) == 0
 
     @pytest.mark.asyncio
-    async def test_tool_call_end_ignored(self, mock_adapter, emitter):
-        """Test that tool_call_end is ignored (not sent to user)."""
-        tool_call = ToolCall(tool_name="weather", arguments={})
-        result = ToolResult.from_text("weather", "Sunny, 25C")
-
-        # Should not raise or send anything
+    async def test_tool_result_ignored(self, mock_adapter, emitter):
+        """Tool results are logged, not sent to the user."""
         await emitter.emit(
-            ReActEvent.TOOL_CALL_END,
-            ToolCallEndPayload(tool_call=tool_call, result=result, seq=0),
+            TurnToolResultEvent(
+                tool_name="weather", call_id="call-1", output="Sunny, 25C"
+            )
         )
 
         # No calls to adapter
@@ -112,17 +124,21 @@ class TestQQBotEmitter:
         assert len(mock_adapter.send_calls) == 0
 
     @pytest.mark.asyncio
-    async def test_emit_complete_flushes_buffer(self, mock_adapter, emitter):
-        """Test that emit_complete flushes buffered content via send()."""
-        await emitter.emit_delta("Hello ")
-        await emitter.emit_delta("World")
+    async def test_turn_finished_flushes_buffer(self, mock_adapter, emitter):
+        """turn_finished flushes buffered content via send()."""
+        await emitter.emit(TurnTextEvent(text="Hello "))
+        await emitter.emit(TurnTextEvent(text="World"))
 
-        result = AgentResult(content="Hello World", reasoning="Some reasoning")
-        await emitter.emit_complete(result)
-
-        # In pseudo-streaming mode, flush goes through send()
+        await emitter.emit(turn_finished_event(AgentResult(content="Hello World")))
+        # In segment mode, flush goes through send()
         assert len(mock_adapter.send_calls) == 1
         assert mock_adapter.send_calls[0][0].content == "Hello World"
+
+    @pytest.mark.asyncio
+    async def test_error_sends_error_message(self, mock_adapter, emitter):
+        await emitter.emit(TurnErroredEvent(message="boom"))
+        assert len(mock_adapter.send_calls) == 1
+        assert "Error: boom" in mock_adapter.send_calls[0][0].content
 
     @pytest.mark.asyncio
     async def test_business_logic_demonstration(self, mock_adapter, emitter, caplog):
@@ -130,12 +146,12 @@ class TestQQBotEmitter:
 
         # 1. Model generates content and reasoning
         with caplog.at_level(logging.INFO):
-            await emitter.emit(ReActEvent.MODEL_REASONING, "Step 1: Analyzing question...")
-            await emitter.emit_delta("The answer is ")
-            await emitter.emit(ReActEvent.MODEL_REASONING, "Step 2: Computing...")
-            await emitter.emit_delta("42")
+            await emitter.emit(TurnReasoningEvent(text="Step 1: Analyzing question..."))
+            await emitter.emit(TurnTextEvent(text="The answer is "))
+            await emitter.emit(TurnReasoningEvent(text="Step 2: Computing..."))
+            await emitter.emit(TurnTextEvent(text="42"))
 
-        # 2. Content should be buffered internally (pseudo-streaming)
+        # 2. Content should be buffered internally (segment policy)
         assert len(mock_adapter.send_delta_calls) == 0
         assert emitter._content_buffer == "The answer is 42"
 
@@ -144,13 +160,27 @@ class TestQQBotEmitter:
         assert "Step 2: Computing..." in caplog.text
 
         # 4. Tool calls should be ignored
-        tool_call = ToolCall(tool_name="calculator", arguments={"expr": "20+22"})
-        await emitter.emit(ReActEvent.TOOL_CALL_START, tool_call)
+        await emitter.emit(
+            TurnToolCallEvent(
+                tool_name="calculator", call_id="call-2", arguments={"expr": "20+22"}
+            )
+        )
         assert len(mock_adapter.send_delta_calls) == 0
 
-        # 5. Complete the response - flushes via send()
-        result = AgentResult(content="The answer is 42", reasoning="Computed 20+22")
-        await emitter.emit_complete(result)
-
+        # 5. Segment boundary flushes via send()
+        await emitter.emit(IterationFinishedEvent(iteration=1, has_tool_calls=True))
         assert len(mock_adapter.send_calls) == 1
         assert mock_adapter.send_calls[0][0].content == "The answer is 42"
+
+    @pytest.mark.asyncio
+    async def test_minimal_gate_drops_reasoning(self, mock_adapter):
+        """The production minimal gate excludes reasoning (as before)."""
+        from bot.adapters.qq import QQEmitterConfig
+
+        gated = QQBotEmitter(
+            output_adapter=mock_adapter,
+            session_id="test_qq_session",
+            gate=QQEmitterConfig.minimal(),
+        )
+        await gated.emit(TurnReasoningEvent(text="hidden"))
+        assert gated._reasoning_buffer == ""

@@ -12,7 +12,7 @@ approval suspend/resume, and integration points for hooks, interceptors, and con
 
 | File | Description |
 |------|-------------|
-| `agent.py` | `ReActAgent(Agent[ReActEvent])` — event enum, turn context setup, constructs `Graph` via `build_react_graph().compile()`, wraps in `GraphEngine`, executes via `engine.run_async(ReActGraphContext(...))`. |
+| `agent.py` | `ReActAgent(Agent)` — turn context setup, constructs `Graph` via `build_react_graph().compile()`, wraps in `GraphEngine`, executes via `engine.run_async(ReActGraphContext(...))`. Nodes construct core `TurnEvent` objects directly at every emission site and deliver them through the turn sink (the retired `ReActEvent` enum died with the unified event-stream cutover; `MAX_ITERATIONS` died into `StopReason`). |
 | `graph.py` | `build_react_graph()` -- builds six ReAct nodes plus engine sentinels with 11 edges. |
 | `context.py` | `ReActGraphContext(GraphContext[ReActTurnState])` — type-safe accessors (`agent_ctx`, `tool_manager`, `context_manager`). |
 | `runtime.py` | `ReactGraphRuntime(GraphRuntime)` — AOP bridge mapping ReAct StrEnums to framework enums, bridging `GraphContext.user_data` → `AgentContext`. |
@@ -26,7 +26,7 @@ approval suspend/resume, and integration points for hooks, interceptors, and con
 | `injection_drainer.py` | `InjectionDrainer` — consumes the per-turn injection queue into history (extracted from `ReActAgent._drain_injections`). |
 | `tool_executor.py` | `ToolExecutor` — runs a tool call through the interceptor chain with the mandatory `ToolTimeoutInterceptor` composed innermost (per-invocation deadline on every ReAct path; the interceptor also declares `tool_timeout + margin` into the dispatch deadline at entry — watchdog phase-budget protocol, see `runtime/dispatch.py`). |
 | `tool_dedup.py` | `ToolCallDeduplicator` tracks cross-step streaks with escalating `<system-reminder>`s; same-step duplicates are pruned during scheduling in `ToolNode`, and `check_same_step` has been removed. It skips at `_STREAK_SKIP=8`, force-cancels the turn at `_STREAK_STOP=12`, and is instantiated once per turn. |
-| `constants.py` | `ReActNode`, `ReActHookPoint` (11 values: iteration-level + turn-attempt `BEFORE_TURN`/`AFTER_TURN` + node-level `START_NODE_TURN`/`END_NODE_TURN`), `ReActScope`, `ReActEvent`, `InterruptReason` (B1) StrEnums, plus the frozen `ToolCallEndPayload` event model. |
+| `constants.py` | `ReActNode`, `ReActHookPoint` (11 values: iteration-level + turn-attempt `BEFORE_TURN`/`AFTER_TURN` + node-level `START_NODE_TURN`/`END_NODE_TURN`), `ReActScope`, `InterruptReason` (B1) StrEnums. The retired `ReActEvent` enum and its payload models were removed — nodes emit core `TurnEvent` objects through the turn sink directly. |
 | `hooks/` | ReAct turn-lifecycle hooks (moved from `hook/builtin/` in the W2 layering wave) — checkpoint, deliver_retry, todo_continuation, todo_planning_nudge, loop_detection, length_guard, knowledge_hook, env_injection. Registered via the HOOK-slot factories in `plugins/defaults/hooks.py` (see `hooks/AGENTS.md`) |
 | `nodes/start.py` | `StartNode` -- routes to BEFORE (fresh) or TOOL (resume from approval). Dispatches `START_NODE_TURN` hook on fresh-turn path only (not on resume). |
 | `nodes/before_turn.py` | `BeforeTurnNode` -- increments `turn_attempt`, resets `iteration = 0`, dispatches `BEFORE_TURN` hook, routes to LLM. |
@@ -129,7 +129,7 @@ Deny policy: default `TOOL_RESULT_ONLY` (loop continues); override to `CANCEL_TU
   generates a new trace root. A future improvement could move `trace_id` generation to
   `START_NODE_TURN` so approval-resume continues the same trace. This is deferred because it
   involves `TraceCollectorHook` span lifecycle redesign.
-- Node-level AOP (hooks, interceptors, governance, control drain, snapshot, emit) is
+- Node-level AOP (hooks, interceptors, governance, control drain, snapshot) is
   routed through `ReactGraphRuntime` via `ctx.runtime.*`. Node-level, turn-attempt, and
   iteration-level hooks are all dispatched explicitly by nodes via
   `ctx.runtime.dispatch_hook(ReActHookPoint.X, ctx)`, NOT engine-auto-invoked

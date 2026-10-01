@@ -2,14 +2,6 @@
 
 from __future__ import annotations
 
-from modex_agent.agents.react.agent import ReActEvent
-
-# ``constants.ReActEvent`` is the graph-runtime subset (9 events that route
-# through ``ReactGraphRuntime.emit``). ``ITERATION_START`` / ``MODEL_OUTPUT``
-# / ``MODEL_REASONING`` are NOT in it — they stay as direct
-# ``ctx.agent_ctx.emitter.emit(...)`` calls (ADR-0033 D9.2: ``agent.ReActEvent``
-# is a superset).
-from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
 from modex_agent.agents.react.constants import (
     ReActHookPoint,
     ReActNode,
@@ -32,6 +24,7 @@ from modex_agent.core.turn.enums import (
     TurnPhase,
 )
 from modex_agent.core.turn.models import MessageDelta
+from modex_agent.core.turn_events import IterationFinishedEvent, IterationStartedEvent
 from modex_graph import GraphPersistenceCoordinator
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput
@@ -72,9 +65,9 @@ class LLMNode(Node[ReActTurnState]):
         # is the SOLE iteration cap on the ReAct path — the engine-level
         # ``compile(max_iterations=N)`` safety net is opt-in and ReAct does
         # not set it; exceeding this gate routes to AFTER via this static
-        # edge as a controlled stop.
+        # edge as a controlled stop. The retired ``max_iterations`` event is
+        # covered by the terminal ``turn_finished`` classification.
         if state.iteration > agent_ctx.max_iterations:
-            await ctx.runtime.emit(GraphReActEvent.MAX_ITERATIONS, None, ctx)
             self.deliver(None, ReActNode.AFTER, ctx)
             return None
 
@@ -84,12 +77,9 @@ class LLMNode(Node[ReActTurnState]):
 
         async def actual_iteration() -> None:
             nonlocal response
-            # ITERATION_START is NOT in ``constants.ReActEvent`` (the
-            # graph-runtime subset) — it stays as a direct emitter call.
             if agent_ctx.emitter is not None:
                 await agent_ctx.emitter.emit(
-                    ReActEvent.ITERATION_START,
-                    {"iteration": state.iteration},
+                    IterationStartedEvent(iteration=state.iteration)
                 )
 
             await ctx.runtime.dispatch_hook(ReActHookPoint.BEFORE_ITERATION, ctx)
@@ -188,11 +178,10 @@ class LLMNode(Node[ReActTurnState]):
             self.deliver(None, ReActNode.TOOL, ctx)
             return None
 
-        await ctx.runtime.emit(
-            GraphReActEvent.ITERATION_END,
-            {"iteration": state.iteration, "has_tool_calls": False},
-            ctx,
-        )
+        if agent_ctx.emitter is not None:
+            await agent_ctx.emitter.emit(
+                IterationFinishedEvent(iteration=state.iteration, has_tool_calls=False)
+            )
         self.deliver(None, ReActNode.AFTER, ctx)
         return None
 

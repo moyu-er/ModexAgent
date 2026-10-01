@@ -31,14 +31,14 @@ Graph node implementations for the ReAct agent execution loop. Each node is a si
 
 ### Common Patterns
 - Read `ctx.state.phase` to detect `SUSPENDED` vs fresh turns
-- Use `ctx.runtime.emit(ReActEvent.xxx, data, ctx)` for event-driven observability
+- Emit core `TurnEvent` objects through `ctx.agent_ctx.emitter` (the turn sink) for event-driven observability
 - LLMNode drains control channel at safe points via `ctx.runtime.drain_control(ctx)`
 - ToolNode normalizes approval decisions via `_normalize_batch_decisions()` before execution
 
 ## Dependencies
 
 ### Internal
-- `modex_agent/agents/react/` — `agent.py` (ReActAgent, ReActEvent), `constants.py` (ReActNode, ReActHookPoint, ReActScope, ReActEvent), `state.py` (ReActTurnState), `runtime.py` (ReactGraphRuntime), `context.py` (ReActGraphContext)
+- `modex_agent/agents/react/` — `agent.py` (ReActAgent), `constants.py` (ReActNode, ReActHookPoint, ReActScope), `state.py` (ReActTurnState), `runtime.py` (ReactGraphRuntime), `context.py` (ReActGraphContext)
 - `modex_graph` — `Node[S]`, `GraphContext[S]`, `IntegratedInput`, `GraphInterrupt` (ADR-0033)
 - `modex_agent/core/` — `AgentContext`, `LLMResponse`, `ToolCall`, emitter types
 - `modex_agent/runtime/` — `TurnPhase`, interceptors, dispatch deadline

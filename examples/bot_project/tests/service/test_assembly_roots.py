@@ -42,7 +42,7 @@ def _make_service(
         config_dir=config_dir or CONFIG_DIR,
         input_adapter=MagicMock(),
         output_adapter=MagicMock(),
-        emitter_factory=lambda session_id, pool_name: MagicMock(),
+        emitter_factory=lambda _binding: MagicMock(),
         app_config=None,
         roots=roots,
         enable_dynamic_workspaces=enable_dynamic_workspaces,

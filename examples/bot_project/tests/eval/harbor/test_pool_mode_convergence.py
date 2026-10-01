@@ -22,12 +22,17 @@ from bot.eval.harbor.pool_mode_convergence import (
 from pydantic import BaseModel
 
 from modex_agent.core.emitter import AgentResult
-from modex_agent.core.turn_events import StopReason
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn.models import JsonValue
+from modex_agent.core.turn_events import (
+    StopReason,
+    TurnErroredEvent,
+    TurnEvent,
+    TurnFinishedEvent,
+)
 from modex_agent.memory.scope import MemoryContext
 from modex_agent.plugins.assembly.context import AssemblyContext
 from modex_agent.plugins.defaults.llm import MultiLLMProviderConfig
@@ -199,13 +204,10 @@ def _observing_emitter(
     on_terminal: Callable[[str], None],
 ) -> type[RootResultCaptureEmitter]:
     class _ObservingEmitter(RootResultCaptureEmitter):
-        async def emit_complete(self, result: AgentResult) -> None:
-            await super().emit_complete(result)
-            on_terminal(self._session_id)
-
-        async def emit_error(self, error: str) -> None:
-            await super().emit_error(error)
-            on_terminal(self._session_id)
+        async def _dispatch(self, event: TurnEvent) -> None:
+            await super()._dispatch(event)
+            if isinstance(event, TurnFinishedEvent | TurnErroredEvent):
+                on_terminal(self._session_id)
 
     return _ObservingEmitter
 
@@ -252,11 +254,8 @@ async def test_pool_entry_returns_after_quiesce_when_terminal_emission_is_lost(
     """
 
     class _SilentEmitter(RootResultCaptureEmitter):
-        async def emit_complete(self, result: AgentResult) -> None:
-            _ = result  # dropped — the missed emission
-
-        async def emit_error(self, error: str) -> None:
-            _ = error  # dropped — the missed emission
+        async def _dispatch(self, event: TurnEvent) -> None:
+            _ = event  # dropped — the missed emission
 
     config = PoolModeConfig.from_environment(_environment(tmp_path))
     with patch.object(pool_mode_module, "RootResultCaptureEmitter", _SilentEmitter):
@@ -353,7 +352,11 @@ async def test_emitter_records_error_as_root_result() -> None:
     capture = _capture()
     emitter = RootResultCaptureEmitter(capture, _ROOT_SESSION_ID)
 
-    await emitter.emit_error("child exploded")
+    # An errored turn terminates with turn_finished carrying the error
+    # classification (the retired emit_error channel's contract).
+    await emitter.emit(
+        TurnFinishedEvent(stop_reason=StopReason.ERROR, error="child exploded")
+    )
 
     assert capture.result is not None
     assert capture.result.error == "child exploded"
@@ -364,7 +367,9 @@ async def test_emitter_ignores_child_error_for_root_result() -> None:
     capture = _capture()
     child = RootResultCaptureEmitter(capture, "inv1.explore")
 
-    await child.emit_error("child exploded")
+    await child.emit(
+        TurnFinishedEvent(stop_reason=StopReason.ERROR, error="child exploded")
+    )
 
     assert capture.result is None
 
