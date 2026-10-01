@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-09-02 -->
+<!-- Updated: 2026-10-01 -->
 
 # adapters
 
@@ -11,7 +11,7 @@ Multi-channel input/output adapters that bridge external platforms (QQ, Telegram
 |------|-------------|
 | `__init__.py` | Package marker, exports key adapter classes |
 | `channels.py` | The multi-channel spine — `ADAPTERS` registry, `@register` decorator, `AdapterBuildContext`, `set_conv_channel`/`get_conv_channel`, and `ChannelRouterOutputAdapter`. `WebUIService` imports every `register_*.py` to fire the decorators, then iterates `ADAPTERS` to build enabled adapters |
-| `qq/` | QQ platform adapters — `QQInputAdapter` (C2C + group), `QQOutputAdapter` (message sending, file upload). Split into `__init__.py` (re-exports), `_ws_state.py`, `input.py`, `output.py`, `emitter.py`. Uses ABC `configure_input_pipeline` default (stores pipeline/ctx/output) |
+| `qq/` | QQ platform adapters — `QQInputAdapter` (C2C + group), `QQOutputAdapter` (message sending, file upload). Split into `__init__.py` (re-exports), `_ws_state.py`, `input.py`, `output.py`, `emitter.py` (`QQBotEmitter`, a `BufferingSink` whose delivery policy is DERIVED from the output adapter's `StreamingMode` — see "Delivery policy" below). Uses ABC `configure_input_pipeline` default (stores pipeline/ctx/output) |
 | `telegram.py` | Telegram adapters — `TelegramInputAdapter` (long-polling inbound via injected PTB hooks), `TelegramOutputAdapter` (HTML render + 4096-char chunking). PTB-free and unit-testable in isolation; real polling wired by `register_telegram.py` |
 | `web_socket.py` | `WebSocketInputAdapter` — manages WebSocket connections for WebUI chat. No-op `configure_input_pipeline` override (pipeline is held by `WebUIServer`) |
 | `register_qq.py` | QQ adapter registration — `@register("qq")`; wires QQ to the bot service. Returns `None` when disabled/unconfigured |
@@ -42,6 +42,7 @@ Multi-channel input/output adapters that bridge external platforms (QQ, Telegram
 ### Common Patterns
 - Adapters are created by their `register_*.py` factory (driven by `WebUIService` iterating `ADAPTERS`) and passed to `PoolRouter` or `Pipeline`.
 - **Channel-filtered emitter**: each IM register returns an emitter factory whose emitter silently drops output for conversations not originated on its channel (e.g. `_ChannelFilteredTelegramEmitter`) — no cross-talk.
+- **Delivery policy**: every channel emitter is a `BufferingSink`, and its delivery policy is DERIVED from the output adapter's `StreamingMode` (`DeliveryPolicy.of_streaming_mode`: NATIVE→STREAMING, NONE→TURN, else SEGMENT). There is deliberately NO per-channel YAML key for it — the channel sections carry credentials only; a deployment that needs an explicit policy passes the typed `BufferingSink(policy=...)` constructor override at its own emitter construction (the framework knob).
 - The fan-in pattern: multiple pipelines share one `FanInOutputAdapter` that multiplexes to WebSocket clients.
 
 ## Dependencies
@@ -49,7 +50,7 @@ Multi-channel input/output adapters that bridge external platforms (QQ, Telegram
 ### Internal
 - `modex_agent/pipeline/adapters.py` — `InputAdapter` ABC
 - `modex_agent/adapters/output.py` — `OutputAdapter` ABC + bundled implementations
-- `modex_agent/adapters/emitter.py` — `StreamingAwareEmitter`
+- `modex_agent/adapters/emitter.py` — `BufferingSink` + `DeliveryPolicy`
 - `modex_agent/adapters/filters.py` — content filters
 - `modex_agent/messaging/models.py` — `InputMessage`, `OutputMessage`, and approval-decision input transport
 - `modex_agent/adapters/platform.py` — `StreamingMode`

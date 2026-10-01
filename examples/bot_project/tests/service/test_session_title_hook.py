@@ -29,10 +29,10 @@ import pytest
 from bot.service.session_title import SessionTitleOps
 
 from modex_agent.core.emitter import AgentResult
-from modex_agent.core.turn_events import StopReason
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn_events import StopReason
 from modex_agent.hook import HookSpec
 from modex_agent.hook.abc import HookPayload, HookPoint
 from modex_agent.hook.runner import HookRunner

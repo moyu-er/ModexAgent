@@ -42,7 +42,7 @@ from modex_agent.core.turn_events import (
 from modex_agent.core.turn_events import (
     ToolArgsDeltaEvent as CoreToolArgsDeltaEvent,
 )
-from modex_agent.presentation import ToolResult
+from modex_agent.presentation import PresentationEvent, ToolResult
 
 
 def _text(text: str) -> TurnTextEvent:
@@ -488,9 +488,9 @@ async def test_tool_args_delta_is_noop_for_acp_projection() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         store = JSONLTranscriptStore(Path(tmp))
         hub = AcpEmitterHub()
-        seen: list[TurnEvent] = []
+        seen: list[PresentationEvent] = []
 
-        async def listener(event: TurnEvent) -> None:
+        async def listener(event: PresentationEvent) -> None:
             seen.append(event)
 
         hub.register("conv1.main", listener)
@@ -660,9 +660,9 @@ async def test_approval_and_usage_projections_are_noop_for_acp() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         store = JSONLTranscriptStore(Path(tmp))
         hub = AcpEmitterHub()
-        seen: list[TurnEvent] = []
+        seen: list[PresentationEvent] = []
 
-        async def listener(event: TurnEvent) -> None:
+        async def listener(event: PresentationEvent) -> None:
             seen.append(event)
 
         hub.register("conv1.main", listener)

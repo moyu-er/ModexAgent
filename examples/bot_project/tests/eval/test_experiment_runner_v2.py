@@ -19,13 +19,13 @@ from langfuse import Langfuse
 
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext, current_agent_context
-from modex_agent.core.turn_events import StopReason
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.core.turn.models import JsonValue, TurnIdentity
+from modex_agent.core.turn_events import StopReason
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.manager import InMemoryToolManager

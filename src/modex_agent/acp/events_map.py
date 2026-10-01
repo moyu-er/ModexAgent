@@ -5,6 +5,13 @@ is pure (no I/O, no connection state) and maps one framework concept to one
 ``acp.schema`` session-update model. ``acp.schema`` types are confined to the
 mapping layer and ``server.py``/``entry.py`` — they must not leak further into
 the framework.
+
+Two input altitudes map onto the SAME wire models (ADR-0054 consumer
+realignment): the presentation half (``PresentationEvent`` — the editor road a
+backend with its own ``SessionEventHub`` feeds through
+``AcpInteraction.emit_presentation``) and the core half (``TurnEvent`` — the
+raw runtime stream a core-fact backend such as the scripted one feeds through
+``AcpInteraction.emit``).
 """
 
 from __future__ import annotations
@@ -37,15 +44,27 @@ from modex_agent.core.turn_events import (
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
+from modex_agent.presentation.events import (
+    PresentationEvent,
+    TextDelta,
+    ThinkingDelta,
+    ToolCallStarted,
+    ToolResult,
+)
 
 __all__ = [
     "SessionUpdateOut",
     "infer_tool_kind",
     "map_history_replay",
+    "map_presentation_event",
     "map_reasoning_event",
     "map_stop_reason",
+    "map_text_delta",
     "map_text_event",
+    "map_thinking_delta",
     "map_tool_call_event",
+    "map_tool_call_started",
+    "map_tool_result",
     "map_tool_result_event",
     "map_turn_event",
     "tool_call_id_for",
@@ -119,10 +138,10 @@ def map_tool_result_event(
 
 
 def map_turn_event(event: TurnEvent, *, turn_id: str) -> SessionUpdateOut:
-    """Dispatch one framework turn event to its ACP session-update model.
+    """Dispatch one core turn event to its ACP session-update model.
 
-    Only the four content/tool kinds map today (the external plane's
-    current producers); any other union member fails loudly instead of
+    Only the four content/tool kinds map today (the core-fact road the
+    scripted backend drives); any other union member fails loudly instead of
     being silently mis-mapped — later waves extend this dispatcher when
     their producers exist.
     """
@@ -136,6 +155,58 @@ def map_turn_event(event: TurnEvent, *, turn_id: str) -> SessionUpdateOut:
         case TurnToolResultEvent():
             return map_tool_result_event(event, turn_id=turn_id)
     raise ValueError(f"TurnEvent kind has no ACP mapping: {event.kind}")
+
+
+def map_text_delta(event: TextDelta) -> AgentMessageChunk:
+    """``TextDelta`` -> ``agent_message_chunk``."""
+    return update_agent_message_text(event.text)
+
+
+def map_thinking_delta(event: ThinkingDelta) -> AgentThoughtChunk:
+    """``ThinkingDelta`` -> ``agent_thought_chunk``."""
+    return update_agent_thought_text(event.text)
+
+
+def map_tool_call_started(event: ToolCallStarted, *, turn_id: str) -> ToolCallStart:
+    """``ToolCallStarted`` -> ``tool_call`` start (full-fidelity arguments)."""
+    return start_tool_call(
+        tool_call_id_for(turn_id, event.call_id),
+        event.tool_name,
+        kind=infer_tool_kind(event.tool_name),
+        status="in_progress",
+        raw_input=dict(event.arguments),
+    )
+
+
+def map_tool_result(event: ToolResult, *, turn_id: str) -> ToolCallProgress:
+    """``ToolResult`` -> ``tool_call_update`` (completed/failed + raw output)."""
+    return update_tool_call(
+        tool_call_id_for(turn_id, event.call_id),
+        status="failed" if event.error else "completed",
+        raw_output=event.output,
+    )
+
+
+def map_presentation_event(event: PresentationEvent, *, turn_id: str) -> SessionUpdateOut:
+    """Dispatch one presentation event to its ACP session-update model.
+
+    The editor road (ADR-0054): a backend that runs its own presentation
+    projection feeds the projected stream here. Only the four content/tool
+    kinds have wire models — editors derive turn boundaries, approvals and
+    usage from the protocol's own surfaces (``PromptResponse``,
+    ``session/request_permission``), so any other kind fails loudly instead
+    of being silently mis-mapped.
+    """
+    match event:
+        case TextDelta():
+            return map_text_delta(event)
+        case ThinkingDelta():
+            return map_thinking_delta(event)
+        case ToolCallStarted():
+            return map_tool_call_started(event, turn_id=turn_id)
+        case ToolResult():
+            return map_tool_result(event, turn_id=turn_id)
+    raise ValueError(f"PresentationEvent kind has no ACP mapping: {event.kind}")
 
 
 _STOP_REASON_MAP: dict[StopReason, AcpStopReason] = {

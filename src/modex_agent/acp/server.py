@@ -74,6 +74,7 @@ from acp.schema import (
 from modex_agent._version import __version__
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.turn_events import TurnEvent
+from modex_agent.presentation.events import PresentationEvent
 
 from . import events_map
 from .backend import AcpInteraction, AcpSessionBackend, AcpSessionHandle
@@ -156,7 +157,14 @@ class _ClientChannel:
 
 
 class _TurnInteraction(AcpInteraction):
-    """One prompt's interaction: maps raw turn events onto the wire channel."""
+    """One prompt's interaction: maps turn facts onto the wire channel.
+
+    Both input altitudes converge on the same ``events_map`` wire models:
+    ``emit`` (core ``TurnEvent``s — the scripted road) and
+    ``emit_presentation`` (projected events — the editor road). Tool-call
+    ids stay prefixed with the server's per-prompt ``turn_id`` on both roads
+    so the streamed cards and permission cards keep matching.
+    """
 
     def __init__(self, channel: _ClientChannel, turn_id: str) -> None:
         self._channel = channel
@@ -164,6 +172,11 @@ class _TurnInteraction(AcpInteraction):
 
     async def emit(self, event: TurnEvent) -> None:
         await self._channel.send_update(events_map.map_turn_event(event, turn_id=self._turn_id))
+
+    async def emit_presentation(self, event: PresentationEvent) -> None:
+        await self._channel.send_update(
+            events_map.map_presentation_event(event, turn_id=self._turn_id)
+        )
 
     async def request_decision(self, prompt: PermissionPrompt) -> PermissionChoice:
         return await self._channel.request_decision(prompt, turn_id=self._turn_id)

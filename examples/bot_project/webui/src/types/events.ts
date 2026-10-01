@@ -12,7 +12,6 @@ export type WebUIEventType =
   | "tool_call_end"
   | "turn_end"
   | "assistant_turn"
-  | "conversation_ready"
   | "conversation_created"
   | "attached"
   | "conversation_deleted"
@@ -108,11 +107,6 @@ export interface AssistantTurnEvent extends ServerEvent {
    * (the turn is still in progress). The frontend renders it as a streaming
    * message and appends live WS deltas on top. */
   is_streaming?: boolean;
-}
-
-export interface ConversationReadyEvent extends ServerEvent {
-  event: "conversation_ready";
-  session_id: string;
 }
 
 export interface ConversationCreatedEvent extends ServerEvent {
@@ -215,7 +209,6 @@ export type ServerEventUnion =
   | ToolCallEndEvent
   | TurnEndEvent
   | AssistantTurnEvent
-  | ConversationReadyEvent
   | ConversationCreatedEvent
   | AttachedEvent
   | ConversationDeletedEvent

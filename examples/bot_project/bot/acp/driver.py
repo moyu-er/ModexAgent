@@ -17,8 +17,8 @@ from modex_agent.acp.types import (
 from modex_agent.approval.views import ApprovalRequestView
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.turn_events import StopReason, TurnTextEvent
+from modex_agent.core.session_id import SessionInfo, agent_of
+from modex_agent.core.turn_events import StopReason
 from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
 from modex_agent.multi_agent.session_tree.request_scope import (
     RequestBusyError,
@@ -29,6 +29,7 @@ from modex_agent.multi_agent.session_tree.request_scope import (
 )
 from modex_agent.pipeline.input.envelope import UserInputEnvelope
 from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
+from modex_agent.presentation import TextDelta
 
 if TYPE_CHECKING:
     from .runtime import AcpRuntime
@@ -92,7 +93,7 @@ class PoolAcpSessionHandle(AcpSessionHandle):
             if self._cancel_requested:
                 await tree.cancel_request(self.session_id, reservation.scope_id)
                 return AgentResult(stop_reason=StopReason.CANCELLED)
-            self._runtime.hub.register(self.session_id, interaction.emit, self._on_approval)
+            self._runtime.hub.register(self.session_id, interaction.emit_presentation, self._on_approval)
             registered = True
             prepared = await self._runtime.preparation.prepare(
                 self._envelope(input.text, message_id=reservation.scope_id), self._runtime.input_context
@@ -102,7 +103,16 @@ class PoolAcpSessionHandle(AcpSessionHandle):
                 return AgentResult(stop_reason=StopReason.CANCELLED)
             if prepared.kind == "handled":
                 if prepared.notice:
-                    await interaction.emit(TurnTextEvent(text=prepared.notice))
+                    # The bot feeds the editor on the presentation road only
+                    # (the core ``emit`` stays the scripted backend's input).
+                    await interaction.emit_presentation(
+                        TextDelta(
+                            session_id=self.session_id,
+                            agent_name=agent_of(self.session_id, default="main"),
+                            turn_id="",
+                            text=prepared.notice,
+                        )
+                    )
                 await tree.release_reservation(reservation)
                 return AgentResult(stop_reason=StopReason.COMPLETED)
             result = await pool.run_input(self.session_id, prepared.message, reservation=reservation)

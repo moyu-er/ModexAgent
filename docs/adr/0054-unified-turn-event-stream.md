@@ -1,6 +1,6 @@
 # Unified Turn-Event Stream
 
-**Status**: Accepted (Wave 1 landed; later waves update this record as they land)
+**Status**: Accepted (implemented end to end — the staged rollout completed; this record now describes the as-built system)
 **Date**: 2026-10-01
 
 ## Context
@@ -30,15 +30,27 @@ The result: adding one observable fact (an approval, a usage snapshot, an iterat
 
 ``TurnInterrupted`` and ``TurnResumed`` are deleted (zero producers, zero consumers): interruption classification rides ``TurnFinished.stop_reason``; resume observation rides ``ApprovalResolved``. The union shrinks 13 → 11 kinds.
 
-### 4. Staged rollout (this ADR is updated as waves land)
+### 4. Staged rollout — completed (as landed)
 
-- **Wave 1 (landed)** — union extension; ``StopReason`` relocation; projector consumes core events; signal deletion; bot translator (``BotTranscriptEmitter._on_event``) driven by a declarative ``_REACT_TO_TURN_KINDS`` table that emits core events; ``emit_complete`` feeds ``TurnFinishedEvent``; architecture anchors (projector disposition completeness, translator table exhaustiveness, entry validity) plus the union/validator unit tests. Behavior-preserving: WS wire frames, transcript records, the emitter method channel and the ``ReActEvent`` enum all stay alive and identical in this wave.
-- **Runtime emission cutover** — the native graph nodes construct core events at the source; the enum channel's translators shrink to nothing.
-- **Sink face** — a single per-turn event sink replaces the ``ContentEmitter`` method channel.
+- **Wave 1** — union extension; ``StopReason`` relocation; the projector consumes core events; signal deletion; architecture anchors (projector disposition completeness, translator table exhaustiveness, entry validity) plus the union/validator unit tests.
+- **Runtime emission cutover** — the native graph nodes construct core events at the source; the enum-channel translators are gone.
+- **Sink face** — a single per-turn ``TurnEventSink`` (+ ``TurnBinding``) replaces the ``ContentEmitter`` method channel; ``BufferingSink`` sinks an ``OutputAdapter`` onto the stream under a ``DeliveryPolicy``.
+- **Presentation hub** — ``SessionEventHub`` owns projection + fan-out to registered ``PresentationSink`` consumers (the bot's transcript tap and wire projection are both hub consumers).
 - **External transport adapters** — CLI/ACP/SDK transports map their private wire formats onto the union through one shared normalizer.
-- **Approval / usage observation producers** — the approval suspension point and the LLM finishing path emit ``approval_requested`` / ``approval_resolved`` / ``usage``.
-- **Transcript record cutover** — bot transcript records converge onto the framework's materialization (one folder).
-- **Consumer realignment** — the editor-protocol path consumes presentation events directly; the re-projection loop is removed.
+- **Approval / usage producers** — the approval suspension/resume points and the LLM finishing path emit ``approval_requested`` / ``approval_resolved`` / ``usage`` (a zero-producer anchor proves every union kind has a default producer).
+- **Transcript record cutover** — presentation events ARE the durable transcript records; the bot's parallel materializer is gone and replay goes through the framework's single ``materialize_turns``.
+- **Consumer realignment** — the editor-protocol path consumes presentation events directly: ``AcpInteraction.emit_presentation`` carries the projected stream and ``events_map`` maps ``PresentationEvent`` → session updates (the raw ``TurnEvent`` input stays only for the framework's scripted backend). The re-projection loop is removed.
+
+## As-Built Decisions (refinements recorded at completion)
+
+- **Async sink emission is a sequential await.** ``TurnEventSink.emit`` awaits each consumer's handler in order — delivery order is the observable contract, matching the pre-existing emitter method channel (no fan-out task spawning, no buffering between producer and consumer).
+- **One terminal kind.** ``TurnFinishedEvent`` carries ``StopReason`` + optional ``error`` AND ``attachments`` — output artifacts are observable facts of the finished turn, so no second terminal variant exists for them.
+- **``TurnErroredEvent`` stays a mid-turn observation.** An error surfaced mid-turn does not classify the turn; terminal classification still arrives only via ``turn_finished``.
+- **Resume rebinds the same turn id.** An approval resume re-invokes the sink factory with a ``TurnBinding`` carrying the suspended attempt's ``turn_id`` and ``resumed=True``; the hub pre-activates the projector so the resumed leg continues the SAME turn and emits no second ``TurnStarted`` (neither eager nor lazy).
+- **External child routing rides a typed child-callback factory.** Core events carry no session identity by design; a backend that must route a child session's stream to its owner injects a typed child-callback/``ChildSessionResolver`` at its own seam (the ACP emitter hub), never an identity field on the union.
+- **``TurnStarted`` is not persisted, and the transient kind set is explicit.** Turn grouping rides the record identity envelope (``turn_id``) alone; ``tool_args_delta`` (warm-up) never touches a transcript store. The transient kinds are a declared set, not an implicit omission.
+- **Transcript record generation detection has a single legacy conversion point.** A store reading old-format lines adapts them in its codec's ``parse`` (zero-or-more records per line) — read-time adaptation in one place, never a parallel writer.
+- **Interruption stays single-taxonomy.** Cancellation/interruption classifies exclusively through ``StopReason`` on ``turn_finished``; the react-internal interrupted marking never surfaces as a separate event kind (``TurnInterrupted`` / ``TurnResumed`` remain deleted).
 
 ## Considered Options
 
@@ -54,12 +66,17 @@ The result: adding one observable fact (an approval, a usage snapshot, an iterat
 - The projector's input is a public, typed, frozen union — its private signal patch surface is gone, and approval/usage now project through the same path as everything else.
 - Dead presentation kinds are removed rather than documented as producer-less.
 - ``StopReason`` lives beside the terminal event that carries it.
+- The rollout is machine-proven by gates that now exist in the suite:
+  - **disposition anchor** — the projector's mapped ∪ ignored tables must equal the full core kind set (an appended variant without a declared disposition fails the build);
+  - **zero-producer anchor** — every union kind must have a default runtime producer (a kind with no producer fails, so dead vocabulary cannot re-enter);
+  - **seam guards** — the sink/binding contract and the hub's consumer ordering are pinned by unit tests, and the scripted/editor interaction altitudes share one wire map (``events_map``), so a second mapping table cannot silently diverge;
+  - **replay equivalence** — a scripted live stream and its materialized transcript round-trip to the same turn view (``materialize_turns``), pinning the transcript contract end to end.
 
 ### Negative / recorded honestly
 
-- During migration the native plane still emits its enum stream; the consumer-side translator (now declarative and anchored) remains until the runtime emission cutover — this is the explicitly staged cost of never breaking the wire in one step.
-- ``TurnFinishedEvent`` carries ``attachments`` that no consumer reads yet (later waves deliver them through the sink face); the projector deliberately ignores them today.
-- The validator is lenient by default because real bridge streams start with content, not ``turn_started``; strict mode becomes the default only after the emission cutover.
+- ``TurnFinishedEvent`` carries ``attachments`` that only the buffering sink delivers today; consumers that ignore them see no difference (the field is the durable record of the artifacts, delivery is each sink's concern).
+- The validator stays lenient by default because bridge streams may still start with content rather than ``turn_started``; strict mode remains opt-in for test gates.
+- ``AcpInteraction`` carries two input altitudes (``emit`` core, ``emit_presentation`` projected) — the deliberate cost of keeping the SDK-free scripted backend on raw core events while the editor road consumes the projection; both converge on the same ``events_map`` wire models.
 
 ## Related
 

@@ -3,16 +3,19 @@
 Covers the output half of the ACP adapter on the REAL seams:
 
 - ``AcpEmitterHub`` — one registration per framework session carrying BOTH the
-  ``TurnEvent`` listener and the optional approval handler; approval with no
-  handler raises (owner cancels — never a hanging drop); child events route
-  through the injected parent-chain resolver with source-namespaced tool ids
-  and annotated text; sessions never cross-stream.
+  ``PresentationEvent`` listener and the optional approval handler; approval
+  with no handler raises (owner cancels — never a hanging drop); child events
+  route through the injected parent-chain resolver with source-namespaced
+  tool ids and annotated text; sessions never cross-stream.
 - ``AcpOutputAdapter`` — routes the REAL ``ApprovalRequestView`` off the
   ``IMUserInterface`` → ``OutputAdapter`` seam (no buffer, no fake request)
   and routes notice/error/command output as text events (nothing dropped).
-- ``AcpTurnEmitter`` — subclasses ``WebBotEmitter`` so the segment/flush
-  lifecycle and the transcript writer are the CANONICAL ones (single write);
-  projects the same facts into full-fidelity ``TurnEvent``s for the editor.
+- ``AcpTurnEmitter`` — subclasses the shared ``BotTranscriptEmitter`` so the
+  segment/flush lifecycle and the transcript writer are the CANONICAL ones
+  (single write); projects the same facts into full-fidelity
+  ``PresentationEvent``s for the editor (the road
+  ``AcpInteraction.emit_presentation`` maps onto the wire — no core
+  ``TurnEvent`` re-derivation anywhere on this path).
 
 Turn-level tests drive a real ``ReActTurnRunner`` pipeline with the scripted
 LLM stub pattern from ``test_acp_driver.py``.
@@ -42,12 +45,6 @@ from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.tool_manager import Tool
-from modex_agent.core.turn_events import (
-    TurnEvent,
-    TurnTextEvent,
-    TurnToolCallEvent,
-    TurnToolResultEvent,
-)
 from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.messaging.models import InputMessage, OutputMessage, OutputMessageType
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
@@ -57,7 +54,12 @@ from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
-from modex_agent.presentation import TextDelta, ToolCallStarted, ToolResult
+from modex_agent.presentation import (
+    PresentationEvent,
+    TextDelta,
+    ToolCallStarted,
+    ToolResult,
+)
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager
@@ -152,12 +154,12 @@ class _RecordingTranscriptStore(TranscriptStore):
 
 
 class _Collector:
-    """TurnEvent listener recording every event it receives."""
+    """PresentationEvent listener recording every event it receives."""
 
     def __init__(self) -> None:
-        self.events: list[TurnEvent] = []
+        self.events: list[PresentationEvent] = []
 
-    async def __call__(self, event: TurnEvent) -> None:
+    async def __call__(self, event: PresentationEvent) -> None:
         self.events.append(event)
 
 
@@ -236,8 +238,13 @@ async def test_notices_route_as_text_events_and_are_not_dropped(
 
     assert len(collector.events) == 1
     event = collector.events[0]
-    assert isinstance(event, TurnTextEvent)
+    assert isinstance(event, TextDelta)
     assert event.text == "pool switched"
+
+
+def _text(session_id: str, text: str) -> TextDelta:
+    """A hand-built presentation text event for hub-level routing tests."""
+    return TextDelta(session_id=session_id, agent_name="main", turn_id="", text=text)
 
 
 async def test_events_reach_only_the_registered_session() -> None:
@@ -246,16 +253,16 @@ async def test_events_reach_only_the_registered_session() -> None:
     hub.register("sess-1", first)
     hub.register("sess-2", second)
 
-    await hub.emit("sess-1", TurnTextEvent(text="for one"))
+    await hub.emit("sess-1", _text("sess-1", "for one"))
 
-    assert [e.text for e in first.events] == ["for one"]
+    assert [e.text for e in first.events if isinstance(e, TextDelta)] == ["for one"]
     assert second.events == []
 
 
 async def test_hub_emit_without_listener_is_quietly_dropped() -> None:
     hub = AcpEmitterHub()
 
-    await hub.emit("nobody", TurnTextEvent(text="lost"))  # no raise
+    await hub.emit("nobody", _text("nobody", "lost"))  # no raise
 
 
 async def test_child_events_forward_via_resolver_with_source_namespacing() -> None:
@@ -267,12 +274,15 @@ async def test_child_events_forward_via_resolver_with_source_namespacing() -> No
 
     await hub.emit(
         "inv9.sub",
-        TurnToolCallEvent(tool_name="read", call_id="c1", arguments={"path": "a"}),
+        ToolCallStarted(
+            session_id="inv9.sub", agent_name="sub", turn_id="t1",
+            tool_name="read", call_id="c1", arguments={"path": "a"},
+        ),
     )
-    await hub.emit("inv9.sub", TurnTextEvent(text="partial finding"))
+    await hub.emit("inv9.sub", _text("inv9.sub", "partial finding"))
 
-    tool_events = [e for e in root_collector.events if isinstance(e, TurnToolCallEvent)]
-    text_events = [e for e in root_collector.events if isinstance(e, TurnTextEvent)]
+    tool_events = [e for e in root_collector.events if isinstance(e, ToolCallStarted)]
+    text_events = [e for e in root_collector.events if isinstance(e, TextDelta)]
     # Tool call ids are namespaced by the SOURCE child session — they can never
     # collide with root-native call ids.
     assert tool_events[0].call_id == "inv9.sub:c1"
@@ -289,7 +299,7 @@ async def test_unresolvable_child_events_are_dropped_not_misrouted() -> None:
     hub.register("sess-1", first)
     hub.register("sess-2", second)
 
-    await hub.emit("unknown.child", TurnTextEvent(text="stray"))
+    await hub.emit("unknown.child", _text("unknown.child", "stray"))
 
     assert first.events == []
     assert second.events == []
@@ -300,9 +310,9 @@ async def test_direct_listener_wins_over_resolver() -> None:
     hub = AcpEmitterHub(resolver=async_lambda("sess-1", "other-place"))
     hub.register("sess-1", collector)
 
-    await hub.emit("sess-1", TurnTextEvent(text="direct"))
+    await hub.emit("sess-1", _text("sess-1", "direct"))
 
-    assert [e.text for e in collector.events] == ["direct"]
+    assert [e.text for e in collector.events if isinstance(e, TextDelta)] == ["direct"]
 
 
 async def test_unregister_removes_both_sinks() -> None:
@@ -515,7 +525,7 @@ async def test_plain_turn_streams_text_once_and_persists_transcript(
     result = await harness.prompt("hello")
 
     assert result is not None and result.stop_reason.value == "completed"
-    texts = [e.text for e in collector.events if isinstance(e, TurnTextEvent)]
+    texts = [e.text for e in collector.events if isinstance(e, TextDelta)]
     assert "".join(texts) == "hello back"
     # Canonical single-write transcript: one TextDelta record, not per-delta writes.
     persisted = await harness.transcripts.load(harness.session.session_id)
@@ -551,8 +561,8 @@ async def test_tool_turn_projects_full_fidelity_tool_events(tmp_path: Path) -> N
     result = await harness.prompt("read a.txt")
 
     assert result is not None and result.stop_reason.value == "completed"
-    calls = [e for e in collector.events if isinstance(e, TurnToolCallEvent)]
-    results = [e for e in collector.events if isinstance(e, TurnToolResultEvent)]
+    calls = [e for e in collector.events if isinstance(e, ToolCallStarted)]
+    results = [e for e in collector.events if isinstance(e, ToolResult)]
     assert len(calls) == 1 and len(results) == 1
     assert calls[0].arguments == big_args  # full args, not the 500-char WS truncation
     assert results[0].output == big_result  # full output, not the 200-char summary
@@ -567,8 +577,8 @@ async def test_tool_turn_projects_full_fidelity_tool_events(tmp_path: Path) -> N
     assert tc[0].call_id == "c1" and tr[0].call_id == "c1"
     assert tr[0].output == big_result
     # Text precedes the tool call on the editor stream (flush-before-tool).
-    first_text = next(i for i, e in enumerate(collector.events) if isinstance(e, TurnTextEvent))
-    first_tool = next(i for i, e in enumerate(collector.events) if isinstance(e, TurnToolCallEvent))
+    first_text = next(i for i, e in enumerate(collector.events) if isinstance(e, TextDelta))
+    first_tool = next(i for i, e in enumerate(collector.events) if isinstance(e, ToolCallStarted))
     assert first_text < first_tool
 
 

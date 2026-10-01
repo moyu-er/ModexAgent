@@ -26,6 +26,7 @@ from abc import ABC, abstractmethod
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.turn_events import TurnEvent
+from modex_agent.presentation.events import PresentationEvent
 
 from .types import AcpOpenRequest, AcpPromptInput, PermissionChoice, PermissionPrompt
 
@@ -35,15 +36,23 @@ __all__ = ["AcpInteraction", "AcpSessionBackend", "AcpSessionHandle"]
 class AcpInteraction(ABC):
     """Per-turn channel handed to ``AcpSessionHandle.prompt``.
 
-    Framework facts flow out through ``emit`` (raw ``TurnEvent`` stream — the
-    server maps them to wire updates); permission decisions flow in through
-    ``request_decision`` (the server's ``session/request_permission``
-    round-trip).
+    Framework facts flow out through one of two input altitudes, both mapped
+    onto the same wire updates by ``events_map`` (ADR-0054 consumer
+    realignment): ``emit_presentation`` carries projected presentation
+    events (the road a backend with its own ``SessionEventHub`` uses — the
+    bot), while ``emit`` carries the raw core ``TurnEvent`` stream (the road
+    of a core-fact backend — the scripted one). Permission decisions flow in
+    through ``request_decision`` (the server's
+    ``session/request_permission`` round-trip).
     """
 
     @abstractmethod
     async def emit(self, event: TurnEvent) -> None:
-        """Emit one framework turn event for the in-flight prompt."""
+        """Emit one core turn event for the in-flight prompt."""
+
+    @abstractmethod
+    async def emit_presentation(self, event: PresentationEvent) -> None:
+        """Emit one projected presentation event for the in-flight prompt."""
 
     @abstractmethod
     async def request_decision(self, prompt: PermissionPrompt) -> PermissionChoice:

@@ -5,7 +5,7 @@ The base class owns ONE transcript writer per emitter: text/reasoning
 accumulate as segments and persist as single complete delta records, tool
 pairs persist together with full fidelity. Projections translate the same
 facts into their own sink — the WebUI one truncates for display, the ACP
-one forwards full-fidelity ``TurnEvent``s. These tests pin the split:
+one forwards full-fidelity ``PresentationEvent``s. These tests pin the split:
 single write, full args, no duplicated text.
 """
 
@@ -28,13 +28,13 @@ from bot.webui.transcript_store import (
 
 from modex_agent.core.emitter import AgentResult, turn_finished_event
 from modex_agent.core.turn_events import (
-    TurnEvent,
     TurnReasoningEvent,
     TurnTextEvent,
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
 from modex_agent.presentation import (
+    PresentationEvent,
     TextDelta,
     ThinkingDelta,
     ToolCallStarted,
@@ -82,12 +82,12 @@ class _RecordingTranscriptStore(TranscriptStore):
 
 
 class _Collector:
-    """TurnEvent listener recording every event it receives."""
+    """PresentationEvent listener recording every event it receives."""
 
     def __init__(self) -> None:
-        self.events: list[TurnEvent] = []
+        self.events: list[PresentationEvent] = []
 
-    async def __call__(self, event: TurnEvent) -> None:
+    async def __call__(self, event: PresentationEvent) -> None:
         self.events.append(event)
 
 
@@ -174,9 +174,9 @@ async def test_react_tool_pair_persisted_once_with_full_fidelity() -> None:
 
 @pytest.mark.asyncio
 async def test_acp_projection_full_fidelity_no_truncation_single_writer() -> None:
-    """The ACP projection forwards FULL args/result as TurnEvents while the
-    SAME turn wrote the canonical tool pair to the transcript — one writer,
-    two sinks, no WS-style truncation."""
+    """The ACP projection forwards FULL args/result as presentation events
+    while the SAME turn wrote the canonical tool pair to the transcript —
+    one writer, two sinks, no WS-style truncation."""
     hub = AcpEmitterHub()
     collector = _Collector()
     hub.register("sess-1", collector)
@@ -194,8 +194,8 @@ async def test_acp_projection_full_fidelity_no_truncation_single_writer() -> Non
         )
     )
 
-    calls = [e for e in collector.events if isinstance(e, TurnToolCallEvent)]
-    results = [e for e in collector.events if isinstance(e, TurnToolResultEvent)]
+    calls = [e for e in collector.events if isinstance(e, ToolCallStarted)]
+    results = [e for e in collector.events if isinstance(e, ToolResult)]
     assert len(calls) == 1 and len(results) == 1
     assert calls[0].arguments == big_args  # full args, not the 500-char truncation
     assert results[0].output == big_result  # full output, not the 200-char summary
@@ -222,7 +222,7 @@ async def test_acp_text_projected_once_without_duplicate() -> None:
     await emitter.emit(TurnTextEvent(text="back"))
     await emitter.emit(turn_finished_event(AgentResult(content="hello back")))
 
-    texts = [e for e in collector.events if isinstance(e, TurnTextEvent)]
+    texts = [e for e in collector.events if isinstance(e, TextDelta)]
     assert "".join(e.text for e in texts) == "hello back"
 
     persisted = transcripts.events["sess-1"]

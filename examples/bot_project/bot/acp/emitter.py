@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from bot.webui.emitter.bot_transcript import BotTranscriptEmitter
 from bot.webui.events import SessionMeta
@@ -12,16 +12,16 @@ from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.approval.views import ApprovalRequestView
 from modex_agent.core.session_id import agent_of
-from modex_agent.core.turn_events import (
-    TurnEvent,
-    TurnReasoningEvent,
-    TurnTextEvent,
-    TurnToolCallEvent,
-    TurnToolResultEvent,
-)
 from modex_agent.messaging.models import OutputMessage, OutputMessageType
+from modex_agent.presentation import (
+    PresentationEvent,
+    TextDelta,
+    ThinkingDelta,
+    ToolCallStarted,
+    ToolResult,
+)
 
-TurnEventListener = Callable[[TurnEvent], Awaitable[None]]
+PresentationEventListener = Callable[[PresentationEvent], Awaitable[None]]
 ApprovalRequestHandler = Callable[[str, ApprovalRequestView], Awaitable[None]]
 """Approval sink: ``(source session id, view)``.
 
@@ -32,17 +32,26 @@ erase which session the decision must resume.
 ChildSessionResolver = Callable[[str], Awaitable[str | None]]
 
 
+class _EnvelopeKwargs(TypedDict):
+    """Keyword form of the identity envelope (internal construction helper)."""
+
+    session_id: str
+    agent_name: str
+    turn_id: str
+    pool: str | None
+
+
 class AcpApprovalRouteError(RuntimeError):
     """A suspended turn has no editor capable of deciding its request."""
 
 
 class AcpEmitterHub:
     def __init__(self, resolver: ChildSessionResolver | None = None) -> None:
-        self._listeners: dict[str, TurnEventListener] = {}
+        self._listeners: dict[str, PresentationEventListener] = {}
         self._approvals: dict[str, ApprovalRequestHandler] = {}
         self._resolver = resolver
 
-    def register(self, session_id: str, on_event: TurnEventListener, on_approval: ApprovalRequestHandler | None = None) -> None:
+    def register(self, session_id: str, on_event: PresentationEventListener, on_approval: ApprovalRequestHandler | None = None) -> None:
         if session_id in self._listeners:
             raise RuntimeError(f"Session {session_id} already has an output listener")
         self._listeners[session_id] = on_event
@@ -66,7 +75,7 @@ class AcpEmitterHub:
             return None
         return await self._resolver(session_id)
 
-    async def emit(self, session_id: str, event: TurnEvent) -> None:
+    async def emit(self, session_id: str, event: PresentationEvent) -> None:
         owner = await self._owner_sid(session_id)
         listener = self._listeners.get(owner) if owner is not None else None
         if listener is None:
@@ -74,16 +83,18 @@ class AcpEmitterHub:
         if owner == session_id:
             await listener(event)
             return
-        projected: TurnEvent
+        projected: PresentationEvent
         match event:
-            case TurnToolCallEvent(call_id=call_id) | TurnToolResultEvent(call_id=call_id):
+            case ToolCallStarted(call_id=call_id) | ToolResult(call_id=call_id):
                 projected = event.model_copy(
                     update={"call_id": f"{session_id}:{call_id}"}
                 )
-            case TurnTextEvent(text=text) | TurnReasoningEvent(text=text):
+            case TextDelta(text=text) | ThinkingDelta(text=text):
                 projected = event.model_copy(
                     update={"text": f"[{agent_of(session_id)}] {text}"}
                 )
+            case _:
+                projected = event
         await listener(projected)
 
     async def approval(self, session_id: str, view: ApprovalRequestView) -> None:
@@ -123,21 +134,40 @@ class AcpOutputAdapter(OutputAdapter):
                 raise AcpApprovalRouteError(f"Invalid approval payload for session {session_id}")
             await self._hub.approval(session_id, ApprovalRequestView(**raw))
         elif message.content:
-            await self._hub.emit(session_id, TurnTextEvent(text=message.content))
+            await self._hub.emit(session_id, _notice_delta(session_id, message.content))
 
     async def send_delta(self, delta: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
         if delta:
-            await self._hub.emit(session_id, TurnTextEvent(text=delta))
+            await self._hub.emit(session_id, _notice_delta(session_id, delta))
 
     async def flush_deltas(self, session_id: str) -> None:
         pass
 
 
+def _notice_delta(session_id: str, text: str) -> TextDelta:
+    """A channel-level notice/error/command reply as a presentation text event.
+
+    No turn is active for adapter-routed output, so the envelope carries the
+    emitter-side identity with an idle turn id — the wire projection reads
+    only the text.
+    """
+    return TextDelta(
+        session_id=session_id,
+        agent_name=agent_of(session_id, default="main"),
+        turn_id="",
+        text=text,
+    )
+
+
 class AcpTurnEmitter(BotTranscriptEmitter):
     """ACP editor projection — records the canonical transcript via the
     shared base lifecycle, projects every fact as a full-fidelity
-    ``TurnEvent`` through the hub (full args / full result, no WS-style
-    display truncation).
+    ``PresentationEvent`` through the hub (full args / full result, no
+    WS-style display truncation). The base's ``_project_*`` bridge is the
+    single projection path: the hooks translate the projected fact onto the
+    presentation altitude the emitter hub and ``AcpInteraction.emit_presentation``
+    consume — no core ``TurnEvent`` is re-derived anywhere on this road
+    (ADR-0054 consumer realignment).
     """
 
     def __init__(
@@ -159,15 +189,36 @@ class AcpTurnEmitter(BotTranscriptEmitter):
         self._hub = hub
 
     # ------------------------------------------------------------------
-    # ACP projection (full-fidelity TurnEvents to the owning editor)
+    # ACP projection (full-fidelity presentation events to the owning editor)
     # ------------------------------------------------------------------
 
+    def _envelope(self) -> _EnvelopeKwargs:
+        """The presentation identity envelope for hook-constructed events."""
+        return {
+            "session_id": self._session_id,
+            "agent_name": self._agent_name,
+            "turn_id": self._current_turn_id,
+            "pool": self._pool,
+        }
+
     async def _project_text_delta(self, text: str, part_id: str | None) -> None:
-        await self._hub.emit(self._session_id, TurnTextEvent(text=text, part_id=part_id))
+        await self._hub.emit(
+            self._session_id,
+            TextDelta(
+                **self._envelope(),
+                text=text,
+                segment_id=part_id if part_id else "_text",
+            ),
+        )
 
     async def _project_reasoning_delta(self, text: str, part_id: str | None) -> None:
         await self._hub.emit(
-            self._session_id, TurnReasoningEvent(text=text, part_id=part_id)
+            self._session_id,
+            ThinkingDelta(
+                **self._envelope(),
+                text=text,
+                segment_id=part_id if part_id else "_reasoning",
+            ),
         )
 
     async def _project_tool_start(
@@ -178,10 +229,11 @@ class AcpTurnEmitter(BotTranscriptEmitter):
     ) -> None:
         await self._hub.emit(
             self._session_id,
-            TurnToolCallEvent(
+            ToolCallStarted(
+                **self._envelope(),
                 tool_name=tool_name,
                 call_id=call_id,
-                arguments=full_args,
+                arguments=dict(full_args),
             ),
         )
 
@@ -196,14 +248,15 @@ class AcpTurnEmitter(BotTranscriptEmitter):
             return
         await self._hub.emit(
             self._session_id,
-            TurnToolResultEvent(
+            ToolResult(
+                **self._envelope(),
                 tool_name=tool_name,
                 call_id=call_id,
                 output=full_result,
+                seq=seq,
             ),
         )
 
     async def _project_turn_end(self, latency_ms: int, turn_id: str) -> None:
         """ACP editors derive turn boundaries from session update state, not
         from an emitter event — no turn_end projection."""
-

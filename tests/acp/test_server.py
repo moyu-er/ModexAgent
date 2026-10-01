@@ -41,9 +41,8 @@ from modex_agent.acp.types import (
     PermissionPrompt,
 )
 from modex_agent.core.emitter import AgentResult
-from modex_agent.core.turn_events import StopReason
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
-from modex_agent.core.turn_events import TurnToolCallEvent
+from modex_agent.core.turn_events import StopReason, TurnToolCallEvent
 
 CWD = "D:/projects/my-app"
 

@@ -9,10 +9,11 @@ transcript persistence contract with a JSONL implementation. See
 ADR-0053 and ADR-0054.
 
 Curated facade — import real names from here:
-``SessionEventHub``, ``PresentationSink``, ``DefaultTurnEventProjector``,
-``PresentationEvent``, ``materialize_turns``.
+``SessionEventHub``, ``PresentationSink``, ``ConsolePresenter``,
+``DefaultTurnEventProjector``, ``PresentationEvent``, ``materialize_turns``.
 """
 
+from modex_agent.presentation.console import ConsolePresenter
 from modex_agent.presentation.events import (
     ApprovalRequested,
     ApprovalResolved,
@@ -48,6 +49,7 @@ from modex_agent.presentation.transcript import (
 __all__ = [
     "ApprovalRequested",
     "ApprovalResolved",
+    "ConsolePresenter",
     "DefaultTurnEventProjector",
     "JsonlTranscriptStore",
     "PresentationEvent",

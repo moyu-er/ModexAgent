@@ -3,7 +3,8 @@
 Every mapper is a pure function (no I/O), so these tests cover the full
 mapping table: text/reasoning chunks, tool-call start/update, the tool-kind
 inference table, the ``{turn_id}:{call_id}`` id format, and the full
-framework ``StopReason`` -> ACP stop-reason table.
+framework ``StopReason`` -> ACP stop-reason table — on BOTH input altitudes
+(core ``TurnEvent`` and presentation ``PresentationEvent``).
 """
 
 import pytest
@@ -16,13 +17,20 @@ from acp.schema import (
 )
 
 from modex_agent.acp import events_map
-from modex_agent.core.turn_events import StopReason
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.turn_events import (
+    StopReason,
     TurnReasoningEvent,
     TurnTextEvent,
     TurnToolCallEvent,
     TurnToolResultEvent,
+)
+from modex_agent.presentation import (
+    ApprovalRequested,
+    TextDelta,
+    ThinkingDelta,
+    ToolCallStarted,
+    ToolResult,
 )
 
 TURN_ID = "turn-abc"
@@ -136,6 +144,88 @@ def test_map_turn_event_dispatches_on_kind() -> None:
     for event, expected_type in cases:
         update = events_map.map_turn_event(event, turn_id=TURN_ID)
         assert type(update) is expected_type
+
+
+# ---------------------------------------------------------------------------
+# presentation-altitude dispatchers (the editor road)
+# ---------------------------------------------------------------------------
+
+
+def test_text_delta_maps_to_agent_message_chunk() -> None:
+    update = events_map.map_text_delta(TextDelta(session_id="s.main", agent_name="main", turn_id=TURN_ID, text="hello"))
+    assert isinstance(update, AgentMessageChunk)
+    assert update.session_update == "agent_message_chunk"
+    assert update.content.text == "hello"
+
+
+def test_thinking_delta_maps_to_agent_thought_chunk() -> None:
+    update = events_map.map_thinking_delta(
+        ThinkingDelta(session_id="s.main", agent_name="main", turn_id=TURN_ID, text="hmm")
+    )
+    assert isinstance(update, AgentThoughtChunk)
+    assert update.content.text == "hmm"
+
+
+def test_tool_call_started_maps_to_tool_call_start() -> None:
+    event = ToolCallStarted(
+        session_id="s.main", agent_name="main", turn_id=TURN_ID,
+        tool_name="Bash", call_id="call-1", arguments={"command": "ls"},
+    )
+    update = events_map.map_tool_call_started(event, turn_id=TURN_ID)
+    assert isinstance(update, ToolCallStart)
+    assert update.tool_call_id == f"{TURN_ID}:call-1"
+    assert update.title == "Bash"
+    assert update.kind == "execute"
+    assert update.status == "in_progress"
+    assert update.raw_input == {"command": "ls"}
+
+
+def test_tool_result_maps_to_completed_progress() -> None:
+    event = ToolResult(
+        session_id="s.main", agent_name="main", turn_id=TURN_ID,
+        tool_name="Read", call_id="call-2", output="contents",
+    )
+    update = events_map.map_tool_result(event, turn_id=TURN_ID)
+    assert isinstance(update, ToolCallProgress)
+    assert update.tool_call_id == f"{TURN_ID}:call-2"
+    assert update.status == "completed"
+    assert update.raw_output == "contents"
+
+
+def test_tool_result_with_error_maps_to_failed_progress() -> None:
+    event = ToolResult(
+        session_id="s.main", agent_name="main", turn_id=TURN_ID,
+        tool_name="Read", call_id="call-3", output="boom", error="boom",
+    )
+    update = events_map.map_tool_result(event, turn_id=TURN_ID)
+    assert update.status == "failed"
+    assert update.raw_output == "boom"
+
+
+def test_map_presentation_event_dispatches_on_kind() -> None:
+    cases = [
+        (TextDelta(session_id="s", agent_name="a", turn_id=TURN_ID, text="t"), AgentMessageChunk),
+        (ThinkingDelta(session_id="s", agent_name="a", turn_id=TURN_ID, text="r"), AgentThoughtChunk),
+        (
+            ToolCallStarted(session_id="s", agent_name="a", turn_id=TURN_ID, tool_name="Read", call_id="c", arguments={}),
+            ToolCallStart,
+        ),
+        (ToolResult(session_id="s", agent_name="a", turn_id=TURN_ID, tool_name="Read", call_id="c", output="o"), ToolCallProgress),
+    ]
+    for event, expected_type in cases:
+        update = events_map.map_presentation_event(event, turn_id=TURN_ID)
+        assert type(update) is expected_type
+
+
+def test_map_presentation_event_rejects_wireless_kinds_loudly() -> None:
+    """Editors have protocol surfaces for approvals/usage/turn boundaries —
+    a presentation kind with no wire model fails loudly, never silently."""
+    event = ApprovalRequested(
+        session_id="s.main", agent_name="main", turn_id=TURN_ID,
+        tool_name="write", call_id="c", prompt="p",
+    )
+    with pytest.raises(ValueError, match="no ACP mapping"):
+        events_map.map_presentation_event(event, turn_id=TURN_ID)
 
 
 # ---------------------------------------------------------------------------

@@ -19,11 +19,20 @@ from pathlib import Path
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.app.roots import AppAssemblyRoots
 from modex_agent.app.runnable import RunnableAppService
+from modex_agent.core.emitter import TurnBinding, TurnEventSink
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.messaging.models import InputMessage, OutputMessage
 from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.presentation import ConsolePresenter, SessionEventHub
 
 PROJECT_DIR = Path(__file__).resolve().parent
+
+
+def _console_emitter_factory(binding: TurnBinding) -> TurnEventSink:
+    """One console presenter per bound turn — the framework PresentationSink
+    seam in action: the hub projects the core stream, the presenter renders
+    it on stdout."""
+    return SessionEventHub(binding, (ConsolePresenter(),))
 
 
 class DemoInputAdapter(InputAdapter):
@@ -73,6 +82,7 @@ def build_service(project_dir: Path) -> RunnableAppService:
         config_dir=roots.config_dir,
         input_adapter=DemoInputAdapter(),
         output_adapter=CollectorOutputAdapter(),
+        emitter_factory=_console_emitter_factory,
         roots=roots,
     )
 

@@ -29,7 +29,6 @@ class WebUIEventType(StrEnum):
     TOOL_RESULT = "tool_result"
     TURN_END = "turn_end"
     ASSISTANT_TURN = "assistant_turn"
-    CONVERSATION_READY = "conversation_ready"
     CONVERSATION_CREATED = "conversation_created"
     ATTACHED = "attached"
     CONVERSATION_DELETED = "conversation_deleted"

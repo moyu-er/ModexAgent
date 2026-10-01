@@ -22,12 +22,13 @@ from modex_agent.acp.types import (
     PermissionChoice,
     PermissionPrompt,
 )
-from modex_agent.core.turn_events import StopReason
 from modex_agent.core.turn_events import (
+    StopReason,
     TurnEvent,
     TurnTextEvent,
     TurnToolResultEvent,
 )
+from modex_agent.presentation import PresentationEvent
 
 
 class RecordingInteraction(AcpInteraction):
@@ -35,11 +36,15 @@ class RecordingInteraction(AcpInteraction):
 
     def __init__(self, choices: list[PermissionChoice]) -> None:
         self.events: list[TurnEvent] = []
+        self.presentation: list[PresentationEvent] = []
         self.prompts: list[PermissionPrompt] = []
         self._choices = list(choices)
 
     async def emit(self, event: TurnEvent) -> None:
         self.events.append(event)
+
+    async def emit_presentation(self, event: PresentationEvent) -> None:
+        self.presentation.append(event)
 
     async def request_decision(self, prompt: PermissionPrompt) -> PermissionChoice:
         self.prompts.append(prompt)
@@ -56,6 +61,7 @@ class HangingApprovalInteraction(AcpInteraction):
 
     def __init__(self) -> None:
         self.events: list[TurnEvent] = []
+        self.presentation: list[PresentationEvent] = []
         self.prompts: list[PermissionPrompt] = []
         self.requested = asyncio.Event()
         self.settled = asyncio.Event()
@@ -67,6 +73,9 @@ class HangingApprovalInteraction(AcpInteraction):
 
     async def emit(self, event: TurnEvent) -> None:
         self.events.append(event)
+
+    async def emit_presentation(self, event: PresentationEvent) -> None:
+        self.presentation.append(event)
 
     async def request_decision(self, prompt: PermissionPrompt) -> PermissionChoice:
         self.prompts.append(prompt)

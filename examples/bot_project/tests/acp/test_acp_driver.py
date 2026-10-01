@@ -27,11 +27,13 @@ from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.turn_events import StopReason, TurnEvent
+from modex_agent.presentation import PresentationEvent
 
 
 class _Interaction(AcpInteraction):
     def __init__(self, option: AcpPermissionOption = AcpPermissionOption.ALLOW_ONCE) -> None:
-        self.events: list[TurnEvent] = []
+        self.events: list[PresentationEvent] = []
+        self.core_events: list[TurnEvent] = []
         self.prompts: list[PermissionPrompt] = []
         self.option = option
         self.permission_entered = asyncio.Event()
@@ -39,6 +41,9 @@ class _Interaction(AcpInteraction):
         self.permission_release.set()
 
     async def emit(self, event: TurnEvent) -> None:
+        self.core_events.append(event)
+
+    async def emit_presentation(self, event: PresentationEvent) -> None:
         self.events.append(event)
 
     async def request_decision(self, prompt: PermissionPrompt) -> PermissionChoice:
@@ -105,7 +110,7 @@ async def test_plain_turn_streams_once_and_completes(make_handle) -> None:
     result = await handle.prompt(AcpPromptInput(text="hello"), interaction)
     assert result.stop_reason == StopReason.COMPLETED
     assert provider.calls == 1
-    assert "".join(e.text for e in interaction.events if e.kind == "text") == "hello back"
+    assert "".join(e.text for e in interaction.events if e.kind == "text_delta") == "hello back"
 
 
 @pytest.mark.parametrize("option,expected_writes", [

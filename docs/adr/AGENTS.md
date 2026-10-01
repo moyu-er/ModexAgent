@@ -82,7 +82,7 @@ ADRs document significant architectural decisions, including the context driving
 | 0050 | Unified session compaction interface and per-model context budgets (see `docs/design/per-model-context-compaction/`) |
 | 0051 | Package layering total-order tree and mechanical gate |
 | 0052 | Runtime as an EXECUTION_STRATEGY slot product and framework-runnable defaults |
-| 0053 | Neutral presentation event projection layer (vocabulary, projector, transcript contract) |
+| 0053 | Neutral presentation event projection layer (vocabulary, projector, hub, console, transcript contract) |
 | 0054 | Unified turn-event stream (one closed runtime union for both execution planes) |
 
 <!-- MANUAL -->
