@@ -527,6 +527,93 @@ async def test_materialize_mixed_real_turn_and_attachment_only_turn_sorted() -> 
     assert turns[1].attachments[0]["id"] == "att-mid"
 
 
+async def test_materialize_interleaved_subagent_records_keep_one_main_turn() -> None:
+    """A main turn whose records straddle a subagent's records (the prefix
+    merge interleaves main + subagent session files by timestamp) must
+    replay as ONE materialized turn — not fragment into one MaterializedTurn
+    per contiguity group sharing the turn id (the refresh-fragmentation
+    regression).
+    """
+    store = _make_store()
+    # Main turn opens and streams its first segment...
+    await store.append("conv.main", TurnStarted(
+        session_id="conv.main", agent_name="main", turn_id="t-main", timestamp_ms=100))
+    await store.append("conv.main", TextDelta(
+        session_id="conv.main", agent_name="main", turn_id="t-main",
+        text="part one", timestamp_ms=110, segment_id="_text"))
+    # ...the subagent it dispatched mid-flight runs in its own session...
+    await store.append("conv.researcher.inv1", TextDelta(
+        session_id="conv.researcher.inv1", agent_name="researcher", turn_id="t-sub",
+        text="sub finding", timestamp_ms=120, segment_id="_text"))
+    # ...then the main turn continues (tool + closing text) around it.
+    await store.append("conv.main", ToolCallStarted(
+        session_id="conv.main", agent_name="main", turn_id="t-main", call_id="c1",
+        tool_name="search", arguments={"q": "x"}, timestamp_ms=130))
+    await store.append("conv.main", ToolResult(
+        session_id="conv.main", agent_name="main", turn_id="t-main", call_id="c1",
+        tool_name="search", output="hits", timestamp_ms=140))
+    await store.append("conv.researcher.inv1", TextDelta(
+        session_id="conv.researcher.inv1", agent_name="researcher", turn_id="t-sub",
+        text="sub done", timestamp_ms=150, segment_id="_text"))
+    await store.append("conv.main", TextDelta(
+        session_id="conv.main", agent_name="main", turn_id="t-main",
+        text="part two", timestamp_ms=160, segment_id="_text"))
+
+    # The prefix merge is the composition the history API reads through.
+    turns = await store.load_materialized_by_prefix("conv")
+
+    main_turns = [turn for turn in turns if turn.turn_id == "t-main"]
+    assert len(main_turns) == 1, (
+        f"interleaved main turn fragmented into {len(main_turns)} turns: "
+        f"{[t.blocks for t in turns]}"
+    )
+    # Fragment blocks concatenate in chronology: streamed text, tool, tail.
+    assert main_turns[0].blocks == [
+        {"kind": "text", "text": "part one"},
+        {"kind": "tool", "tool": "search", "args": {"q": "x"}, "result": "hits"},
+        {"kind": "text", "text": "part two"},
+    ]
+    assert main_turns[0].started_at == 100
+    # The subagent's own turn stays its own turn (its own turn id).
+    assert [turn.turn_id for turn in turns if turn.turn_id == "t-sub"] == ["t-sub"]
+
+
+async def test_materialize_two_standalone_carriers_are_two_turns() -> None:
+    """Two standalone outbound carriers (SendFileToUserTool's production
+    shape: ``turn_id=""``) must replay as TWO turns in record order — one
+    per sent file, each with its own attachment and timestamp — not merge
+    into one turn holding both files at the earliest timestamp (the
+    post-cutover regression).
+    """
+    store = _make_store()
+    await store.append("conv.main", _msg("conv.main", "hi", timestamp=100))
+    await store.append("conv.main", AttachmentCarrier(
+        session_id="conv.main", agent_name="main", timestamp_ms=200,
+        attachments=[{"id": "att-1", "kind": "other", "name": "a.txt",
+                      "mime": "text/plain", "size": 1, "path": "/x/a.txt",
+                      "locator": "workspace"}]))
+    await store.append("conv.main", AttachmentCarrier(
+        session_id="conv.main", agent_name="main", timestamp_ms=300,
+        attachments=[{"id": "att-2", "kind": "image", "name": "b.png",
+                      "mime": "image/png", "size": 2, "path": "/x/b.png",
+                      "locator": "workspace"}]))
+
+    turns = await store.load_materialized_by_prefix("conv")
+
+    assert len(turns) == 2, (
+        f"expected one turn per standalone carrier, got {len(turns)}: "
+        f"{[(t.turn_id, t.attachments) for t in turns]}"
+    )
+    assert turns[0].turn_id == ""
+    assert turns[0].blocks == []
+    assert [att["id"] for att in turns[0].attachments] == ["att-1"]
+    assert turns[0].started_at == 200
+    assert turns[1].turn_id == ""
+    assert turns[1].blocks == []
+    assert [att["id"] for att in turns[1].attachments] == ["att-2"]
+    assert turns[1].started_at == 300
+
+
 # ── ResilientTranscriptStore (I/O resilience) ───────────────────────────────
 
 

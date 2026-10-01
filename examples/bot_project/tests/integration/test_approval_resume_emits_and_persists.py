@@ -363,13 +363,19 @@ async def test_resumed_approval_turn_persists_to_transcript(tmp_path: Path) -> N
         f"resumed turn transcript missing: {transcript_file} (children={list(sessions_dir.rglob('*')) if sessions_dir.exists() else 'no sessions dir'})"
     )
     events = await JSONLTranscriptStore(sessions_dir / "main").load("s1.main")
-    event_types = [type(e).__name__ for e in events]
-    # The tool that executed on resume must appear in the transcript.
-    assert "ToolCallEvent" in event_types, (
-        f"resumed turn did not persist ToolCallEvent; got {event_types}"
-    )
-    assert "ToolResultEvent" in event_types, (
-        f"resumed turn did not persist ToolResultEvent; got {event_types}"
+    # The tool that executed on resume must appear in the transcript as the
+    # durable record kinds (W6 cutover): the started card + its result.
+    tool_records = [
+        record
+        for record in events
+        if record.kind in ("tool_call_started", "tool_result")
+    ]
+    assert [record.kind for record in tool_records] == [
+        "tool_call_started",
+        "tool_result",
+    ], f"resumed turn did not persist the tool call+result pair; got {[e.kind for e in events]}"
+    assert all(record.tool_name == "write" for record in tool_records), (
+        f"persisted tool records are not the resumed write tool; got {[e.model_dump() for e in tool_records]}"
     )
 
 
@@ -396,7 +402,9 @@ async def test_resumed_approval_turn_persists_final_text(tmp_path: Path) -> None
     )
 
     events = await JSONLTranscriptStore(sessions_dir / "main").load("s1.main")
-    blobs = [str(e.to_dict()) for e in events]
+    # Records are Pydantic models — serialize through the model boundary
+    # (serialization rule 13), never a hand-rolled to_dict.
+    blobs = [record.model_dump_json() for record in events]
     assert any("done after resume" in b for b in blobs), (
         f"resumed turn final text missing from transcript; events={blobs}"
     )
@@ -469,12 +477,18 @@ async def test_resumed_turn_persists_after_jsonfile_snapshot_roundtrip(
         f"children={list(sessions_dir.rglob('*')) if sessions_dir.exists() else 'no sessions dir'}"
     )
     events = await JSONLTranscriptStore(sessions_dir / "main").load("s1.main")
-    event_types = [type(e).__name__ for e in events]
-    assert "ToolCallEvent" in event_types, (
-        f"resumed turn did not persist ToolCallEvent after round-trip; got {event_types}"
-    )
-    assert "ToolResultEvent" in event_types, (
-        f"resumed turn did not persist ToolResultEvent after round-trip; got {event_types}"
+    # Same durable-record-kinds coverage as the in-memory variant (W6).
+    tool_records = [
+        record
+        for record in events
+        if record.kind in ("tool_call_started", "tool_result")
+    ]
+    assert [record.kind for record in tool_records] == [
+        "tool_call_started",
+        "tool_result",
+    ], f"resumed turn did not persist the tool call+result pair after round-trip; got {[e.kind for e in events]}"
+    assert all(record.tool_name == "write" for record in tool_records), (
+        f"persisted tool records are not the resumed write tool; got {[e.model_dump() for e in tool_records]}"
     )
 
 

@@ -7,7 +7,7 @@ build is skipped gracefully (logs a warning and returns).
 
 from __future__ import annotations
 
-from bot.adapters.channels import AdapterBuildContext, get_conv_channel
+from bot.adapters.channels import AdapterBuildContext, get_conv_channel, im_channel_gate
 from modex_agent.core.emitter import TurnBinding, TurnEventSink
 from modex_agent.core.session_id import session_id_prefix_of
 from modex_agent.core.turn_events import TurnEvent
@@ -33,7 +33,6 @@ def build_qq(ctx: AdapterBuildContext):
 
     from bot.adapters.qq import (
         QQBotEmitter,
-        QQEmitterConfig,
         QQInputAdapter,
         QQOutputAdapter,
     )
@@ -74,7 +73,7 @@ def build_qq(ctx: AdapterBuildContext):
         return _ChannelFilteredQQEmitter(
             output_adapter=_raw_output,
             session_id=binding.session_id,
-            gate=QQEmitterConfig.minimal(),
+            gate=im_channel_gate(),
         )
 
     logger.info("QQ adapter: built (app_id=%s)", qq_cfg["app_id"])

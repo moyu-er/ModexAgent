@@ -44,6 +44,7 @@ import pathvalidate
 from bot.webui.transcript_store import (
     AttachmentCarrier,
     JSONLTranscriptStore,
+    MaterializedTurn,
     ResilientTranscriptStore,
     TranscriptRecord,
     TranscriptStore,
@@ -337,7 +338,7 @@ class WorkspaceScopedTranscriptStore(WorkspaceRoutedTranscriptStore, WorkspaceIn
         *,
         pool: str | None = None,
         sessions_dir: Path | None = None,
-    ) -> list:
+    ) -> list[MaterializedTurn]:
         """Replay events for *session_prefix* into merged turn blocks."""
         events = await self.load_sessions_by_prefix(
             session_prefix, sessions_dir=sessions_dir, pool=pool

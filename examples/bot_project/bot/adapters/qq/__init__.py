@@ -35,7 +35,7 @@ from bot.adapters.qq._ws_state import (  # noqa: F401
     _read_channel_ws,
     _write_channel_ws,
 )
-from bot.adapters.qq.emitter import QQBotEmitter, QQEmitterConfig
+from bot.adapters.qq.emitter import QQBotEmitter
 from bot.adapters.qq.input import QQInputAdapter
 from bot.adapters.qq.output import QQOutputAdapter
 from bot.utils.media_utils import download_file as download_file
@@ -44,5 +44,4 @@ __all__ = [
     "QQInputAdapter",
     "QQOutputAdapter",
     "QQBotEmitter",
-    "QQEmitterConfig",
 ]

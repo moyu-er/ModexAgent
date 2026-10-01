@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from bot.adapters.channels import im_channel_gate
 from bot.adapters.qq import (
     QQBotEmitter,
-    QQEmitterConfig,
     QQInputAdapter,
     QQOutputAdapter,
 )
@@ -51,7 +51,7 @@ class QQBotService(BotService):
             return QQBotEmitter(
                 output_adapter=qq_output_adapter,
                 session_id=binding.session_id,
-                gate=QQEmitterConfig.minimal(),
+                gate=im_channel_gate(),
             )
 
         super().__init__(

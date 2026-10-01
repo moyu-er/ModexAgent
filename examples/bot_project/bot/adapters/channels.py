@@ -16,12 +16,14 @@ from any channel.
 
 from __future__ import annotations
 
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
+from modex_agent.core.emitter import KindGate
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.messaging.models import OutputMessage
 from modex_agent.plugins.loader import ChannelBuildContext
@@ -43,6 +45,41 @@ def get_conv_channel(conv_id: str) -> str:
 def set_conv_channel(conv_id: str, channel: str) -> None:
     """Record the channel that originated *conv_id*."""
     _conversation_channels[conv_id] = channel
+
+
+# ── IM-channel sink gate ──────────────────────────────────────────────────
+
+
+IM_CHANNEL_KINDS: frozenset[str] = frozenset(
+    {
+        "text",
+        "tool_call",
+        "tool_result",
+        "turn_finished",
+        "turn_errored",
+        "iteration_finished",
+    }
+)
+"""The delivered-kind set every IM channel sink (QQ, Telegram) gates on."""
+
+
+def im_channel_gate(
+    enabled: AbstractSet[str] | None = None,
+    disabled: AbstractSet[str] | None = None,
+) -> KindGate:
+    """Build the IM-channel sink gate — the single owner of the kind set.
+
+    Kind literals are the core ``TurnEvent`` kinds (old enum-event-name
+    migration: model_output→text, tool_call_start→tool_call,
+    tool_call_end→tool_result, final_output→turn_finished, error→
+    turn_errored). ``iteration_finished`` was not in the old set, but it
+    is the buffering policy's (SEGMENT) flush boundary, so it stays
+    enabled.
+    """
+    return KindGate(
+        enabled_kinds=frozenset(enabled) if enabled is not None else IM_CHANNEL_KINDS,
+        disabled_kinds=frozenset(disabled) if disabled is not None else frozenset(),
+    )
 
 
 # ── Build context passed to each adapter's build() ──────────────────────

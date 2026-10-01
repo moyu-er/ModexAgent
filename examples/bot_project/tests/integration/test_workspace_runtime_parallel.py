@@ -47,7 +47,7 @@ from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.core import BotService
 from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import UserMessageEvent
+from bot.webui.transcript_store import UserMessageRecord
 from bot.workspace.dynamic_workspaces import (
     WorkspaceCreationError,
     WorkspaceExistsError,
@@ -186,7 +186,7 @@ class _ScriptedLLM:
         session_id = f"probe-{marker}.{_MAIN_POOL}"
         await self._transcripts.append(
             session_id,
-            UserMessageEvent(
+            UserMessageRecord(
                 session_id=session_id,
                 agent_name=_MAIN_POOL,
                 content=f"transcript-probe-{marker}",

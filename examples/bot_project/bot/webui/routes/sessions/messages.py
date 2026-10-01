@@ -18,6 +18,7 @@ from bot.webui.transcript_store import (
     MaterializedTurn,
     TranscriptRecord,
     UserMessageRecord,
+    WorkspaceRoutedTranscriptStore,
     materialize_records,
 )
 from bot.webui.types import _DEFAULT_AGENT_NAME
@@ -136,10 +137,12 @@ async def handle_get_messages(request: web.Request) -> web.Response:
 
     # Partial streaming events — in-memory buffer, queried separately
     # from the main transcript, folded by the SAME framework materializer
-    # and attached as a synthetic streaming turn.
-    load_partial = getattr(store, "load_partial", None)
-    if load_partial is not None:
-        partial_records = await load_partial(session_id, sessions_dir=sessions_dir)
+    # and attached as a synthetic streaming turn. The capability probe is
+    # the SAME store-shape check the recording tap uses
+    # (isinstance against WorkspaceRoutedTranscriptStore — the only store
+    # shape carrying the in-memory partial buffer).
+    if isinstance(store, WorkspaceRoutedTranscriptStore):
+        partial_records = await store.load_partial(session_id, sessions_dir=sessions_dir)
         if partial_records:
             partial_turn = partial_streaming_turn(partial_records, agent_name)
             if partial_turn is not None:

@@ -25,6 +25,7 @@ import pytest
 # Bot tests resolve ``bot.*`` via the repo root inserted into sys.path.
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
+from modex_agent.adapters.platform import StreamingMode
 from modex_agent.agents.react.nodes.tool_classification import decision_of
 from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
@@ -100,6 +101,10 @@ class _OutputAdapter:
     async def send_delta(self, delta: str, session_id: str) -> None: ...
 
     async def flush_deltas(self, session_id: str) -> None: ...
+
+    @property
+    def streaming_mode(self) -> StreamingMode:
+        return StreamingMode.NONE
 
     @property
     def supports_streaming(self) -> bool:

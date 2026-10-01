@@ -501,7 +501,7 @@ class ResilientTranscriptStore(TranscriptStore):
                 "transcript append failed for session %s (event=%s); "
                 "continuing without persisting this event",
                 session_id,
-                getattr(event, "kind", type(event).__name__),
+                event.kind,
             )
 
     async def load(self, session_id: str) -> list[TranscriptRecord]:
@@ -590,6 +590,13 @@ def materialize_records(records: Sequence[TranscriptRecord]) -> list[Materialize
     id (standalone carriers become their own turns), and derives each
     turn's start timestamp from its earliest record. Turns come back
     sorted by start time.
+
+    The framework folder groups by CONTIGUITY, but the bot layer merges
+    main + subagent session files by timestamp first — a main turn that
+    dispatched a subagent mid-flight reaches the folder with its records
+    interleaved with the subagent's, so its views must be merged back by
+    turn id here (the composition is bot-owned; the framework's
+    contiguity semantics stay untouched).
     """
     presentation: list[PresentationEvent] = []
     carriers: list[AttachmentCarrier] = []
@@ -608,17 +615,20 @@ def materialize_records(records: Sequence[TranscriptRecord]) -> list[Materialize
         if turn_id not in started_at or timestamp < started_at[turn_id]:
             started_at[turn_id] = timestamp
 
-    attachments_by_turn: dict[str, list[dict[str, JsonValue]]] = {}
-    for carrier in carriers:
-        attachments_by_turn.setdefault(carrier.turn_id, []).extend(
-            carrier.attachments
-        )
+    # Fold, then merge the fragments sharing one turn id: concatenate
+    # blocks in fold (= record) order, which preserves each fragment's
+    # internal order and the inter-fragment chronology. ``started_at``
+    # already holds the turn's earliest record time.
+    blocks_by_turn: dict[str, list[dict[str, object]]] = {}
+    for view in materialize_turns(presentation):
+        blocks_by_turn.setdefault(view.turn_id, []).extend(_turn_view_blocks(view))
 
     result: list[MaterializedTurn] = []
-    attached: set[str] = set()
-    for view in materialize_turns(presentation):
-        blocks = _turn_view_blocks(view)
-        attachments = list(attachments_by_turn.get(view.turn_id, ()))
+    for turn_id, blocks in blocks_by_turn.items():
+        attachments: list[dict[str, JsonValue]] = []
+        for carrier in carriers:
+            if carrier.turn_id == turn_id:
+                attachments.extend(carrier.attachments)
         # A turn with no blocks and no attachments has no replay surface —
         # observation-only groups (usage / approval records on an idle
         # identity) must not surface as empty assistant turns.
@@ -626,27 +636,27 @@ def materialize_records(records: Sequence[TranscriptRecord]) -> list[Materialize
             continue
         result.append(
             MaterializedTurn(
-                turn_id=view.turn_id,
+                turn_id=turn_id,
                 blocks=blocks,
                 attachments=attachments,
-                started_at=started_at.get(view.turn_id, 0),
+                started_at=started_at.get(turn_id, 0),
             )
         )
-        attached.add(view.turn_id)
 
     # Carriers with no matching replayed turn (the standalone outbound
     # attachment records SendFileToUserTool persists) replay as their own
     # turns so the history API keeps rendering download cards after a
-    # refresh. Timestamp keeps them chronological relative to real turns.
+    # refresh — ONE turn PER carrier record, in record order, so two sent
+    # files stay two cards at their own timestamps. Timestamp keeps them
+    # chronological relative to real turns.
     for carrier in carriers:
-        if carrier.turn_id in attached:
+        if carrier.turn_id in blocks_by_turn:
             continue
-        attached.add(carrier.turn_id)
         result.append(
             MaterializedTurn(
                 turn_id=carrier.turn_id,
                 blocks=[],
-                attachments=list(attachments_by_turn.get(carrier.turn_id, ())),
+                attachments=list(carrier.attachments),
                 started_at=carrier.timestamp_ms,
             )
         )

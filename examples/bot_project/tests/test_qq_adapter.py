@@ -8,11 +8,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from bot.adapters.channels import IM_CHANNEL_KINDS, im_channel_gate
 from bot.adapters.qq import (
     QQ_FILE_TYPE_FILE,
     QQ_FILE_TYPE_IMAGE,
     QQBotEmitter,
-    QQEmitterConfig,
     QQInputAdapter,
     QQOutputAdapter,
     _qq_file_type,
@@ -146,14 +146,29 @@ class TestQQOutputAdapter:
         assert call.kwargs["is_image"] is True           # from record.kind
 
 
-class TestQQEmitterConfig:
-    def test_config_can_be_created(self) -> None:
-        config = QQEmitterConfig()
-        assert config is not None
+class TestImChannelGate:
+    def test_default_gate_enables_the_im_kind_set(self) -> None:
+        """The shared QQ/Telegram gate enables exactly the IM sink kinds —
+        the migrated set (text/tool_call/tool_result/turn_finished/
+        turn_errored) plus iteration_finished (the SEGMENT flush boundary)."""
+        gate = im_channel_gate()
+        assert gate.enabled_kinds == IM_CHANNEL_KINDS
+        assert gate.enabled_kinds == frozenset(
+            {
+                "text",
+                "tool_call",
+                "tool_result",
+                "turn_finished",
+                "turn_errored",
+                "iteration_finished",
+            }
+        )
 
-    def test_config_is_creatable(self) -> None:
-        config = QQEmitterConfig()
-        assert config is not None
+    def test_custom_enabled_and_disabled_sets(self) -> None:
+        gate = im_channel_gate(enabled={"text"}, disabled={"tool_result"})
+        assert gate.is_enabled("text")
+        assert not gate.is_enabled("tool_result")  # disabled always wins
+        assert not gate.is_enabled("turn_finished")  # outside the enabled set
 
 
 class TestQQBotEmitter:

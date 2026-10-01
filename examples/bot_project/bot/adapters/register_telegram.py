@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from bot.adapters.channels import (
     AdapterBuildContext,
     get_conv_channel,
+    im_channel_gate,
     set_conv_channel,
 )
 from modex_agent.adapters.emitter import BufferingSink
@@ -201,23 +202,7 @@ def build_telegram(
         return _ChannelFilteredTelegramEmitter(
             output_adapter=out,
             sid=session_id,
-            gate=KindGate(
-                # Migrated from the old enabled_events set (model_output →
-                # text, tool_call_start → tool_call, tool_call_end →
-                # tool_result, final_output → turn_finished, error →
-                # turn_errored); iteration_finished added as the SEGMENT
-                # flush boundary.
-                enabled_kinds=frozenset(
-                    {
-                        "text",
-                        "tool_call",
-                        "tool_result",
-                        "turn_finished",
-                        "turn_errored",
-                        "iteration_finished",
-                    }
-                )
-            ),
+            gate=im_channel_gate(),
         )
 
     logger.info("Telegram adapter: built (proxy=%s)", bool(proxy))

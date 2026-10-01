@@ -413,10 +413,11 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
                         )
                     await self._persist(event)
             case TurnErrored(message=message):
-                self._error_delivered = True
-                await self._safe_adapter_send(
-                    OutputMessage(content=f"Error: {message}"), log_label="emit_error"
-                )
+                # Mid-flight terminal: the error render goes through the
+                # SAME once-per-turn helper the terminal branch uses, so
+                # the render and its flag never drift between the two
+                # terminal paths this emitter owns.
+                await self._render_turn_error(message)
             case TurnFinished():
                 # Terminal record — stop classification + latency. An idle
                 # turn (no identity) has no replayable surface: today's
@@ -436,8 +437,8 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
 
     async def _dispatch(self, event: TurnEvent) -> None:
         match event:
-            case TurnFinishedEvent(stop_reason=stop_reason, error=error, attachments=attachments):
-                await self._handle_turn_finished(stop_reason, error, attachments)
+            case TurnFinishedEvent():
+                await self._handle_turn_finished(event)
             case IterationFinishedEvent():
                 # Segment boundary: the retired emit_stream_end flush now
                 # rides the iteration-finished signal (same boundary — after
@@ -447,33 +448,42 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
             case _:
                 await self._event_hub.emit(event)
 
-    async def _handle_turn_finished(
-        self,
-        stop_reason: StopReason,
-        error: str | None,
-        attachments: tuple[str, ...],
-    ) -> None:
+    async def _render_turn_error(self, message: str) -> None:
+        """Deliver the user-facing error render once per turn.
+
+        THE single owner of the error render for both terminal paths this
+        emitter owns — the mid-flight tap (``TurnErrored``) and the
+        terminal branch (``TurnFinished`` with ``StopReason.ERROR``):
+        whichever fires first renders, the other is suppressed by the
+        once flag. Sends through the inherited adapter-safe send (the
+        same protected method the base ``BufferingSink._dispatch`` renders
+        through).
+        """
+        if self._error_delivered:
+            return
+        self._error_delivered = True
+        await self._safe_adapter_send(
+            OutputMessage(content=f"Error: {message}"), log_label="emit_error"
+        )
+
+    async def _handle_turn_finished(self, event: TurnFinishedEvent) -> None:
         """Terminal branch: error render, segment flush, attachments, projection.
 
         Ordering preserved from the retired emitter channels: the error
         message (when the mid-flight path did not already deliver one),
         then the segment flush (while the turn identity is still active),
-        then attachments, then the terminal projection — delegating the
-        terminal event to the hub projects it and fans the TurnFinished
-        card out to the consumers (the projection bridge renders the
-        terminal frame last).
+        then attachments (the inherited base delivery), then the terminal
+        projection — delegating the event to the hub projects it and fans
+        the TurnFinished card out to the consumers (the projection bridge
+        renders the terminal frame last). The event is forwarded VERBATIM,
+        never reconstructed field-by-field, so future fields survive.
         """
         try:
-            if stop_reason is StopReason.ERROR and error and not self._error_delivered:
-                self._error_delivered = True
-                await self._safe_adapter_send(
-                    OutputMessage(content=f"Error: {error}"), log_label="emit_error"
-                )
+            if event.stop_reason is StopReason.ERROR and event.error:
+                await self._render_turn_error(event.error)
             await self._flush_active_segment()
-            await self._deliver_attachments(attachments)
-            await self._event_hub.emit(
-                TurnFinishedEvent(stop_reason=stop_reason, error=error, attachments=attachments)
-            )
+            await self._deliver_attachments(event.attachments)
+            await self._event_hub.emit(event)
         finally:
             await self._clear_partial()
             self._segments = {}
