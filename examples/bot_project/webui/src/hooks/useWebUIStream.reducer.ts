@@ -1,6 +1,7 @@
 import type {
-  ApprovalRequestEvent,
+  ApprovalRequestedEvent,
   ApprovalRequestView,
+  ApprovalResolvedEvent,
   AssistantReasoningEvent,
   AttachmentCardEvent,
   ContentEvent,
@@ -375,15 +376,18 @@ export function applyServerEvent(
   pendingRequestRef: PendingRequestRef,
   t: TFn = defaultT,
 ): StreamState {
-  if (event.event === "approval_request") {
-    const areq = event as ApprovalRequestEvent;
+  if (event.event === "approval_requested") {
+    const areq = event as ApprovalRequestedEvent;
     const sid: string = areq.session_id;
+    // Degraded view: the streamed card carries identity + prompt; the
+    // authoritative tier/arguments land with the pending-list fetch this
+    // event triggers (the fetch-replace wins within milliseconds).
     const view: ApprovalRequestView = {
-      tool_call_id: areq.tool_call_id,
+      tool_call_id: areq.call_id,
       tool_name: areq.tool_name,
-      tier: areq.tier,
-      arguments: areq.arguments,
-      status: areq.status,
+      tier: "",
+      arguments: {},
+      status: "pending",
     };
     const prev = state.pendingApprovals[sid] ?? [];
     if (prev.some((v) => v.tool_call_id === view.tool_call_id)) {
@@ -394,6 +398,18 @@ export function applyServerEvent(
       pendingApprovals: { ...state.pendingApprovals, [sid]: [...prev, view] },
     };
   }
+
+  if (event.event === "approval_resolved") {
+    // The decision flowed back on the same turn: drop the decided card. The
+    // POST path clears optimistically; this covers decisions made elsewhere
+    // (another tab, an IM channel) and is idempotent with the optimistic
+    // clear.
+    const ares = event as ApprovalResolvedEvent;
+    return clearPendingApproval(state, ares.session_id, ares.call_id);
+  }
+
+  // usage_summary: tolerated without a dedicated indicator (no element to
+  // attach to yet) — falls through to the default no-op below.
 
   // Some legacy flat events used ``conversation_id`` instead of ``session_id``;
   // every typed ServerEvent has ``session_id``, so the fallback is defensive.

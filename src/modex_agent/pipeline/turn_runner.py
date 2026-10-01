@@ -47,12 +47,17 @@ if TYPE_CHECKING:
     from modex_agent.pipeline.turn_context_config import TurnContextDescriptor
     from modex_agent.workspace import WorkspaceManager
 
-from modex_agent.approval.views import ApprovalRequestView, view_from_request
+from modex_agent.approval.views import (
+    ApprovalRequestView,
+    format_approval_prompt,
+    view_from_request,
+)
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.turn.dispatch import renew_dispatch_deadline
 from modex_agent.core.turn.enums import TurnCustomKey
 from modex_agent.core.turn.models import TurnSnapshot
+from modex_agent.core.turn_events import ApprovalRequestedEvent
 from modex_agent.messaging.models import ApprovalAction
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
@@ -336,6 +341,20 @@ class ReActTurnRunner(TurnRunner):
                     suspension_requests = [
                         view_from_request(req, turn_uuid=turn_uuid) for req in requests
                     ]
+                    # Observation event: exactly one approval_requested per
+                    # suspension, carrying the prompted request (the first
+                    # pending one) — the same view the channel prompt renders.
+                    # The suspension does NOT terminate the turn: no
+                    # turn_finished is emitted between requested and resolved.
+                    if suspension_requests:
+                        prompted = suspension_requests[0]
+                        await emitter.emit(
+                            ApprovalRequestedEvent(
+                                tool_name=prompted.tool_name,
+                                call_id=prompted.tool_call_id,
+                                prompt=format_approval_prompt(prompted),
+                            )
+                        )
                     if self._user_interface is not None:
                         for req in requests:
                             await self._user_interface.render_approval_prompt(
@@ -433,6 +452,7 @@ class ReActTurnRunner(TurnRunner):
             session_id=session_id,
             pool_data=pool_data,
             agent_context=agent_context,
+            emitter=emitter,
             tool_call_id=tool_call_id,
             approval_id=approval_id,
         )

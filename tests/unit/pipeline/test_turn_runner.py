@@ -181,17 +181,28 @@ def _make_graph_context(graph_instance_id: int = 1) -> GraphContext:
 
 
 async def test_execute_turn_suspends_with_typed_fact_and_renders_prompt() -> None:
-    """agent.run raises GraphInterrupt -> execute_turn renders prompt and returns the typed suspension."""
+    """agent.run raises GraphInterrupt -> execute_turn emits one approval_requested,
+    renders the prompt, and returns the typed suspension (never turn_finished)."""
+    from modex_agent.core.emitter import TurnEvent, TurnEventSink
     from modex_agent.pipeline.turn_outcome import TurnSuspension
+
+    class _RecordingSink(TurnEventSink):
+        def __init__(self) -> None:
+            super().__init__()
+            self.events: list[TurnEvent] = []
+
+        async def _dispatch(self, event: TurnEvent) -> None:
+            self.events.append(event)
 
     ui = _RecordingUI()
     runner = _make_runner(agent=_InterruptingAgent(), user_interface=ui)
     agent_context = _make_agent_context()
     ctx_mgr = _FlushingCtxMgr()
+    sink = _RecordingSink()
 
     result = await runner.execute_turn(
         agent_context,
-        MagicMock(),
+        sink,
         "s1",
         ContextState(),
         {},
@@ -203,6 +214,15 @@ async def test_execute_turn_suspends_with_typed_fact_and_renders_prompt() -> Non
     assert result.requests and result.requests[0].tool_name == "dangerous_tool"
     assert result.requests[0].approval_id == "ap1"
     assert ui.rendered_prompt is not None
+
+    # Observation: exactly one approval_requested per suspension, carrying the
+    # prompted request; a suspension is a pause, NOT a turn end.
+    requested = [e for e in sink.events if e.kind == "approval_requested"]
+    assert len(requested) == 1
+    assert requested[0].tool_name == "dangerous_tool"
+    assert requested[0].call_id == "call_1"
+    assert "dangerous_tool" in requested[0].prompt
+    assert not any(e.kind == "turn_finished" for e in sink.events)
 
 
 async def test_execute_turn_finally_unregisters_and_flushes() -> None:

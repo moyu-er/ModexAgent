@@ -29,6 +29,7 @@ from modex_agent.agents.react.state import (
 )
 from modex_agent.approval.views import ApprovalRequestView
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.emitter import TurnEvent, TurnEventSink
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn.approval_types import (
     ApprovalDecision,
@@ -293,6 +294,7 @@ async def test_apply_resume_partial_saves_and_returns_none(
     result = await resumer.apply_resume(
         partial_snapshot, action=None, session_id="s1", pool_data=None,
         agent_context=fake_agent_context_for(partial_snapshot),
+        emitter=None,
     )
     assert result is None
     assert turn_store.saved  # save_turn invoked with updated snapshot
@@ -307,6 +309,7 @@ async def test_apply_resume_complete_restores_state_and_returns_store(
     result = await resumer.apply_resume(
         complete_snapshot, action=None, session_id="s1", pool_data=None,
         agent_context=fake_agent_context,
+        emitter=None,
     )
     assert result is resumer._turn_store  # the store the caller should clean up with
     assert fake_agent_context.runtime is not None  # restored from snapshot
@@ -321,7 +324,7 @@ async def test_apply_resume_action_decides_last_pending_returns_store(
     # decision, but the second is still PENDING → still None.
     result_partial = await resumer.apply_resume(
         partial_snapshot, action=ApprovalAction.ALLOW, session_id="s1",
-        pool_data=None, agent_context=fake_agent_context,
+        pool_data=None, agent_context=fake_agent_context, emitter=None,
     )
     assert result_partial is None  # one decided, one still pending
 
@@ -332,7 +335,7 @@ async def test_apply_resume_action_decides_last_pending_returns_store(
     )
     result = await resumer.apply_resume(
         single, action=ApprovalAction.ALLOW, session_id="s1",
-        pool_data=None, agent_context=fake_agent_context,
+        pool_data=None, agent_context=fake_agent_context, emitter=None,
     )
     assert result is resumer._turn_store
 
@@ -343,6 +346,7 @@ async def test_apply_resume_no_turn_store_returns_none(snapshot_no_store):
     result = await no_store_resumer.apply_resume(
         snapshot, action=None, session_id="s1", pool_data=None,
         agent_context=fake_agent_context_for(snapshot),
+        emitter=None,
     )
     assert result is None
 
@@ -353,7 +357,7 @@ async def test_apply_resume_approval_none_returns_none(
     """approval_from_snapshot returns None → return None immediately."""
     result = await resumer.apply_resume(
         snapshot_no_approval, action=ApprovalAction.ALLOW, session_id="s1",
-        pool_data=None, agent_context=fake_agent_context,
+        pool_data=None, agent_context=fake_agent_context, emitter=None,
     )
     assert result is None
 
@@ -364,7 +368,7 @@ async def test_apply_resume_complete_but_runtime_none_returns_none(
     """All decided but agent_context.runtime is None → return None (cannot restore)."""
     result = await resumer.apply_resume(
         complete_snapshot, action=ApprovalAction.ALLOW, session_id="s1",
-        pool_data=None, agent_context=fake_agent_context_no_runtime,
+        pool_data=None, agent_context=fake_agent_context_no_runtime, emitter=None,
     )
     assert result is None
 
@@ -378,6 +382,7 @@ async def test_apply_resume_pool_data_turn_store_used(
     result = await resumer.apply_resume(
         partial_snapshot, action=None, session_id="s1", pool_data=pool_data,
         agent_context=fake_agent_context_for(partial_snapshot),
+        emitter=None,
     )
     assert result is None  # partial → no resume
     assert pool_store.saved  # pool_data.turn_store, not the resumer's own
@@ -416,7 +421,7 @@ async def test_apply_resume_targets_specific_call_id(
     """tool_call_id given → only that request decided; the other stays PENDING."""
     result = await resumer.apply_resume(
         partial_snapshot, action=ApprovalAction.ALLOW, session_id="s1",
-        pool_data=None, agent_context=fake_agent_context, tool_call_id="c2",
+        pool_data=None, agent_context=fake_agent_context, emitter=None, tool_call_id="c2",
     )
     assert result is None  # c1 still pending → not every tool decided
     saved = turn_store.saved[-1]
@@ -437,6 +442,7 @@ async def test_explicit_sqlite_partial_decision_uses_coordinator_without_turn_st
         session_id="s1",
         pool_data=pool_data,
         agent_context=fake_agent_context_for(partial_snapshot),
+        emitter=None,
         tool_call_id="c2",
     )
 
@@ -473,6 +479,7 @@ async def test_explicit_sqlite_final_denial_audits_selected_request_and_reason(
         session_id="s1",
         pool_data=pool_data,
         agent_context=fake_agent_context,
+        emitter=None,
         tool_call_id="c2",
     )
 
@@ -497,6 +504,7 @@ async def test_passive_sqlite_redisplay_does_not_write_audit(
         session_id="s1",
         pool_data=pool_data,
         agent_context=fake_agent_context_for(partial_snapshot),
+        emitter=None,
     )
 
     assert result is None
@@ -518,6 +526,7 @@ async def test_explicit_sqlite_decision_requires_persisted_turn_uuid(
             session_id="s1",
             pool_data=pool_data,
             agent_context=fake_agent_context_for(snapshot),
+        emitter=None,
             tool_call_id="c1",
         )
 
@@ -538,6 +547,7 @@ async def test_stale_target_does_not_write_audit(
         session_id="s1",
         pool_data=pool_data,
         agent_context=fake_agent_context_for(snapshot),
+        emitter=None,
         tool_call_id="c1",
     )
 
@@ -553,7 +563,7 @@ async def test_apply_resume_targeted_call_id_completes_when_last_pending(
     snapshot = _snapshot(decisions={"c1": ApprovalDecision.ALLOWED})  # c2 still PENDING
     result = await resumer.apply_resume(
         snapshot, action=ApprovalAction.ALLOW, session_id="s1",
-        pool_data=None, agent_context=fake_agent_context, tool_call_id="c2",
+        pool_data=None, agent_context=fake_agent_context, emitter=None, tool_call_id="c2",
     )
     assert result is resumer._turn_store
 
@@ -571,7 +581,7 @@ async def test_apply_resume_targeting_already_decided_is_noop(
     snapshot = _snapshot(decisions={"c1": ApprovalDecision.ALLOWED})
     result = await resumer.apply_resume(
         snapshot, action=ApprovalAction.ALLOW, session_id="s1",
-        pool_data=None, agent_context=fake_agent_context, tool_call_id="c1",
+        pool_data=None, agent_context=fake_agent_context, emitter=None, tool_call_id="c1",
     )
     assert result is None  # c2 still pending
     saved = turn_store.saved[-1]
@@ -613,7 +623,7 @@ async def test_webui_deny_seals_batch_all_pending(
     )
     result = await resumer.apply_resume(
         snapshot, action=ApprovalAction.DENY, session_id="s1",
-        pool_data=None, agent_context=fake_agent_context, tool_call_id="c1",
+        pool_data=None, agent_context=fake_agent_context, emitter=None, tool_call_id="c1",
     )
     assert result is resumer._turn_store  # resumed, not partial-saved
     approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
@@ -643,7 +653,7 @@ async def test_webui_deny_preempts_already_allowed(
     )
     result = await resumer.apply_resume(
         snapshot, action=ApprovalAction.DENY, session_id="s1",
-        pool_data=None, agent_context=fake_agent_context, tool_call_id="c2",
+        pool_data=None, agent_context=fake_agent_context, emitter=None, tool_call_id="c2",
     )
     assert result is resumer._turn_store
     approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
@@ -673,7 +683,7 @@ async def test_webui_approve_is_per_request(
     )
     result = await resumer.apply_resume(
         snapshot, action=ApprovalAction.ALLOW, session_id="s1",
-        pool_data=None, agent_context=fake_agent_context, tool_call_id="c1",
+        pool_data=None, agent_context=fake_agent_context, emitter=None, tool_call_id="c1",
     )
     assert result is None  # partial path
     saved = turn_store.saved[-1]
@@ -707,7 +717,7 @@ async def test_im_deny_seals_batch_and_im_allow_is_partial(
     )
     result_deny = await resumer.apply_resume(
         snapshot, action=ApprovalAction.DENY, session_id="s1",
-        pool_data=None, agent_context=fake_agent_context, tool_call_id=None,
+        pool_data=None, agent_context=fake_agent_context, emitter=None, tool_call_id=None,
     )
     assert result_deny is resumer._turn_store  # sealed → resume
     approval_deny = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
@@ -730,7 +740,7 @@ async def test_im_deny_seals_batch_and_im_allow_is_partial(
     )
     result_allow = await resumer.apply_resume(
         snapshot_allow, action=ApprovalAction.ALLOW, session_id="s1",
-        pool_data=None, agent_context=fake_agent_context, tool_call_id=None,
+        pool_data=None, agent_context=fake_agent_context, emitter=None, tool_call_id=None,
     )
     assert result_allow is None  # partial path
     saved = turn_store.saved[-1]
@@ -739,6 +749,94 @@ async def test_im_deny_seals_batch_and_im_allow_is_partial(
     assert approval_allow.decisions.get("c2", ApprovalDecision.PENDING) == ApprovalDecision.PENDING
     assert approval_allow.decisions.get("c3", ApprovalDecision.PENDING) == ApprovalDecision.PENDING
     assert approval_allow.every_tool_decided is False
+
+
+# ---------------------------------------------------------------------------
+# approval_resolved observation (W5) — exactly one per applied decision,
+# emitted through the resumed turn's sink before the turn continues.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingSink(TurnEventSink):
+    """Sink collecting every gate-passing event it observes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.events: list[TurnEvent] = []
+
+    async def _dispatch(self, event: TurnEvent) -> None:
+        self.events.append(event)
+
+
+async def test_apply_resume_emits_approval_resolved_once_per_decision(
+    resumer, fake_agent_context,
+):
+    """A decision that applies emits exactly one approval_resolved on the sink."""
+    sink = _RecordingSink()
+    snapshot = _snapshot(
+        decisions={},
+        approval_requests=[_request("r1", "c1")],
+    )
+    result = await resumer.apply_resume(
+        snapshot, action=ApprovalAction.ALLOW, session_id="s1",
+        pool_data=None, agent_context=fake_agent_context, emitter=sink,
+    )
+    assert result is resumer._turn_store  # the turn continues after the emission
+    resolved = [e for e in sink.events if e.kind == "approval_resolved"]
+    assert len(resolved) == 1
+    assert resolved[0].call_id == "c1"
+    assert resolved[0].approved is True
+
+
+async def test_apply_resume_emits_denied_flag_on_deny(
+    resumer, fake_agent_context,
+):
+    """A DENY decision carries approved=False on the observation."""
+    sink = _RecordingSink()
+    snapshot = _snapshot(
+        decisions={},
+        approval_requests=[
+            _request("r1", "c1"),
+            _request("r2", "c2"),
+        ],
+    )
+    result = await resumer.apply_resume(
+        snapshot, action=ApprovalAction.DENY, session_id="s1",
+        pool_data=None, agent_context=fake_agent_context, emitter=sink,
+    )
+    assert result is resumer._turn_store  # deny seals the batch → resume
+    resolved = [e for e in sink.events if e.kind == "approval_resolved"]
+    assert len(resolved) == 1
+    assert resolved[0].approved is False
+
+
+async def test_apply_resume_passive_rerender_emits_nothing(
+    resumer, turn_store,
+):
+    """action=None (pure re-render / recovery) applies no decision → no event."""
+    sink = _RecordingSink()
+    result = await resumer.apply_resume(
+        _snapshot(decisions={}), action=None, session_id="s1", pool_data=None,
+        agent_context=fake_agent_context_for(_snapshot(decisions={})),
+        emitter=sink,
+    )
+    assert result is None
+    assert sink.events == []
+
+
+async def test_apply_resume_stale_decision_emits_nothing(
+    resumer, turn_store,
+):
+    """A stale decision (already-decided target) is dropped → no event."""
+    sink = _RecordingSink()
+    snapshot = _snapshot(decisions={"c1": ApprovalDecision.ALLOWED})  # c2 still PENDING
+    result = await resumer.apply_resume(
+        snapshot, action=ApprovalAction.ALLOW, session_id="s1",
+        pool_data=None, agent_context=fake_agent_context_for(snapshot),
+        emitter=sink, tool_call_id="c1",
+    )
+    assert result is None
+    assert sink.events == []
 
 
 # ---------------------------------------------------------------------------

@@ -11,15 +11,21 @@ from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapte
 from bot.webui.emitter import CompositeEmitter, WebBotEmitter
 from bot.webui.emitter import web_bot as web_bot_module
 from bot.webui.events import (
+    ApprovalRequestedEvent,
+    ApprovalResolvedEvent,
     ServerEvent,
     ToolArgsDeltaEvent,
     ToolResultEvent,
+    UsageSummaryEvent,
     WebUIEventType,
 )
 from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.core.emitter import AgentResult, TurnEventSink, turn_finished_event
+from modex_agent.core.llm_struct import TokenUsage
 from modex_agent.core.turn_events import (
+    ApprovalRequestedEvent as CoreApprovalRequestedEvent,
+    ApprovalResolvedEvent as CoreApprovalResolvedEvent,
     IterationFinishedEvent,
     StopReason,
     TurnEvent,
@@ -28,6 +34,7 @@ from modex_agent.core.turn_events import (
     TurnTextEvent,
     TurnToolCallEvent,
     TurnToolResultEvent,
+    UsageEvent,
 )
 from modex_agent.core.turn_events import (
     ToolArgsDeltaEvent as CoreToolArgsDeltaEvent,
@@ -500,6 +507,184 @@ def test_tool_args_delta_event_roundtrip() -> None:
     assert loaded.chars == 42
     assert loaded.preview == '{"path": "/tmp/x"}'
     assert loaded.event == WebUIEventType.TOOL_ARGS_DELTA.value
+
+
+# ── approval / usage projections (streamed cards over the WS envelope) ─────
+
+
+@pytest.mark.asyncio
+async def test_approval_requested_streams_card_without_transcript_record() -> None:
+    """approval_requested: one WS envelope per suspension, no transcript record."""
+    with tempfile.TemporaryDirectory() as tmp:
+        input_adapter = WebSocketInputAdapter()
+        output_adapter = WebSocketOutputAdapter(input_adapter)
+        store = JSONLTranscriptStore(Path(tmp))
+        emitter = WebBotEmitter(output_adapter, "conv1.main", transcript_store=store)
+        input_adapter.register_connection("conv1.main", None)
+
+        await emitter.emit(_text("running it"))
+        await emitter.emit(
+            CoreApprovalRequestedEvent(
+                tool_name="write_file",
+                call_id="call_0",
+                prompt="Approval Required [DANGEROUS]\nTool: write_file",
+            )
+        )
+
+        q = input_adapter.get_delta_queue("conv1.main", None)
+        assert q is not None
+        text_env = q.get_nowait()
+        approval_env = q.get_nowait()
+        assert text_env.event_type == WebUIEventType.MODEL_CONTENT_DELTA.value
+        assert approval_env.event_type == WebUIEventType.APPROVAL_REQUESTED.value
+        assert approval_env.payload["tool_name"] == "write_file"
+        assert approval_env.payload["call_id"] == "call_0"
+        assert "write_file" in approval_env.payload["prompt"]
+        assert approval_env.payload["turn_id"] == text_env.payload["turn_id"]
+        assert q.empty()
+
+        # Transient card: the transcript keeps only the streamed text record.
+        events = await store.load("conv1.main")
+        assert not any(
+            e.event == WebUIEventType.APPROVAL_REQUESTED.value for e in events
+        )
+
+
+@pytest.mark.asyncio
+async def test_approval_resolved_streams_card() -> None:
+    input_adapter = WebSocketInputAdapter()
+    output_adapter = WebSocketOutputAdapter(input_adapter)
+    # The resumer emits approval_resolved on the RESUMED binding (same turn id
+    # as the suspended attempt) — mirror that wiring.
+    emitter = WebBotEmitter(output_adapter, "conv1.main", turn_id="turn_same", resumed=True)
+    input_adapter.register_connection("conv1.main", None)
+
+    await emitter.emit(CoreApprovalResolvedEvent(call_id="call_0", approved=True))
+
+    q = input_adapter.get_delta_queue("conv1.main", None)
+    assert q is not None
+    env = q.get_nowait()
+    assert env.event_type == WebUIEventType.APPROVAL_RESOLVED.value
+    assert env.payload["call_id"] == "call_0"
+    assert env.payload["approved"] is True
+    assert env.payload["turn_id"] == "turn_same"
+
+
+@pytest.mark.asyncio
+async def test_usage_summary_streams_token_snapshot() -> None:
+    input_adapter = WebSocketInputAdapter()
+    output_adapter = WebSocketOutputAdapter(input_adapter)
+    emitter = WebBotEmitter(output_adapter, "conv1.main")
+    input_adapter.register_connection("conv1.main", None)
+
+    await emitter.emit(_text("answer"))
+    await emitter.emit(
+        UsageEvent(
+            usage=TokenUsage(
+                input_tokens=10,
+                output_tokens=5,
+                reasoning_tokens=2,
+                cache_read_input_tokens=7,
+            )
+        )
+    )
+
+    q = input_adapter.get_delta_queue("conv1.main", None)
+    assert q is not None
+    text_env = q.get_nowait()
+    usage_env = q.get_nowait()
+    assert usage_env.event_type == WebUIEventType.USAGE_SUMMARY.value
+    assert usage_env.payload["input_tokens"] == 10
+    assert usage_env.payload["output_tokens"] == 5
+    assert usage_env.payload["reasoning_tokens"] == 2
+    assert usage_env.payload["cache_read_tokens"] == 7
+    assert usage_env.payload["cache_creation_tokens"] == 0
+    # total = input + cache_read + cache_creation + output (reasoning is a
+    # subset of output, not added on top).
+    assert usage_env.payload["total_tokens"] == 22
+    assert usage_env.payload["turn_id"] == text_env.payload["turn_id"]
+
+
+@pytest.mark.asyncio
+async def test_resumed_binding_continues_same_turn_id() -> None:
+    """A resumed emitter (TurnBinding.resumed) adopts the suspended turn's id:
+    the first content event announces no second TurnStarted — the WebUI turn
+    card continues, and approval_resolved rides the SAME turn id."""
+    input_adapter = WebSocketInputAdapter()
+    output_adapter = WebSocketOutputAdapter(input_adapter)
+    emitter = WebBotEmitter(
+        output_adapter, "conv1.main", turn_id="suspended_turn", resumed=True
+    )
+    input_adapter.register_connection("conv1.main", None)
+
+    await emitter.emit(CoreApprovalResolvedEvent(call_id="call_0", approved=True))
+    await emitter.emit(TurnToolResultEvent(tool_name="write_file", call_id="call_0", output="written"))
+
+    q = input_adapter.get_delta_queue("conv1.main", None)
+    assert q is not None
+    resolved_env = q.get_nowait()
+    tool_env = q.get_nowait()
+    assert resolved_env.payload["turn_id"] == "suspended_turn"
+    assert tool_env.payload["turn_id"] == "suspended_turn"
+    # The resumed leg emits NO turn_start frame (the hub pre-activated the
+    # projector — the wire keeps the original turn card).
+    assert tool_env.event_type == WebUIEventType.TOOL_CALL_END.value
+
+
+@pytest.mark.asyncio
+async def test_approval_and_usage_projections_are_noop_for_acp() -> None:
+    """ACP projection keeps the base no-op hooks: no hub event, no record."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = JSONLTranscriptStore(Path(tmp))
+        hub = AcpEmitterHub()
+        seen: list[TurnEvent] = []
+
+        async def listener(event: TurnEvent) -> None:
+            seen.append(event)
+
+        hub.register("conv1.main", listener)
+        emitter = AcpTurnEmitter(hub, "conv1.main", transcript_store=store)
+
+        await emitter.emit(
+            CoreApprovalRequestedEvent(tool_name="write_file", call_id="c0", prompt="p")
+        )
+        await emitter.emit(CoreApprovalResolvedEvent(call_id="c0", approved=False))
+        await emitter.emit(UsageEvent(usage=TokenUsage(input_tokens=1)))
+
+        assert seen == []
+        assert await store.load("conv1.main") == []
+
+
+def test_approval_and_usage_event_roundtrip() -> None:
+    requested = ServerEvent.from_dict(
+        ApprovalRequestedEvent(
+            session_id="abc.main", agent_name="main", tool_name="write_file",
+            call_id="call_0", turn_id="t1", prompt="Approval Required",
+        ).to_dict()
+    )
+    assert isinstance(requested, ApprovalRequestedEvent)
+    assert requested.call_id == "call_0"
+    assert requested.event == WebUIEventType.APPROVAL_REQUESTED.value
+
+    resolved = ServerEvent.from_dict(
+        ApprovalResolvedEvent(
+            session_id="abc.main", agent_name="main", call_id="call_0",
+            approved=True, turn_id="t1",
+        ).to_dict()
+    )
+    assert isinstance(resolved, ApprovalResolvedEvent)
+    assert resolved.approved is True
+    assert resolved.event == WebUIEventType.APPROVAL_RESOLVED.value
+
+    usage = ServerEvent.from_dict(
+        UsageSummaryEvent(
+            session_id="abc.main", agent_name="main", input_tokens=3,
+            output_tokens=4, total_tokens=7, turn_id="t1",
+        ).to_dict()
+    )
+    assert isinstance(usage, UsageSummaryEvent)
+    assert usage.total_tokens == 7
+    assert usage.event == WebUIEventType.USAGE_SUMMARY.value
 
 
 # ── CompositeEmitter tests ────────────────────────────────────────────────

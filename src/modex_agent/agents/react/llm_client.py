@@ -42,6 +42,7 @@ from modex_agent.core.stream_events import (
     TextDelta,
     ToolCallComplete,
     ToolCallDelta,
+    UsageSnapshot,
 )
 from modex_agent.core.turn.dispatch import renew_dispatch_deadline
 from modex_agent.core.turn.enums import TurnCustomKey
@@ -49,6 +50,7 @@ from modex_agent.core.turn_events import (
     ToolArgsDeltaEvent,
     TurnReasoningEvent,
     TurnTextEvent,
+    UsageEvent,
 )
 
 logger = logging.getLogger(__name__)
@@ -189,6 +191,18 @@ class ReactLlmClient:
                             )
                     case ToolCallComplete():
                         tool_names.append(event.tool_name)
+                        await assembler.feed(event)
+                    case UsageSnapshot():
+                        await self._drain_control(ctx)
+                        renew_dispatch_deadline()
+                        # Provider-reported usage snapshot: observed on the
+                        # turn stream as one UsageEvent per LLM call. Never
+                        # fabricated — only providers that report usage
+                        # produce UsageSnapshot events (the callback bridge
+                        # suppresses all-zero defaults), so a silent provider
+                        # stays silent on the stream.
+                        if emitter is not None:
+                            await emitter.emit(UsageEvent(usage=event.usage))
                         await assembler.feed(event)
                     case _:
                         await assembler.feed(event)

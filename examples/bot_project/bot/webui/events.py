@@ -36,6 +36,9 @@ class WebUIEventType(StrEnum):
     ERROR = "error"
     ATTACHMENT_CARD = "attachment_card"
     SESSIONS_CHANGED = "sessions_changed"
+    APPROVAL_REQUESTED = "approval_requested"
+    APPROVAL_RESOLVED = "approval_resolved"
+    USAGE_SUMMARY = "usage_summary"
 
 
 class WebSocketAction(StrEnum):
@@ -331,6 +334,51 @@ class ConversationCreatedEvent(ServerEvent):
     """A new subagent conversation was spawned under its parent session."""
     parent_session_id: str | None = None
     event: str = field(default=WebUIEventType.CONVERSATION_CREATED.value, init=False)
+
+
+@dataclass
+class ApprovalRequestedEvent(ServerEvent):
+    """A tool call awaits human approval — streamed from the turn stream.
+
+    Projected from the presentation ``ApprovalRequested`` card: one per
+    suspension, before the turn pauses. The frontend uses it exactly as the
+    retired adapter-side ``approval_request`` push was used — append the
+    pending card (deduped by ``call_id``) and reconcile against the
+    authoritative GET list. Tier/arguments land with that fetch; the prompt
+    text is the same rendered view the IM channels receive.
+    """
+    tool_name: str = ""
+    call_id: str = ""
+    turn_id: str = ""
+    prompt: str = ""
+    event: str = field(default=WebUIEventType.APPROVAL_REQUESTED.value, init=False)
+
+
+@dataclass
+class ApprovalResolvedEvent(ServerEvent):
+    """A pending approval was decided — the decision flowed back.
+
+    Projected from the presentation ``ApprovalResolved`` card: exactly one
+    per applied decision, emitted before the resumed turn continues (same
+    turn id as the suspended attempt).
+    """
+    call_id: str = ""
+    approved: bool = False
+    turn_id: str = ""
+    event: str = field(default=WebUIEventType.APPROVAL_RESOLVED.value, init=False)
+
+
+@dataclass
+class UsageSummaryEvent(ServerEvent):
+    """A token-usage snapshot for the turn (provider-reported, never fabricated)."""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    total_tokens: int = 0
+    turn_id: str = ""
+    event: str = field(default=WebUIEventType.USAGE_SUMMARY.value, init=False)
 
 
 # ---------------------------------------------------------------------------

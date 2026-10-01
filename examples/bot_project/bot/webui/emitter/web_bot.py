@@ -19,8 +19,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from modex_agent.core.llm_struct import TokenUsage
+
 from ...adapters.web_socket import WebSocketOutputAdapter
 from ..events import (
+    ApprovalRequestedEvent,
+    ApprovalResolvedEvent,
     DeltaEnvelope,
     ModelContentDelta,
     ModelReasoningDelta,
@@ -30,6 +34,7 @@ from ..events import (
     ToolCallEndEvent,
     ToolCallStartEvent,
     TurnEndEvent,
+    UsageSummaryEvent,
 )
 from ..transcript_store import TranscriptStore
 from .bot_transcript import BotTranscriptEmitter
@@ -81,6 +86,8 @@ class WebBotEmitter(BotTranscriptEmitter):
         transcript_store: TranscriptStore | None = None,
         session_meta_resolver: Callable[[], SessionMeta] | None = None,
         sessions_dir_provider: Callable[[], Path | None] | None = None,
+        turn_id: str = "",
+        resumed: bool = False,
     ) -> None:
         super().__init__(
             output_adapter,
@@ -90,6 +97,8 @@ class WebBotEmitter(BotTranscriptEmitter):
             transcript_store=transcript_store,
             session_meta_resolver=session_meta_resolver,
             sessions_dir_provider=sessions_dir_provider,
+            turn_id=turn_id,
+            resumed=resumed,
         )
         self._output: WebSocketOutputAdapter = output_adapter
         # tool_args_delta 节流账目, 按 call_id 键控; 由 _project_tool_start /
@@ -214,3 +223,46 @@ class WebBotEmitter(BotTranscriptEmitter):
         # 清场: LENGTH 截断 / 规范 id 不一致等孤儿预热账目随回合结束一并
         # 丢弃, 避免跨回合泄漏累积状态。
         self._args_stream_state.clear()
+
+    async def _project_approval_requested(
+        self, tool_name: str, call_id: str, prompt: str
+    ) -> None:
+        # The WebUI's approval card delivery: streamed over the same WS
+        # envelope as content events (replaces the retired adapter-side
+        # approval_request push — one delivery, from the turn stream).
+        await self._send_event(
+            ApprovalRequestedEvent(
+                session_id=self._session_id,
+                agent_name=self._agent_name,
+                turn_id=self._current_turn_id,
+                tool_name=tool_name,
+                call_id=call_id,
+                prompt=prompt,
+            )
+        )
+
+    async def _project_approval_resolved(self, call_id: str, approved: bool) -> None:
+        await self._send_event(
+            ApprovalResolvedEvent(
+                session_id=self._session_id,
+                agent_name=self._agent_name,
+                turn_id=self._current_turn_id,
+                call_id=call_id,
+                approved=approved,
+            )
+        )
+
+    async def _project_usage_summary(self, usage: TokenUsage) -> None:
+        await self._send_event(
+            UsageSummaryEvent(
+                session_id=self._session_id,
+                agent_name=self._agent_name,
+                turn_id=self._current_turn_id,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                reasoning_tokens=usage.reasoning_tokens,
+                cache_read_tokens=usage.cache_read_input_tokens,
+                cache_creation_tokens=usage.cache_creation_input_tokens,
+                total_tokens=usage.total_tokens,
+            )
+        )

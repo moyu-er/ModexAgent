@@ -16,11 +16,11 @@ covering the generic agent-turn envelope:
 
 Bot-specific concepts (pool-attribution display, attachments, block
 materialization for a specific frontend) stay consumer-side as
-enrichments layered on these events. Kinds without a default producer
-today (approval) exist so consumers can construct them at their own
-seams; the projector's disposition tables
-(``DefaultTurnEventProjector``) document which runtime inputs map and
-which are deliberately dropped.
+enrichments layered on these events. Every kind has a default runtime
+producer on the core stream (approval lifecycle from the turn runner /
+approval resumer, usage from the LLM client); the projector's
+disposition tables (``DefaultTurnEventProjector``) declare the mapping
+for each runtime input kind.
 """
 
 from __future__ import annotations
@@ -153,8 +153,8 @@ class ToolResult(PresentationEventBase):
 class ApprovalRequested(PresentationEventBase):
     """A tool call awaits human approval.
 
-    No default producer today — approval surfaces at the consumer's
-    approval seam, which constructs this card.
+    Produced by the turn runner at suspension time (one per suspension,
+    before the turn pauses).
     """
 
     kind: Literal["approval_requested"] = "approval_requested"

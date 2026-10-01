@@ -68,6 +68,34 @@ def test_legal_turn_with_approval_pair() -> None:
     assert validator.violations == []
 
 
+def test_full_suspend_resume_finish_sequence_is_clean() -> None:
+    """The W5 production sequence: one turn suspends for approval, the same
+    turn resumes after the decision, and exactly one turn_finished closes it
+    (no terminal between approval_requested and approval_resolved)."""
+    validator = TurnEventValidator()
+    _feed_all(
+        validator,
+        [
+            TurnStartedEvent(),
+            UsageEvent(usage=TokenUsage(input_tokens=10, output_tokens=5)),
+            TurnTextEvent(text="running it"),
+            TurnToolCallEvent(tool_name="write_file", call_id="c1", arguments={"p": "a"}),
+            # Suspension observation — a pause, not a turn end.
+            ApprovalRequestedEvent(
+                tool_name="write_file", call_id="c1", prompt="Approval Required..."
+            ),
+            # Resumed leg: same call ids, same turn (no second turn_started).
+            ApprovalResolvedEvent(call_id="c1", approved=True),
+            TurnToolResultEvent(tool_name="write_file", call_id="c1", output="written"),
+            UsageEvent(usage=TokenUsage(input_tokens=30, output_tokens=8)),
+            TurnTextEvent(text="done"),
+            TurnFinishedEvent(stop_reason=StopReason.COMPLETED),
+        ],
+    )
+    assert validator.violations == []
+    assert validator.finished
+
+
 def test_lenient_mode_auto_starts_on_content_without_turn_started() -> None:
     validator = TurnEventValidator()
     _feed_all(

@@ -292,19 +292,12 @@ class WebSocketOutputAdapter(OutputAdapter):
 
     async def send(self, message: OutputMessage, session_id: str) -> None:
         if message.message_type == "approval_request":
-            # Structured approval push: emit the view as the envelope payload so
-            # the webui renders an approval card. IM/QQ adapters (which read
-            # ``content``) are unaffected — they receive the same OutputMessage
-            # via their own adapters, not this branch.
-            view = dict(message.metadata.get("approval") or {})
-            await self.send_envelope(
-                DeltaEnvelope(
-                    session_id=session_id,
-                    agent_name=_agent_of(session_id),
-                    event_type="approval_request",
-                    payload=view,
-                )
-            )
+            # WebUI approval cards stream from the turn sink now: the
+            # WebBotEmitter projects the presentation ApprovalRequested card
+            # (one per suspension, same turn id) onto the same WS envelope.
+            # The IM text prompt riding this OutputMessage is channel
+            # vocabulary — IM adapters render it, the WebUI drops it so the
+            # card is never delivered twice.
             return
         # Outbound attachment cards (ADR-0013 §3). Emit one card per record so
         # the frontend renders inline-image / file-card / fallback based on

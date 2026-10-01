@@ -145,12 +145,16 @@ class AcpTurnEmitter(BotTranscriptEmitter):
         transcript_store: TranscriptStore | None = None,
         sessions_dir_provider: Callable[[], Path | None] | None = None,
         session_meta_resolver: Callable[[], SessionMeta] | None = None,
+        turn_id: str = "",
+        resumed: bool = False,
     ) -> None:
         super().__init__(
             AcpOutputAdapter(hub), session_id, pool=pool,
             transcript_store=transcript_store,
             sessions_dir_provider=sessions_dir_provider,
             session_meta_resolver=session_meta_resolver,
+            turn_id=turn_id,
+            resumed=resumed,
         )
         self._hub = hub
 

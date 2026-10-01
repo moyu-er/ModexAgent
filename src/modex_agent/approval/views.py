@@ -101,8 +101,10 @@ def format_approval_prompt(view: ApprovalRequestView) -> str:
 def approval_output_message(view: ApprovalRequestView) -> OutputMessage:
     """One message serving both channels: IM text (content) + webui structured (metadata).
 
-    IM/QQ adapters read ``content`` and are unchanged; ``WebSocketOutputAdapter``
-    branches on ``message_type == "approval_request"`` to emit a structured envelope.
+    IM/QQ adapters read ``content`` and are unchanged; the WebUI channel drops
+    this message — its approval card streams from the turn sink (the
+    presentation ApprovalRequested projection), so the prompt never renders
+    twice.
     """
     return OutputMessage(
         content=format_approval_prompt(view),

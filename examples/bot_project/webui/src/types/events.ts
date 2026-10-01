@@ -18,7 +18,9 @@ export type WebUIEventType =
   | "conversation_deleted"
   | "error"
   | "content"
-  | "approval_request"
+  | "approval_requested"
+  | "approval_resolved"
+  | "usage_summary"
   | "attachment_card";
 
 // ── Server → Client events ──────────────────────────────────────────────────
@@ -146,13 +148,40 @@ export interface ApprovalRequestView {
   status: string;
 }
 
-export interface ApprovalRequestEvent extends ServerEvent {
-  event: "approval_request";
-  tool_call_id: string;
+/**
+ * A tool call awaits human approval — streamed from the turn stream (one per
+ * suspension, before the turn pauses). The authoritative tier/arguments land
+ * with the pending-list fetch this event triggers; the streamed card carries
+ * the identity + rendered prompt.
+ */
+export interface ApprovalRequestedEvent extends ServerEvent {
+  event: "approval_requested";
   tool_name: string;
-  tier: string;
-  arguments: Record<string, unknown>;
-  status: string;
+  call_id: string;
+  turn_id: string;
+  prompt: string;
+}
+
+/** A pending approval was decided — the decision flowed back (same turn id
+ * as the suspended attempt; emitted before the resumed turn continues). */
+export interface ApprovalResolvedEvent extends ServerEvent {
+  event: "approval_resolved";
+  call_id: string;
+  approved: boolean;
+  turn_id: string;
+}
+
+/** A token-usage snapshot for the turn (provider-reported, never fabricated).
+ * Currently tolerated without a dedicated indicator. */
+export interface UsageSummaryEvent extends ServerEvent {
+  event: "usage_summary";
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  total_tokens: number;
+  turn_id: string;
 }
 
 /**
@@ -192,7 +221,9 @@ export type ServerEventUnion =
   | ConversationDeletedEvent
   | ErrorEvent
   | ContentEvent
-  | ApprovalRequestEvent
+  | ApprovalRequestedEvent
+  | ApprovalResolvedEvent
+  | UsageSummaryEvent
   | AttachmentCardEvent;
 
 // ── Structured transport envelope ─────────────────────────────────────────────

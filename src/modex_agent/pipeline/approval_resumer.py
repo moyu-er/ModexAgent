@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.views import view_from_request
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.emitter import TurnEventSink
 from modex_agent.core.turn.approval_decision import (
     ApprovalAuditDecision,
     ApprovalAuditEntry,
@@ -28,6 +29,7 @@ from modex_agent.core.turn.models import (
     StateQueryScope,
     TurnSnapshot,
 )
+from modex_agent.core.turn_events import ApprovalResolvedEvent
 from modex_agent.hook.abc import HookPayload, HookPoint
 from modex_agent.messaging.models import ApprovalAction
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
@@ -202,10 +204,17 @@ class ApprovalResumer:
         session_id: str,
         pool_data: PoolDataSnapshot | None,
         agent_context: AgentContext,
+        emitter: TurnEventSink | None,
         tool_call_id: str | None = None,
         approval_id: str | None = None,
     ) -> TurnStateStore | None:
         """Apply a resume decision and restore state if every tool is decided.
+
+        ``emitter`` is the resumed turn's sink (bound to the SAME turn id as
+        the suspended attempt via ``TurnBinding.resumed``): exactly one
+        ``approval_resolved`` observation is emitted on it when this call
+        applies a decision, BEFORE the turn continues. ``None`` skips the
+        observation (no sink in scope).
 
         Returns the ``TurnStateStore`` the caller should use for cleanup
         (``delete_turn`` on the snapshot, then ``drain``) when the resume
@@ -261,6 +270,17 @@ class ApprovalResumer:
                     approval_id,
                 )
                 return None
+
+        if decided_request is not None and emitter is not None:
+            # Exactly one approval_resolved per decision, emitted through the
+            # resumed turn's sink (same turn id as the suspension) before the
+            # turn continues.
+            await emitter.emit(
+                ApprovalResolvedEvent(
+                    call_id=decided_request.tool_call_id,
+                    approved=action is ApprovalAction.ALLOW,
+                )
+            )
 
         snapshot = ReActSnapshotPolicy.replace_approval(snapshot, approval)
         turn_store = self._resolve_turn_store(pool_data)

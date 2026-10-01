@@ -5,7 +5,15 @@ from modex_agent.messaging.models import OutputMessage
 
 
 @pytest.mark.asyncio
-async def test_approval_message_emits_structured_envelope() -> None:
+async def test_approval_message_is_dropped_on_webui_channel() -> None:
+    """The IM approval prompt OutputMessage no longer pushes a WebUI card.
+
+    Approval cards stream from the turn sink (WebBotEmitter projects the
+    presentation ApprovalRequested card onto the same WS envelope, one per
+    suspension); the adapter-side push was its duplicate delivery. The IM
+    text prompt is channel vocabulary — the WebUI drops it instead of
+    rendering the raw prompt text as a content delta.
+    """
     inp = WebSocketInputAdapter()
     inp.register_connection("s.main", None)
     out = WebSocketOutputAdapter(inp)
@@ -20,11 +28,7 @@ async def test_approval_message_emits_structured_envelope() -> None:
     )
     q = inp.get_delta_queue("s.main", None)
     assert q is not None
-    env = q.get_nowait()
-    assert env.event_type == "approval_request"
-    assert env.payload["tool_call_id"] == "c1"
-    assert env.payload["tool_name"] == "write_file"
-    assert env.payload["tier"] == "dangerous"
+    assert q.empty()  # no card push, no prompt-text content delta
 
 
 @pytest.mark.asyncio

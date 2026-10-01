@@ -522,8 +522,8 @@ describe("applyServerEvent control notices", () => {
   });
 });
 
-describe("applyServerEvent approval_request", () => {
-  it("stores approval_request into pendingApprovals keyed by session", () => {
+describe("applyServerEvent approval_requested / approval_resolved / usage_summary", () => {
+  it("stores approval_requested into pendingApprovals keyed by session", () => {
     const ref = { current: null as string | null };
     const state: StreamState = {
       messages: [],
@@ -534,22 +534,22 @@ describe("applyServerEvent approval_request", () => {
       pendingApprovals: {},
     };
     const ev = {
-      event: "approval_request",
+      event: "approval_requested",
       session_id: "s.main",
       agent_name: "main",
       timestamp: 1,
-      tool_call_id: "c1",
+      call_id: "c1",
       tool_name: "write_file",
-      tier: "dangerous",
-      arguments: { path: "a" },
-      status: "pending",
+      turn_id: "t1",
+      prompt: "Approval Required [DANGEROUS]\nTool: write_file",
     } as unknown as ServerEventUnion;
     const next = applyServerEvent(state, ev, "s.main", ref);
     expect(next.pendingApprovals["s.main"]).toHaveLength(1);
     expect(next.pendingApprovals["s.main"]![0]!.tool_call_id).toBe("c1");
+    expect(next.pendingApprovals["s.main"]![0]!.tool_name).toBe("write_file");
   });
 
-  it("dedupes a repeated approval_request by tool_call_id", () => {
+  it("dedupes a repeated approval_requested by call_id", () => {
     const ref = { current: null as string | null };
     const state: StreamState = {
       messages: [],
@@ -570,14 +570,13 @@ describe("applyServerEvent approval_request", () => {
       },
     };
     const ev = {
-      event: "approval_request",
+      event: "approval_requested",
       session_id: "s.main",
       agent_name: "main",
-      tool_call_id: "c1",
+      call_id: "c1",
       tool_name: "write_file",
-      tier: "dangerous",
-      arguments: {},
-      status: "pending",
+      turn_id: "t1",
+      prompt: "p",
     } as unknown as ServerEventUnion;
     const next = applyServerEvent(state, ev, "s.main", ref);
     expect(next.pendingApprovals["s.main"]).toHaveLength(1);
@@ -597,18 +596,84 @@ describe("applyServerEvent approval_request", () => {
       pendingApprovals: {},
     };
     const ev = {
-      event: "approval_request",
+      event: "approval_requested",
       session_id: "s.subagent",
       agent_name: "subagent",
-      tool_call_id: "c9",
+      call_id: "c9",
       tool_name: "edit_file",
-      tier: "dangerous",
-      arguments: {},
-      status: "pending",
+      turn_id: "t1",
+      prompt: "p",
     } as unknown as ServerEventUnion;
     const next = applyServerEvent(state, ev, "s.main", ref);
     expect(next.pendingApprovals["s.subagent"]).toHaveLength(1);
     expect(next.sessionMessages["s.subagent"]).toBeUndefined();
+  });
+
+  it("approval_resolved removes the decided card from the pending list", () => {
+    const ref = { current: null as string | null };
+    const state: StreamState = {
+      messages: [],
+      isStreaming: false,
+      sessionMessages: {},
+      sessionStreaming: {},
+      todos: {},
+      pendingApprovals: {
+        "s.main": [
+          {
+            tool_call_id: "c1",
+            tool_name: "write_file",
+            tier: "dangerous",
+            arguments: {},
+            status: "pending",
+          },
+          {
+            tool_call_id: "c2",
+            tool_name: "edit_file",
+            tier: "sensitive",
+            arguments: {},
+            status: "pending",
+          },
+        ],
+      },
+    };
+    const ev = {
+      event: "approval_resolved",
+      session_id: "s.main",
+      agent_name: "main",
+      call_id: "c1",
+      approved: true,
+      turn_id: "t1",
+    } as unknown as ServerEventUnion;
+    const next = applyServerEvent(state, ev, "s.main", ref);
+    expect(next.pendingApprovals["s.main"]).toHaveLength(1);
+    expect(next.pendingApprovals["s.main"]![0]!.tool_call_id).toBe("c2");
+  });
+
+  it("usage_summary is tolerated without mutating state", () => {
+    const ref = { current: null as string | null };
+    const state: StreamState = {
+      messages: [],
+      isStreaming: false,
+      sessionMessages: {},
+      sessionStreaming: {},
+      todos: {},
+      pendingApprovals: {},
+    };
+    const ev = {
+      event: "usage_summary",
+      session_id: "s.main",
+      agent_name: "main",
+      input_tokens: 10,
+      output_tokens: 5,
+      total_tokens: 15,
+      turn_id: "t1",
+    } as unknown as ServerEventUnion;
+    const next = applyServerEvent(state, ev, "s.main", ref);
+    // No usage element exists yet: content and approvals untouched, not
+    // streaming (the default no-op disposition).
+    expect(next.messages).toEqual([]);
+    expect(next.pendingApprovals).toEqual({});
+    expect(next.isStreaming).toBe(false);
   });
 });
 

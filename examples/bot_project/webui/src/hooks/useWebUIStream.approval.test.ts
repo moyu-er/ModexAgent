@@ -234,7 +234,7 @@ describe("useWebUIStream approval fetch/render/submit", () => {
     expect(result.current.isApprovingBatch).toBe(false);
   });
 
-  it("re-fetches the authoritative pending list when approval_request arrives via WebSocket", async () => {
+  it("re-fetches the authoritative pending list when approval_requested arrives via WebSocket", async () => {
     vi.mocked(fetchMessages).mockResolvedValue([]);
     vi.mocked(fetchTodos).mockResolvedValue([]);
     // Initial load: empty.
@@ -251,7 +251,7 @@ describe("useWebUIStream approval fetch/render/submit", () => {
 
     await waitFor(() => expect(result.current.pendingApprovals).toEqual([]));
 
-    // The backend emits ONE approval_request on suspend; the GET endpoint
+    // The backend streams ONE approval_requested per suspend; the GET endpoint
     // returns the full pending set.
     vi.mocked(fetchApprovals).mockResolvedValue([
       {
@@ -273,18 +273,17 @@ describe("useWebUIStream approval fetch/render/submit", () => {
     act(() => {
       const socket = sockets[sockets.length - 1]!;
       socket.receive({
-        event_type: "approval_request",
+        event_type: "approval_requested",
         session_id: sessionId,
         agent_name: "main",
         pool: "main",
         parent_session_id: null,
         metadata: {},
         payload: {
-          tool_call_id: "tc_a",
           tool_name: "shell",
-          tier: "high",
-          arguments: { cmd: "ls" },
-          status: "pending",
+          call_id: "tc_a",
+          turn_id: "t1",
+          prompt: "Approval Required [HIGH]\nTool: shell",
         },
       });
     });
@@ -299,7 +298,7 @@ describe("useWebUIStream approval fetch/render/submit", () => {
     expect(fetchApprovals).toHaveBeenCalledWith(sessionId, undefined, undefined);
   });
 
-  it("clears isStreaming for its session when approval_request arrives", async () => {
+  it("clears isStreaming for its session when approval_requested arrives", async () => {
     vi.mocked(fetchMessages).mockResolvedValue([]);
     vi.mocked(fetchTodos).mockResolvedValue([]);
     vi.mocked(fetchApprovals).mockResolvedValue([]);
@@ -334,23 +333,22 @@ describe("useWebUIStream approval fetch/render/submit", () => {
     act(() => {
       const socket = sockets[sockets.length - 1]!;
       socket.receive({
-        event_type: "approval_request",
+        event_type: "approval_requested",
         session_id: sessionId,
         agent_name: "main",
         pool: "main",
         parent_session_id: null,
         metadata: {},
         payload: {
-          tool_call_id: "tc_a",
           tool_name: "shell",
-          tier: "high",
-          arguments: { cmd: "ls" },
-          status: "pending",
+          call_id: "tc_a",
+          turn_id: "t1",
+          prompt: "Approval Required [HIGH]\nTool: shell",
         },
       });
     });
 
-    // Suspend never emits turn_end; approval_request must clear the busy
+    // Suspend never emits turn_end; approval_requested must clear the busy
     // flag so the composer is no longer "streaming".
     await waitFor(() => expect(result.current.isStreaming).toBe(false));
   });
@@ -402,7 +400,7 @@ describe("useWebUIStream approval fetch/render/submit", () => {
     expect(result.current.isApprovingBatch).toBe(false);
   });
 
-  it("ignores an approval_request-triggered fetch while a decision POST is in flight (no phantom card)", async () => {
+  it("ignores an approval_requested-triggered fetch while a decision POST is in flight (no phantom card)", async () => {
     vi.mocked(fetchMessages).mockResolvedValue([]);
     vi.mocked(fetchTodos).mockResolvedValue([]);
     // Initial load: one pending approval the user is about to decide.
@@ -447,8 +445,8 @@ describe("useWebUIStream approval fetch/render/submit", () => {
       expect(result.current.pendingApprovals.map((v) => v.tool_call_id)).toEqual(["tc_1"]);
     });
 
-    // Stash the in-flight count before the approval_request fires. A
-    // second, later approval_request fetch returns a stale list that STILL
+    // Stash the in-flight count before the approval_requested fires. A
+    // second, later approval_requested fetch returns a stale list that STILL
     // includes tc_1 (captured before the backend recorded the decision).
     const callsBefore = vi.mocked(fetchApprovals).mock.calls.length;
 
@@ -472,23 +470,22 @@ describe("useWebUIStream approval fetch/render/submit", () => {
     act(() => {
       const socket = sockets[sockets.length - 1]!;
       socket.receive({
-        event_type: "approval_request",
+        event_type: "approval_requested",
         session_id: sessionId,
         agent_name: "main",
         pool: "main",
         parent_session_id: null,
         metadata: {},
         payload: {
-          tool_call_id: "tc_1",
           tool_name: "shell",
-          tier: "high",
-          arguments: { cmd: "ls" },
-          status: "pending",
+          call_id: "tc_1",
+          turn_id: "t1",
+          prompt: "Approval Required [HIGH]\nTool: shell",
         },
       });
     });
 
-    // Wait for the approval_request-triggered fetch to be issued + settle.
+    // Wait for the approval_requested-triggered fetch to be issued + settle.
     await waitFor(() => expect(vi.mocked(fetchApprovals).mock.calls.length).toBe(callsBefore + 1));
     // Flush the fetch's .then chain so a setState would have run if the
     // guard were absent.
@@ -505,7 +502,7 @@ describe("useWebUIStream approval fetch/render/submit", () => {
     expect(result.current.isApprovingBatch).toBe(true);
 
     // Once the submit resolves, the optimistic clear fires and the next
-    // approval_request reconciles to the authoritative view.
+    // approval_requested reconciles to the authoritative view.
     vi.mocked(fetchApprovals).mockResolvedValue([]);
     await act(async () => {
       resolveSubmit({ accepted: true });
@@ -561,7 +558,7 @@ describe("useWebUIStream approval fetch/render/submit", () => {
     expect(result.current.isApprovingBatch).toBe(false);
   });
 
-  it("does not re-append an approval_request for a card whose decision POST is in flight (phantom suppression)", async () => {
+  it("does not re-append an approval_requested for a card whose decision POST is in flight (phantom suppression)", async () => {
     vi.mocked(fetchMessages).mockResolvedValue([]);
     vi.mocked(fetchTodos).mockResolvedValue([]);
     // Initial load: the card under decision is NOT in the pending list — it
@@ -570,7 +567,7 @@ describe("useWebUIStream approval fetch/render/submit", () => {
     vi.mocked(fetchApprovals).mockResolvedValue([]);
 
     // Hold the submit POST unresolved so the in-flight flag stays set across
-    // the stale approval_request arrival.
+    // the stale approval_requested arrival.
     let resolveSubmit!: (value: { accepted: boolean }) => void;
     vi.mocked(submitApproval).mockImplementation(
       () => new Promise((resolve) => { resolveSubmit = resolve; }),
@@ -594,24 +591,23 @@ describe("useWebUIStream approval fetch/render/submit", () => {
     });
     await waitFor(() => expect(result.current.isApprovingBatch).toBe(true));
 
-    // A stale approval_request for the in-flight card arrives. The pending
+    // A stale approval_requested for the in-flight card arrives. The pending
     // list does NOT contain it, so the reducer's dedupe would pass and it
     // would be appended — the hook guard must suppress the append.
     act(() => {
       const socket = sockets[sockets.length - 1]!;
       socket.receive({
-        event_type: "approval_request",
+        event_type: "approval_requested",
         session_id: sessionId,
         agent_name: "main",
         pool: "main",
         parent_session_id: null,
         metadata: {},
         payload: {
-          tool_call_id: phantomTc,
           tool_name: "shell",
-          tier: "high",
-          arguments: { cmd: "ls" },
-          status: "pending",
+          call_id: phantomTc,
+          turn_id: "t1",
+          prompt: "Approval Required [HIGH]\nTool: shell",
         },
       });
     });
@@ -631,5 +627,167 @@ describe("useWebUIStream approval fetch/render/submit", () => {
     });
     await waitFor(() => expect(result.current.isApprovingBatch).toBe(false));
     expect(result.current.pendingApprovals).toEqual([]);
+  });
+
+  it("re-fetches the remaining pending list when approval_resolved arrives (partial batch)", async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([]);
+    vi.mocked(fetchTodos).mockResolvedValue([]);
+    // Initial load: two pending cards.
+    vi.mocked(fetchApprovals).mockResolvedValue([
+      {
+        tool_call_id: "tc_a",
+        tool_name: "shell",
+        tier: "high",
+        arguments: { cmd: "ls" },
+        status: "pending",
+      },
+      {
+        tool_call_id: "tc_b",
+        tool_name: "shell",
+        tier: "high",
+        arguments: { cmd: "rm" },
+        status: "pending",
+      },
+    ]);
+
+    const sessionId = "apr007.main";
+    const getPoolForUuid = (): undefined => undefined;
+
+    const { result } = renderHook(() => useWebUIStream(sessionId, getPoolForUuid));
+
+    act(() => {
+      result.current.connect();
+    });
+
+    await waitFor(() => expect(result.current.pendingApprovals).toHaveLength(2));
+
+    // tc_a was decided (elsewhere — e.g. an IM channel): the decision event
+    // streams back and the authoritative remaining list (tc_b only — there is
+    // no second approval_requested: no new suspension happened) reconciles.
+    vi.mocked(fetchApprovals).mockResolvedValue([
+      {
+        tool_call_id: "tc_b",
+        tool_name: "shell",
+        tier: "high",
+        arguments: { cmd: "rm" },
+        status: "pending",
+      },
+    ]);
+
+    act(() => {
+      const socket = sockets[sockets.length - 1]!;
+      socket.receive({
+        event_type: "approval_resolved",
+        session_id: sessionId,
+        agent_name: "main",
+        pool: "main",
+        parent_session_id: null,
+        metadata: {},
+        payload: { call_id: "tc_a", approved: true, turn_id: "t1" },
+      });
+    });
+
+    await waitFor(() =>
+      expect(result.current.pendingApprovals.map((v) => v.tool_call_id)).toEqual(["tc_b"]),
+    );
+  });
+
+  it("drops the decided card when approval_resolved arrives for a listed pending card", async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([]);
+    vi.mocked(fetchTodos).mockResolvedValue([]);
+    vi.mocked(fetchApprovals).mockResolvedValue([
+      {
+        tool_call_id: "tc_a",
+        tool_name: "shell",
+        tier: "high",
+        arguments: { cmd: "ls" },
+        status: "pending",
+      },
+    ]);
+
+    const sessionId = "apr008.main";
+    const getPoolForUuid = (): undefined => undefined;
+
+    const { result } = renderHook(() => useWebUIStream(sessionId, getPoolForUuid));
+
+    act(() => {
+      result.current.connect();
+    });
+
+    await waitFor(() => expect(result.current.pendingApprovals).toHaveLength(1));
+
+    // The decision event's reducer path removes the card immediately — hold
+    // the reconcile fetch open (never resolves) so the instant drop is the
+    // only state change observable here.
+    vi.mocked(fetchApprovals).mockImplementation(() => new Promise(() => {}));
+    act(() => {
+      const socket = sockets[sockets.length - 1]!;
+      socket.receive({
+        event_type: "approval_resolved",
+        session_id: sessionId,
+        agent_name: "main",
+        pool: "main",
+        parent_session_id: null,
+        metadata: {},
+        payload: { call_id: "tc_a", approved: false, turn_id: "t1" },
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      result.current.pendingApprovals.map((v) => v.tool_call_id),
+    ).not.toContain("tc_a");
+  });
+
+  it("tolerates usage_summary events without state changes", async () => {
+    vi.mocked(fetchMessages).mockResolvedValue([]);
+    vi.mocked(fetchTodos).mockResolvedValue([]);
+    vi.mocked(fetchApprovals).mockResolvedValue([]);
+
+    const sessionId = "apr009.main";
+    const getPoolForUuid = (): undefined => undefined;
+
+    const { result } = renderHook(() => useWebUIStream(sessionId, getPoolForUuid));
+
+    act(() => {
+      result.current.connect();
+    });
+
+    await waitFor(() => expect(result.current.pendingApprovals).toEqual([]));
+
+    // A usage snapshot mid-turn: tolerated (no dedicated indicator yet), no
+    // fetch triggered, no crash, streaming state untouched.
+    const callsBefore = vi.mocked(fetchApprovals).mock.calls.length;
+    act(() => {
+      const socket = sockets[sockets.length - 1]!;
+      socket.receive({
+        event_type: "usage_summary",
+        session_id: sessionId,
+        agent_name: "main",
+        pool: "main",
+        parent_session_id: null,
+        metadata: {},
+        payload: {
+          input_tokens: 10,
+          output_tokens: 5,
+          reasoning_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          total_tokens: 15,
+          turn_id: "t1",
+        },
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.pendingApprovals).toEqual([]);
+    expect(result.current.isStreaming).toBe(false);
+    expect(vi.mocked(fetchApprovals).mock.calls.length).toBe(callsBefore);
   });
 });

@@ -31,6 +31,7 @@ from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
 from modex_agent.approval.ui import IMUserInterface
 from modex_agent.commands.processor import SlashCommandProcessor
+from modex_agent.core.emitter import TurnBinding, TurnEvent, TurnEventSink
 from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
@@ -38,6 +39,7 @@ from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool
 from modex_agent.core.turn.enums import SnapshotReason, TurnPhase
 from modex_agent.core.turn.models import StateQueryScope
+from modex_agent.core.turn_events import StopReason
 from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.messaging.models import (
     ApprovalAction,
@@ -1079,3 +1081,111 @@ async def test_resume_with_production_memory_cm_feeds_llm_well_formed_history(
     assert provider.calls == 2, f"LLM should be called twice, got {provider.calls}"
     assert recorded == [("/etc/passwd", "x")]
     await memory_system.close()
+
+
+# ==========================================================================
+# W5 — unified-stream approval observation, end-to-end through the real
+# pipeline: suspend -> approval_requested -> approval_resolved (same turn id)
+# -> continuation -> exactly-one turn_finished.
+# ==========================================================================
+
+
+class _SequenceSink(TurnEventSink):
+    """Recording sink for one bound turn (the framework seam, no mocks)."""
+
+    def __init__(self, binding: TurnBinding) -> None:
+        super().__init__()
+        self.binding = binding
+        self.events: list[TurnEvent] = []
+
+    async def _dispatch(self, event: TurnEvent) -> None:
+        self.events.append(event)
+
+
+@pytest.mark.asyncio
+async def test_suspend_resume_event_stream_sequence(tmp_path: Path) -> None:
+    """The unified stream's approval observation contract, end-to-end:
+
+    - suspension emits exactly one ``approval_requested`` and NO
+      ``turn_finished`` (a suspension is a pause, not a turn end);
+    - the resumed binding carries the SAME turn id with ``resumed=True``;
+    - the decision emits exactly one ``approval_resolved`` as the resumed
+      leg's FIRST observation, before the turn continues;
+    - exactly one ``turn_finished`` (COMPLETED) closes the whole sequence.
+    """
+    sinks: list[_SequenceSink] = []
+
+    def factory(binding: TurnBinding) -> TurnEventSink:
+        sink = _SequenceSink(binding)
+        sinks.append(sink)
+        return sink
+
+    provider = _Provider(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        tool_name="write",
+                        arguments={"path": "/etc/passwd", "content": "x"},
+                        call_id="c1",
+                    ),
+                ],
+            ),
+            LLMResponse(content="done"),
+        ]
+    )
+    pipeline = _build_pipeline_with_agent(
+        tmp_path=tmp_path,
+        agent=ReActAgent(provider),
+        output_adapter=_RecordingOutputAdapter(),
+        turn_store=InMemoryTurnStateStore(),
+        recorded=[],
+    )
+    # Rewire the sink factory onto the built pipeline's turn runner (the
+    # helper's _build_pipeline_with_agent does not forward emitter_factory).
+    pipeline._turn_runner.set_emitter_factory(factory)  # type: ignore[attr-defined]
+    session = SessionInfo.from_str("s1.main")
+
+    # --- Suspend leg ---
+    assert await pipeline._process_message(
+        InputMessage(content="write secrets", session=session)
+    ) is None
+    assert len(sinks) == 1
+    suspended = sinks[0]
+    kinds = [e.kind for e in suspended.events]
+    assert kinds.count("approval_requested") == 1
+    requested = next(e for e in suspended.events if e.kind == "approval_requested")
+    assert requested.tool_name == "write"
+    assert requested.call_id == "c1"
+    assert "write" in requested.prompt
+    assert "turn_finished" not in kinds, "a suspension must not terminate the turn"
+
+    # --- Decision leg ---
+    result = await pipeline._process_message(
+        InputMessage(
+            content="",
+            session=session,
+            approval_decision=ApprovalDecisionInput(tool_call_id="c1", action=ApprovalAction.ALLOW),
+        )
+    )
+    assert result is not None and result.stop_reason == StopReason.COMPLETED
+    assert len(sinks) == 2
+
+    # The resumed binding adopts the suspended attempt's turn identity.
+    resumed = sinks[1]
+    assert resumed.binding.resumed is True
+    assert resumed.binding.turn_id == suspended.binding.turn_id
+    assert resumed.binding.turn_id != ""
+
+    # The decision observation leads the resumed leg, before continuation.
+    assert resumed.events[0].kind == "approval_resolved"
+    resolved = resumed.events[0]
+    assert resolved.call_id == "c1"
+    assert resolved.approved is True
+    assert [e.kind for e in resumed.events].count("approval_resolved") == 1
+
+    # Exactly one terminal for the whole suspend+resume sequence.
+    finished = [e for s in sinks for e in s.events if e.kind == "turn_finished"]
+    assert len(finished) == 1
+    assert finished[0].stop_reason == StopReason.COMPLETED

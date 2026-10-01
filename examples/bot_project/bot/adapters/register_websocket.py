@@ -44,12 +44,16 @@ def build_websocket_emitter(
     pool: str | None = None,
     sessions_dir_provider: Callable[[], Path | None] | None = None,
     session_meta_resolver: Callable[[], SessionMeta] | None = None,
+    turn_id: str = "",
+    resumed: bool = False,
 ) -> WebBotEmitter:
     """Construct a WebBotEmitter wired to the shared WS adapter + store.
 
     Used both by the shared channel factory (no provider — ctxvar fallback)
     and by per-workspace factories (with a provider from the workspace's
-    resolver cell).
+    resolver cell). ``turn_id`` / ``resumed`` adopt the runtime's turn
+    identity from the sink-factory binding so an approval resume continues
+    the SAME turn on the wire (no second TurnStarted).
     """
     return WebBotEmitter(
         output_adapter=output_adapter,
@@ -58,6 +62,8 @@ def build_websocket_emitter(
         transcript_store=transcript_store,
         session_meta_resolver=session_meta_resolver,
         sessions_dir_provider=sessions_dir_provider,
+        turn_id=turn_id,
+        resumed=resumed,
     )
 
 
@@ -80,6 +86,8 @@ def build_websocket(ctx: AdapterBuildContext):
             transcript_store=store,
             pool=binding.pool,
             session_meta_resolver=_parent_meta_for(ws_input, binding.session_id),
+            turn_id=binding.turn_id,
+            resumed=binding.resumed,
         )
 
     return ws_input, ws_output, emitter_factory

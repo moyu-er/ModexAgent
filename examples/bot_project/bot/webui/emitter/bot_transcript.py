@@ -42,6 +42,7 @@ from typing import Any
 from modex_agent.adapters.emitter import BufferingSink
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.emitter import KindGate, TurnBinding
+from modex_agent.core.llm_struct import TokenUsage
 from modex_agent.core.session_id import agent_of
 from modex_agent.core.turn_events import (
     IterationFinishedEvent,
@@ -51,6 +52,8 @@ from modex_agent.core.turn_events import (
 )
 from modex_agent.messaging.models import OutputMessage
 from modex_agent.presentation import (
+    ApprovalRequested,
+    ApprovalResolved,
     PresentationEvent,
     PresentationSink,
     SessionEventHub,
@@ -61,6 +64,7 @@ from modex_agent.presentation import (
     ToolResult,
     TurnErrored,
     TurnFinished,
+    UsageSummary,
 )
 
 from ..events import (
@@ -108,6 +112,8 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
         transcript_store: TranscriptStore | None = None,
         session_meta_resolver: Callable[[], SessionMeta] | None = None,
         sessions_dir_provider: Callable[[], Path | None] | None = None,
+        turn_id: str = "",
+        resumed: bool = False,
     ) -> None:
         super().__init__(
             output_adapter,
@@ -134,14 +140,19 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
         self._sessions_dir_provider: Callable[[], Path | None] | None = sessions_dir_provider
         # Framework per-turn station: core TurnEvents in, presentation events
         # fanned out to (this recording tap, the projection bridge) —
-        # registration order fixes record-before-project delivery. The bot
-        # synthesizes the binding from its constructor identity (turn ids stay
-        # projector-lazy, matching the pre-hub wire behavior).
+        # registration order fixes record-before-project delivery. The binding
+        # comes from the sink factory: ``turn_id`` adopts the runtime's turn
+        # identity (so an approval resume — ``resumed=True`` carrying the
+        # suspended attempt's id — continues the SAME turn on the wire and
+        # emits no second TurnStarted); empty keeps the projector's lazy
+        # factory, matching the pre-hub wire behavior.
         self._event_hub = SessionEventHub(
             TurnBinding(
                 session_id=session_id,
                 agent_name=self._agent_name,
                 pool=pool,
+                turn_id=turn_id,
+                resumed=resumed,
             ),
             (self, _ProjectionBridge(self)),
         )
@@ -201,6 +212,30 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
 
         默认 no-op: 预热态是纯显示投影, 记录生命周期(段缓冲/持久化)不参与;
         WebUI 投影覆盖此钩子做节流外发, ACP 投影忽略。
+        """
+
+    async def _project_approval_requested(
+        self, tool_name: str, call_id: str, prompt: str
+    ) -> None:
+        """Project one approval-requested card (a tool call awaits a human).
+
+        No-op default: approval delivery is each sink's channel concern (the
+        IM text prompt rides the ApprovalUserInterface output path); the WebUI
+        projection overrides this hook to stream the card.
+        """
+
+    async def _project_approval_resolved(self, call_id: str, approved: bool) -> None:
+        """Project one approval decision (the decision flowed back).
+
+        No-op default; the WebUI projection overrides this hook to stream the
+        decided card.
+        """
+
+    async def _project_usage_summary(self, usage: TokenUsage) -> None:
+        """Project one token-usage snapshot for the turn.
+
+        No-op default: the recording lifecycle takes no part; the WebUI
+        projection overrides this hook to stream the usage card.
         """
 
     @abstractmethod
@@ -520,10 +555,18 @@ class _ProjectionBridge(PresentationSink):
                 await emitter._project_tool_start(tool_name, call_id, dict(args))
             case ToolResult(tool_name=tool_name, call_id=call_id, output=output, seq=seq):
                 await emitter._project_tool_end(tool_name, call_id, output, seq)
+            case ApprovalRequested(
+                tool_name=tool_name, call_id=call_id, prompt=prompt
+            ):
+                await emitter._project_approval_requested(tool_name, call_id, prompt)
+            case ApprovalResolved(call_id=call_id, approved=approved):
+                await emitter._project_approval_resolved(call_id, approved)
+            case UsageSummary(usage=usage):
+                await emitter._project_usage_summary(usage)
             case TurnFinished(latency_ms=latency_ms, turn_id=turn_id):
                 await emitter._project_turn_end(latency_ms, turn_id)
             case _:
-                # TurnStarted / TurnErrored / usage / approval cards have no
-                # sink projection hook (the error render lives on the
-                # transcript tap; TurnStarted has no bot wire frame).
+                # TurnStarted / TurnErrored have no sink projection hook (the
+                # error render lives on the transcript tap; TurnStarted has no
+                # bot wire frame).
                 pass

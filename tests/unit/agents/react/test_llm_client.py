@@ -319,6 +319,79 @@ class TestStreamWithControlPreservesUsage:
         assert result.usage == TokenUsage(input_tokens=30, output_tokens=12)
 
 
+class TestUsageEventEmission:
+    """Provider-reported usage is observed on the turn stream as UsageEvent.
+
+    One UsageEvent per LLM call whose stream reports a usage snapshot —
+    for streaming AND non-streaming sinks (usage is not a per-delta
+    concern). A provider that reports no usage produces no event: usage
+    is never fabricated.
+    """
+
+    class _RecordingSink(TurnEventSink):
+        def __init__(self) -> None:
+            super().__init__()
+            self.events: list[TurnEvent] = []
+
+        def wants_streaming(self) -> bool:
+            return True
+
+        async def _dispatch(self, event: TurnEvent) -> None:
+            self.events.append(event)
+
+    class _RecordingNonStreamSink(_RecordingSink):
+        def wants_streaming(self) -> bool:
+            return False
+
+    async def test_usage_snapshot_emits_one_usage_event(self):
+        ctx = _make_ctx()
+        sink = self._RecordingSink()
+        ctx.emitter = sink
+        provider = _FakeStreamProvider(
+            ["hello"],
+            response=LLMResponse(
+                content="hello",
+                usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            ),
+        )
+
+        await ReactLlmClient(provider).call([], ctx)
+
+        usage_events = [e for e in sink.events if e.kind == "usage"]
+        assert len(usage_events) == 1
+        assert usage_events[0].usage == TokenUsage(input_tokens=10, output_tokens=5)
+
+    async def test_usage_event_emitted_for_non_streaming_sink(self):
+        ctx = _make_ctx()
+        sink = self._RecordingNonStreamSink()
+        ctx.emitter = sink
+        provider = _FakeNonStreamProvider(
+            response=LLMResponse(
+                content="hello",
+                usage={"prompt_tokens": 30, "completion_tokens": 12, "total_tokens": 42},
+            ),
+        )
+
+        await ReactLlmClient(provider).call([], ctx)
+
+        usage_events = [e for e in sink.events if e.kind == "usage"]
+        assert len(usage_events) == 1
+        assert usage_events[0].usage == TokenUsage(input_tokens=30, output_tokens=12)
+
+    async def test_silent_provider_emits_no_usage_event(self):
+        ctx = _make_ctx()
+        sink = self._RecordingSink()
+        ctx.emitter = sink
+        provider = _FakeStreamProvider(
+            ["hello"],
+            response=LLMResponse(content="hello"),
+        )
+
+        await ReactLlmClient(provider).call([], ctx)
+
+        assert not [e for e in sink.events if e.kind == "usage"]
+
+
 class TestCompletionStartTimePropagation:
     """completion_start_time (TTFT) must flow from provider → LLMResponse → hook.
 

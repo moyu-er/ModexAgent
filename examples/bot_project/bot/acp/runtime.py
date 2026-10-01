@@ -217,6 +217,8 @@ class AcpRuntime(AcpSessionBackend):
                 binding.session_id,
                 pool=binding.pool,
                 transcript_store=self._transcript,
+                turn_id=binding.turn_id,
+                resumed=binding.resumed,
             )
 
         service = BotService(
