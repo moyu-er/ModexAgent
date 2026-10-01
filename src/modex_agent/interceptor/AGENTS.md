@@ -16,7 +16,7 @@ AOP onion-chain layer wrapping call boundaries. Interceptors form recursive clos
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | 3 interceptors + 1 classification helper -- tool_timeout, result-limit, tool_approval |
+| `builtin/` | tool_timeout (mandatory, composed by ToolExecutor). result-limit moved to `tools/overflow/result_limit.py` (W2 — the overflow vertical owns its trigger side); ArgumentMatcher moved to `approval/argument_matcher.py` (W2 — pure classification helper) |
 
 ## Active Scopes
 | Scope | Method | Chain method | Purpose |

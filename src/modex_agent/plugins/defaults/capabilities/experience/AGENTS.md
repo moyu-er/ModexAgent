@@ -56,8 +56,8 @@ normal slot resolution (one entry: `register_experience_feature`).
 ## Dependencies
 
 ### Internal
-- `modex_agent.plugins.capability` — the Capability protocol + view types
-- `modex_agent.plugins.abc` / `plugins.loader` — factory/slot/registration faces
+- `modex_agent.scope.capability` — the Capability protocol + view types
+- `modex_agent.scope.components` / `plugins.loader` — factory/slot/registration faces
 - `modex_agent.core.prompt` — `SystemPromptProvider`; `core.tool_manager` — Tool bases
 - `modex_agent.tools.manager` + `tools.standard` — InMemoryToolManager + file tools
 - `modex_agent.agents.summarizer` — `ScopedFileAgent` base + trajectory emitter

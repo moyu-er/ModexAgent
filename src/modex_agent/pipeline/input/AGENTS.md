@@ -1,7 +1,9 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-22 -->
+<!-- Updated: 2026-09-30 | merged into pipeline/input/ (W2) -->
 
-# input_pipeline
+# input
+
+(formerly the top-level `input_pipeline/` package; merged into `pipeline/` as the `input/` subpackage in the W2 layering wave)
 
 ## Purpose
 

@@ -25,7 +25,7 @@ WebUI backend — aiohttp server with REST API, WebSocket, and transcript storag
 | `routes/websocket/graph.py` | WS SUBSCRIBE_GRAPH + UNSUBSCRIBE_GRAPH actions — graph event subscription, per-instance queue registry + `forward_graph_events` drain loop |
 | `routes/websocket/streaming.py` | Delta forwarding — `forward_deltas`, `watch_new_queues`, queue connection filtering |
 | `events.py` | WebUI event types — `ModelContentDelta`, `ModelReasoningDelta`, `ToolCallStart/End`, `TurnEnd`, `UserMessage` |
-| `transcript_store.py` | `TranscriptStore` — per-agent JSONL transcript persistence for history replay |
+| `transcript_store.py` | `TranscriptStore` (ServerEvent parameterization of the framework `presentation` transcript contract, ADR-0053) + `ServerEventTranscriptCodec` — per-agent JSONL transcript persistence and `MaterializedTurn` block materialization for history replay |
 | `emitter/` | `BotTranscriptEmitter` (shared turn-record lifecycle + projection ABC), `WebBotEmitter` (WS projection), `CompositeEmitter` — split into `__init__.py` (re-exports), `bot_transcript.py`, `web_bot.py`, `composite.py` |
 
 ## REST API Endpoints

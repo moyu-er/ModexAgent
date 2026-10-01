@@ -30,7 +30,7 @@ Tool subsystem — the concrete tool manager, type definitions, filtering, metad
 | `mcp/` | MCP integration — `BaseMCPClient`, `MCPClientManager`, connection management, tool wrapper; transports: stdio, SSE, streamable HTTP |
 | `standard/` | Built-in tools — `file_tool.py` (read/write/edit/ls/find), `search_tool.py` (content search across files) |
 | `terminal/` | Stateful terminal system — `TerminalManager`, `TerminalSession`, `ShellTool`, input guard, poll loop, process-registry, config, state-store, types, prompt; backends: pexpect, tmux, Windows visible/hidden, winpty (see `terminal/AGENTS.md`) |
-| `overflow/` | Tool result overflow management — `ToolOverflowStore` ABC, `ToolResultOverflowHandler`, `OverflowCleaner`, `OverflowStore` local implementation (see `overflow/AGENTS.md`) |
+| `overflow/` | Tool result overflow management — `ToolOverflowStore` ABC, `ToolResultOverflowHandler`, `OverflowCleaner`, `OverflowStore` local implementation, and the `ToolResultLimitInterceptor` trigger side (moved from `interceptor/builtin/`, W2) (see `overflow/AGENTS.md`) |
 | `ast/` | AST-based code analysis — `ast_search.py`, `ast_replace.py`, `engine.py` |
 | `web/` | Web tools — `reader.py` (URL content extraction), `search.py` (web search) |
 | `lsp/` | Language Server Protocol integration — `lsp_navigation.py`, `lsp_diagnostics.py` |

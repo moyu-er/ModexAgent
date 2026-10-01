@@ -197,7 +197,7 @@ unconditional `factory.py` registration is gone.
 - `modex_agent.core.session_id` — `SessionInfo`
 - `modex_agent.core.history` — `MessageHistory` ABC
 - `modex_agent.utils` — xml, helpers, sanitizer
-- `modex_agent.agents.summarizer` — `ArchiveSummarizer`, `CoreMemoryConsolidator`, `SessionCompactorAgent` (for consolidation and compact pipelines)
+- `modex_agent.memory.summarizer` — the collaborator contract (`ArchiveGenerator`, `CoreMemoryConsolidatorBase`, `CompactionOutcome`/`ConsolidationOutcome`; moved from `agents/summarizer/abc.py`, W2). Concrete agents live in `modex_agent.agents.summarizer` — `ArchiveSummarizer`, `CoreMemoryConsolidator`, `SessionCompactorAgent` (for consolidation and compact pipelines)
 
 ### External
 - `pydantic` — data models

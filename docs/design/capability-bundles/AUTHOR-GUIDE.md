@@ -18,7 +18,7 @@ Write a **Capability** when your components bind together: enabling one should e
 
 behind one registration name that is also the declaration key.
 
-**Do not write one for a single component.** A lone hook (or lone tool) continues to be a plain slot registration — that is a legitimate, complete plugin shape. The reference walkthrough is `examples/bot_project/plugins/reference_collector.py`: a `Plugin` subclass registering one HOOK-slot factory under the name `reference_collector`, referenced from YAML with `hooks: [+reference_collector]`. No capability, no enablement predicate — nothing about it needs bundling. Promote to a capability only when the second bound element appears.
+**Do not write one for a single component.** A lone hook (or lone tool) continues to be a plain slot registration — that is a legitimate, complete plugin shape. The reference walkthrough is `examples/bot_project/bot_plugins/reference_collector.py`: a `Plugin` subclass registering one HOOK-slot factory under the name `reference_collector`, referenced from YAML with `hooks: [+reference_collector]`. No capability, no enablement predicate — nothing about it needs bundling. Promote to a capability only when the second bound element appears.
 
 The framework's own five bundled capabilities (`aci`, `ast_grep`, `todo`, `experience`, `subagents` — `src/modex_agent/plugins/defaults/capabilities/`) are worked examples of every shape: tools-only (`ast_grep`), tools-with emergent same-name overwrite (`aci`), full four-element (`todo`, `experience`), and tree-derived dynamic enablement (`subagents`).
 
@@ -244,7 +244,23 @@ Also cover your failure paths — they are contracts:
 - your anchor vetoed (e.g. `tools: [-your_anchor]`) → `CapabilityError` naming the repair path,
 - a component reference without the capability effective → the loud `require_*` raise at assembly.
 
-## 9. Quick reference
+## 9. Packaging your plugin (the W6 packaging contract)
+
+The directory layout is NOT the API. A plugin ships through one of three discovery sources (`modex_agent/plugins/loader.py`, `PluginDiscoveryConfig`), and none of them require a fixed directory name, a `sys.path` entry, or a top-level `plugins` package:
+
+| Source | Where | Loaded as |
+|---|---|---|
+| Project dir | the deployment's plugin package (e.g. the bot project's `bot_plugins/`, wired as `AppAssemblyRoots.plugins_dir`) | every `*.py` file imported under a QUALIFIED synthetic name `modex_agent_userplugins_<dir-sha>.<module>` via importlib — no `sys.path` mutation |
+| User dir | `~/.modex_agent/plugins` (`DEFAULT_USER_PLUGIN_DIR`), enabled by default; opt out with the app-config flag `user_plugins_enabled: false` | same qualified loading; a missing directory is normal (debug log) |
+| entry_points | a pip-installed distribution exposing an entry point in the `modex_agent.plugins` group (e.g. `acme = acme_plugins.plugin:AcmePlugin`) | resolved through `importlib.metadata` — the installed-wheel shape (`<pkg>/` + `<pkg>-1.0.dist-info/entry_points.txt`) is the proven red anchor (`tests/unit/plugins/test_loader_entry_points.py`) |
+
+Notes for authors:
+
+- Cross-source name collisions resolve by priority — user > project > entry_points > bundled (`SPEC §3.5 O2`); a same-source duplicate `(slot, name)` is a boot error.
+- Because directory-discovered files load under synthetic names, DO NOT rely on import-identity between a directly-imported plugin module and the registry-resolved factory — construct configs from the factory's own `config_model` (the registry is the single identity source; see the boot-regression note in `modex_agent/pipeline/input/skeleton.py`).
+- Relative imports between plugin files in one directory work (the synthetic parent package anchors the directory's `__path__`); imports of your deployment's own packages (e.g. `bot.*`) resolve through the normal import system as before.
+
+## 10. Quick reference
 
 | You write | The framework does |
 |---|---|

@@ -18,14 +18,10 @@ Runtime state governance — typed state models, enums, persistence, codecs, and
 | `process_registry.py` | `ProcessRegistry` ABC + `SingletonProcessRegistry` zero-infrastructure liveness implementation; replace the implementation for multi-instance discovery |
 | `constants.py` | `EXECUTOR_PROCESS_ID_KEY` — typed `GraphMetadata.attrs` key for executor ownership |
 | `store.py` | `TurnStateStore` ABC; `NoOpTurnStateStore`, `InMemoryTurnStateStore`, and `JsonFileTurnStateStore`; `ActiveTurnConflictError`. |
-| `todo.py` | Per-session `TodoStatus`, `TodoItem`, `TodoStore`, and `JsonFileTodoStore`; SQLite implementation lives in `persistence/adapters/todo_store.py`. |
-| `dispatch.py` | `DispatchDeadline` — the unified watchdog deadline (module docstring carries the phase-budget protocol table). The pool watchdog is the sole termination mechanism (provider-level timeouts default to `None`). Phases owning an inner deadline declare their full budget at entry (tool: `tool_timeout + margin`; hooks: `hook_timeout×n + margin`; turn tail: flush+hook+margin); LLM calls re-assert `dispatch_timeout` at call entry; activity signals (react stream chunks, external provider events) renew by `chunk_renew_seconds`. `DeadlinePolicy` (`core/llm_struct.py`) holds the knobs (`chunk_renew_seconds` / `max_ahead_seconds` / `watchdog_poll_seconds`; phase margin = 2×poll). The sliding ceiling (`max_ahead_seconds`, default 1200s) is a panic fuse validated at startup against every phase budget. `current_dispatch_deadline` ContextVar + `renew_dispatch_deadline()` helper |
-| `models.py` | Core data models: `TurnIdentity`, `ToolArguments`, `ApprovalRequestState`, `ApprovalTransaction`, `ToolBatchState`, `TurnStateBase`, `TurnSnapshot`, `TurnSummary`, `StateQueryScope`, and `MessageDelta`. |
-| `enums.py` | Enumerations — `StateScope`, `AgentKind`, `TurnPhase`, `OperationKind`, `ToolBatchStatus`, `ToolCallStatus`, `ApprovalDenyPolicy`, `ApprovalSubjectType`, `OperationStatus`, `CancellationSource`, `SnapshotReason`, `MessageDeltaSource`, `TurnCustomKey` |
 | `policy.py` | `SnapshotPolicy` ABC — defines when/how snapshots are taken during agent execution |
 | `codec.py` | `RuntimeStateCodec` ABC + `RuntimeStateCodecRegistry` — serialization extensibility for runtime state |
-| `approval_decision.py` | `ApprovalDecisionCoordinator` ABC + typed approval audit entry/decision models for atomic snapshot-and-audit persistence |
-| `dream_locks.py` | Dream lock primitives — coordination locks for the dream engine's concurrent scan phases |
+
+The turn-execution vocabulary moved to `core/turn/` (W1 layering surgery): `enums.py`, `models.py`, `dispatch.py` (`DispatchDeadline`), `approval_decision.py`, `env_context.py`, and the todo values/`TodoStore` ABC (`core/turn/todo.py`); the approval enums now live in `core/turn/approval_types.py`. See `core/AGENTS.md`.
 
 ## Timeout Architecture
 
@@ -51,7 +47,7 @@ One watchdog, phase-budget declarations (see `dispatch.py` module docstring for 
 - Use `TurnStateStore` for all runtime persistence — do not bypass it with custom file I/O.
 - `AgentRuntimeServices` is constructed once per process; `AgentRuntime` is constructed per turn.
 - `TurnSnapshot` captures the full agent state for approval suspend/resume.
-- `dream_locks.py` is specific to the dream engine's scan phase — not for general locking.
+- Dream locks moved to `memory/consolidation/dream_locks.py` (W2) — dream-engine domain.
 
 ## Note on Control-Related Types
 

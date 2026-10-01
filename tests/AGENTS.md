@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-07-17 | Updated: 2026-09-02 -->
+<!-- Generated: 2026-07-17 | Updated: 2026-09-30 -->
 
 # tests
 
@@ -17,7 +17,9 @@ The `tests/` directory mirrors the `src/modex_agent/` package structure with uni
 | `framework/` | Framework-level tests — tool/MCP/terminal integration (real wiring, not mocked) |
 | `architecture/` | AST-guard tests enforcing architectural invariants (ADR-0006 dependency tiers, exact E1/E2 facades and owner exports, old-path absence, no back-refs, dead-code-gone, god-object-gone, module seams preserved). Each test is an ADR gate — `EXPECTED_OFFENDERS` sets shrink to empty as fixes land; the assertion stays strict. |
 | `conformance/` | Parametrized file↔SQLite backend equivalence suites (ADR-0023) — one file per split-store/runtime-state ABC (`MessageStore`, `KVStore`, `CursorStore`, `ArchiveStore`, `InboxMQ`, `PoolRoutingStore`, `ExternalSessionMapStore`, `ScopeRegistryStore` (file name still says "workspace registry"), `ApprovalAuditStore`, `TurnStateStore`, `TodoStore`, and persistence-owned `SessionStore`). The session suite compares `LocalFileSessionStore` from `persistence/adapters/file_session_store.py` with `SqliteSessionStore`. |
-| `integration/` | Integration tests across multiple modules — `experience/`, `memory/`, `multi_agent/`, `bot_project/`. Excluded by default (`-m 'not integration'`); run explicitly with `-m integration`. |
+| `integration/` | Integration tests across multiple modules — `bot_project/`, `experience/`, `external/`, `graph_orchestration/`, `memory/`, `multi_agent/`, `packaging/`, `plugins/`, `providers/`. Excluded by default (`-m 'not integration'`); run explicitly with `-m integration`. |
+| `acp/` | ACP agent-server surface tests (ADR-0049) — scripted-backend e2e over the stdio server seam |
+| `fixtures/` | Shared test fixtures (golden files, sample data) |
 
 > `tests_ext/` is declared in `pyproject.toml` `testpaths` but does not exist on disk — it is a reserved external/downstream test surface.
 
@@ -38,7 +40,7 @@ The `tests/` directory mirrors the `src/modex_agent/` package structure with uni
 - Tests follow the same package structure as `src/modex_agent/`
 - Transport model tests live under `unit/messaging/`; session store/registry tests live under `unit/persistence/`
 - `AsyncMock` for async interfaces
-- `conftest.py` for shared fixtures (4 files: `conformance/`, `unit/memory/`, `unit/persistence/adapters/`, `integration/bot_project/`)
+- `conftest.py` for shared fixtures (12 files: `unit/` root, `unit/agents/react/`, `unit/memory/`, `unit/modex_graph/`, `unit/multi_agent/`, `unit/persistence/adapters/`, `unit/sandbox/`, `unit/tools/`, `unit/tools/web/`, `conformance/`, `framework/tools/terminal/`, `acp/`)
 - Architecture tests use AST parsing, not runtime — they enforce structural invariants
 - Conformance tests parametrize over `file` + `sqlite` backends via shared `conftest.py` fixtures
 - Integration tests may require more timeouts due to async coordination

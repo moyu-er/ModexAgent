@@ -41,7 +41,7 @@ The SQLite backend adapter is `SqliteInboxMQ` in `modex_agent.persistence.adapte
 - The inbox is pure MQ — it does NOT drive turns or touch the broker. Between-
   turn driving is the `InboxPoller` (`multi_agent/inbox_poller.py`, event-driven
   via a pool-level `asyncio.Event` with a tick fallback); mid-turn fold-in is
-  `InboxFlushHook` (`hook/builtin/`). Wakeup is signalled from
+  `InboxFlushHook` (`flush_hook.py`, moved from `hook/builtin/` in W2). Wakeup is signalled from
   `LocalAgentMessageBus.send` (the single convergence point of all inbox
   writers) directly to the poller — no broker `_inbox_wakeup` anymore. The
   inbox only persists + consumes.
@@ -72,7 +72,7 @@ The SQLite backend adapter is `SqliteInboxMQ` in `modex_agent.persistence.adapte
 ### Internal
 - `modex_agent/multi_agent/envelope.py` — `AgentMessageEnvelope` consumed by the producer to build an `InboxMessage`
 - `modex_agent/multi_agent/inbox_poller.py` — the poller (sole between-turn consumer)
-- `modex_agent/hook/builtin/inbox_flush.py` — `InboxFlushHook` (mid-turn fold-in)
+- `modex_agent/multi_agent/inbox/flush_hook.py` — `InboxFlushHook` (mid-turn fold-in)
 - `modex_agent/utils/file_io.py` — `read_json_robust` used by the tracker
 
 <!-- MANUAL -->

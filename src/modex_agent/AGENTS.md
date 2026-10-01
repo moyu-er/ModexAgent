@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-09-02 -->
+<!-- Updated: 2026-10-01 | module-table accuracy pass (27 packages) -->
 
 # modex_agent
 
@@ -23,30 +23,31 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 
 | Module | Subdirectories | Purpose |
 |--------|----------------|---------|
-| `core/` | — | Foundational contracts and values: agents, emitters, `MessageHistory`, system-prompt seams, messages, LLMs, tools, media, session identity, and canonical `RecordScope`. Session persistence lives in `persistence/` (see `core/AGENTS.md`). |
+| `core/` | `turn/` | Foundational contracts and values: agents, emitters, `MessageHistory`, system-prompt seams, messages, LLMs, tools, media, session identity, canonical `RecordScope`, the inbox/control/interceptor/terminal/guard/storage contracts, and the turn-execution vocabulary in `core/turn/`. Session persistence lives in `persistence/` (see `core/AGENTS.md`). |
 | `agents/` | `react/`, `external/`, `summarizer/` | Agent implementations — `ReActAgent`, `ExternalAgent`, and `SessionCompactorAgent` (see `agents/AGENTS.md`). |
-| `memory/` | `consolidation/`, `core/`, `injection/`, `layers/`, `prompt_pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Context management, configurable memory scopes, governance, concrete message histories, and session/archive/core memory with pluggable split stores (see `memory/AGENTS.md`). |
+| `memory/` | `consolidation/`, `core/`, `injection/`, `layers/`, `prompt_pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Context management, configurable memory scopes, governance, concrete message histories, session/archive/core memory with pluggable split stores, and the domain-owned assembly face (`assembly.py` governance-chain builders; `summarizer.py` session summarizer; `config.py`/`presets.py` memory config + presets) (see `memory/AGENTS.md`). |
 | `persistence/` | `adapters/`, `managers/`, `migrations/`, `session_artifacts/` | Hybrid persistence layer (ADR-0023, ADR-0028~0031). Owns `SessionStore`, `SessionRegistry`, file/SQLite adapters, migrations, and session artifact cleanup. |
-| `multi_agent/` | `communication/`, `inbox/`, `session_tree/` | Star-topology orchestration — `AgentPool`, `AgentTemplate`, `PoolInstance`, inbox, and `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
-| `tools/` | `ast/`, `lsp/`, `mcp/`, `overflow/`, `standard/`, `terminal/`, `web/` | Tool subsystem — concrete `InMemoryToolManager`, filtering, MCP, terminal, overflow, and standard tools (see `tools/AGENTS.md`) |
+| `multi_agent/` | `communication/`, `inbox/`, `pool_config/`, `session_tree/` | Star-topology orchestration — `AgentPool`, `AgentTemplate`, `PoolInstance`, the `ExecutionStrategy` ABC + `StrategyComponentFactory` registration face + `AgentMaterializer` seam, inbox, and `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
+| `tools/` | `aci/`, `ast/`, `lint/`, `lsp/`, `mcp/`, `overflow/`, `standard/`, `terminal/`, `web/` | Tool subsystem — concrete `InMemoryToolManager`, filtering, MCP, terminal, overflow, and standard tools (see `tools/AGENTS.md`) |
 | `sandbox/` | `adapters/` | Opt-in execution substrate and shared permission judgments (ADR-0007): LOCAL/OCI selection, per-session native main/subagent HOST fallback, canonical targets and independent human approval. DEFAULT is dormant; HOST/external coverage and validation limits: see `sandbox/AGENTS.md`. |
-| `pipeline/` | — | `AgentPipeline` orchestration, `InputAdapter` ABC, approval renderer, snapshot handling (see `pipeline/AGENTS.md`) |
-| `runtime/` | — | `AgentRuntime`, runtime state/codecs, `TurnStateStore`, and per-session Todo models/store contracts in `todo.py` (see `runtime/AGENTS.md`). |
+| `pipeline/` | `input/` | `AgentPipeline` orchestration, `InputAdapter` ABC, approval renderer, snapshot handling, and the generic user-input stage pipeline (`input/` — `InputStage` ABC, envelope, IM/WebUI/ACP stage skeletons with declarative `order`) (see `pipeline/AGENTS.md`) |
+| `orchestration/` | — | Framework-level graph orchestration — `GraphOrchestrator` (spec → compiled graph → instance → engine), `GraphControlService`, `GraphRecoveryService`, `GraphSpecLoader` |
+| `runtime/` | — | Runtime state governance — `AgentRuntime`/`AgentRuntimeServices`, per-turn `RuntimeContext`, `TurnStateStore` + concrete stores, process identity/registry, snapshot policy (see `runtime/AGENTS.md`). The turn vocabulary (enums/models/dispatch/approval/todo values) lives in `core/turn/`. |
 | `commands/` | — | Slash command parsing and dispatch, including the consumer-owned `SkillResolver` command seam (see `commands/AGENTS.md`) |
-| `control/` | — | Control transport — `InMemoryControlChannel` (the live `/stop` + pause mechanism), `ControlCommand`, `AgentControlError` exceptions (see `control/AGENTS.md`) |
-| `hook/` | `builtin/` | Lifecycle hooks — `HookRunner`, `HookPoint`, builtin hooks (see `hook/AGENTS.md`) |
+| `control/` | — | Control transport — `InMemoryControlChannel` (the live `/stop` + pause mechanism), `ControlCommand`, `AgentControlError` exceptions; graph control/recovery live in `orchestration/` (see `control/AGENTS.md`) |
+| `hook/` | `builtin/` | Lifecycle hooks — `HookRunner`, `HookPoint`, generic builtin hooks; domain-owned hooks live in `agents/react/hooks/`, `multi_agent/inbox/`, `trace/`, and the capability packages (see `hook/AGENTS.md`) |
 | `interceptor/` | `builtin/` | AOP interceptor chain — `InterceptorChain` and builtin interceptors (see `interceptor/AGENTS.md`) |
-| `ioc/` | `configs/`, `factories/` | `AppConfig` and typed construction helpers (see `ioc/AGENTS.md`) |
+| `app/` | `models/` | Application-level bootstrap — root `AppConfig` YAML face (incl. the `user_plugins_enabled` opt-out), `config_domain` (deployment-injected app-domain config), the `AppService` lifecycle skeleton, `AppAssemblyRoots` (config/resource/workspace three-root separation), `RunnableAppService` (`runnable.py` — the concrete framework-runnable default: declaration boot → `create_pool` per declared pool + the request-scope single-turn driver; proven end-to-end by `examples/mini_project`), process `supervisor`, and the model universe (`models/` — registry, choice, provider, assembly) |
 | `approval/` | — | Tiered tool approval, typed classification facts, per-tool path/command rules and response parsing; guard verdicts reuse the existing transaction/GraphInterrupt channel (see `approval/AGENTS.md`) |
-| `messaging/` | — | `MessageBroker`, `BrokerBridgeService` (see `messaging/AGENTS.md`) |
-| `plugins/` | `assembly/`, `defaults/capabilities/` | Plugin-unified agent assembly; the `CAPABILITY` slot hosts bundled capabilities, including the complete Experience and Skills vertical slices (see `plugins/AGENTS.md` and `docs/design/capability-bundles/AUTHOR-GUIDE.md`) |
-| `scope/` | — | Scope declarations, validation, compilation, effective toolsets, provenance, and the capability compile protocol (see `scope/AGENTS.md`) |
-| `providers/` | `http/` | Direct-HTTP event-stream LLM providers and protocol engines (ADR-0046; see `providers/AGENTS.md`) |
+| `messaging/` | — | Level-0 message vocabulary — transport models (`InputMessage` et al.), `MessageBroker` + in-memory broker, agent-message vocabulary and routing, message formatting (see `messaging/AGENTS.md`) |
+| `plugins/` | `assembly/` (incl. `strategies/`), `defaults/` (incl. `capabilities/`) | Plugin loading (qualified-name discovery over bundled/project/user/entry-point sources, `PluginRegistrationContext` incl. channel-adapter registration) + unified agent assembly — `create_pool`, the bundled `react`/`external` pool-shape strategies, backend factories, native assembly core; the `CAPABILITY` slot hosts bundled capabilities, including the complete Experience and Skills vertical slices (see `plugins/AGENTS.md` and `docs/design/capability-bundles/AUTHOR-GUIDE.md`) |
+| `scope/` | — | Scope declarations, validation, compilation, effective toolsets, provenance, the capability compile protocol, and the assembly schema — `ComponentSlot`/`ComponentFactory` (`components.py`), `Capability` (`capability.py`), `RuntimeOwnership`/`StrategyManifest` (`runtime_ownership.py`), `AssemblySpec` (`assembly_spec.py`), `ComponentRegistry` (`component_registry.py`) (see `scope/AGENTS.md`) |
+| `providers/` | `http/`, `shared/` | Direct-HTTP event-stream LLM providers and protocol engines (ADR-0046; see `providers/AGENTS.md`) |
 | `workspace/` | — | Workspace identity, paths, resource lookup, and routing (see `workspace/AGENTS.md`) |
-| `input_pipeline/` | — | Extensible user-input stage pipeline — `UserInputEnvelope`, `InputStage`, `Continue`/`Terminate`, `UserInputPipeline` (see `input_pipeline/AGENTS.md`) |
 | `trace/` | — | Tracing and observability — `TraceStore`, `TraceHooks`, `TraceType` |
 | `utils/` | — | Shared tokenizer, frontmatter, XML, file, process, and time helpers |
 | `adapters/` | — | Platform I/O contracts, output adapters, content filters, and the emitter bridge (see `adapters/AGENTS.md`) |
+| `presentation/` | — | Neutral presentation projection over the runtime event seam (ADR-0053): the closed `PresentationEvent` vocabulary, `TurnEventProjector` ABC + `DefaultTurnEventProjector` (lazy turn identity, tool-card pairing, documented ignore-list), and the generic `TranscriptStore` contract with a JSONL implementation + presentation codec and turn-view materialization. Bot WebUI ServerEvents/transcripts are consumer implementations of this contract. |
 | `acp/` | — | ACP (Agent Client Protocol) agent-server surface over editor-spawned stdio — SDK-free backend/handle/interaction seam, `ModexAcpAgent` wire mapping, once-only permission round-trip, scripted backend; NOT in the `@register` channel registry (ADR-0049, see `acp/AGENTS.md`) |
 | `media/` | — | Concrete media storage, MIME classification, and security gates; contracts live in `core/media.py` (see `media/AGENTS.md`) |
 
@@ -93,10 +94,10 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 - `multi_agent/` — Star-topology subagent orchestration.
 - `tools/` — Concrete tool manager (InMemoryToolManager), MCP, terminal backends.
 - `pipeline/` — End-to-end orchestration pipeline.
-- `runtime/` — Runtime state/services plus Todo values and persistence contracts.
+- `runtime/` — Runtime state/services and store/codec contracts; the turn vocabulary lives in `core/turn/`.
 - `hook/` + `interceptor/` — Extension layers for lifecycle observation and AOP.
 - `control/` — Control transport: live `/stop` + pause queues `CANCEL_TURN` and actively cancels the registered turn task so long-running tools wake immediately; ToolNode converges worker cleanup and tool-result synthesis. A separate busy-INTERRUPT path uses the same task-cancel wakeup without a channel command.
-- `ioc/` — Dependency injection configuration and factories.
+- `app/` — Application bootstrap: root `AppConfig` YAML face, `config_domain`, the `AppService` lifecycle skeleton, `AppAssemblyRoots`, `supervisor`, and the model universe (`app/models/`). The former `ioc/` layer was dissolved — configs moved to their owning domains (`memory/config.py`, `approval/config.py`, `trace/observability.py`, `providers/llm_config|model_config|safety_config`, `hook/config.py`, `tools/mcp_config.py`), factories to `providers/factory.py`, `memory/assembly.py`, and `plugins/assembly/*_factory.py`.
 
 ## Graph Scheduling Convergence
 

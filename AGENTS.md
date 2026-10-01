@@ -2,7 +2,7 @@
 
 ## Project Layout
 
-`src/modex_agent/` is the reusable agent framework (src layout, ADR-0003). `src/modex_graph/` is the standalone graph engine (ADR-0033). Key framework areas: `agents/react/` (ReAct runtime), `agents/external/` (Pi/OpenCode harness), `memory/` (three-layer), `persistence/` (hybrid SQLite+file, ADR-0023), `multi_agent/` (star-topology), `scope/` (scope declaration/validation/compile/bill, ADR-0042), `plugins/` (11-slot component registry + capability bundles, ADR-0047 — bundled tool/hook/section/supply sets are `Capability` packages enabled per agent via the `capabilities:` declaration map), `pipeline/`, `hook/`+`interceptor/`+`control/` (three-layer runtime), `tools/`, `approval/`, `sandbox/`, `media/`, `commands/`. See `src/modex_agent/AGENTS.md` for the exhaustive module table (27 modules).
+`src/modex_agent/` is the reusable agent framework (src layout, ADR-0003). `src/modex_graph/` is the standalone graph engine (ADR-0033). Key framework areas: `agents/react/` (ReAct runtime), `agents/external/` (external coding-agent harness, OpenCode provider), `memory/` (three-layer), `persistence/` (hybrid SQLite+file, ADR-0023), `multi_agent/` (star-topology; `ExecutionStrategy`/`RuntimeOwnership`/`AgentMaterializer` seams), `scope/` (scope declaration/validation/compile/bill + the assembly schema — `ComponentSlot`/`Capability`/`AssemblySpec`/`ComponentRegistry`, ADR-0042), `plugins/` (plugin loading + unified assembly: bundled `react`/`external` strategies, `create_pool`, backend factories, 11-slot component registry + capability bundles, ADR-0047 — bundled tool/hook/section/supply sets are `Capability` packages enabled per agent via the `capabilities:` declaration map), `app/` (application bootstrap: root `AppConfig`, `AppService` skeleton, supervisor, model universe with the `multi` LLM factory), `pipeline/` (+ generic input-stage skeleton), `hook/`+`interceptor/`+`control/` (three-layer runtime), `tools/`, `approval/`, `sandbox/`, `media/`, `commands/`. See `src/modex_agent/AGENTS.md` for the exhaustive module table (27 modules).
 
 `examples/bot_project/` is the primary end-to-end reference (Pool mode, WebUI React frontend, QQ + Telegram adapters). Framework-generic behavior in `src/modex_agent/`; business wiring in `examples/`.
 
@@ -98,7 +98,7 @@ Detailed rules in `rules/type-safety.md` and `rules/architecture.md`. Read befor
 
 ## Documentation
 
-ADRs in `docs/adr/` (ADR-0001~0048), design docs in `docs/design/`. See `docs/AGENTS.md` for the index. Read relevant ADRs before significant architectural changes. `ARCHITECTURE-MIGRATION-PLAN.md` (repo root) is the execution baseline for core ownership convergence and the Experience/Skills capability migration — any work touching core ownership, those capabilities, or the A0–E2 checklist must follow it.
+ADRs in `docs/adr/` (ADR-0001~0052), design docs in `docs/design/`. See `docs/AGENTS.md` for the index. Read relevant ADRs before significant architectural changes. The settled ownership record for core-ownership convergence and the Experience/Skills capability migration is ADR-0047; the package layering tree and its mechanical gate are recorded in ADR-0051, and the runtime-slot / framework-runnable-defaults decisions in ADR-0052.
 
 **ADR governance:** living documents, not append-only logs. Merge refinements in place. No parallel versions. Consolidate, don't proliferate. New ADRs only for genuinely new decisions.
 
@@ -108,7 +108,7 @@ ADRs in `docs/adr/` (ADR-0001~0048), design docs in `docs/design/`. See `docs/AG
 |------|-------------|
 | `rules/type-safety.md` | 16 type safety rules — read before framework code changes |
 | `rules/architecture.md` | 15 architecture rules — read before module design or refactor |
-| `src/modex_agent/AGENTS.md` | Exhaustive framework module table (26 modules) |
+| `src/modex_agent/AGENTS.md` | Exhaustive framework module table (27 modules) |
 | `examples/bot_project/AGENTS.md` | End-to-end reference implementation |
 | `tests/AGENTS.md` | Test suite overview |
 | `docs/AGENTS.md` | ADRs, design docs, agent docs index |

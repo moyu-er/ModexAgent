@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-09-10 | shell capability convergence -->
+<!-- Updated: 2026-09-30 | design-tree coverage + ADR range -->
 
 # docs
 
@@ -10,13 +10,22 @@ Documentation index for the ModexAgent project — ADRs, design docs, and agent 
 ```
 docs/
 ├── AGENTS.md              ← this file (docs index)
-├── adr/                   ← Architecture Decision Records (ADR-0001 ~ 0050)
+├── adr/                   ← Architecture Decision Records (ADR-0001 ~ 0053)
 │   ├── history/            ← Historical/superseded ADRs
 │   └── AGENTS.md          ← ADR index + conventions
 ├── design/                ← Feature design docs (PRD per feature; completed tickets in _archive/)
 │   ├── _archive/                      ← Superseded PRDs + completed tickets
+│   ├── acp-adapter/                   ACP adapter design — three-root assembly (config/resource/workspace), PLAN
+│   ├── agent-role-descriptors/        Agent role descriptors — PRD (ADR-0026)
 │   ├── capability-bundles/            (ADR-0047, implemented 2026-08-28) capability bundles — SPEC, author guide
-│   ├── shell-capability/               (ADR-0047 refinement) atomic shell group, selection/lifecycle SPEC, coordinator tasks
+│   ├── eval-integration/              Eval integration — MAP, issues, research
+│   ├── graph-convergence/             Graph convergence — MAP, issues, research
+│   ├── graph-visualization-redesign/  Graph visualization redesign — PRD, tickets
+│   ├── kb-store/                      KnowledgeBase store — DESIGN, PRD
+│   ├── otel-collector/                OTel collector deployment — PRD (ADR-0024 companion)
+│   ├── session-tree/                  Session-tree convergence — MAP, closure maps, issues
+│   ├── skills/                        Skills system design (pre-capability history; current ownership in ADR-0047)
+│   ├── shell-capability/               (ADR-0047 refinement) atomic shells group, selection/lifecycle SPEC, coordinator tasks
 │   ├── sandbox-integration/           (ADR-0007) execution substrate, per-session HOST fallback and validation evidence - PRD, tickets
 │   ├── unified-security/              shared verdicts, independent human approval and delegation limits - PRD, tickets
 │   ├── llm-provider/                  (ADR-0046) LLM provider protocol engines — PRD
@@ -49,7 +58,7 @@ docs/
 
 | Document | Location | Description |
 |----------|----------|-------------|
-| ADR index | `adr/` | 50 Architecture Decision Records (ADR-0001~0050) — see `adr/AGENTS.md` for the full index |
+| ADR index | `adr/` | 53 Architecture Decision Records (ADR-0001~0053) — see `adr/AGENTS.md` for the full index |
 | Bot local setup | `bot-local-setup.md` | Step-by-step bot setup from source (prerequisites, venv, config, troubleshooting) |
 | Issue tracker | `agents/issue-tracker.md` | Issues live as local markdown under `docs/design/<feature>/` |
 | Triage labels | `agents/triage-labels.md` | Canonical triage label vocabulary |

@@ -96,7 +96,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/service/core.py` | `BotService` — initialization, workspace context, pool creation, pipeline wiring; `roots: BotAssemblyRoots` (None → resident identity) + `enable_dynamic_workspaces` assembly inputs, and `home_resources`/`assembly_context`/`pool_session_store` accessors |
 | `bot/service/roots.py` | `BotAssemblyRoots` — frozen typed roots of one bot assembly: `config_dir` (app/model/scope/MCP config), `resource_root` (bundled plugins/graphs/declaration assets), `workspace_home` (runtime data — DBs, routing store, ScopeRegistry home); derived paths (scope declaration, MCP registry, plugins, graphs, home/registry DBs) computed in one place; `resident()` reproduces the historical paths exactly |
 | `bot/service/builders.py` | Service-level construction helpers (inbox/turn-state/session/routing stores, external session map, slash-command processor) — tool construction glue is gone (scope assembly resolves tools from the compiled declaration) |
-| `bot/service/pool/` | Pool mode assembly — creates `AgentPool` from the compiled scope declaration (`declaration.py` boots: load → validate → compile; `factory.py` assembles). Split into 8 focused modules |
+| `bot/service/pool/` | Pool mode declaration boot — `declaration.py` boots the scope declaration (load → validate → compile) and partitions per-pool products. `create_pool` + the react/external strategies + the persistence backend factories were promoted into the framework (W4a: `modex_agent.plugins.assembly.pool_factory` / `strategies` / `backend_factory`); the bot keeps the boot + `UserNoticeCleanupHook` |
 | `modex_agent/multi_agent/pool_router.py` | `PoolRouter` (framework) — session→pool dispatch shell, `PoolRoutingStore` persistence, declaration-lookup agent→pool ownership |
 | `modex_agent/multi_agent/pool_instance.py` | `PoolInstance` — pool runtime holder (config, pool, root agent name) |
 | `bot/workspace/wiring/` | `build_workspace_stack` — workspace assembly (stack + resources; the workspace layer's resource selection — memory backend/path layout — is declared in `config/scopes/bot.yml`, ticket 14). Resources resolve config/asset paths through `service.roots` (the assembly roots, never `_project_dir`) and `_enable_dynamic_workspaces` gates the dynamic-workspace switch entries |
@@ -328,9 +328,9 @@ points, so the presets never reach them regardless of config:
 1. **Subagent**: `AgentTemplate.materialize` (`template.py`) early-dispatches
    to `_materialize_external` when `execution_strategy == EXTERNAL` —
    skips native memory/tool/skill/hooks assembly entirely.
-2. **Main agent pipeline**: `pool.create_pool` (`pool/factory.py`)
+2. **Main agent pipeline**: `create_pool` (`modex_agent/plugins/assembly/pool_factory.py`, promoted W4a)
    takes the external branch (capability-flag driven, not identity checks),
-   skipping `_wire_main_pipeline` (no governance, no hooks, no approval
+   skipping `wire_main_pipeline` (no governance, no hooks, no approval
    renderer).
 3. **Experience hook**: the external strategy's `assemble_main()` returns a
    `StrategyAssembly` with no pipeline and no memory/experience
@@ -494,7 +494,7 @@ are the converged seams; no platform preconditions on any OS.
 | `skills/` | Agent skill definitions (self-documented via SKILL.md files) |
 | `templates/` | Template files for core memory, soul, user memory (see `templates/AGENTS.md`) |
 | `tests/` | Test suites including `input_pipeline/` (see `tests/AGENTS.md`) |
-| `plugins/` | Bot plugins (see `plugins/AGENTS.md`) |
+| `bot_plugins/` | Bot plugins package — the deployment's plugin dir (`AppAssemblyRoots.plugins_dir`); qualified loader names, no `sys.path` requirement (see `bot_plugins/AGENTS.md`; moved from `plugins/` in W6) |
 | `experiences/` | Self-learned EXPERIENCE.md storage — runtime-populated by `ExperienceReviewAgent` (not committed; created on first use) |
 | `docs/langfuse/` | Langfuse usage guides — `langfuse-deployment.md`(deploy + eval + training-data)、`trace-reading-guide.md`(span/metric 含义、面板操作、问题排查) |
 | `packaging/` | Windows installer build — Inno Setup + Tauri + python-build-standalone (see `packaging/README.md`) |

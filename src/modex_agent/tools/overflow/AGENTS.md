@@ -11,6 +11,7 @@ Tool result overflow management. Persists oversized tool outputs outside the LLM
 |------|-------------|
 | `store.py` | `ToolOverflowStore` ABC with `initialize()`, `store()`, `read_metadata()`, `delete()`, `list_tool_call_ids()`, `close()`, `clean()` |
 | `handler.py` | `ToolResultOverflowHandler`: orchestrates store + cleaner, returns truncated text with a path notification |
+| `result_limit.py` | `ToolResultLimitInterceptor` — the overflow trigger side (moved from `interceptor/builtin/result_limit.py`, W2). Persists oversized tool results via `ToolResultOverflowHandler` and returns head+tail truncation |
 | `truncate.py` | `render_overflow_text` + `split_head_tail`: single source of truth for model-facing truncation text (head + elision marker + tail + full-output notice) |
 | `cleaner.py` | `OverflowCleaner`: manages overflow lifecycle, prunes stale entries per session |
 | `local.py` | `LocalFileToolOverflowStore`: filesystem-backed implementation, single `full.txt` file |

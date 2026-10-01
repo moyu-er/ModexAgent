@@ -1,9 +1,11 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-09-10 | bot shell policy -->
+<!-- Updated: 2026-09-30 | W6 packaging contract: plugins/ -> bot_plugins/ -->
 
-# plugins
+# bot_plugins
 
-Bot-side plugins for the component-factory-based plugin system. Each plugin
+Bot-side plugins for the component-factory-based plugin system, shipped as the
+deployment's plugin package (`AppAssemblyRoots.plugins_dir`; qualified loader
+names, no `sys.path` requirement). Each plugin
 registers component factories into the ``ComponentRegistry`` (loaded by
 ``ComponentRegistryLoader`` in ``core.py`` initialization). The plugin
 classes stay here; the underlying hook/strategy/stage CLASSES stay in their
@@ -15,7 +17,6 @@ FW/BIZ separation).
 | File | Description |
 |------|-------------|
 | `__init__.py` | Package marker |
-| `bot_strategies.py` | `BotStrategiesPlugin` — registers `react` + `external` execution strategies into the `EXECUTION_STRATEGY` slot via `SimpleFactory` |
 | `bot_hooks.py` | `BotHooksPlugin` — registers bot-specific React + Memory hooks (`model_choice_bind`, memory cleanup hooks) into the `HOOK` slot via `ReactHookFactory` / `MemoryHookFactory`, plus the `send_file_to_user` TOOL-slot factory (`SendFileToUserToolFactory` — output adapter/transcript/media/sessions-dir deps from the pool assembly context; declared per agent via `tools: [+send_file_to_user]`) |
 | `im_input_stages.py` | `IMInputStagesPlugin` — registers every built-in IM/WebUI pipeline stage factory into the `INPUT_STAGE` slot; constructor dependencies use frozen config models |
 | `bot_shell.py` | `BotShellPlugin` — project-priority replacement for only the framework `shell` capability policy. Auto-applies shell for absent/default, `full`, `read_write`, and `read_only` toolsets or explicit `bash` selection; implementation, mode selection, and resources remain framework-owned. |

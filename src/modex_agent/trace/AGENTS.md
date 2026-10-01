@@ -35,6 +35,7 @@ assembled by `build_trace_hooks()` from the `trace_spans` tier
 | `prompt_capture.py` | `PromptCaptureStrategy` ABC + `Off`/`Hash`/`Summary` (default)/`Full` implementations producing `gen_ai.input.*` attributes (ADR-0024 IN11); multimodal parts render via the shared `render_content_part_ref` bracket lines — span attributes carry refs, never base64 payloads |
 | `cassette.py` | `CassetteRecorder` + `CassetteReplayEngine` — content-addressed LLM/tool capture for bit-identical replay; the replay engine exposes a `misses` counter to gate replays (lookup misses surface as error stops inside `ReActAgent.run`, not exceptions); records sanitize inline media payloads to sha256 digest placeholders (`[media sha256=…, data:<mime>, <n> bytes]`) — the call key hashes the ORIGINAL messages so replay keys stay stable, and `media://` refs pass through untouched |
 | `training_exporter.py` | `TrainingDataExporter` — derives SFT OpenAI messages JSONL + DPO preference-pair JSONL from traced spans. L2 scoring, 3-tier dedup, scope-aware filtering |
+| `training_data_hook.py` | `TrainingDataHook` — `OutcomeFinallyHook` tagging each completed turn's trace with `gen_ai.training.relevant` (moved from `hook/builtin/training_data.py`, W2 — the trace vertical's hook side); reads the stashed `TrajectoryMetrics` and the ReAct iteration state at `finally_graph` |
 | `otel_store.py` | `OtelSpanTraceStore` — backend-gated persistence: FILE = `spans.jsonl` append; OTEL_HTTP = **write-only** — bounded export queue (`export_queue_size=10000`, drop-oldest + counted on Full) drained by a daemon sender thread (httpx, 3 s timeout) that POSTs OTLP JSON; NO read buffers (the former per-session LRU was deleted 2026-08-18) — `list_by_session`/`list_by_trace_id` raise `NotImplementedError` in this mode (read traces via `LangfuseTraceQuery`); the hot path never touches the network. `build_trace_stores()` factory with config-driven selection + fall-back-to-FILE guard (missing `[observability]` extra / empty headers) |
 | `langfuse_query.py` | `LangfuseClient` + `LangfuseTraceQuery` — cross-process read path over the Langfuse v2 API (`v2/observations`, cursor pagination, mandatory heavy-field `fields=` projection; `list_sessions` helper over `v2/sessions`). `observation_to_span()` reverse-normalizes observations back into `SpanModel`: TOOL → `execute_tool` name restore, metadata-first attribute rebuild (`attributes.*` keys authoritative over native fields), `{"result": ...}` envelope unwrap for tool output |
 | `store.py` | `SpanModel`/`SpanStatus` (frozen Pydantic), `TraceQuery` ABC (read-only: `list_by_session`/`list_by_trace_id`), `JsonlSpanQuery` (pure-read impl) |
@@ -136,7 +137,7 @@ the dispatching `agent.handoff` span.
 
 ### Configuration
 
-See `ObservabilityConfig` in `ioc/configs/observability.py`:
+See `ObservabilityConfig` in `trace/observability.py`:
 `trace_backend`, `otel_endpoint`, `otel_service_name`,
 `retain_reasoning_content`, `checkpoint_per_iteration`,
 `cassette_enabled`, `cassette_scope`, `training_relevant`,
@@ -207,8 +208,8 @@ into `gen_ai.tool.call.result`.
 
 ### Internal
 - `modex_agent.hook.abc` — hook ABCs
-- `modex_agent.runtime.enums` — `OperationKind`, `TurnCustomKey`
-- `modex_agent.ioc.configs.observability` — `ObservabilityConfig`, `TraceBackend`
+- `modex_agent.core.turn.enums` — `OperationKind`, `TurnCustomKey`
+- `modex_agent.trace.observability` — `ObservabilityConfig`, `TraceBackend`
 - `modex_agent.utils.file_io` — `read_jsonl_robust`
 
 ### External

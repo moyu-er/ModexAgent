@@ -10,6 +10,7 @@ Offline background consolidation that processes archive entries through a ReAct-
 | File | Description |
 |------|-------------|
 | `__init__.py` | Package init |
+| `dream_locks.py` | Dream lock primitives — scope-keyed `asyncio.Lock` map for concurrent DreamEngine runs (moved from `runtime/dream_locks.py`, W2) |
 | `dream_engine.py` | `DreamEngine` — offline memory consolidation orchestrator. Takes unprocessed archive entries and sends them through a `CoreMemoryConsolidatorBase` agent (renamed from `KnowledgeConsolidatorBase` per ADR-0035) to generate targeted core memory updates |
 
 ## For AI Agents
@@ -33,6 +34,6 @@ Offline background consolidation that processes archive entries through a ReAct-
 - `modex_agent.memory.core.models` — `ArchiveEntry`
 - `modex_agent.memory.core.scope` — `MemoryAgentRole`, `MemoryContext`, `MemoryLayerName`
 - `modex_agent.memory.registry.base` — `MemoryStoreRegistry`
-- `modex_agent.agents.summarizer.abc` — `CoreMemoryConsolidatorBase` (renamed from `KnowledgeConsolidatorBase` per ADR-0035)
+- `modex_agent.memory.summarizer` — `CoreMemoryConsolidatorBase` (renamed from `KnowledgeConsolidatorBase` per ADR-0035; the contract moved home from `agents/summarizer/abc.py` in W2)
 
 <!-- MANUAL -->

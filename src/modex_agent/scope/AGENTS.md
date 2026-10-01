@@ -11,6 +11,11 @@ Scope declaration tree (ADR-0042 / `docs/design/scope-assembly/SPEC.md`, impleme
 
 | Type | File | Description |
 |------|------|-------------|
+| ``ComponentSlot`` + factory hierarchy | ``components.py`` | 11-slot enum, ``ComponentFactory``/``SimpleFactory``/``PrototypeFactory``, hook-factory hierarchy (W3a move from ``plugins/abc.py``; compile-time schema owned by scope). ``ComponentFactory.probe()`` is the opt-in synchronous introspection face — the EXECUTION_STRATEGY slot's contract is probe → ``StrategyManifest`` |
+| ``RuntimeOwnership`` / ``StrategyManifest`` / ``resolve_strategy_ownership`` | ``runtime_ownership.py`` | The execution-strategy ownership contract (W5 completion): a frozen six-axis declaration (``needs_llm_provider``/``needs_main_agent_tools``/``needs_memory``/``supports_approval``/``supports_subagents``/``owns_context``), the probeable manifest, the bundled react/external constants (single owner — the bundled strategies return them), and the resolver (registry slot probe first, bundled enum shapes second, loud error otherwise) driving V12, the position-default-hook exclusion, and the memory/approval compile rules |
+| ``Capability`` ABC + views | ``capability.py`` | ADR-0047 five-phase protocol + frozen view/contribution/binding types (W3a move from ``plugins/capability.py``; import-light preserved) |
+| ``ComponentRegistry`` / ``PluginSource`` / ``TypedBundle`` | ``component_registry.py`` | Process-wide factory store (W3a move from ``plugins/registry.py``) |
+| ``AssemblySpec`` / ``MemoryOverrides`` / ``ToolEntry`` | ``assembly_spec.py`` | Assembly input spec (W3a move from ``plugins/assembly/spec.py``) |
 | ``ScopeSpec`` / ``ScopeKind`` | ``spec.py`` | A loaded declaration tree — exactly one root form: ``kind=WORKSPACE`` (``WorkspaceSpec`` hosting pools) or ``kind=POOL`` (a single pool IS the root scope, no workspace layer). All frozen Pydantic (``extra="forbid"``) |
 | ``WorkspaceSpec`` | ``spec.py`` | Workspace-layer resource selection — ``persistence`` (memory backend), ``paths`` (data-dir layout), ``mcp`` (shared server-name set), hosted ``pools``. Every selection field is ``None = inherit`` the service-level domain config |
 | ``PoolSpec`` | ``spec.py`` | One pool tree: a FLAT ``agents`` list with ``parent`` references (nested YAML is loader-flattened sugar) + ``peers`` (cross-pool links, ADR-0019). ``root_agent`` accessor is loud until V3 guarantees exactly one root |
@@ -36,10 +41,10 @@ Scope declaration tree (ADR-0042 / `docs/design/scope-assembly/SPEC.md`, impleme
 ## Dependencies
 
 ### Internal
-- ``modex_agent.plugins.assembly.spec`` — ``AssemblySpec``/``MemoryOverrides`` (the compiler's output face)
+- ``modex_agent.scope.assembly_spec`` — ``AssemblySpec``/``MemoryOverrides`` (the compiler's output face)
 - ``modex_agent.plugins.assembly.context`` — ``WorkspaceContext`` (compile parameter)
 - ``modex_agent.memory.presets`` — ``main_agent_memory``/``subagent_memory`` (position families)
-- ``modex_agent.tools.presets`` — ``ToolPreset`` (position-derived toolset expansion)
+- ``modex_agent.core.tool_vocabulary`` — ``ToolPreset`` (position-derived toolset expansion)
 - ``modex_agent.persistence.config`` — ``PersistenceBackend`` (workspace resource selection)
 
 ### External

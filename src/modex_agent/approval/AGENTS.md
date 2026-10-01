@@ -48,8 +48,8 @@ Implemented scope and validation are recorded in [security tickets](../../../doc
 
 ## Dependencies
 - `modex_agent.core` — `AgentContext`, `ToolCall` (used by `ApprovalClassifier`)
-- `modex_agent.interceptor` — `ArgumentMatcher` (used by `TieredToolApprovalClassifier`)
+- `modex_agent.approval.argument_matcher` — `ArgumentMatcher` (moved home from `interceptor/builtin/tool_approval.py`, W2; used by `TieredToolApprovalClassifier`)
 - `modex_agent.messaging` — `ApprovalAction` and `OutputMessage` transport values
-- `modex_agent.runtime.enums` — `ApprovalDenyPolicy` (used by `ApprovalRuntime`)
+- `modex_agent.core.turn.enums` — `ApprovalDenyPolicy` (used by `ApprovalRuntime`)
 
 <!-- MANUAL: -->

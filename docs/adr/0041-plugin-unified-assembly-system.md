@@ -206,7 +206,7 @@ A three-reviewer audit (2026-08-19, architecture/correctness/coverage, arbitrate
 
 ### Decision
 
-**10-slot authoritative set** (TOOL/HOOK/MEMORY_SYSTEM/LLM_PROVIDER/SYSTEM_PROMPT_PROVIDER/INTERCEPTOR/COMMAND_HANDLER/EXECUTION_STRATEGY/INPUT_STAGE/DATA_NAMESPACE). The three dead slots are deleted, not completed: their theoretical value is covered — `MEMORY_SYSTEM` granularity plus the memory package's own seams (SystemPromptProvider pipeline, MemorySystem subclassing) plus `memory:` YAML overrides for parameter level.
+**10-slot authoritative set** (TOOL/HOOK/MEMORY_SYSTEM/LLM_PROVIDER/SYSTEM_PROMPT_PROVIDER/INTERCEPTOR/COMMAND_HANDLER/EXECUTION_STRATEGY/INPUT_STAGE/DATA_NAMESPACE). The three dead slots are deleted, not completed: their theoretical value is covered — `MEMORY_SYSTEM` granularity plus the memory package's own seams (SystemPromptProvider pipeline, MemorySystem subclassing) plus `memory:` YAML overrides for parameter level. *(Updated 2026-09-30: the authoritative set is now 11 — `CAPABILITY` joined as the 11th compile-time slot per ADR-0047, and every slot in the set has real registration-and-consumption traffic; see the closing addendum below.)*
 
 **Convergence, not addition.** The LLM name→instance resolution happens exactly once per agent at the production entry, through one mechanism: `AgentFactory.create_agent(llm_provider=...)` override > factory default > LiteLLM. `StrategyAssembly.provider` and the builders.py fallback are deleted. The FW `default` factory serves only the FW single-provider schema; multi-provider model.yml parsing belongs to BIZ `bot_default`.
 
@@ -224,7 +224,7 @@ Memory ends as two YAML layers plus package seams: `memory:` (parameter-level Me
 
 **Negative**
 - Migration cost for any (hypothetical) user of the removed slots — mitigated by warnings and hard rejections rather than silent acceptance.
-- `plugins/defaults/` bundle shrinks (populated 6, empty 4); the empty four are by-design (bot territory per Errata-3, or on-demand).
+- `plugins/defaults/` bundle shrinks (populated 6, empty 4); the empty four are by-design (bot territory per Errata-3, or on-demand). *(Refreshed 2026-09-30, SPEC Errata-8(h): `DefaultPlugin` now populates 10 of the 11 slots — TOOL, HOOK, LLM_PROVIDER (`default` + `multi`), SYSTEM_PROMPT_PROVIDER, INTERCEPTOR, COMMAND_HANDLER, CAPABILITY, EXECUTION_STRATEGY (`react` + `external`), MEMORY_SYSTEM (`default`), DATA_NAMESPACE (`default`); the single empty slot is INPUT_STAGE, empty by FW design — input stages are deployment wiring registered by deployment plugins, while the framework owns the stage skeleton that resolves them. Authoritative registration set: `src/modex_agent/plugins/defaults/__init__.py`.)*
 - Known gaps recorded rather than fixed: InfraAssembleStage's `state_schema_compiler` product was deleted in the final review (it had zero consumers — BIZ wiring via `resources.py`'s `build_state_schema_compiler` is the single construction site); `_create_state` handles only `state_class`; custom sub execution-strategy names are cast (only `external` special-cased); INPUT_STAGE order stays code-defined with global insert.
 
 ### Alternatives considered
@@ -238,3 +238,26 @@ Memory ends as two YAML layers plus package seams: `memory:` (parameter-level Me
 - `docs/design/scope-converge/plan-slot-rationalization.md` (approved plan) + `.omo/plans/slot-rationalization-steps.md` (execution ledger)
 - `docs/design/scope-converge/HANDOFF.md` "Slot Rationalization Waves" (commit chain + verification)
 - This addendum supersedes D-A5 (LLM layering) and the slot-matrix wording of the Unified Consumption Realization section above.
+
+## Closing Addendum: Current Slot Reality (added 2026-09-30)
+
+The follow-on convergence work that completed this system's promise is recorded
+in two companion ADRs; this section only restates the current facts so a fresh
+reader does not have to reconstruct them from the history above:
+
+- **The authoritative slot set is 11** (the 10 slots of the Slot
+  Rationalization section plus `CAPABILITY`, ADR-0047), and **every slot has
+  real traffic**: MEMORY_SYSTEM and DATA_NAMESPACE ship selectable `default`
+  factories consumed by the production assembly paths; INPUT_STAGE is consumed
+  by the framework's input-pipeline skeleton (`pipeline/input/` — the IM/WebUI/
+  ACP stage skeletons resolve their stages through the slot, with a declarative
+  `order` override), with stages registered by deployment plugins.
+- **The agent runtime itself is an EXECUTION_STRATEGY slot product** — the
+  factory enum branch is gone; strategies are referenced by name from
+  declarations and own their runtime construction through the
+  runtime-constructor seam. Decision record: **ADR-0052** (which also records
+  the framework's now-runnable default set and the plugin packaging contract).
+- **The package layering that makes the assembly layer the single composition
+  apex is a mechanically gated total-order tree** with an empty offender
+  ledger. Decision record: **ADR-0051** (`tests/architecture/test_dependency_tree.py`).
+
