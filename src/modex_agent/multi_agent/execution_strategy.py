@@ -27,7 +27,7 @@ Two frozen ``@dataclass`` types carry the assembly contract:
 
 Both are runtime-object containers per rule 12 (NOT Pydantic ``BaseModel``) —
 their fields are live objects with connections and state (``Agent``,
-``MessageBroker``, ``LLMProvider``, ``StreamingProviderBackend``), not
+``MessageBroker``, ``LLMProvider``, ``ExternalTransport``), not
 serializable values. This is the ADR-0025 D2 判例: runtime-object containers
 with cross-module visibility use frozen ``@dataclass``, not ``BaseModel``.
 

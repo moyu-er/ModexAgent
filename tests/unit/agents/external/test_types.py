@@ -20,10 +20,8 @@ from pydantic import ValidationError
 
 from modex_agent.agents.external import (
     BackendResult,
-    Emission,
     ExecOptions,
     ExternalEnvSpec,
-    ExternalEvent,
     SessionMapEntry,
 )
 
@@ -211,48 +209,3 @@ class TestExternalEnvSpec:
         )
         assert spec.comm_kind is AgentCommKind.NORMAL
         assert spec.parent_session_id is None
-
-
-class TestEmission:
-    """Per-event-kind payload coverage + frozen + extras."""
-
-    def test_text_delta(self) -> None:
-        e = Emission(event=ExternalEvent.TEXT_DELTA, text="hello")
-        assert e.event is ExternalEvent.TEXT_DELTA
-        assert e.text == "hello"
-
-    def test_thinking(self) -> None:
-        e = Emission(event=ExternalEvent.THINKING, text="reasoning")
-        assert e.text == "reasoning"
-
-    def test_tool_use(self) -> None:
-        e = Emission(event=ExternalEvent.TOOL_USE, tool_name="bash", tool_input="ls")
-        assert e.tool_name == "bash"
-        assert e.tool_input == "ls"
-
-    def test_tool_result(self) -> None:
-        e = Emission(
-            event=ExternalEvent.TOOL_RESULT,
-            call_id="c1",
-            output="out.txt",
-        )
-        assert e.call_id == "c1"
-        assert e.output == "out.txt"
-
-    def test_error(self) -> None:
-        e = Emission(event=ExternalEvent.ERROR, message="kaboom")
-        assert e.message == "kaboom"
-
-    def test_frozen(self) -> None:
-        e = Emission(event=ExternalEvent.ERROR, message="kaboom")
-        with pytest.raises(ValidationError):
-            e.message = "silenced"  # type: ignore[misc]
-
-    def test_extras_rejected(self) -> None:
-        with pytest.raises(ValidationError):
-            Emission(event=ExternalEvent.ERROR, message="kaboom", surprise=1)  # type: ignore[call-arg]
-
-    def test_round_trip(self) -> None:
-        e = Emission(event=ExternalEvent.TOOL_USE, tool_name="bash", tool_input="ls -la")
-        restored = Emission.model_validate_json(e.model_dump_json())
-        assert restored == e

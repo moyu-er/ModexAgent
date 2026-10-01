@@ -37,8 +37,8 @@ from modex_agent.agents.external.env_builder import ExternalEnvBuilder
 from modex_agent.agents.external.os_layer import (
     register_signal_handlers,
 )
-from modex_agent.agents.external.providers.opencode.v2_parser import (
-    OpenCodeV2EventParser,
+from modex_agent.agents.external.transports.cli_transport import (
+    OpenCodeTransport,
 )
 from modex_agent.agents.external.types import ExternalEnvSpec
 from modex_agent.core import AgentCommKind
@@ -403,7 +403,7 @@ async def test_assemble_sub_uses_pool_scoped_backend_provider(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_assemble_sub_opencode_provider_kind_uses_opencode_parser(
+async def test_assemble_sub_opencode_provider_kind_uses_opencode_transport(
     tmp_path: Path,
 ) -> None:
     strategy = ExternalExecutionStrategy()
@@ -413,7 +413,9 @@ async def test_assemble_sub_opencode_provider_kind_uses_opencode_parser(
 
     sub = await strategy.assemble_sub(ctx, deps)
 
-    assert isinstance(_external_agent(sub)._parser, OpenCodeV2EventParser)
+    # The opencode parsing path is transport-internal now; the provider-kind
+    # contract is visible through the transport the agent acquires.
+    assert isinstance(_external_agent(sub)._backend_provider._backend, OpenCodeTransport)
 
 
 @pytest.mark.asyncio

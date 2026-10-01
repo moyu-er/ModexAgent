@@ -1,11 +1,11 @@
-"""Integration tests for ``OpenCodeServerBackend`` against a real opencode server.
+"""Integration tests for ``OpenCodeTransport`` against a real opencode server.
 
 Server-lifecycle unit tests (spawn, readiness rollback, close-time reap, etc.)
-have moved to ``test_opencode_server_manager.py`` — the singleton
-``OpenCodeServerManager`` now owns the ``opencode serve`` process, SSE readers,
-and the HTTP client. ``OpenCodeServerBackend`` is a thin wrapper that borrows a
-``ServerHandle`` per turn via ``OpenCodeServerManager.acquire()`` and delegates
-all session/prompt/poll operations to V1 endpoints on the shared client.
+live in ``test_opencode_server_manager.py`` — the singleton
+``OpenCodeServerManager`` owns the ``opencode serve`` process, SSE readers,
+and the HTTP client. ``OpenCodeTransport`` borrows a ``ServerHandle`` per
+turn via ``OpenCodeServerManager.acquire()`` and delegates all
+session/prompt/poll operations to V1 endpoints on the shared client.
 
 The tests below are skip-gated behind ``OPENCODE_SSE_INTEGRATION=1`` and a real
 ``opencode`` binary on PATH. They exercise the real V2 control + V1 SSE event
@@ -22,11 +22,14 @@ import pytest
 
 pytest.importorskip("aiohttp", reason="aiohttp not installed")
 
-from modex_agent.agents.external import Emission, ExternalEvent
-from modex_agent.agents.external.providers.opencode.server_backend import (
-    OpenCodeServerBackend,
-)
+from modex_agent.agents.external.transports import OpenCodeTransport
 from modex_agent.agents.external.types import BackendStatus, ExecOptions
+from modex_agent.core.turn_events import (
+    TurnEvent,
+    TurnTextEvent,
+    TurnToolCallEvent,
+    TurnToolResultEvent,
+)
 
 _SKIP_REASON = "opencode CLI not installed or OPENCODE_SSE_INTEGRATION not set"
 
@@ -50,71 +53,69 @@ def _make_env(modex_sid: str = "test_sse.opencode") -> dict[str, str]:
     return env
 
 
+def _collect(sink: list[TurnEvent]):
+    async def _cb(event: TurnEvent) -> None:
+        sink.append(event)
+
+    return _cb
+
+
 @pytest.mark.skipif(not _opencode_available(), reason=_SKIP_REASON)
 @pytest.mark.asyncio
-class TestOpenCodeServerBackendIntegration:
+class TestOpenCodeTransportIntegration:
     async def test_simple_prompt_streams_text_delta(self) -> None:
-        backend = OpenCodeServerBackend()
+        transport = OpenCodeTransport()
         try:
             opts = ExecOptions(
                 prompt="Say hello in exactly three words. Do not use any tools.",
                 workdir=Path(os.environ.get("OPENCODE_TEST_WORKDIR", os.getcwd())),
             )
             env = _make_env("test_sse_1.opencode")
-            emissions: list[Emission] = []
+            events: list[TurnEvent] = []
 
-            async def on_emission(e: Emission) -> None:
-                emissions.append(e)
-
-            result = await backend.execute_streaming(opts, env, on_emission)
+            result = await transport.execute(opts, env, _collect(events))
 
             assert result.status is BackendStatus.COMPLETED
             assert result.session_id is not None
-            text_emissions = [e for e in emissions if e.event is ExternalEvent.TEXT_DELTA]
-            assert len(text_emissions) > 0
-            combined = "".join(e.text or "" for e in text_emissions)
+            text_events = [e for e in events if isinstance(e, TurnTextEvent)]
+            assert len(text_events) > 0
+            combined = "".join(e.text for e in text_events)
             assert len(combined) > 0
         finally:
-            await backend.close()
+            await transport.close()
 
-    async def test_prompt_with_tool_yields_tool_use_and_result(self) -> None:
-        backend = OpenCodeServerBackend()
+    async def test_prompt_with_tool_yields_tool_call_and_result(self) -> None:
+        transport = OpenCodeTransport()
         try:
             opts = ExecOptions(
                 prompt="Read the first 5 lines of README.md, then summarize in one sentence.",
                 workdir=Path(os.environ.get("OPENCODE_TEST_WORKDIR", os.getcwd())),
             )
             env = _make_env("test_sse_2.opencode")
-            emissions: list[Emission] = []
+            events: list[TurnEvent] = []
 
-            async def on_emission(e: Emission) -> None:
-                emissions.append(e)
-
-            result = await backend.execute_streaming(opts, env, on_emission)
+            result = await transport.execute(opts, env, _collect(events))
 
             assert result.status is BackendStatus.COMPLETED
-            tool_uses = [e for e in emissions if e.event is ExternalEvent.TOOL_USE]
-            assert len(tool_uses) >= 1
-            tool_results = [e for e in emissions if e.event is ExternalEvent.TOOL_RESULT]
+            tool_calls = [e for e in events if isinstance(e, TurnToolCallEvent)]
+            assert len(tool_calls) >= 1
+            tool_results = [e for e in events if isinstance(e, TurnToolResultEvent)]
             assert len(tool_results) >= 1
-            text_emissions = [e for e in emissions if e.event is ExternalEvent.TEXT_DELTA]
-            assert len(text_emissions) > 0
+            text_events = [e for e in events if isinstance(e, TurnTextEvent)]
+            assert len(text_events) > 0
         finally:
-            await backend.close()
+            await transport.close()
 
     async def test_session_resume_reuses_session_id(self) -> None:
-        backend = OpenCodeServerBackend()
+        transport = OpenCodeTransport()
         try:
             workdir = Path(os.environ.get("OPENCODE_TEST_WORKDIR", os.getcwd()))
             env = _make_env("test_sse_3.opencode")
 
             opts1 = ExecOptions(prompt="Say hi.", workdir=workdir)
-            emissions1: list[Emission] = []
+            events1: list[TurnEvent] = []
 
-            async def on_e1(e: Emission) -> None:
-                emissions1.append(e)
-
-            result1 = await backend.execute_streaming(opts1, env, on_e1)
+            result1 = await transport.execute(opts1, env, _collect(events1))
             assert result1.status is BackendStatus.COMPLETED
             assert result1.session_id is not None
 
@@ -123,13 +124,10 @@ class TestOpenCodeServerBackendIntegration:
                 workdir=workdir,
                 resume_session_id=result1.session_id,
             )
-            emissions2: list[Emission] = []
+            events2: list[TurnEvent] = []
 
-            async def on_e2(e: Emission) -> None:
-                emissions2.append(e)
-
-            result2 = await backend.execute_streaming(opts2, env, on_e2)
+            result2 = await transport.execute(opts2, env, _collect(events2))
             assert result2.status is BackendStatus.COMPLETED
             assert result2.session_id == result1.session_id
         finally:
-            await backend.close()
+            await transport.close()

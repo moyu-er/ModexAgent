@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from modex_agent.core.agent import AgentCommKind
 
+from .paths import ExternalPaths
 from .types import ExternalEnvSpec
 
 
@@ -48,6 +50,27 @@ def join_modexctl_path(modexctl_bin_dir: Path, base_path: str) -> str:
     if base_path:
         return str(modexctl_bin_dir) + os.pathsep + base_path
     return str(modexctl_bin_dir)
+
+
+def write_env_snapshot_for_session(
+    paths: ExternalPaths, env: Mapping[str, str], provider_session_id: str
+) -> None:
+    """Write ``env-snapshots/<provider_session_id>.json``.
+
+    The single convergence point for per-provider-session env snapshot
+    files. Called by ``OpenCodeTransport.execute`` (main session, after
+    session-id resolution, before the prompt is dispatched) and by the
+    external event normalizer (child session, on discovery). modexctl
+    reads the file matching the ``OPENCODE_SESSION_ID`` injected by the
+    shell.env plugin.
+    """
+    snapshot = {k: v for k, v in env.items() if k.startswith("MODEX_") or k == "PATH"}
+    snapshot_dir = paths.env_snapshots_dir
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    paths.env_snapshot_for_session(provider_session_id).write_text(
+        json.dumps(snapshot, indent=2, sort_keys=True, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 class ExternalEnvBuilder:
@@ -150,4 +173,4 @@ class ExternalEnvBuilder:
         return merged
 
 
-__all__ = ["ExternalEnvBuilder"]
+__all__ = ["ExternalEnvBuilder", "write_env_snapshot_for_session"]

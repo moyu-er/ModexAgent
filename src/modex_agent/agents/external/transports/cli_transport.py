@@ -1,23 +1,32 @@
-"""``OpenCodeServerBackend`` — shared server + V1 session/prompt backend.
+"""``OpenCodeTransport`` — the CLI-subprocess transport for the OpenCode provider.
+
+This is the external plane's one real transport today. It spawns (or
+reuses) the shared ``opencode serve`` CLI subprocess through
+:class:`OpenCodeServerManager`, drives one turn over the server's V1
+session/prompt endpoints, and reads the subprocess's event stream
+(JSONL lines over the ``/event`` SSE endpoint) through
+:class:`OpenCodeV2SseReader` + :class:`OpenCodeV2EventParser`, which map
+provider records onto core :class:`TurnEvent` records directly.
 
 The server lifecycle (spawn/health/SSE) is owned by
-:class:`OpenCodeServerManager` — a process-global singleton that shares one
-``opencode serve`` across ALL backends (main agents, subagents, peers).
-This backend borrows the shared collaborators per turn via
+:class:`OpenCodeServerManager` — a process-global singleton that shares
+one ``opencode serve`` across ALL transports (main agents, subagents,
+peers). This transport borrows the shared collaborators per turn via
 ``ServerHandle`` and releases them on close.
 
-All session operations — creation, prompt dispatch, status polling, message
-fallback, and abort — use V1 endpoints. V1 ``prompt_async`` runs through
-``SessionPrompt`` which injects ``promptOps`` into the tool context; the
-``task`` tool (subagent dispatch) requires this and is NOT available on the
-V2 ``SessionRunner`` path.
+All session operations — creation, prompt dispatch, status polling,
+message fallback, and abort — use V1 endpoints. V1 ``prompt_async`` runs
+through ``SessionPrompt`` which injects ``promptOps`` into the tool
+context; the ``task`` tool (subagent dispatch) requires this and is NOT
+available on the V2 ``SessionRunner`` path.
 
 The ``/event`` SSE stream carries both V2 (``session.next.*``) and V1
-(``message.part.*``, ``session.created``) events through the same
-``EventV2Bridge``. The parser and SSE reader handle both envelope shapes.
-
-When ``OPENCODE_HOST`` is set in the environment, the manager connects to
-an external already-running server instead of spawning its own.
+(``message.part.*``, ``session.created``) events; the parser and SSE
+reader handle both envelope shapes. Provider-minted child sessions
+(auto-discovered by the reader) get their delivery target from the
+``on_child_event`` factory — core events carry no session identity, so
+the reader's per-session callback demux is where the source session
+attaches.
 """
 
 from __future__ import annotations
@@ -25,30 +34,36 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Mapping
 from pathlib import Path
 from typing import override
 
 import aiohttp
 
-from ...agent import StaleSessionError, StreamingProviderBackend, write_env_snapshot_for_session
-from ...events import ExternalEvent
-from ...paths import ExternalPaths
-from ...types import BackendResult, BackendStatus, Emission, ExecOptions
-from .server_manager import OpenCodeServerManager
-from .session_state import OpenCodeSessionState
-from .turn_waiter import TurnCompletionWaiter
-from .v2_client import (
+from modex_agent.core.turn_events import TurnEvent, TurnTextEvent
+
+from ..env_builder import write_env_snapshot_for_session
+from ..paths import ExternalPaths
+from ..providers.opencode.server_manager import OpenCodeServerManager
+from ..providers.opencode.session_state import OpenCodeSessionState
+from ..providers.opencode.turn_waiter import TurnCompletionWaiter
+from ..providers.opencode.v2_client import (
     ModelRef,
     OpencodeV2Client,
     OpencodeV2Error,
 )
-from .v2_parser import OpenCodeV2EventParser
-from .v2_sse_reader import OpenCodeV2SseReader
+from ..providers.opencode.v2_sse_reader import OpenCodeV2SseReader
+from ..types import BackendResult, BackendStatus, ExecOptions
+from .abc import (
+    ChildTurnEventCallbackFactory,
+    ExternalTransport,
+    StaleSessionError,
+    TurnEventCallback,
+)
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["OpenCodeServerBackend"]
+__all__ = ["OpenCodeTransport"]
 
 _SSE_READ_TIMEOUT: float = 300.0
 _ACTIVE_POLL_INTERVAL: float = 0.5
@@ -64,13 +79,14 @@ def _model_ref_from_str(model: str | None) -> ModelRef | None:
     return ModelRef(id=model, providerID="")
 
 
-class OpenCodeServerBackend(StreamingProviderBackend):
-    """Shared-server backend — borrows collaborators from ``OpenCodeServerManager``.
+class OpenCodeTransport(ExternalTransport):
+    """Shared-server transport — borrows collaborators from ``OpenCodeServerManager``.
 
-    Each ``execute_streaming`` call acquires a :class:`ServerHandle` from the
-    singleton manager. The handle carries the shared HTTP client, parser, and
-    SSE reader. The backend does NOT own the server process — that lifecycle
-    is the manager's responsibility (refcounted across all backends).
+    Each :meth:`execute` call acquires a :class:`ServerHandle` from the
+    singleton manager. The handle carries the shared HTTP client, parser,
+    and SSE reader. The transport does NOT own the server process — that
+    lifecycle is the manager's responsibility (refcounted across all
+    transports).
     """
 
     def __init__(self, quiesce_s: float = 3.0) -> None:
@@ -83,19 +99,9 @@ class OpenCodeServerBackend(StreamingProviderBackend):
         return self._handle.client
 
     @property
-    def _parser(self) -> OpenCodeV2EventParser:
-        assert self._handle is not None
-        return self._handle.parser
-
-    @property
     def _sse_reader(self) -> OpenCodeV2SseReader:
         assert self._handle is not None
         return self._handle.sse_reader
-
-    @property
-    def _server_url(self) -> str:
-        assert self._handle is not None
-        return self._handle.server_url
 
     @property
     def _session_state(self) -> OpenCodeSessionState:
@@ -105,17 +111,22 @@ class OpenCodeServerBackend(StreamingProviderBackend):
     async def _ensure_server(self, workdir: Path, env: dict[str, str]) -> None:
         self._handle = await OpenCodeServerManager.acquire(workdir, env)
 
+    @override
     async def close(self) -> None:
+        # No-op: the shared server lifecycle belongs to
+        # OpenCodeServerManager, not to an individual transport.
         pass
 
     @override
-    async def execute_streaming(
+    async def execute(
         self,
         opts: ExecOptions,
-        env: dict[str, str],
-        on_emission: Callable[[Emission], Awaitable[None]],
+        env: Mapping[str, str],
+        on_event: TurnEventCallback,
+        on_child_event: ChildTurnEventCallbackFactory | None = None,
     ) -> BackendResult:
-        await self._ensure_server(opts.workdir, env)
+        spawn_env = dict(env)
+        await self._ensure_server(opts.workdir, spawn_env)
 
         workdir_str = str(opts.workdir)
 
@@ -125,17 +136,17 @@ class OpenCodeServerBackend(StreamingProviderBackend):
             session_id = await self._client.create_session_v1(workdir_str)
         self._handle.register_session(session_id)
 
-        write_env_snapshot_for_session(ExternalPaths(opts.workdir), env, session_id)
+        write_env_snapshot_for_session(ExternalPaths(opts.workdir), spawn_env, session_id)
 
         text_seen = False
 
-        async def _on_emission_tracked(emission: Emission) -> None:
+        async def _on_event_tracked(event: TurnEvent) -> None:
             nonlocal text_seen
-            if emission.event is ExternalEvent.TEXT_DELTA:
+            if event.kind == "text":
                 text_seen = True
-            await on_emission(emission)
+            await on_event(event)
 
-        self._sse_reader.register_session(session_id, _on_emission_tracked)
+        self._sse_reader.register_session(session_id, _on_event_tracked, on_child_event)
 
         registry = self._session_state
         waiter = TurnCompletionWaiter(
@@ -186,7 +197,7 @@ class OpenCodeServerBackend(StreamingProviderBackend):
                 )
 
             if not text_seen:
-                await self._emit_fallback_text(session_id, on_emission, directory=workdir_str)
+                await self._emit_fallback_text(session_id, on_event, directory=workdir_str)
 
             return BackendResult(status=BackendStatus.COMPLETED, session_id=session_id)
         finally:
@@ -234,10 +245,16 @@ class OpenCodeServerBackend(StreamingProviderBackend):
     async def _emit_fallback_text(
         self,
         session_id: str,
-        on_emission: Callable[[Emission], Awaitable[None]],
+        on_event: TurnEventCallback,
         *,
         directory: str,
     ) -> None:
+        """No streamed text arrived — recover the assistant text from REST.
+
+        The provider occasionally completes a turn without delivering any
+        text delta on the event stream; the authoritative message list
+        still has it. Best-effort: on fetch error, silently give up.
+        """
         try:
             messages = await self._client.get_messages_v1(session_id, directory=directory)
         except OpencodeV2Error:
@@ -255,6 +272,6 @@ class OpenCodeServerBackend(StreamingProviderBackend):
                 if isinstance(part, dict) and part.get("type") == "text":
                     text = part.get("text", "")
                     if text:
-                        await on_emission(Emission(event=ExternalEvent.TEXT_DELTA, text=text))
+                        await on_event(TurnTextEvent(text=text))
                         return
             return

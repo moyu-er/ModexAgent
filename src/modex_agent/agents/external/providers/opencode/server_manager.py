@@ -1,6 +1,6 @@
 """Global ``opencode serve`` process manager — singleton with liveness check.
 
-One ``opencode serve`` process shared across ALL ``OpenCodeServerBackend``
+One ``opencode serve`` process shared across ALL ``OpenCodeTransport``
 instances (main agents, subagents, peer pools). The opencode server supports
 multi-workdir routing via the ``x-opencode-directory`` header.
 
@@ -14,8 +14,7 @@ Design:
 
 3. **Per-workdir SSE readers** — opencode's ``/event`` endpoint filters
    events by ``x-opencode-directory``. Each workdir gets its own SSE
-   connection + parser (parser supports multi main-session via
-   ``add_main_session``/``remove_main_session``). Readers are cached and
+   connection + parser. Readers are cached and
    reused across turns within the same workdir.
 
 4. **Orphan reaping** — on first ``acquire()``, kill any ``opencode serve``
@@ -127,11 +126,9 @@ class OpenCodeServerManager:
             self._workdir = workdir
 
         def register_session(self, session_id: str) -> None:
-            self.parser.add_main_session(session_id)
             self._manager._active_sessions.add(session_id)
 
         def unregister_session(self, session_id: str) -> None:
-            self.parser.remove_main_session(session_id)
             self._manager._active_sessions.discard(session_id)
 
         async def release(self) -> None:

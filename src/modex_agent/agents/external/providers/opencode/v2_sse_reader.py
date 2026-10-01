@@ -1,6 +1,6 @@
 """``OpenCodeV2SseReader`` — persistent SSE reader with per-session demux.
 
-Long-lived connection to ``/api/event`` with per-session emission demux,
+Long-lived connection to ``/api/event`` with per-session event demux,
 ``durable.seq`` replay, stall reconnect, and ``restart()``.
 
 The ``/api/event`` stream carries BOTH V2 events (``session.next.*``, payload
@@ -10,10 +10,14 @@ dispatching to the parser.
 
 Child session auto-discovery: when a ``session.created`` event arrives with
 ``info.parentID`` matching a registered session, the child session is
-automatically registered with the parent's callback. This mirrors opencode's
-session tree discovery — child events flow through the same global stream and
-are routed to the parent's callback, where ``_handle_emission`` in the agent
-creates a child emitter based on ``source_session_id``.
+registered with its OWN callback, obtained from the parent registration's
+child-callback factory. Core turn events carry no session identity, so this
+per-session callback demux is the single place a provider child session
+attaches to its delivery target — the normalizer on the other side of the
+factory owns the routing (child sink creation, lineage registration).
+
+Events for sessions with neither a registered callback nor a discoverable
+parent factory are dropped.
 
 Permission and question events are NOT handled here. The spawn env sets
 ``OPENCODE_PERMISSION='{"*":"allow","question":"deny"}'`` which prevents
@@ -26,12 +30,11 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 import aiohttp
 
-from ...types import Emission
+from ...transports.abc import ChildTurnEventCallbackFactory, TurnEventCallback
 from .session_state import OpenCodeSessionState, SessionActivity
 from .v2_parser import OpenCodeV1EventType, OpenCodeV2EventParser
 
@@ -101,10 +104,11 @@ class OpenCodeV2SseReader:
 
     The reader owns the SSE connection lifecycle: connect → consume →
     (stall/close) → replay missed durable events → reconnect. Per-session
-    callbacks receive ``Emission`` objects.
+    callbacks receive core ``TurnEvent`` objects.
 
     Child sessions are auto-registered when ``session.created`` events with
-    a matching ``parentID`` are seen — no manual registration needed.
+    a matching ``parentID`` are seen — no manual registration needed, as
+    long as the parent was registered with a child-callback factory.
     """
 
     def __init__(self, server_url: str, workdir: str, parser: OpenCodeV2EventParser) -> None:
@@ -115,7 +119,8 @@ class OpenCodeV2SseReader:
         self._stopped = True
         self._server_unavailable = False
 
-        self._session_callbacks: dict[str, Callable[[Emission], Awaitable[None]]] = {}
+        self._session_callbacks: dict[str, TurnEventCallback] = {}
+        self._child_factories: dict[str, ChildTurnEventCallbackFactory] = {}
         self._last_known_seq: dict[str, int] = {}
         self._seen_event_ids: dict[str, set[str]] = {}
         self._child_to_parent: dict[str, str] = {}
@@ -136,7 +141,7 @@ class OpenCodeV2SseReader:
         Once attached, every raw SSE event is fed to ``state.on_event``
         before the parser path runs (design 5.4). The registry is
         orthogonal to ``register_session``/``unregister_session`` (which
-        route output emissions) — it drives turn-completion detection.
+        route output events) — it drives turn-completion detection.
         """
         self._session_state = state
 
@@ -181,13 +186,28 @@ class OpenCodeV2SseReader:
         await self.start()
 
     def register_session(
-        self, session_id: str, on_emission: Callable[[Emission], Awaitable[None]]
+        self,
+        session_id: str,
+        on_event: TurnEventCallback,
+        on_child_event: ChildTurnEventCallbackFactory | None = None,
     ) -> None:
-        self._session_callbacks[session_id] = on_emission
+        """Route one provider session's events to ``on_event``.
+
+        ``on_child_event`` (when supplied) is the factory used to obtain
+        delivery targets for provider sessions minted under this one at
+        runtime (subagent child sessions). Registrations without a factory
+        do not observe child sessions — child events are dropped.
+        """
+        self._session_callbacks[session_id] = on_event
         self._seen_event_ids.setdefault(session_id, set())
+        if on_child_event is not None:
+            self._child_factories[session_id] = on_child_event
+        else:
+            self._child_factories.pop(session_id, None)
 
     def unregister_session(self, session_id: str) -> None:
         self._session_callbacks.pop(session_id, None)
+        self._child_factories.pop(session_id, None)
         self._seen_event_ids.pop(session_id, None)
         for child, parent in list(self._child_to_parent.items()):
             if parent == session_id:
@@ -295,19 +315,34 @@ class OpenCodeV2SseReader:
                     return
                 seen.add(event_id)
 
-        for emission in self._parser.parse_line(json_str):
-            target = emission.source_session_id or sid_str
-            if target is None:
-                continue
-            callback = self._session_callbacks.get(target)
+        for event in self._parser.parse_line(json_str):
+            callback = self._callback_for_session(sid_str)
             if callback is not None:
-                await callback(emission)
-            else:
-                parent = self._child_to_parent.get(target or "")
-                if parent is not None:
-                    parent_cb = self._session_callbacks.get(parent)
-                    if parent_cb is not None:
-                        await parent_cb(emission)
+                await callback(event)
+
+    def _callback_for_session(self, sid: str | None) -> TurnEventCallback | None:
+        """Resolve the delivery target for one provider session id.
+
+        Direct registration wins; otherwise a known child→parent link
+        resolves through the parent's child-callback factory (registering
+        the child for subsequent events). Sessions with no resolvable
+        target are dropped.
+        """
+        if sid is None:
+            return None
+        callback = self._session_callbacks.get(sid)
+        if callback is not None:
+            return callback
+        parent = self._child_to_parent.get(sid)
+        if parent is None:
+            return None
+        factory = self._child_factories.get(parent)
+        if factory is None:
+            return None
+        callback = factory(sid)
+        self._session_callbacks[sid] = callback
+        self._seen_event_ids.setdefault(sid, set())
+        return callback
 
     def _maybe_discover_child(
         self, payload: dict[str, Any], data: dict[str, Any], sid: str | None
@@ -318,21 +353,23 @@ class OpenCodeV2SseReader:
         parent_id = _extract_parent_sid(data)
         if parent_id is None:
             return
+        if parent_id not in self._session_callbacks:
+            return
         info = data.get("info", data)
         if not isinstance(info, dict):
             return
         child_id = info.get("id")
-        if (
-            isinstance(child_id, str)
-            and child_id
-            and parent_id in self._session_callbacks
-            and child_id not in self._session_callbacks
-        ):
-            parent_cb = self._session_callbacks[parent_id]
-            self._session_callbacks[child_id] = parent_cb
-            self._seen_event_ids.setdefault(child_id, set())
-            self._child_to_parent[child_id] = parent_id
-            logger.info("Auto-discovered child session %s (parent=%s)", child_id, parent_id)
+        if not (isinstance(child_id, str) and child_id and child_id not in self._session_callbacks):
+            return
+        factory = self._child_factories.get(parent_id)
+        if factory is None:
+            # The parent's registration observes no child sessions —
+            # leave the child unregistered (its events are dropped).
+            return
+        self._session_callbacks[child_id] = factory(child_id)
+        self._seen_event_ids.setdefault(child_id, set())
+        self._child_to_parent[child_id] = parent_id
+        logger.info("Auto-discovered child session %s (parent=%s)", child_id, parent_id)
 
     def _track_durable_seq(self, payload: dict[str, Any], sid: str | None) -> None:
         if sid is None:

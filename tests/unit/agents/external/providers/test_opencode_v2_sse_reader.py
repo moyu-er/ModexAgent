@@ -22,7 +22,6 @@ pytest.importorskip("aiohttp", reason="aiohttp not installed")
 
 import aiohttp
 
-from modex_agent.agents.external import Emission, ExternalEvent
 from modex_agent.agents.external.providers.opencode.session_state import (
     OpenCodeSessionState,
     SessionActivity,
@@ -34,6 +33,11 @@ from modex_agent.agents.external.providers.opencode.v2_parser import (
 )
 from modex_agent.agents.external.providers.opencode.v2_sse_reader import (
     OpenCodeV2SseReader,
+)
+from modex_agent.core.turn_events import (
+    TurnEvent,
+    TurnTextEvent,
+    TurnToolCallEvent,
 )
 
 _BASE_URL = "http://127.0.0.1:4096"
@@ -147,9 +151,9 @@ def _make_reader(
     return reader
 
 
-def _collect(received: list[Emission]) -> Any:
-    async def _cb(emission: Emission) -> None:
-        received.append(emission)
+def _collect(received: list[TurnEvent]) -> Any:
+    async def _cb(event: TurnEvent) -> None:
+        received.append(event)
 
     return _cb
 
@@ -162,7 +166,7 @@ def _collect(received: list[Emission]) -> Any:
 class TestProcessEventDispatch:
     async def test_text_delta_dispatches_to_registered_callback(self) -> None:
         reader = _make_reader()
-        received: list[Emission] = []
+        received: list[TurnEvent] = []
         reader.register_session("ses_1", _collect(received))
         reader._stopped = False
 
@@ -175,12 +179,12 @@ class TestProcessEventDispatch:
             )
         )
         assert len(received) == 1
-        assert received[0].event is ExternalEvent.TEXT_DELTA
+        assert isinstance(received[0], TurnTextEvent)
         assert received[0].text == "Hello"
 
     async def test_text_delta_async_dispatch(self) -> None:
         reader = _make_reader()
-        received: list[Emission] = []
+        received: list[TurnEvent] = []
         reader.register_session("ses_1", _collect(received))
         reader._stopped = False
 
@@ -197,7 +201,7 @@ class TestProcessEventDispatch:
 
     async def test_tool_called_dispatches_tool_use(self) -> None:
         reader = _make_reader()
-        received: list[Emission] = []
+        received: list[TurnEvent] = []
         reader.register_session("ses_1", _collect(received))
         reader._stopped = False
 
@@ -210,12 +214,12 @@ class TestProcessEventDispatch:
             )
         )
         assert len(received) == 1
-        assert received[0].event is ExternalEvent.TOOL_USE
+        assert isinstance(received[0], TurnToolCallEvent)
         assert received[0].tool_name == "bash"
 
     async def test_server_connected_no_dispatch(self) -> None:
         reader = _make_reader()
-        received: list[Emission] = []
+        received: list[TurnEvent] = []
         reader.register_session("ses_1", _collect(received))
         reader._stopped = False
 
@@ -231,7 +235,7 @@ class TestProcessEventDispatch:
 
     async def test_event_for_unregistered_session_dropped(self) -> None:
         reader = _make_reader()
-        received: list[Emission] = []
+        received: list[TurnEvent] = []
         reader.register_session("ses_1", _collect(received))
         reader._stopped = False
 
@@ -248,11 +252,9 @@ class TestProcessEventDispatch:
 
 class TestPerSessionDemux:
     async def test_main_and_child_session_demux(self) -> None:
-        parser = OpenCodeV2EventParser()
-        parser.add_main_session("ses_main")
-        reader = _make_reader(parser)
-        main_recv: list[Emission] = []
-        child_recv: list[Emission] = []
+        reader = _make_reader()
+        main_recv: list[TurnEvent] = []
+        child_recv: list[TurnEvent] = []
         reader.register_session("ses_main", _collect(main_recv))
         reader.register_session("ses_child", _collect(child_recv))
         reader._stopped = False
@@ -278,15 +280,13 @@ class TestPerSessionDemux:
 
         assert len(main_recv) == 1
         assert main_recv[0].text == "main text"
-        assert main_recv[0].source_session_id is None
         assert len(child_recv) == 1
         assert child_recv[0].text == "child text"
-        assert child_recv[0].source_session_id == "ses_child"
 
     async def test_two_sessions_routed_correctly(self) -> None:
         reader = _make_reader()
-        recv_a: list[Emission] = []
-        recv_b: list[Emission] = []
+        recv_a: list[TurnEvent] = []
+        recv_b: list[TurnEvent] = []
         reader.register_session("ses_a", _collect(recv_a))
         reader.register_session("ses_b", _collect(recv_b))
         reader._stopped = False
@@ -322,7 +322,7 @@ class TestPerSessionDemux:
 class TestConsumeStream:
     async def test_heartbeat_lines_stripped(self) -> None:
         reader = _make_reader()
-        received: list[Emission] = []
+        received: list[TurnEvent] = []
         reader.register_session("ses_1", _collect(received))
         reader._stopped = False
 
@@ -436,7 +436,7 @@ class TestDurableSeqAndDedup:
 
     async def test_dedup_skips_duplicate_event_id(self) -> None:
         reader = _make_reader()
-        received: list[Emission] = []
+        received: list[TurnEvent] = []
         reader.register_session("ses_1", _collect(received))
         reader._stopped = False
 
@@ -516,7 +516,7 @@ class TestRegisterUnregister:
 class TestLifecycle:
     async def test_start_consume_stop(self) -> None:
         reader = _make_reader()
-        received: list[Emission] = []
+        received: list[TurnEvent] = []
         reader.register_session("ses_1", _collect(received))
 
         lines = [
@@ -559,13 +559,22 @@ def _v1_event(
     }
 
 
+def _child_collector(children: dict[str, list[TurnEvent]]):
+    """Child-callback factory recording per-child delivery targets."""
+
+    def factory(provider_sid: str):
+        sink: list[TurnEvent] = []
+        children[provider_sid] = sink
+        return _collect(sink)
+
+    return factory
+
+
 class TestChildSessionDiscovery:
     async def test_session_created_auto_registers_child(self) -> None:
         reader = _make_reader()
-        parser = reader._parser
-        parser.add_main_session("ses_main")
-        main_recv: list[Emission] = []
-        reader.register_session("ses_main", _collect(main_recv))
+        child_map: dict[str, list[TurnEvent]] = {}
+        reader.register_session("ses_main", _collect([]), _child_collector(child_map))
         reader._stopped = False
 
         # session.created for child with parentID matching main session
@@ -585,13 +594,13 @@ class TestChildSessionDiscovery:
         assert "ses_child" in reader._session_callbacks
         assert "ses_child" in reader._seen_event_ids
         assert reader._child_to_parent["ses_child"] == "ses_main"
+        assert "ses_child" in child_map
 
-    async def test_child_event_routed_to_parent_callback(self) -> None:
+    async def test_child_event_routed_to_child_callback(self) -> None:
         reader = _make_reader()
-        parser = reader._parser
-        parser.add_main_session("ses_main")
-        main_recv: list[Emission] = []
-        reader.register_session("ses_main", _collect(main_recv))
+        main_recv: list[TurnEvent] = []
+        child_map: dict[str, list[TurnEvent]] = {}
+        reader.register_session("ses_main", _collect(main_recv), _child_collector(child_map))
         reader._stopped = False
 
         # First: session.created discovers the child
@@ -616,18 +625,36 @@ class TestChildSessionDiscovery:
             )
         )
 
-        assert len(main_recv) == 1
-        assert main_recv[0].text == "child text"
-        assert main_recv[0].source_session_id == "ses_child"
+        assert main_recv == []
+        assert len(child_map["ses_child"]) == 1
+        assert child_map["ses_child"][0].text == "child text"
 
-    async def test_unregistered_child_event_falls_back_to_parent(self) -> None:
+    async def test_no_factory_child_not_registered(self) -> None:
+        """A registration without a child factory observes no child
+        sessions — session.created leaves the child unregistered."""
+        reader = _make_reader()
+        reader.register_session("ses_main", _collect([]))
+        reader._stopped = False
+
+        await reader._process_event(
+            json.dumps(
+                _v1_event(
+                    "session.created",
+                    {"sessionID": "ses_child", "info": {"id": "ses_child", "parentID": "ses_main"}},
+                    event_id="evt_create",
+                )
+            )
+        )
+
+        assert "ses_child" not in reader._session_callbacks
+
+    async def test_unregistered_child_event_falls_back_to_parent_factory(self) -> None:
         """Even without session.created, child events find their parent
         via the child_to_parent lookup after a manual registration."""
         reader = _make_reader()
-        parser = reader._parser
-        parser.add_main_session("ses_main")
-        main_recv: list[Emission] = []
-        reader.register_session("ses_main", _collect(main_recv))
+        main_recv: list[TurnEvent] = []
+        child_map: dict[str, list[TurnEvent]] = {}
+        reader.register_session("ses_main", _collect(main_recv), _child_collector(child_map))
         reader._stopped = False
 
         # Simulate child mapping without session.created event
@@ -643,8 +670,9 @@ class TestChildSessionDiscovery:
             )
         )
 
-        assert len(main_recv) == 1
-        assert main_recv[0].text == "fallback"
+        assert main_recv == []
+        assert len(child_map["ses_child"]) == 1
+        assert child_map["ses_child"][0].text == "fallback"
 
     def test_unregister_session_cleans_up_children(self) -> None:
         reader = _make_reader()
@@ -681,10 +709,9 @@ class TestCrossTurnChildRediscovery:
 
     async def test_child_events_dropped_after_turn_end_without_session_created(self) -> None:
         reader = _make_reader()
-        parser = reader._parser
-        parser.add_main_session("ses_main")
-        main_recv: list[Emission] = []
-        reader.register_session("ses_main", _collect(main_recv))
+        main_recv: list[TurnEvent] = []
+        child_map_t1: dict[str, list[TurnEvent]] = {}
+        reader.register_session("ses_main", _collect(main_recv), _child_collector(child_map_t1))
         reader._stopped = False
 
         # Turn 1: session.created discovers child
@@ -707,8 +734,9 @@ class TestCrossTurnChildRediscovery:
                 )
             )
         )
-        assert len(main_recv) == 1
-        assert main_recv[0].text == "t1 child"
+        assert len(main_recv) == 0
+        assert len(child_map_t1["ses_child"]) == 1
+        assert child_map_t1["ses_child"][0].text == "t1 child"
 
         # Turn 1 end: unregister main → child cleaned up
         reader.unregister_session("ses_main")
@@ -716,7 +744,7 @@ class TestCrossTurnChildRediscovery:
         assert "ses_child" not in reader._child_to_parent
 
         # Turn 2: main re-registered
-        main_recv_t2: list[Emission] = []
+        main_recv_t2: list[TurnEvent] = []
         reader.register_session("ses_main", _collect(main_recv_t2))
 
         # Turn 2: child event WITHOUT session.created → dropped
@@ -733,10 +761,9 @@ class TestCrossTurnChildRediscovery:
 
     async def test_child_rediscovered_with_new_session_created_in_turn_2(self) -> None:
         reader = _make_reader()
-        parser = reader._parser
-        parser.add_main_session("ses_main")
-        main_recv: list[Emission] = []
-        reader.register_session("ses_main", _collect(main_recv))
+        main_recv: list[TurnEvent] = []
+        child_map_t1: dict[str, list[TurnEvent]] = {}
+        reader.register_session("ses_main", _collect(main_recv), _child_collector(child_map_t1))
         reader._stopped = False
 
         # Turn 1: child discovered + event routed
@@ -758,14 +785,15 @@ class TestCrossTurnChildRediscovery:
                 )
             )
         )
-        assert len(main_recv) == 1
+        assert len(child_map_t1["ses_child"]) == 1
 
         # Turn end: cleanup
         reader.unregister_session("ses_main")
 
         # Turn 2: main re-registered + NEW session.created for same child_id
-        main_recv_t2: list[Emission] = []
-        reader.register_session("ses_main", _collect(main_recv_t2))
+        main_recv_t2: list[TurnEvent] = []
+        child_map_t2: dict[str, list[TurnEvent]] = {}
+        reader.register_session("ses_main", _collect(main_recv_t2), _child_collector(child_map_t2))
 
         await reader._process_event(
             json.dumps(
@@ -785,15 +813,15 @@ class TestCrossTurnChildRediscovery:
                 )
             )
         )
-        assert len(main_recv_t2) == 1
-        assert main_recv_t2[0].text == "t2"
+        assert len(main_recv_t2) == 0
+        assert len(child_map_t2["ses_child"]) == 1
+        assert child_map_t2["ses_child"][0].text == "t2"
 
     async def test_multiple_children_same_turn(self) -> None:
         reader = _make_reader()
-        parser = reader._parser
-        parser.add_main_session("ses_main")
-        main_recv: list[Emission] = []
-        reader.register_session("ses_main", _collect(main_recv))
+        main_recv: list[TurnEvent] = []
+        child_map: dict[str, list[TurnEvent]] = {}
+        reader.register_session("ses_main", _collect(main_recv), _child_collector(child_map))
         reader._stopped = False
 
         # Child 1 discovered
@@ -837,11 +865,11 @@ class TestCrossTurnChildRediscovery:
             )
         )
 
-        assert len(main_recv) == 2
-        assert main_recv[0].text == "child1 text"
-        assert main_recv[0].source_session_id == "ses_c1"
-        assert main_recv[1].text == "child2 text"
-        assert main_recv[1].source_session_id == "ses_c2"
+        assert main_recv == []
+        assert len(child_map["ses_c1"]) == 1
+        assert child_map["ses_c1"][0].text == "child1 text"
+        assert len(child_map["ses_c2"]) == 1
+        assert child_map["ses_c2"][0].text == "child2 text"
 
 
 # ---------------------------------------------------------------------------
@@ -979,9 +1007,7 @@ class TestSessionStateDualPath:
     async def test_dual_path_does_not_break_parser_dispatch(self) -> None:
         """Registry fed AND parser emissions still delivered (both paths)."""
         reader = _make_reader()
-        parser = reader._parser
-        parser.add_main_session("ses_root")
-        received: list[Emission] = []
+        received: list[TurnEvent] = []
         reader.register_session("ses_root", _collect(received))
 
         state = OpenCodeSessionState()
@@ -1021,7 +1047,7 @@ class TestSessionStateDualPath:
     async def test_no_session_state_attached_reader_still_works(self) -> None:
         """Regression: without attach_session_state, behavior is unchanged."""
         reader = _make_reader()
-        received: list[Emission] = []
+        received: list[TurnEvent] = []
         reader.register_session("ses_1", _collect(received))
         reader._stopped = False
 

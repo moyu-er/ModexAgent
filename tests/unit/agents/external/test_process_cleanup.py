@@ -69,7 +69,7 @@ def _patch_manager_spawn_chain(
     """Patch spawn/readiness/SSE/client/kill used by ``OpenCodeServerManager.acquire``.
 
     Mocks live on the ``opencode_server_manager`` module (where the manager
-    imports them), NOT on ``opencode_server_backend`` — the backend no longer
+    imports them), NOT on ``cli_transport`` — the transport no longer
     owns the server lifecycle.
     """
     monkeypatch.setattr(opencode_server_manager, "_find_free_port", lambda: 43123)

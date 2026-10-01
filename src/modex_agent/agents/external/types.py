@@ -21,8 +21,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.core.agent import AgentCommKind, ProviderKind
 
-from .events import ExternalEvent
-
 # ---------------------------------------------------------------------------
 # Exec options / backend result
 # ---------------------------------------------------------------------------
@@ -202,44 +200,12 @@ class ExternalEnvSpec(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Emission (per line) — discriminated union by event
+# Emission vocabulary — retired
 # ---------------------------------------------------------------------------
-
-
-class Emission(BaseModel):
-    """A single emission parsed from one stdout JSONL line.
-
-    Field set is the union of every event-kind-specific payload; only
-    those relevant to the concrete event are populated. ``event`` is the
-    discriminator consumers switch on. Day-one shapes:
-
-    - ``TEXT_DELTA``  → ``text``
-    - ``THINKING``    → ``text``
-    - ``TOOL_USE``    → ``tool_name`` + ``tool_input``
-    - ``TOOL_RESULT`` → ``call_id`` + ``output``
-    - ``ERROR``       → ``message``
-
-    Parsers (`ProviderEventParser`) return zero or more ``Emission``
-    records per line so a single line carrying multiple updates fans
-    out cleanly.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    event: ExternalEvent
-    part_id: str | None = None
-    # TEXT_DELTA / THINKING
-    text: str | None = None
-    # TOOL_USE
-    tool_name: str | None = None
-    tool_input: str | None = None
-    # TOOL_RESULT
-    call_id: str | None = None
-    output: str | None = None
-    # ERROR
-    message: str | None = None
-    # Child session routing: None = main session, str = provider child session ID
-    source_session_id: str | None = None
+# The per-line ``Emission`` model and the ``ExternalEvent`` enum were
+# replaced by the transport layer (``transports/``): transports produce
+# core ``TurnEvent`` records directly and the shared normalizer
+# (``normalizer.py``) owns every cross-transport concern.
 
 
 __all__ = [
@@ -248,5 +214,4 @@ __all__ = [
     "BackendResult",
     "SessionMapEntry",
     "ExternalEnvSpec",
-    "Emission",
 ]

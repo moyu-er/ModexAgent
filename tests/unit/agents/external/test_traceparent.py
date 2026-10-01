@@ -10,57 +10,30 @@ Verifies:
 
 from __future__ import annotations
 
-import json
 import os
 import re
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-from modex_agent.agents.external.agent import (
-    ExternalAgent,
-    ScriptedStreamingAdapter,
-)
+from modex_agent.agents.external.agent import ExternalAgent
 from modex_agent.agents.external.backend_provider import PoolScopedBackendProvider
-from modex_agent.agents.external.contracts import ProviderEventParser
-from modex_agent.agents.external.events import ExternalEvent
 from modex_agent.agents.external.paths import ExternalPaths
-from modex_agent.agents.external.scripted_backend import (
-    ScriptedProgramme,
-    ScriptedProviderBackend,
-    ScriptedStep,
-)
 from modex_agent.agents.external.session_store import LocalFileExternalSessionMapStore
-from modex_agent.agents.external.types import Emission, ExternalEnvSpec
+from modex_agent.agents.external.transports import (
+    ScriptedProgramme,
+    ScriptedTransport,
+)
+from modex_agent.agents.external.types import ExternalEnvSpec
 from modex_agent.core.agent import AgentContext, ProviderKind
 from modex_agent.core.emitter import AgentResult, TurnEvent, TurnEventSink
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.turn_events import TurnErroredEvent, TurnEvent, TurnFinishedEvent
+from modex_agent.core.turn_events import TurnErroredEvent, TurnFinishedEvent
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.tools.manager import InMemoryToolManager
 
 _TRACEPARENT_RE = re.compile(r"^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$")
-
-
-class _PiCompatibleParser(ProviderEventParser):
-    """Parses Pi-style JSONL lines — replacement for deleted PiEventParser."""
-
-    def parse_line(self, line: str) -> Iterator[Emission]:
-        line = line.strip()
-        if not line:
-            return iter(())
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            return iter(())
-        event_type = data.get("type")
-        if event_type == "message_update":
-            update = data.get("update", {})
-            if "text_delta" in update:
-                return iter([Emission(event=ExternalEvent.TEXT_DELTA, text=update["text_delta"])])
-        return iter(())
 
 
 class _RecordingEmitter(TurnEventSink):
@@ -69,18 +42,12 @@ class _RecordingEmitter(TurnEventSink):
         self.completed: AgentResult | None = None
         self.errors: list[str] = []
 
-    def wants_streaming(self) -> bool:
-        return False
-
     async def _dispatch(self, event: TurnEvent) -> None:
         match event:
             case TurnErroredEvent(message=message):
                 self.errors.append(message)
             case TurnFinishedEvent(stop_reason=stop_reason, error=error):
                 self.completed = AgentResult(error=error, stop_reason=stop_reason)
-
-    async def flush(self) -> None:
-        pass
 
 
 def _make_spec(workdir: Path, session_id: str = "pool1.agent1") -> ExternalEnvSpec:
@@ -108,28 +75,22 @@ def _make_ctx(session_id: str = "pool1.agent1") -> AgentContext:
     )
 
 
-def _pi_text_step(text: str) -> ScriptedStep:
-    return ScriptedStep(text=json.dumps({"type": "message_update", "update": {"text_delta": text}}))
-
-
 def _make_agent(
     tmp_path: Path,
     *,
     programme: ScriptedProgramme,
-) -> tuple[ExternalAgent, ScriptedStreamingAdapter]:
-    scripted = ScriptedProviderBackend(programme)
-    adapter = ScriptedStreamingAdapter(scripted, _PiCompatibleParser())
+) -> tuple[ExternalAgent, ScriptedTransport]:
+    transport = ScriptedTransport(programme)
     spec = _make_spec(tmp_path)
     store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
     agent = ExternalAgent(
-        backend_provider=PoolScopedBackendProvider(adapter),
+        backend_provider=PoolScopedBackendProvider(transport),
         session_store=store,
-        parser=_PiCompatibleParser(),
         provider_kind=ProviderKind.OPENCODE,
         spec=spec,
         base_env={"PATH": "/usr/bin"},
     )
-    return agent, adapter
+    return agent, transport
 
 
 @pytest.fixture(autouse=True)
@@ -139,59 +100,55 @@ def _clear_traceparent_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestSubprocessEnvTraceparent:
-    @pytest.mark.asyncio
     async def test_env_contains_traceparent(self, tmp_path: Path) -> None:
-        agent, adapter = _make_agent(
+        agent, transport = _make_agent(
             tmp_path,
             programme=ScriptedProgramme(session_id="prov-1"),
         )
         await agent.run(_make_ctx(), _RecordingEmitter())
 
-        assert len(adapter.recorded_envs) == 1
-        env = adapter.recorded_envs[0]
+        assert len(transport.recorded_envs) == 1
+        env = transport.recorded_envs[0]
         assert "TRACEPARENT" in env
         assert _TRACEPARENT_RE.match(env["TRACEPARENT"])
 
-    @pytest.mark.asyncio
     async def test_traceparent_forwarded_from_os_environ(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         expected = "00-aabbccddeeff00112233445566778899-0011223344556677-01"
         monkeypatch.setenv("TRACEPARENT", expected)
 
-        agent, adapter = _make_agent(
+        agent, transport = _make_agent(
             tmp_path,
             programme=ScriptedProgramme(session_id="prov-1"),
         )
         await agent.run(_make_ctx(), _RecordingEmitter())
 
-        env = adapter.recorded_envs[0]
+        env = transport.recorded_envs[0]
         assert env["TRACEPARENT"] == expected
 
-    @pytest.mark.asyncio
     async def test_traceparent_generated_when_no_context(self, tmp_path: Path) -> None:
-        agent, adapter = _make_agent(
+        agent, transport = _make_agent(
             tmp_path,
             programme=ScriptedProgramme(session_id="prov-1"),
         )
         await agent.run(_make_ctx(), _RecordingEmitter())
 
-        tp = adapter.recorded_envs[0]["TRACEPARENT"]
+        tp = transport.recorded_envs[0]["TRACEPARENT"]
         assert _TRACEPARENT_RE.match(tp)
         assert tp != os.environ.get("TRACEPARENT")
 
-    @pytest.mark.asyncio
     async def test_tracestate_forwarded_when_present(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("TRACEPARENT", "00-aaa-0011223344556677-01")
         monkeypatch.setenv("TRACESTATE", "vendor=value")
 
-        agent, adapter = _make_agent(
+        agent, transport = _make_agent(
             tmp_path,
             programme=ScriptedProgramme(session_id="prov-1"),
         )
         await agent.run(_make_ctx(), _RecordingEmitter())
 
-        env = adapter.recorded_envs[0]
+        env = transport.recorded_envs[0]
         assert env.get("TRACESTATE") == "vendor=value"

@@ -4,8 +4,8 @@ Covers the shared module-level ``write_env_snapshot_for_session`` function
 added to ``agent.py`` (Task 2). This function is the single convergence
 point for writing ``env-snapshots/<provider_session_id>.json`` files:
 
-- The **main session** snapshot is written by ``OpenCodeServerBackend.
-  execute_streaming`` right after ``create_session_v1`` / resume resolves
+- The **main session** snapshot is written by ``OpenCodeTransport.
+  execute`` right after ``create_session_v1`` / resume resolves
   the provider session id, BEFORE ``prompt_async_v1`` runs (so the agent
   can call ``modexctl`` mid-turn and the snapshot already exists).
 - The **child session** snapshot is written by ``ExternalAgent.
@@ -23,8 +23,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from modex_agent.agents.external.agent import write_env_snapshot_for_session
-from modex_agent.agents.external.env_builder import ExternalEnvBuilder
+from modex_agent.agents.external.env_builder import (
+    ExternalEnvBuilder,
+    write_env_snapshot_for_session,
+)
 from modex_agent.agents.external.paths import ExternalPaths
 from modex_agent.agents.external.types import ExternalEnvSpec
 from modex_agent.core.agent import AgentCommKind

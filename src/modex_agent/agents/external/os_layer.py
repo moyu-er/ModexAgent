@@ -287,7 +287,7 @@ def register_signal_handlers() -> None:
 
     The handler calls ``atexit._run_exitfuncs()`` (which runs all
     registered atexit hooks, including ``_atexit_cleanup`` from
-    :mod:`opencode_server_backend`) then ``sys.exit(0)``.
+    :mod:`agents.external.transports.cli_transport`) then ``sys.exit(0)``.
 
     On Windows, ``SIGBREAK`` is registered in addition to ``SIGINT``
     because ``taskkill`` (without ``/f``) sends ``CTRL_BREAK_EVENT``,

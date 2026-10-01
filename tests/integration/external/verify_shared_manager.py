@@ -37,14 +37,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-from modex_agent.agents.external import Emission, ExternalEvent
-from modex_agent.agents.external.providers.opencode_server_backend import (
-    OpenCodeServerBackend,
-)
-from modex_agent.agents.external.providers.opencode_server_manager import (
+from modex_agent.agents.external.providers.opencode.server_manager import (
     OpenCodeServerManager,
 )
+from modex_agent.agents.external.transports import OpenCodeTransport
 from modex_agent.agents.external.types import ExecOptions
+from modex_agent.core.turn_events import TurnEvent, TurnTextEvent
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s %(message)s")
 logger = logging.getLogger("verify")
@@ -65,44 +63,48 @@ def _make_env(modex_sid: str) -> dict[str, str]:
 
 
 async def _run_turn(
-    backend: OpenCodeServerBackend,
+    transport: OpenCodeTransport,
     prompt: str,
     workdir: Path,
     env: dict[str, str],
     resume_session_id: str | None = None,
-) -> tuple[list[Emission], str | None]:
-    """Run one turn and return (emissions, session_id)."""
-    emissions: list[Emission] = []
+) -> tuple[list[TurnEvent], str | None]:
+    """Run one turn and return (events, session_id)."""
+    events: list[TurnEvent] = []
 
-    async def on_emission(e: Emission) -> None:
-        emissions.append(e)
+    async def on_event(event: TurnEvent) -> None:
+        events.append(event)
 
     opts = ExecOptions(prompt=prompt, workdir=workdir, resume_session_id=resume_session_id)
-    result = await backend.execute_streaming(opts, env, on_emission)
+    result = await transport.execute(opts, env, on_event)
     logger.info(
-        "Turn result: status=%s, session=%s, emissions=%d",
+        "Turn result: status=%s, session=%s, events=%d",
         result.status,
         result.session_id,
-        len(emissions),
+        len(events),
     )
-    return emissions, result.session_id
+    return events, result.session_id
+
+
+def _text_of(events: list[TurnEvent]) -> str:
+    return "".join(e.text for e in events if isinstance(e, TurnTextEvent))
 
 
 async def test_multi_session_same_workdir(workdir: Path) -> None:
     """Two sessions in the same workdir — both should receive events."""
     logger.info("=== Test: Multi-session same workdir ===")
     env = _make_env("verify.same_workdir")
-    backend = OpenCodeServerBackend()
+    transport = OpenCodeTransport()
 
-    emissions1, sid1 = await _run_turn(backend, "Say hello in exactly three words.", workdir, env)
+    emissions1, sid1 = await _run_turn(transport, "Say hello in exactly three words.", workdir, env)
     assert sid1 is not None, "First turn should return a session_id"
-    text1 = "".join(e.text or "" for e in emissions1 if e.event is ExternalEvent.TEXT_DELTA)
+    text1 = _text_of(emissions1)
     logger.info("Turn 1: session=%s, text=%r", sid1, text1[:100])
     assert len(text1) > 0, "Turn 1 should produce text"
 
-    emissions2, sid2 = await _run_turn(backend, "Say goodbye in exactly two words.", workdir, env)
+    emissions2, sid2 = await _run_turn(transport, "Say goodbye in exactly two words.", workdir, env)
     assert sid2 is not None and sid2 != sid1, "Second turn should be a new session"
-    text2 = "".join(e.text or "" for e in emissions2 if e.event is ExternalEvent.TEXT_DELTA)
+    text2 = _text_of(emissions2)
     logger.info("Turn 2: session=%s, text=%r", sid2, text2[:100])
     assert len(text2) > 0, "Turn 2 should produce text"
 
@@ -112,19 +114,19 @@ async def test_multi_session_same_workdir(workdir: Path) -> None:
 async def test_multi_workdir(workdir_a: Path, workdir_b: Path) -> None:
     """Sessions in different workdirs — each gets its own SSE reader."""
     logger.info("=== Test: Multi-workdir ===")
-    backend = OpenCodeServerBackend()
+    transport = OpenCodeTransport()
 
     env_a = _make_env("verify.workdir_a")
-    emissions_a, sid_a = await _run_turn(backend, "Say 'A'.", workdir_a, env_a)
+    emissions_a, sid_a = await _run_turn(transport, "Say 'A'.", workdir_a, env_a)
     assert sid_a is not None
-    text_a = "".join(e.text or "" for e in emissions_a if e.event is ExternalEvent.TEXT_DELTA)
+    text_a = _text_of(emissions_a)
     logger.info("Workdir A: session=%s, text=%r", sid_a, text_a[:50])
     assert len(text_a) > 0, "Workdir A should produce text"
 
     env_b = _make_env("verify.workdir_b")
-    emissions_b, sid_b = await _run_turn(backend, "Say 'B'.", workdir_b, env_b)
+    emissions_b, sid_b = await _run_turn(transport, "Say 'B'.", workdir_b, env_b)
     assert sid_b is not None and sid_b != sid_a
-    text_b = "".join(e.text or "" for e in emissions_b if e.event is ExternalEvent.TEXT_DELTA)
+    text_b = _text_of(emissions_b)
     logger.info("Workdir B: session=%s, text=%r", sid_b, text_b[:50])
     assert len(text_b) > 0, "Workdir B should produce text"
 
@@ -139,17 +141,17 @@ async def test_resume(workdir: Path) -> None:
     """Resume a session — should reuse the same provider session_id."""
     logger.info("=== Test: Session resume ===")
     env = _make_env("verify.resume")
-    backend = OpenCodeServerBackend()
+    transport = OpenCodeTransport()
 
-    emissions1, sid1 = await _run_turn(backend, "Remember the number 42.", workdir, env)
+    emissions1, sid1 = await _run_turn(transport, "Remember the number 42.", workdir, env)
     assert sid1 is not None
     logger.info("Turn 1: session=%s", sid1)
 
     emissions2, sid2 = await _run_turn(
-        backend, "What number did I ask you to remember?", workdir, env, resume_session_id=sid1
+        transport, "What number did I ask you to remember?", workdir, env, resume_session_id=sid1
     )
     assert sid2 == sid1, "Resume should reuse the same session_id"
-    text2 = "".join(e.text or "" for e in emissions2 if e.event is ExternalEvent.TEXT_DELTA)
+    text2 = _text_of(emissions2)
     logger.info("Turn 2 (resume): session=%s, text=%r", sid2, text2[:100])
     assert "42" in text2, "Resume should remember the number 42"
 
@@ -183,10 +185,10 @@ async def test_watchdog_respawn(workdir: Path) -> None:
 
     # Verify the next turn works with the new process
     env = _make_env("verify.respawn")
-    backend = OpenCodeServerBackend()
-    emissions, sid = await _run_turn(backend, "Say 'alive'.", workdir, env)
+    transport = OpenCodeTransport()
+    emissions, sid = await _run_turn(transport, "Say 'alive'.", workdir, env)
     assert sid is not None
-    text = "".join(e.text or "" for e in emissions if e.event is ExternalEvent.TEXT_DELTA)
+    text = _text_of(emissions)
     assert len(text) > 0, "Turn after respawn should produce text"
 
     logger.info("PASS: Watchdog respawned and next turn succeeded")

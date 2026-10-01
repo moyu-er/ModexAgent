@@ -1,1 +1,1 @@
-"""Per-provider `ProviderEventParser` implementations (OpenCode)."""
+"""Per-provider transport internals (OpenCode): SSE parser, reader, server manager."""

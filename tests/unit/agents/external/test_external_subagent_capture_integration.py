@@ -1,9 +1,11 @@
 """Integration tests for external subagent (child session) capture.
 
-End-to-end verification of the child-session discovery + routing pipeline
-using :class:`ScriptedStreamingAdapter` + :class:`OpenCodeV2EventParser` to
-simulate a complete opencode V2 SSE event sequence (task tool call + child
-discovery + child text/tool events + main session continuation).
+End-to-end verification of the child-session discovery + routing pipeline.
+The scripted transport replays a complete OpenCode V2 SSE event sequence
+(task tool call + child discovery + child text/tool events + main session
+continuation) parsed into core ``TurnEvent`` steps by the REAL
+``OpenCodeV2EventParser`` — the same line → event mapping the CLI
+transport's SSE reader performs.
 
 Coverage:
 
@@ -21,40 +23,34 @@ Coverage:
    ``sessionTree.ts`` ``buildTree()`` algorithm in Python and verifies
    parent→child tree construction.
 
-All tests use scripted adapters — no real opencode process is spawned.
+All tests use scripted transports — no real opencode process is spawned.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from modex_agent.agents.external.agent import (
-    ExternalAgent,
-    ScriptedStreamingAdapter,
-    StreamingProviderBackend,
-)
+from modex_agent.agents.external.agent import ExternalAgent
 from modex_agent.agents.external.backend_provider import (
     PoolScopedBackendProvider,
 )
 from modex_agent.agents.external.child_discovery import (
     ExternalChildSessionDiscoverySink,
 )
-from modex_agent.agents.external.events import ExternalEvent
 from modex_agent.agents.external.paths import ExternalPaths
 from modex_agent.agents.external.providers.opencode.v2_parser import (
     OpenCodeV2EventParser,
 )
-from modex_agent.agents.external.scripted_backend import (
-    ScriptedProgramme,
-    ScriptedProviderBackend,
-    ScriptedStep,
-)
 from modex_agent.agents.external.session_store import (
     LocalFileExternalSessionMapStore,
+)
+from modex_agent.agents.external.transports import (
+    ScriptedProgramme,
+    ScriptedStep,
+    ScriptedTransport,
 )
 from modex_agent.agents.external.types import (
     BackendStatus,
@@ -67,17 +63,13 @@ from modex_agent.core.emitter import (
     TurnEventSink,
     TurnEventSinkFactory,
 )
-from modex_agent.core.turn_events import (
-    TurnErroredEvent,
-    TurnEvent,
-    TurnFinishedEvent,
-    TurnTextEvent,
-)
-from modex_agent.core.turn_events import StopReason
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.turn_events import (
+    StopReason,
+    TurnErroredEvent,
     TurnEvent,
+    TurnFinishedEvent,
     TurnTextEvent,
     TurnToolCallEvent,
     TurnToolResultEvent,
@@ -132,20 +124,13 @@ class _RecordingChildEmitter(TurnEventSink):
         super().__init__()
         self.modex_sid = modex_sid
         self.turn_events: list[TurnEvent] = []
-        self.errors: list[str] = []
-        self.deltas: list[str] = []
 
     async def _dispatch(self, event: TurnEvent) -> None:
         self.turn_events.append(event)
-        match event:
-            case TurnTextEvent(text=text):
-                self.deltas.append(text)
-            case TurnErroredEvent(message=message):
-                self.errors.append(message)
 
 
 # ---------------------------------------------------------------------------
-# SSE event JSON builders (opencode V2 SSE wire format)
+# SSE event JSON builders (opencode V2 SSE wire format) → scripted steps
 # ---------------------------------------------------------------------------
 
 
@@ -165,10 +150,7 @@ def _sse_tool_called(
     tool_name: str,
     tool_input: str = '{"cmd":"ls"}',
 ) -> str:
-    """Build an opencode V2 ``session.next.tool.called`` event JSON line.
-
-    Produces a ``TOOL_USE`` emission from the parser.
-    """
+    """Build an opencode V2 ``session.next.tool.called`` event JSON line."""
     return json.dumps(
         {
             "type": "session.next.tool.called",
@@ -183,11 +165,7 @@ def _sse_tool_called(
 
 
 def _sse_tool_success(session_id: str, call_id: str, output: str) -> str:
-    """Build an opencode V2 ``session.next.tool.success`` event JSON line.
-
-    Produces a ``TOOL_RESULT`` emission from the parser. V2 carries the
-    output as a ``content`` list of typed parts (matching the V2 schema).
-    """
+    """Build an opencode V2 ``session.next.tool.success`` event JSON line."""
     return json.dumps(
         {
             "type": "session.next.tool.success",
@@ -200,8 +178,30 @@ def _sse_tool_success(session_id: str, call_id: str, output: str) -> str:
     )
 
 
+def _sse_to_steps(parser: OpenCodeV2EventParser, *lines: str) -> list[ScriptedStep]:
+    """Convert SSE JSON lines into scripted steps via the REAL parser.
+
+    The line → event mapping is the same one the CLI transport's SSE
+    reader performs; the step's source session comes from the wire line's
+    ``data.sessionID`` when it differs from the main provider session.
+    """
+    steps: list[ScriptedStep] = []
+    for line in lines:
+        payload = json.loads(line)
+        data = payload.get("data", {})
+        source = data.get("sessionID")
+        for event in parser.parse_line(line):
+            steps.append(
+                ScriptedStep(
+                    event=event,
+                    source_session_id=source if source != _MAIN_PROVIDER_SID else None,
+                )
+            )
+    return steps
+
+
 # ---------------------------------------------------------------------------
-# Helpers: spec, context, agent, adapter
+# Helpers: spec, context, agent, transport
 # ---------------------------------------------------------------------------
 
 
@@ -241,29 +241,24 @@ def _make_child_emitter_factory(
     return factory
 
 
-def _make_adapter(
-    steps: list[ScriptedStep], parser: OpenCodeV2EventParser
-) -> ScriptedStreamingAdapter:
-    """Construct a ScriptedStreamingAdapter with a fresh parser."""
-    programme = ScriptedProgramme(
-        steps=tuple(steps),
-        status=BackendStatus.COMPLETED,
-        session_id=_MAIN_PROVIDER_SID,
+def _make_transport(steps: list[ScriptedStep]) -> ScriptedTransport:
+    return ScriptedTransport(
+        ScriptedProgramme(
+            steps=tuple(steps),
+            status=BackendStatus.COMPLETED,
+            session_id=_MAIN_PROVIDER_SID,
+        )
     )
-    scripted = ScriptedProviderBackend(programme)
-    return ScriptedStreamingAdapter(scripted=scripted, parser=parser)
 
 
 def _make_fresh_parser() -> OpenCodeV2EventParser:
-    """A fresh V2 SSE parser with the main session pre-set."""
-    parser = OpenCodeV2EventParser()
-    parser.add_main_session(_MAIN_PROVIDER_SID)
-    return parser
+    """A fresh parser (its call-name/part-type state is per instance)."""
+    return OpenCodeV2EventParser()
 
 
 def _build_agent(
     tmp_path: Path,
-    adapter: StreamingProviderBackend,
+    transport: ScriptedTransport,
     *,
     sink: ExternalChildSessionDiscoverySink,
     registry: InMemorySessionRegistry,
@@ -271,9 +266,8 @@ def _build_agent(
     emitter_factory: TurnEventSinkFactory,
 ) -> ExternalAgent:
     return ExternalAgent(
-        backend_provider=PoolScopedBackendProvider(adapter),
+        backend_provider=PoolScopedBackendProvider(transport),
         session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
-        parser=_make_fresh_parser(),  # unused by agent turn flow; required by ctor
         provider_kind=ProviderKind.OPENCODE,
         spec=_make_spec(tmp_path),
         base_env={"PATH": "/usr/bin"},
@@ -313,13 +307,7 @@ class _TreeNode:
 
 
 def _build_tree(sessions: list[dict[str, Any]]) -> list[_TreeNode]:
-    """Replicate WebUI ``buildTree()`` logic in Python for testing.
-
-    Groups a flat list of conversation dicts (each with ``session_id`` and
-    ``parent_session_id``) into a parent→children tree, sorting siblings by
-    ``updated_at`` descending — matching ``examples/bot_project/webui/src/lib/
-    sessionTree.ts``.
-    """
+    """Replicate WebUI ``buildTree()`` logic in Python for testing."""
     children_map: dict[str, list[dict[str, Any]]] = {}
     roots: list[dict[str, Any]] = []
     for s in sessions:
@@ -351,7 +339,7 @@ def _build_tree(sessions: list[dict[str, Any]]) -> list[_TreeNode]:
 
 
 class TestEndToEndChildCapture:
-    """Full pipeline: SSE JSON → parser → Emission → routing → registration."""
+    """Full pipeline: SSE JSON → parser → TurnEvents → routing → registration."""
 
     async def test_main_and_child_events_routed_and_registered(self, tmp_path: Path) -> None:
         session_store = LocalFileSessionStore(tmp_path / "sessions")
@@ -359,20 +347,18 @@ class TestEndToEndChildCapture:
         sink = _build_real_sink(tmp_path, registry)
         child_emitters: dict[str, _RecordingChildEmitter] = {}
 
-        steps = [
-            ScriptedStep(text=_sse_text_delta(_MAIN_PROVIDER_SID, "Starting task...")),
-            ScriptedStep(text=_sse_text_delta(_CHILD_PROVIDER_SID_1, "Working on subtask...")),
-            ScriptedStep(text=_sse_tool_called(_CHILD_PROVIDER_SID_1, "call-child-1", "bash")),
-            ScriptedStep(
-                text=_sse_tool_success(_CHILD_PROVIDER_SID_1, "call-child-1", "file1\nfile2")
-            ),
-            ScriptedStep(text=_sse_text_delta(_MAIN_PROVIDER_SID, "Task complete.")),
-        ]
-        parser = _make_fresh_parser()
-        adapter = _make_adapter(steps, parser)
+        steps = _sse_to_steps(
+            _make_fresh_parser(),
+            _sse_text_delta(_MAIN_PROVIDER_SID, "Starting task..."),
+            _sse_text_delta(_CHILD_PROVIDER_SID_1, "Working on subtask..."),
+            _sse_tool_called(_CHILD_PROVIDER_SID_1, "call-child-1", "bash"),
+            _sse_tool_success(_CHILD_PROVIDER_SID_1, "call-child-1", "file1\nfile2"),
+            _sse_text_delta(_MAIN_PROVIDER_SID, "Task complete."),
+        )
+        transport = _make_transport(steps)
         agent = _build_agent(
             tmp_path,
-            adapter,
+            transport,
             sink=sink,
             registry=registry,
             session_store=session_store,
@@ -402,7 +388,9 @@ class TestEndToEndChildCapture:
         assert len(child_texts) == 1
         assert child_texts[0].text == "Working on subtask..."
         child_tool_calls = [e for e in child.turn_events if isinstance(e, TurnToolCallEvent)]
-        child_tool_results = [e for e in child.turn_events if isinstance(e, TurnToolResultEvent)]
+        child_tool_results = [
+            e for e in child.turn_events if isinstance(e, TurnToolResultEvent)
+        ]
         assert len(child_tool_calls) == 1
         assert child_tool_calls[0].call_id == "call-child-1"
         assert child_tool_calls[0].tool_name == "bash"
@@ -453,16 +441,15 @@ class TestCrossTurnResume:
         sink = _build_real_sink(tmp_path, registry)
         child_emitters: dict[str, _RecordingChildEmitter] = {}
 
-        # Turn 1: child text emission.
-        steps_1 = [
-            ScriptedStep(text=_sse_text_delta(_MAIN_PROVIDER_SID, "main turn 1")),
-            ScriptedStep(text=_sse_text_delta(_CHILD_PROVIDER_SID_1, "child turn 1")),
-        ]
-        parser_1 = _make_fresh_parser()
-        adapter_1 = _make_adapter(steps_1, parser_1)
+        # Turn 1: child text event.
+        steps_1 = _sse_to_steps(
+            _make_fresh_parser(),
+            _sse_text_delta(_MAIN_PROVIDER_SID, "main turn 1"),
+            _sse_text_delta(_CHILD_PROVIDER_SID_1, "child turn 1"),
+        )
         agent = _build_agent(
             tmp_path,
-            adapter_1,
+            _make_transport(steps_1),
             sink=sink,
             registry=registry,
             session_store=session_store,
@@ -479,15 +466,14 @@ class TestCrossTurnResume:
         assert len(children_after_1) == 1
         assert children_after_1[0].session_id == child_modex_sid
 
-        # Turn 2: same provider_child_sid, fresh parser (avoids seen_tool_calls
+        # Turn 2: same provider_child_sid, fresh parser (avoids call-name
         # state leaking). Swap the backend provider on the agent.
-        steps_2 = [
-            ScriptedStep(text=_sse_text_delta(_MAIN_PROVIDER_SID, "main turn 2")),
-            ScriptedStep(text=_sse_text_delta(_CHILD_PROVIDER_SID_1, "child turn 2")),
-        ]
-        parser_2 = _make_fresh_parser()
-        adapter_2 = _make_adapter(steps_2, parser_2)
-        agent._backend_provider = PoolScopedBackendProvider(adapter_2)
+        steps_2 = _sse_to_steps(
+            _make_fresh_parser(),
+            _sse_text_delta(_MAIN_PROVIDER_SID, "main turn 2"),
+            _sse_text_delta(_CHILD_PROVIDER_SID_1, "child turn 2"),
+        )
+        agent._backend_provider = PoolScopedBackendProvider(_make_transport(steps_2))
         await agent.run(_make_ctx(), _RecordingEmitter())
 
         # Deterministic modex_sid: same key both turns.
@@ -518,26 +504,26 @@ class TestConcurrentChildren:
         sink = _build_real_sink(tmp_path, registry)
         child_emitters: dict[str, _RecordingChildEmitter] = {}
 
-        steps = [
-            ScriptedStep(text=_sse_text_delta(_MAIN_PROVIDER_SID, "dispatching two subtasks")),
+        steps = _sse_to_steps(
+            _make_fresh_parser(),
+            _sse_text_delta(_MAIN_PROVIDER_SID, "dispatching two subtasks"),
             # Child 1 text
-            ScriptedStep(text=_sse_text_delta(_CHILD_PROVIDER_SID_1, "child 1 working")),
+            _sse_text_delta(_CHILD_PROVIDER_SID_1, "child 1 working"),
             # Child 2 text (interleaved before child 1 finishes)
-            ScriptedStep(text=_sse_text_delta(_CHILD_PROVIDER_SID_2, "child 2 working")),
+            _sse_text_delta(_CHILD_PROVIDER_SID_2, "child 2 working"),
             # Child 1 tool
-            ScriptedStep(text=_sse_tool_called(_CHILD_PROVIDER_SID_1, "call-c1", "grep")),
-            ScriptedStep(text=_sse_tool_success(_CHILD_PROVIDER_SID_1, "call-c1", "match found")),
+            _sse_tool_called(_CHILD_PROVIDER_SID_1, "call-c1", "grep"),
+            _sse_tool_success(_CHILD_PROVIDER_SID_1, "call-c1", "match found"),
             # Child 2 tool
-            ScriptedStep(text=_sse_tool_called(_CHILD_PROVIDER_SID_2, "call-c2", "bash")),
-            ScriptedStep(text=_sse_tool_success(_CHILD_PROVIDER_SID_2, "call-c2", "done")),
+            _sse_tool_called(_CHILD_PROVIDER_SID_2, "call-c2", "bash"),
+            _sse_tool_success(_CHILD_PROVIDER_SID_2, "call-c2", "done"),
             # Main session continuation
-            ScriptedStep(text=_sse_text_delta(_MAIN_PROVIDER_SID, "both subtasks done")),
-        ]
-        parser = _make_fresh_parser()
-        adapter = _make_adapter(steps, parser)
+            _sse_text_delta(_MAIN_PROVIDER_SID, "both subtasks done"),
+        )
+        transport = _make_transport(steps)
         agent = _build_agent(
             tmp_path,
-            adapter,
+            transport,
             sink=sink,
             registry=registry,
             session_store=session_store,

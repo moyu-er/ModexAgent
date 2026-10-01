@@ -1,15 +1,15 @@
-"""BackendProvider — per-turn backend borrowing seam (ADR-0027, T2).
+"""BackendProvider — per-turn transport borrowing seam (ADR-0027, T2).
 
 The :class:`BackendProvider` ABC decouples :class:`ExternalAgent` from
-owning a fixed :class:`StreamingProviderBackend`. The agent borrows a backend
+owning a fixed :class:`ExternalTransport`. The agent borrows a transport
 per turn via :meth:`BackendProvider.acquire` and returns it via
 :meth:`BackendProvider.release` whether the turn succeeded or failed. Pool
 shutdown converges on :meth:`BackendProvider.close_all`.
 
-:class:`PoolScopedBackendProvider` wraps a single pool-scoped backend,
+:class:`PoolScopedBackendProvider` wraps a single pool-scoped transport,
 reused across all turns. Both the main-agent and subagent external paths
 use it — the :class:`OpenCodeServerManager` singleton handles process
-lifecycle, and ``OpenCodeServerBackend.close()`` is a no-op.
+lifecycle, and ``OpenCodeTransport.close()`` is a no-op.
 """
 
 from __future__ import annotations
@@ -17,12 +17,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from modex_agent.core.agent import ProviderKind
 
-if TYPE_CHECKING:
-    from .agent import StreamingProviderBackend
+from .transports.abc import ExternalTransport
 
 __all__ = [
     "BackendProvider",
@@ -40,9 +38,9 @@ class TurnContext:
 
 
 class BackendProvider(ABC):
-    """Borrowing seam for :class:`StreamingProviderBackend` instances.
+    """Borrowing seam for :class:`ExternalTransport` instances.
 
-    The agent never owns a backend. Each turn opens with
+    The agent never owns a transport. Each turn opens with
     :meth:`acquire` and closes with :meth:`release` in a ``finally`` block.
     Pool shutdown converges on :meth:`close_all`.
     """
@@ -50,11 +48,11 @@ class BackendProvider(ABC):
     @abstractmethod
     async def acquire(
         self, modex_session_id: str, turn_context: TurnContext
-    ) -> StreamingProviderBackend:
+    ) -> ExternalTransport:
         raise NotImplementedError
 
     @abstractmethod
-    async def release(self, backend: StreamingProviderBackend, *, turn_failed: bool) -> None:
+    async def release(self, backend: ExternalTransport, *, turn_failed: bool) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -63,22 +61,22 @@ class BackendProvider(ABC):
 
 
 class PoolScopedBackendProvider(BackendProvider):
-    """Single pool-scoped backend, reused across all turns.
+    """Single pool-scoped transport, reused across all turns.
 
     Both main-agent and subagent external paths use this — the
     :class:`OpenCodeServerManager` singleton handles the shared process
-    lifecycle; ``OpenCodeServerBackend.close()`` is a no-op.
+    lifecycle; ``OpenCodeTransport.close()`` is a no-op.
     """
 
-    def __init__(self, backend: StreamingProviderBackend) -> None:
+    def __init__(self, backend: ExternalTransport) -> None:
         self._backend = backend
 
     async def acquire(
         self, modex_session_id: str, turn_context: TurnContext
-    ) -> StreamingProviderBackend:
+    ) -> ExternalTransport:
         return self._backend
 
-    async def release(self, backend: StreamingProviderBackend, *, turn_failed: bool) -> None:
+    async def release(self, backend: ExternalTransport, *, turn_failed: bool) -> None:
         return
 
     async def close_all(self) -> None:

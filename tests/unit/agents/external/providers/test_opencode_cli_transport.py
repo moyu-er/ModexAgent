@@ -1,21 +1,23 @@
-"""Unit tests for the V2 OpenCodeServerBackend (scripted event-driven model).
+"""Unit tests for the OpenCode CLI transport (scripted event-driven model).
 
-Rewritten per design 7.4 to use scripted SSE events fed through the real
-``OpenCodeSessionState`` registry + ``TurnCompletionWaiter`` — NOT mocked
-polling. The backend's ``execute_streaming`` creates a waiter internally;
-tests feed ``registry.on_event(...)`` to simulate the SSE event sequence
-and drive the waiter's ACTIVE/QUIESCING/COMPLETE state machine.
+Uses scripted SSE events fed through the real ``OpenCodeSessionState``
+registry + ``TurnCompletionWaiter`` — NOT mocked polling. The transport's
+``execute`` creates a waiter internally; tests feed ``registry.on_event(...)``
+to simulate the SSE event sequence and drive the waiter's
+ACTIVE/QUIESCING/COMPLETE state machine.
 
-Test cases (design 7.4):
+Test cases (design 7.4, carried over from the retired backend tests):
+
   4.1 — scripted: turn COMPLETED only after whole tree quiesced (NOT first idle)
-  4.2 — scripted: child session output routed via ``source_session_id``
+  4.2 — scripted: child session events routed via the child callback factory
   4.3 — scripted: reader reconnect_pending → fallback busy poll
   4.4 — turn end: ``unregister_waiter`` called; ``unregister_session`` NOT called
   4.5 — timeout → abort + TIMEOUT result
   4.6 — scripted: opencode process restart → root 404 → ERROR result
   4.7 — scripted: reader disconnect → reconnect → rebuild → COMPLETED
 
-Plus adapted carry-over tests: resume, stale session, text fallback, close no-op.
+Plus adapted carry-over tests: resume, stale session, text fallback, close
+no-op.
 """
 
 from __future__ import annotations
@@ -28,10 +30,6 @@ import pytest
 
 pytest.importorskip("aiohttp", reason="aiohttp not installed")
 
-from modex_agent.agents.external import Emission, ExternalEvent
-from modex_agent.agents.external.providers.opencode.server_backend import (
-    OpenCodeServerBackend,
-)
 from modex_agent.agents.external.providers.opencode.server_manager import (
     OpenCodeServerManager,
 )
@@ -40,7 +38,12 @@ from modex_agent.agents.external.providers.opencode.session_state import (
     SessionActivity,
 )
 from modex_agent.agents.external.providers.opencode.v2_client import OpencodeV2Error
+from modex_agent.agents.external.transports import (
+    OpenCodeTransport,
+    StaleSessionError,
+)
 from modex_agent.agents.external.types import BackendStatus, ExecOptions
+from modex_agent.core.turn_events import TurnEvent, TurnTextEvent
 
 _WORKDIR = str(Path("/tmp/test"))
 
@@ -50,18 +53,18 @@ _WORKDIR = str(Path("/tmp/test"))
 # ---------------------------------------------------------------------------
 
 
-def _make_backend_with_mocks(
+def _make_transport_with_mocks(
     monkeypatch: pytest.MonkeyPatch,
     quiesce_s: float = 0.05,
-) -> tuple[OpenCodeServerBackend, AsyncMock, AsyncMock, OpenCodeSessionState]:
-    """Build a backend with a mock ServerHandle carrying a real registry.
+) -> tuple[OpenCodeTransport, AsyncMock, AsyncMock, OpenCodeSessionState]:
+    """Build a transport with a mock ServerHandle carrying a real registry.
 
     Bypasses ``_ensure_server`` (server lifecycle is owned by
-    ``OpenCodeServerManager``). The mock handle carries mock client/parser/
-    SSE reader and a REAL ``OpenCodeSessionState`` registry so tests can
-    feed scripted events through ``registry.on_event(...)``.
+    ``OpenCodeServerManager``). The mock handle carries mock client/SSE
+    reader and a REAL ``OpenCodeSessionState`` registry so tests can feed
+    scripted events through ``registry.on_event(...)``.
     """
-    backend = OpenCodeServerBackend(quiesce_s=quiesce_s)
+    transport = OpenCodeTransport(quiesce_s=quiesce_s)
 
     mock_client = AsyncMock()
     mock_parser = Mock()
@@ -83,11 +86,11 @@ def _make_backend_with_mocks(
         manager=Mock(),
         workdir=_WORKDIR,
     )
-    backend._handle = handle
+    transport._handle = handle
 
-    monkeypatch.setattr(backend, "_ensure_server", AsyncMock(return_value=None))
+    monkeypatch.setattr(transport, "_ensure_server", AsyncMock(return_value=None))
 
-    return backend, mock_client, mock_reader, registry
+    return transport, mock_client, mock_reader, registry
 
 
 def _make_opts(
@@ -110,8 +113,15 @@ def _default_client_mocks(mock_client: AsyncMock) -> None:
     mock_client.abort_session_v1 = AsyncMock()
 
 
+def _collect(sink: list[TurnEvent]):
+    async def _cb(event: TurnEvent) -> None:
+        sink.append(event)
+
+    return _cb
+
+
 async def _wait_for_turn_start(task: asyncio.Task[object], delay: float = 0.02) -> None:
-    """Let ``execute_streaming`` reach ``waiter.wait_complete()``."""
+    """Let ``execute`` reach ``waiter.wait_complete()``."""
     await asyncio.sleep(delay)
 
 
@@ -127,18 +137,15 @@ class TestScriptedCompleteLoop:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        backend, mock_client, mock_reader, registry = _make_backend_with_mocks(monkeypatch)
+        transport, mock_client, mock_reader, registry = _make_transport_with_mocks(monkeypatch)
 
         mock_client.create_session_v1 = AsyncMock(return_value="ses_1")
         mock_client.prompt_async_v1 = AsyncMock()
         _default_client_mocks(mock_client)
 
-        emissions: list[Emission] = []
+        events: list[TurnEvent] = []
 
-        async def on_emission(e: Emission) -> None:
-            emissions.append(e)
-
-        task = asyncio.create_task(backend.execute_streaming(_make_opts(), {}, on_emission))
+        task = asyncio.create_task(transport.execute(_make_opts(), {}, _collect(events)))
         await _wait_for_turn_start(task)
 
         # Feed root busy → root idle
@@ -158,33 +165,37 @@ class TestScriptedCompleteLoop:
 
 
 # ---------------------------------------------------------------------------
-# 4.2 — scripted: child session output routed via source_session_id
+# 4.2 — scripted: child session events routed via the child factory
 # ---------------------------------------------------------------------------
 
 
 class TestScriptedChildRouting:
-    """4.2 — child session output routed to on_emission via source_session_id."""
+    """4.2 — child session events routed to the child callback factory."""
 
-    async def test_child_emission_routed(
+    async def test_child_event_routed(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        backend, mock_client, mock_reader, registry = _make_backend_with_mocks(monkeypatch)
+        transport, mock_client, mock_reader, registry = _make_transport_with_mocks(monkeypatch)
 
         mock_client.create_session_v1 = AsyncMock(return_value="ses_root")
         mock_client.prompt_async_v1 = AsyncMock()
         _default_client_mocks(mock_client)
 
-        emissions: list[Emission] = []
+        main_events: list[TurnEvent] = []
+        child_events: list[TurnEvent] = []
 
-        async def on_emission(e: Emission) -> None:
-            emissions.append(e)
+        def child_factory(provider_sid: str):
+            return _collect(child_events)
 
-        task = asyncio.create_task(backend.execute_streaming(_make_opts(), {}, on_emission))
+        task = asyncio.create_task(
+            transport.execute(_make_opts(), {}, _collect(main_events), child_factory)
+        )
         await _wait_for_turn_start(task)
 
-        # Get the emission callback registered by execute_streaming
+        # Get the emission callback registered by execute
         captured_cb = mock_reader.register_session.call_args[0][1]
+        captured_factory = mock_reader.register_session.call_args[0][2]
 
         # Feed: root busy → child created → child text → child idle → root idle
         registry.on_event("ses_root", "session.status", activity=SessionActivity.BUSY)
@@ -192,14 +203,10 @@ class TestScriptedChildRouting:
         registry.on_event("ses_child", "session.created", parent_sid="ses_root")
         await asyncio.sleep(0)
 
-        # Emit child text via the captured callback (simulates SSE delivery)
-        await captured_cb(
-            Emission(
-                event=ExternalEvent.TEXT_DELTA,
-                text="child output",
-                source_session_id="ses_child",
-            )
-        )
+        # Emit child text via the factory-obtained callback (simulates the
+        # reader's per-session demux delivering a child event)
+        await captured_factory("ses_child")(TurnTextEvent(text="child output"))
+        await captured_cb(TurnTextEvent(text="root output"))
 
         registry.on_event("ses_child", "session.status", activity=SessionActivity.IDLE)
         await asyncio.sleep(0)
@@ -208,9 +215,8 @@ class TestScriptedChildRouting:
         result = await asyncio.wait_for(task, timeout=1.0)
         assert result.status is BackendStatus.COMPLETED
 
-        child_emissions = [e for e in emissions if e.source_session_id == "ses_child"]
-        assert len(child_emissions) == 1
-        assert child_emissions[0].text == "child output"
+        assert child_events == [TurnTextEvent(text="child output")]
+        assert main_events == [TurnTextEvent(text="root output")]
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +231,7 @@ class TestScriptedReconnectFallback:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        backend, mock_client, mock_reader, registry = _make_backend_with_mocks(monkeypatch)
+        transport, mock_client, mock_reader, registry = _make_transport_with_mocks(monkeypatch)
 
         mock_client.create_session_v1 = AsyncMock(return_value="ses_recon")
         mock_client.prompt_async_v1 = AsyncMock()
@@ -243,10 +249,7 @@ class TestScriptedReconnectFallback:
         # Mark reconnect pending BEFORE starting the turn
         registry.mark_reconnect_pending()
 
-        async def on_emission(e: Emission) -> None:
-            pass
-
-        task = asyncio.create_task(backend.execute_streaming(_make_opts(), {}, on_emission))
+        task = asyncio.create_task(transport.execute(_make_opts(), {}, _collect([])))
 
         # Wait for _wait_busy_fallback + rebuild_subtree to complete
         await asyncio.sleep(0.05)
@@ -278,16 +281,13 @@ class TestTurnEndCleanup:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        backend, mock_client, mock_reader, registry = _make_backend_with_mocks(monkeypatch)
+        transport, mock_client, mock_reader, registry = _make_transport_with_mocks(monkeypatch)
 
         mock_client.create_session_v1 = AsyncMock(return_value="ses_clean")
         mock_client.prompt_async_v1 = AsyncMock()
         _default_client_mocks(mock_client)
 
-        async def on_emission(e: Emission) -> None:
-            pass
-
-        task = asyncio.create_task(backend.execute_streaming(_make_opts(), {}, on_emission))
+        task = asyncio.create_task(transport.execute(_make_opts(), {}, _collect([])))
         await _wait_for_turn_start(task)
 
         registry.on_event("ses_clean", "session.status", activity=SessionActivity.BUSY)
@@ -317,19 +317,14 @@ class TestTimeoutAborts:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        backend, mock_client, mock_reader, registry = _make_backend_with_mocks(monkeypatch)
+        transport, mock_client, mock_reader, registry = _make_transport_with_mocks(monkeypatch)
 
         mock_client.create_session_v1 = AsyncMock(return_value="ses_timeout")
         mock_client.prompt_async_v1 = AsyncMock()
         _default_client_mocks(mock_client)
 
-        async def on_emission(e: Emission) -> None:
-            pass
-
         # Very short timeout — no events fed, waiter never completes
-        result = await backend.execute_streaming(
-            _make_opts(timeout=0.05), {}, on_emission
-        )
+        result = await transport.execute(_make_opts(timeout=0.05), {}, _collect([]))
 
         assert result.status is BackendStatus.TIMEOUT
         assert result.session_id == "ses_timeout"
@@ -348,7 +343,7 @@ class TestScriptedRootMissing:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        backend, mock_client, mock_reader, registry = _make_backend_with_mocks(monkeypatch)
+        transport, mock_client, mock_reader, registry = _make_transport_with_mocks(monkeypatch)
 
         mock_client.create_session_v1 = AsyncMock(return_value="ses_dead")
         mock_client.prompt_async_v1 = AsyncMock()
@@ -369,11 +364,8 @@ class TestScriptedRootMissing:
         # Mark reconnect pending to trigger _wait_busy_fallback + rebuild_subtree
         registry.mark_reconnect_pending()
 
-        async def on_emission(e: Emission) -> None:
-            pass
-
         result = await asyncio.wait_for(
-            backend.execute_streaming(_make_opts(), {}, on_emission),
+            transport.execute(_make_opts(), {}, _collect([])),
             timeout=2.0,
         )
 
@@ -394,7 +386,7 @@ class TestScriptedDisconnectRecovery:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        backend, mock_client, mock_reader, registry = _make_backend_with_mocks(monkeypatch)
+        transport, mock_client, mock_reader, registry = _make_transport_with_mocks(monkeypatch)
 
         mock_client.create_session_v1 = AsyncMock(return_value="ses_disc")
         mock_client.prompt_async_v1 = AsyncMock()
@@ -407,10 +399,7 @@ class TestScriptedDisconnectRecovery:
         # Mark reconnect pending (simulates reader disconnect)
         registry.mark_reconnect_pending()
 
-        async def on_emission(e: Emission) -> None:
-            pass
-
-        task = asyncio.create_task(backend.execute_streaming(_make_opts(), {}, on_emission))
+        task = asyncio.create_task(transport.execute(_make_opts(), {}, _collect([])))
 
         # Wait for _wait_busy_fallback + rebuild_subtree to complete
         await asyncio.sleep(0.05)
@@ -426,29 +415,26 @@ class TestScriptedDisconnectRecovery:
 
 
 # ---------------------------------------------------------------------------
-# Resume (adapted from old tests — scripted events, not mock polling)
+# Resume
 # ---------------------------------------------------------------------------
 
 
-class TestExecuteStreamingResume:
+class TestExecuteResume:
     """Turn 2+: resume_session_id skips create_session_v1."""
 
     async def test_resume_skips_create_session(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        backend, mock_client, mock_reader, registry = _make_backend_with_mocks(monkeypatch)
+        transport, mock_client, mock_reader, registry = _make_transport_with_mocks(monkeypatch)
 
         mock_client.create_session_v1 = AsyncMock(return_value="should-not-be-called")
         mock_client.prompt_async_v1 = AsyncMock()
         _default_client_mocks(mock_client)
 
-        async def on_emission(e: Emission) -> None:
-            pass
-
         task = asyncio.create_task(
-            backend.execute_streaming(
-                _make_opts(resume_session_id="ses_existing"), {}, on_emission
+            transport.execute(
+                _make_opts(resume_session_id="ses_existing"), {}, _collect([])
             )
         )
         await _wait_for_turn_start(task)
@@ -468,18 +454,15 @@ class TestExecuteStreamingResume:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        backend, mock_client, mock_reader, registry = _make_backend_with_mocks(monkeypatch)
+        transport, mock_client, mock_reader, registry = _make_transport_with_mocks(monkeypatch)
 
         mock_client.create_session_v1 = AsyncMock()
         mock_client.prompt_async_v1 = AsyncMock()
         _default_client_mocks(mock_client)
 
-        async def on_emission(e: Emission) -> None:
-            pass
-
         task = asyncio.create_task(
-            backend.execute_streaming(
-                _make_opts(resume_session_id="ses_resume_42"), {}, on_emission
+            transport.execute(
+                _make_opts(resume_session_id="ses_resume_42"), {}, _collect([])
             )
         )
         await _wait_for_turn_start(task)
@@ -497,18 +480,16 @@ class TestExecuteStreamingResume:
 
 
 # ---------------------------------------------------------------------------
-# Stale session (adapted — unregister_session NOT called)
+# Stale session
 # ---------------------------------------------------------------------------
 
 
-class TestExecuteStreamingStaleSession:
+class TestExecuteStaleSession:
     async def test_stale_session_raises_when_prompt_returns_404(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from modex_agent.agents.external.agent import StaleSessionError
-
-        backend, mock_client, mock_reader, registry = _make_backend_with_mocks(monkeypatch)
+        transport, mock_client, mock_reader, registry = _make_transport_with_mocks(monkeypatch)
 
         mock_client.create_session_v1 = AsyncMock(return_value="ses_stale")
         error = OpencodeV2Error(
@@ -519,12 +500,9 @@ class TestExecuteStreamingStaleSession:
         )
         mock_client.prompt_async_v1 = AsyncMock(side_effect=error)
 
-        async def on_emission(e: Emission) -> None:
-            pass
-
         with pytest.raises(StaleSessionError):
-            await backend.execute_streaming(
-                _make_opts(resume_session_id="ses_stale"), {}, on_emission
+            await transport.execute(
+                _make_opts(resume_session_id="ses_stale"), {}, _collect([])
             )
 
         # unregister_session NOT called (design 5.6)
@@ -532,7 +510,7 @@ class TestExecuteStreamingStaleSession:
 
 
 # ---------------------------------------------------------------------------
-# Text fallback (adapted — scripted events)
+# Text fallback
 # ---------------------------------------------------------------------------
 
 
@@ -541,7 +519,7 @@ class TestTextFallback:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        backend, mock_client, mock_reader, registry = _make_backend_with_mocks(monkeypatch)
+        transport, mock_client, mock_reader, registry = _make_transport_with_mocks(monkeypatch)
 
         mock_client.create_session_v1 = AsyncMock(return_value="ses_fb")
         mock_client.prompt_async_v1 = AsyncMock()
@@ -555,12 +533,9 @@ class TestTextFallback:
         ]
         mock_client.get_messages_v1 = AsyncMock(return_value=v1_messages)
 
-        emissions: list[Emission] = []
+        events: list[TurnEvent] = []
 
-        async def on_emission(e: Emission) -> None:
-            emissions.append(e)
-
-        task = asyncio.create_task(backend.execute_streaming(_make_opts(), {}, on_emission))
+        task = asyncio.create_task(transport.execute(_make_opts(), {}, _collect(events)))
         await _wait_for_turn_start(task)
 
         # Feed root busy → root idle (no text emitted via SSE)
@@ -571,69 +546,66 @@ class TestTextFallback:
         result = await asyncio.wait_for(task, timeout=1.0)
         assert result.status is BackendStatus.COMPLETED
 
-        text_emissions = [e for e in emissions if e.event is ExternalEvent.TEXT_DELTA]
-        assert len(text_emissions) == 1
-        assert text_emissions[0].text == "fallback text"
+        text_events = [e for e in events if isinstance(e, TurnTextEvent)]
+        assert len(text_events) == 1
+        assert text_events[0].text == "fallback text"
 
 
 # ---------------------------------------------------------------------------
-# Close is no-op (unchanged)
+# Close is no-op
 # ---------------------------------------------------------------------------
 
 
 class TestCloseIsNoOp:
     async def test_close_does_not_release_handle(self) -> None:
-        backend = OpenCodeServerBackend()
-        backend._handle = Mock()
-        await backend.close()
+        transport = OpenCodeTransport()
+        transport._handle = Mock()
+        await transport.close()
 
 
 # ---------------------------------------------------------------------------
-# 7.5 — Integration: full loop end-to-end (scripted backend)
+# Integration: full loop end-to-end (scripted)
 # ---------------------------------------------------------------------------
 
 
 class TestIntegrationFullLoopEndToEnd:
-    """7.5 — full loop: root → subagent → inject → root resumes → COMPLETE.
+    """Full loop: root → subagent → inject → root resumes → COMPLETE.
 
     Verifies the core scenario from design 7.5: "完整循环端到端:输出全流入
-    emitter、回合整树静默后结束。" All three TEXT_DELTA emissions (root initial,
-    child, root final) must reach the on_emission callback, and the turn must
+    emitter、回合整树静默后结束。" All three text events (root initial,
+    child, root final) must reach their delivery targets, and the turn must
     NOT complete at the first root idle (step 4) — only after the final root
     idle + quiesce window.
     """
 
-    async def test_full_loop_all_emissions_and_late_completion(
+    async def test_full_loop_all_events_and_late_completion(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        backend, mock_client, mock_reader, registry = _make_backend_with_mocks(monkeypatch)
+        transport, mock_client, mock_reader, registry = _make_transport_with_mocks(monkeypatch)
 
         mock_client.create_session_v1 = AsyncMock(return_value="ses_root")
         mock_client.prompt_async_v1 = AsyncMock()
         _default_client_mocks(mock_client)
 
-        emissions: list[Emission] = []
+        main_events: list[TurnEvent] = []
+        child_events: list[TurnEvent] = []
 
-        async def on_emission(e: Emission) -> None:
-            emissions.append(e)
+        def child_factory(provider_sid: str):
+            return _collect(child_events)
 
-        task = asyncio.create_task(backend.execute_streaming(_make_opts(), {}, on_emission))
+        task = asyncio.create_task(
+            transport.execute(_make_opts(), {}, _collect(main_events), child_factory)
+        )
         await _wait_for_turn_start(task)
 
-        # Get the emission callback registered by execute_streaming
         captured_cb = mock_reader.register_session.call_args[0][1]
+        captured_factory = mock_reader.register_session.call_args[0][2]
 
         # --- Steps 1-2: root busy + root text "working on it..." ---
         registry.on_event("ses_root", "session.status", activity=SessionActivity.BUSY)
         await asyncio.sleep(0)
-        await captured_cb(
-            Emission(
-                event=ExternalEvent.TEXT_DELTA,
-                text="working on it...",
-                source_session_id="ses_root",
-            )
-        )
+        await captured_cb(TurnTextEvent(text="working on it..."))
 
         # --- Step 3: child created (background subagent) ---
         registry.on_event("ses_child", "session.created", parent_sid="ses_root")
@@ -648,13 +620,7 @@ class TestIntegrationFullLoopEndToEnd:
         await asyncio.sleep(0)
 
         # --- Step 6: child text "child output" ---
-        await captured_cb(
-            Emission(
-                event=ExternalEvent.TEXT_DELTA,
-                text="child output",
-                source_session_id="ses_child",
-            )
-        )
+        await captured_factory("ses_child")(TurnTextEvent(text="child output"))
 
         # --- Step 7: child idle (child done) ---
         registry.on_event("ses_child", "session.status", activity=SessionActivity.IDLE)
@@ -670,13 +636,7 @@ class TestIntegrationFullLoopEndToEnd:
         await asyncio.sleep(0)
 
         # --- Step 10: root text "final output" ---
-        await captured_cb(
-            Emission(
-                event=ExternalEvent.TEXT_DELTA,
-                text="final output",
-                source_session_id="ses_root",
-            )
-        )
+        await captured_cb(TurnTextEvent(text="final output"))
 
         # --- Step 11: root idle ---
         registry.on_event("ses_root", "session.status", activity=SessionActivity.IDLE)
@@ -686,32 +646,30 @@ class TestIntegrationFullLoopEndToEnd:
         assert result.status is BackendStatus.COMPLETED
         assert result.session_id == "ses_root"
 
-        # All 3 TEXT_DELTA emissions received
-        text_emissions = [e for e in emissions if e.event is ExternalEvent.TEXT_DELTA]
-        assert len(text_emissions) == 3
-        assert text_emissions[0].text == "working on it..."
-        assert text_emissions[1].text == "child output"
-        assert text_emissions[1].source_session_id == "ses_child"
-        assert text_emissions[2].text == "final output"
+        # All text events received on the right targets
+        assert [e.text for e in main_events if isinstance(e, TurnTextEvent)] == [
+            "working on it...",
+            "final output",
+        ]
+        assert [e.text for e in child_events if isinstance(e, TurnTextEvent)] == [
+            "child output"
+        ]
 
 
 # ---------------------------------------------------------------------------
-# 7.5 — Integration: cross-turn wakeup
+# Integration: cross-turn wakeup + no state leak
 # ---------------------------------------------------------------------------
 
 
-class TestIntegrationCrossTurnWakeup:
-    """7.5 — cross-turn wakeup: T1 completes → T2 on same sid → T2 streams.
-
-    Verifies: "回合间唤醒:T1 完成 → 触发新 turn(prompt 到同 sid)→ T2 输出正确
-    流式;断言 T1/T2 间 registry 无残留 waiter、无泄漏计时器。"
-    """
+class TestIntegrationCrossTurnAndNoStateLeak:
+    """Cross-turn wakeup (T1 completes → T2 on same sid) and no residual
+    state between turns (waiter discarded, registry node preserved)."""
 
     async def test_cross_turn_wakeup_no_residual_state(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        backend, mock_client, mock_reader, registry = _make_backend_with_mocks(monkeypatch)
+        transport, mock_client, mock_reader, registry = _make_transport_with_mocks(monkeypatch)
 
         mock_client.create_session_v1 = AsyncMock(return_value="ses_root")
         mock_client.prompt_async_v1 = AsyncMock()
@@ -721,13 +679,8 @@ class TestIntegrationCrossTurnWakeup:
         baseline_tasks = asyncio.all_tasks()
 
         # ===== T1: root busy → root idle → quiesce → COMPLETE =====
-        emissions_t1: list[Emission] = []
-
-        async def on_emission_t1(e: Emission) -> None:
-            emissions_t1.append(e)
-
         task_t1 = asyncio.create_task(
-            backend.execute_streaming(_make_opts(prompt="T1"), {}, on_emission_t1)
+            transport.execute(_make_opts(prompt="T1"), {}, _collect([]))
         )
         await _wait_for_turn_start(task_t1)
 
@@ -740,30 +693,23 @@ class TestIntegrationCrossTurnWakeup:
         assert result_t1.session_id == "ses_root"
 
         # ===== Between T1 and T2: verify no residual state =====
-        # No residual waiters (waiter unregistered in finally)
         assert len(registry._waiters) == 0, "waiter not unregistered after T1"
 
-        # No leaked asyncio tasks from T1's waiter (quiesce timer cancelled
-        # in wait_complete's finally block). T1's task is done and excluded.
+        # No leaked asyncio tasks from T1's waiter.
         after_t1_tasks = asyncio.all_tasks()
         leaked = after_t1_tasks - baseline_tasks
         assert not leaked, f"Leaked tasks after T1: {leaked}"
 
-        # Root session node preserved for cross-turn reuse (design 5.6:
-        # "finally 不再 unregister_session" — registry keeps the node)
+        # Root session node preserved for cross-turn reuse (design 5.6).
         assert "ses_root" in registry._nodes, "root node removed after T1"
 
         # ===== T2: same sid, new prompt → root busy → text → idle → COMPLETE =====
-        emissions_t2: list[Emission] = []
-
-        async def on_emission_t2(e: Emission) -> None:
-            emissions_t2.append(e)
-
+        events_t2: list[TurnEvent] = []
         task_t2 = asyncio.create_task(
-            backend.execute_streaming(
+            transport.execute(
                 _make_opts(prompt="T2", resume_session_id="ses_root"),
                 {},
-                on_emission_t2,
+                _collect(events_t2),
             )
         )
         await _wait_for_turn_start(task_t2)
@@ -771,33 +717,23 @@ class TestIntegrationCrossTurnWakeup:
         # T2 reused the session — create_session_v1 not called again
         assert mock_client.create_session_v1.await_count == 1
 
-        # Capture T2's emission callback (register_session called again)
+        # Capture T2's callback (register_session called again)
         captured_cb_t2 = mock_reader.register_session.call_args[0][1]
 
         # Feed T2 events: root busy → root text → root idle
         registry.on_event("ses_root", "session.status", activity=SessionActivity.BUSY)
         await asyncio.sleep(0)
-        await captured_cb_t2(
-            Emission(
-                event=ExternalEvent.TEXT_DELTA,
-                text="T2 output",
-                source_session_id="ses_root",
-            )
-        )
+        await captured_cb_t2(TurnTextEvent(text="T2 output"))
         registry.on_event("ses_root", "session.status", activity=SessionActivity.IDLE)
 
         result_t2 = await asyncio.wait_for(task_t2, timeout=1.0)
         assert result_t2.status is BackendStatus.COMPLETED
         assert result_t2.session_id == "ses_root"
 
-        # T2 output is correct and separate from T1
-        text_t2 = [e for e in emissions_t2 if e.event is ExternalEvent.TEXT_DELTA]
+        # T2 output is correct
+        text_t2 = [e for e in events_t2 if isinstance(e, TurnTextEvent)]
         assert len(text_t2) == 1
         assert text_t2[0].text == "T2 output"
-
-        # T1 had no text emissions (none fed)
-        text_t1 = [e for e in emissions_t1 if e.event is ExternalEvent.TEXT_DELTA]
-        assert len(text_t1) == 0
 
         # prompt_async_v1 called once per turn
         assert mock_client.prompt_async_v1.await_count == 2
@@ -807,38 +743,19 @@ class TestIntegrationCrossTurnWakeup:
         assert mock_reader.register_session.call_args_list[0][0][0] == "ses_root"
         assert mock_reader.register_session.call_args_list[1][0][0] == "ses_root"
 
-
-# ---------------------------------------------------------------------------
-# 7.5 — Integration: no state leak between turns
-# ---------------------------------------------------------------------------
-
-
-class TestIntegrationNoStateLeakBetweenTurns:
-    """7.5 — no state leak: registry node preserved, waiter discarded, T2 works.
-
-    Verifies:
-    - After T1: registry node for root still exists (preserved for cross-turn
-      reuse per design 5.6: "finally 不再 unregister_session").
-    - But the waiter is unregistered.
-    - T2 can register a new waiter on the same root_sid and work correctly.
-    """
-
     async def test_registry_node_preserved_waiter_discarded_t2_succeeds(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        backend, mock_client, mock_reader, registry = _make_backend_with_mocks(monkeypatch)
+        transport, mock_client, mock_reader, registry = _make_transport_with_mocks(monkeypatch)
 
         mock_client.create_session_v1 = AsyncMock(return_value="ses_loop")
         mock_client.prompt_async_v1 = AsyncMock()
         _default_client_mocks(mock_client)
 
-        async def on_emission(e: Emission) -> None:
-            pass
-
         # ===== T1 =====
         task_t1 = asyncio.create_task(
-            backend.execute_streaming(_make_opts(prompt="first"), {}, on_emission)
+            transport.execute(_make_opts(prompt="first"), {}, _collect([]))
         )
         await _wait_for_turn_start(task_t1)
 
@@ -856,10 +773,10 @@ class TestIntegrationNoStateLeakBetweenTurns:
 
         # ===== T2: new waiter on same root_sid =====
         task_t2 = asyncio.create_task(
-            backend.execute_streaming(
+            transport.execute(
                 _make_opts(prompt="second", resume_session_id="ses_loop"),
                 {},
-                on_emission,
+                _collect([]),
             )
         )
         await _wait_for_turn_start(task_t2)

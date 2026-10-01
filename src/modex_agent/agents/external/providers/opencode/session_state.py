@@ -177,7 +177,7 @@ class OpenCodeSessionState:
         self._waiters.add(waiter)
 
     def unregister_waiter(self, waiter: TurnCompletionWaiter) -> None:
-        """Unregister a waiter. Called in ``execute_streaming`` finally block."""
+        """Unregister a waiter. Called in ``OpenCodeTransport.execute`` finally block."""
         self._waiters.discard(waiter)
 
     # ------------------------------------------------------------------

@@ -2,34 +2,33 @@
 
 The ``CachingBackendProvider`` and ``BackendFactory`` were deleted after
 the ``OpenCodeServerManager`` singleton refactor made them vestigial —
-``OpenCodeServerBackend.close()`` is a no-op, and the singleton manages
+``OpenCodeTransport.close()`` is a no-op, and the singleton manages
 process lifecycle. Both main-agent and subagent external paths now use
 :class:`PoolScopedBackendProvider`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 
-from modex_agent.agents.external.agent import StreamingProviderBackend
 from modex_agent.agents.external.backend_provider import (
     BackendProvider,
     PoolScopedBackendProvider,
     TurnContext,
 )
+from modex_agent.agents.external.transports import ExternalTransport, TurnEventCallback
 from modex_agent.agents.external.types import (
     BackendResult,
     BackendStatus,
-    Emission,
     ExecOptions,
 )
 from modex_agent.core.agent import ProviderKind
 
 
-class _CloseCountingBackend(StreamingProviderBackend):
+class _CloseCountingTransport(ExternalTransport):
     def __init__(self, *, label: str = "") -> None:
         self._label = label
         self.close_calls = 0
@@ -39,11 +38,12 @@ class _CloseCountingBackend(StreamingProviderBackend):
     def label(self) -> str:
         return self._label
 
-    async def execute_streaming(
+    async def execute(
         self,
         opts: ExecOptions,
-        env: dict[str, str],
-        on_emission: Callable[[Emission], Awaitable[None]],
+        env: Mapping[str, str],
+        on_event: TurnEventCallback,
+        on_child_event=None,
     ) -> BackendResult:
         return BackendResult(status=BackendStatus.COMPLETED)
 
@@ -59,7 +59,7 @@ def _ctx(workdir: Path | None = None) -> TurnContext:
 class TestPoolScopedBackendProviderIdentity:
     @pytest.mark.asyncio
     async def test_acquire_returns_same_backend_every_time(self, tmp_path: Path) -> None:
-        backend = _CloseCountingBackend()
+        backend = _CloseCountingTransport()
         provider = PoolScopedBackendProvider(backend)
         ctx = _ctx(tmp_path)
 
@@ -71,7 +71,7 @@ class TestPoolScopedBackendProviderIdentity:
 
     @pytest.mark.asyncio
     async def test_release_is_no_op_regardless_of_turn_failed(self) -> None:
-        backend = _CloseCountingBackend()
+        backend = _CloseCountingTransport()
         provider = PoolScopedBackendProvider(backend)
 
         await provider.release(backend, turn_failed=False)
@@ -81,7 +81,7 @@ class TestPoolScopedBackendProviderIdentity:
 
     @pytest.mark.asyncio
     async def test_close_all_calls_backend_close_exactly_once(self) -> None:
-        backend = _CloseCountingBackend()
+        backend = _CloseCountingTransport()
         provider = PoolScopedBackendProvider(backend)
 
         await provider.close_all()
@@ -92,25 +92,26 @@ class TestPoolScopedBackendProviderIdentity:
     async def test_close_all_propagates_close_failure(self) -> None:
         failure = RuntimeError("close failed")
 
-        class _CloseFailingBackend(StreamingProviderBackend):
-            async def execute_streaming(
+        class _CloseFailingTransport(ExternalTransport):
+            async def execute(
                 self,
                 opts: ExecOptions,
-                env: dict[str, str],
-                on_emission: Callable[[Emission], Awaitable[None]],
+                env: Mapping[str, str],
+                on_event: TurnEventCallback,
+                on_child_event=None,
             ) -> BackendResult:
                 return BackendResult(status=BackendStatus.COMPLETED)
 
             async def close(self) -> None:
                 raise failure
 
-        provider = PoolScopedBackendProvider(_CloseFailingBackend())
+        provider = PoolScopedBackendProvider(_CloseFailingTransport())
 
         with pytest.raises(RuntimeError, match="close failed"):
             await provider.close_all()
 
     @pytest.mark.asyncio
     async def test_is_a_backend_provider(self) -> None:
-        backend = _CloseCountingBackend()
+        backend = _CloseCountingTransport()
         provider = PoolScopedBackendProvider(backend)
         assert isinstance(provider, BackendProvider)

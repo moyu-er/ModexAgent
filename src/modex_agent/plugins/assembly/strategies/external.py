@@ -10,7 +10,7 @@ former ``ExternalAwareFactory`` (a ``DefaultAgentFactory`` subclass that
 stubbed the base class's react attributes and re-implemented
 ``create_agent``) is deleted: the strategy performs the
 provider-availability gate (``shutil.which``), builds its typed products
-(backend / parser / session map store / env spec), dispatches the declared
+(transport / session map store / env spec), dispatches the declared
 HOOK roster through the same ``dispatch_hooks`` the native path uses, and
 constructs the ``ExternalAgent`` + ``ExternalTurnRunner`` + pipeline
 directly through :func:`modex_agent.multi_agent.factory.assemble_external_pipeline`
@@ -31,20 +31,13 @@ import shutil
 from collections.abc import Sequence
 from pathlib import Path
 
-from modex_agent.agents.external.agent import StreamingProviderBackend
 from modex_agent.agents.external.backend_provider import PoolScopedBackendProvider
 from modex_agent.agents.external.builder import ExternalAgentBuilder
 from modex_agent.agents.external.child_discovery import (
     ExternalChildSessionDiscoverySink,
 )
 from modex_agent.agents.external.cli_resolver import resolve_modexctl_bin_dir
-from modex_agent.agents.external.contracts import ProviderEventParser
-from modex_agent.agents.external.providers.opencode.server_backend import (
-    OpenCodeServerBackend,
-)
-from modex_agent.agents.external.providers.opencode.v2_parser import (
-    OpenCodeV2EventParser,
-)
+from modex_agent.agents.external.transports import ExternalTransport, OpenCodeTransport
 from modex_agent.agents.external.types import (
     ExternalEnvSpec,
 )
@@ -245,7 +238,7 @@ class ExternalExecutionStrategy(ExecutionStrategyABC):
           enforces it): external main agents have no tool surface and
           cannot dispatch subagent tasks.
         * **``provider_kind`` required** — the CLI kind (``opencode``)
-          must be set so the strategy knows which backend + parser to build.
+          must be set so the strategy knows which transport to build.
 
         Raises :class:`ValueError` on violation. This runs at pool-assembly
         time as defense-in-depth on top of declaration validation.
@@ -256,7 +249,7 @@ class ExternalExecutionStrategy(ExecutionStrategyABC):
                 f"Pool {pool.name!r}: execution_strategy 'external' requires a provider_kind"
             )
 
-    # ── Provider-kind / backend / parser resolution ──────────────────────
+    # ── Provider-kind / transport resolution ─────────────────────────────
 
     def _read_provider_kind(self, pool_spec: PoolSpec) -> ProviderKind:
         """The declared root's provider kind (spec validation guarantees it
@@ -274,15 +267,11 @@ class ExternalExecutionStrategy(ExecutionStrategyABC):
     def _provider_executable_for(kind: ProviderKind) -> str:
         return kind.value
 
-    def _build_external_backend(self, kind: ProviderKind) -> StreamingProviderBackend:
+    def _build_external_backend(self, kind: ProviderKind) -> ExternalTransport:
+        """Build the provider's transport (the ``backend`` the provider seam wraps)."""
         if kind != ProviderKind.OPENCODE:
             raise ValueError(f"Unsupported provider_kind: {kind!r}")
-        return OpenCodeServerBackend()
-
-    def _build_external_parser(self, kind: ProviderKind) -> ProviderEventParser:
-        if kind != ProviderKind.OPENCODE:
-            raise ValueError(f"Unsupported provider_kind: {kind!r}")
-        return OpenCodeV2EventParser()
+        return OpenCodeTransport()
 
     # ── Assemble ─────────────────────────────────────────────────────────
 
@@ -328,8 +317,8 @@ class ExternalExecutionStrategy(ExecutionStrategyABC):
 
         Performs the provider-availability gate (``shutil.which`` →
         raises :class:`ProviderUnavailableError` when the CLI is missing),
-        builds the typed external products (backend / parser / session
-        map store / env spec — strategy-local, never a deps dict),
+        builds the typed external products (transport / session map
+        store / env spec — strategy-local, never a deps dict),
         dispatches the declared HOOK roster, and constructs the
         ``ExternalAgent`` + ``ExternalTurnRunner`` + pipeline through the
         shared :func:`assemble_external_pipeline` helper. The built main
@@ -358,7 +347,7 @@ class ExternalExecutionStrategy(ExecutionStrategyABC):
         if shutil.which(executable) is None:
             raise ProviderUnavailableError(executable)
 
-        # 2. Typed external products (backend/session_store/parser/env_spec).
+        # 2. Typed external products (transport/session_store/env_spec).
         #    ``inbox_dir`` mirrors the path ``create_pool``
         #    computes (``data_dir / "inbox" / pool_name``) — the
         #    external env spec resolves inbox-relative paths from
@@ -431,7 +420,6 @@ class ExternalExecutionStrategy(ExecutionStrategyABC):
                 self._build_external_backend(provider_kind)
             ),
             session_store=session_store,
-            parser=self._build_external_parser(provider_kind),
             provider_kind=provider_kind,
             spec=spec,
             base_env=dict(os.environ),
@@ -469,8 +457,8 @@ class ExternalExecutionStrategy(ExecutionStrategyABC):
         """Assemble an external subagent — absorbs the 7-step logic from the
         deleted ``BotSubagentExternalBuilder.build()`` (ADR-0027 convergence).
 
-        The 7 steps: (1) env_spec (2) session_store (3) parser (4) backend
-        (5) child_discovery (6) ExternalAgent (7) HookRunner carrying the
+        The 7 steps: (1) env_spec (2) session_store (3) transport
+        (4) child_discovery (5) ExternalAgent (6) HookRunner carrying the
         auto-send hook (the HOOK-slot factory, resolved explicitly —
         external subagents never run the native roster dispatch). Pipeline
         assembly (``assemble_pipeline``) runs here too — the caller
@@ -547,7 +535,6 @@ class ExternalExecutionStrategy(ExecutionStrategyABC):
         )
 
         provider_kind = ProviderKind(spec.provider_kind) if spec.provider_kind else ProviderKind.OPENCODE
-        parser = self._build_external_parser(provider_kind)
         backend_provider = PoolScopedBackendProvider(
             self._build_external_backend(provider_kind)
         )
@@ -564,7 +551,6 @@ class ExternalExecutionStrategy(ExecutionStrategyABC):
             provider=None,
             backend_provider=backend_provider,
             session_store=session_store,
-            parser=parser,
             provider_kind=provider_kind,
             spec=env_spec,
             base_env=dict(os.environ),

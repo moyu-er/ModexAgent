@@ -1,20 +1,22 @@
-"""External coding agent integration — public API for T1 (foundation types).
+"""External coding agent integration — public API.
 
 This sub-package admits industry-standard coding-agent CLIs
 (OpenCode, future Claude Code / Codex / Cursor) as NORMAL main agents of
-their own dedicated pools. T1 ships the pure-Pydantic type layer
-every subsequent ticket depends on; richer pieces (session store,
-provider backends, the `ExternalAgent` harness, ``modexbot``
-CLI) land in T2–T8.
+their own dedicated pools. The layout (W4 of the unified turn-event
+stream refactor):
 
-Per ADR-0022, the framework footprint outside this sub-package stays
-at two lines (factory branch) plus one comment (descriptor). All
-heavy lifting lives here.
+- ``transports/`` — the access-form seam. ``ExternalTransport.execute``
+  drives the external agent for one turn and delivers core ``TurnEvent``
+  records; ``OpenCodeTransport`` (CLI subprocess) is the real transport,
+  ``ScriptedTransport`` the deterministic test double.
+- ``normalizer.py`` — ``ExternalEventNormalizer`` owns every
+  cross-transport concern (child-session routing, ``seq`` stamping,
+  orphan tool-result policy, turn lifecycle synthesis).
 
-ADR-0027 (T2) introduces the :class:`BackendProvider` borrowing seam:
-:class:`ExternalAgent` borrows a backend per turn rather than
-holding a fixed instance. The main-agent path wraps its pre-built
-backend in :class:`PoolScopedBackendProvider`.
+ADR-0027 (T2) introduced the :class:`BackendProvider` borrowing seam:
+:class:`ExternalAgent` borrows a transport per turn rather than holding
+a fixed instance. The main-agent path wraps its pre-built transport in
+:class:`PoolScopedBackendProvider`.
 """
 
 from modex_agent.core.external_session import ExternalSessionMapStore
@@ -24,34 +26,59 @@ from .backend_provider import (
     PoolScopedBackendProvider,
     TurnContext,
 )
-from .contracts import ProviderBackend, ProviderEventParser
-from .env_builder import ExternalEnvBuilder
-from .events import ExternalEvent
+from .env_builder import ExternalEnvBuilder, write_env_snapshot_for_session
+from .normalizer import (
+    ExternalEventNormalizer,
+    error_of_backend_result,
+    stop_reason_of,
+)
 from .paths import ExternalPaths
 from .session_store import LocalFileExternalSessionMapStore
+from .transports import (
+    ChildTurnEventCallbackFactory,
+    ExternalTransport,
+    OpenCodeTransport,
+    ScriptedProgramme,
+    ScriptedStep,
+    ScriptedTransport,
+    SendSideEffect,
+    StaleSessionError,
+    TurnEventCallback,
+)
 from .types import (
     BackendResult,
     BackendStatus,
-    Emission,
     ExecOptions,
     ExternalEnvSpec,
     SessionMapEntry,
 )
 
 __all__ = [
-    # Enums
-    "ExternalEvent",
+    # Transport seam (access forms)
+    "ExternalTransport",
+    "OpenCodeTransport",
+    "ScriptedTransport",
+    "ScriptedProgramme",
+    "ScriptedStep",
+    "SendSideEffect",
+    "StaleSessionError",
+    "TurnEventCallback",
+    "ChildTurnEventCallbackFactory",
+    # Shared normalizer
+    "ExternalEventNormalizer",
+    "stop_reason_of",
+    "error_of_backend_result",
+    # Enums / status
     "BackendStatus",
     # Path accessor
     "ExternalPaths",
     # Env builder + spec
     "ExternalEnvBuilder",
+    "write_env_snapshot_for_session",
     "ExternalEnvSpec",
-    # Backend contracts
+    # Execution contracts
     "ExecOptions",
     "BackendResult",
-    "ProviderBackend",
-    "ProviderEventParser",
     # Backend provider seam (ADR-0027)
     "BackendProvider",
     "PoolScopedBackendProvider",
@@ -60,6 +87,4 @@ __all__ = [
     "ExternalSessionMapStore",
     "LocalFileExternalSessionMapStore",
     "SessionMapEntry",
-    # Per-line emission
-    "Emission",
 ]

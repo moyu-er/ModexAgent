@@ -1,19 +1,15 @@
 """Minimal builder for :class:`ExternalAgent`.
 
-T5 ships just enough construction surface for its integration test to
-assemble an agent from explicit collaborators. T6 extends this with
-factory integration (resolving the backend, parser, and
-:class:`ExternalEnvSpec` from :class:`AgentDescriptor` / config).
-
 The builder is a thin fluent shell — every parameter is forwarded
 verbatim to :class:`ExternalAgent.__init__`. No inference, no
 defaults beyond what the constructor already provides.
 
 ADR-0027 (T2) replaced the ``backend`` collaborator with a
-:class:`BackendProvider`. The fluent setter is now
+:class:`BackendProvider`. The fluent setter is
 :meth:`with_backend_provider` and :meth:`build_agent` takes a
 ``backend_provider`` keyword. Main-agent wiring wraps its pre-built
-backend in :class:`PoolScopedBackendProvider` before calling the builder.
+transport in :class:`PoolScopedBackendProvider` before calling the
+builder.
 """
 
 from __future__ import annotations
@@ -24,7 +20,6 @@ from modex_agent.core.agent import ProviderKind
 
 from .agent import ExternalAgent
 from .backend_provider import BackendProvider
-from .contracts import ProviderEventParser
 from .types import ExternalEnvSpec
 
 if TYPE_CHECKING:
@@ -46,13 +41,13 @@ class ExternalAgentBuilder:
 
     Every ``with_*`` method returns ``self`` so a caller can chain.
     :meth:`build` materialises the agent. Required collaborators
-    (backend_provider, session_store, parser, provider_kind, spec) must
+    (backend_provider, session_store, provider_kind, spec) must
     all be supplied before :meth:`build` or it raises :class:`ValueError`.
 
     In addition to the fluent API, the builder exposes the two static
     entry points expected by :class:`DefaultAgentFactory`:
     :meth:`build_agent` and :meth:`build_emitter_factory`.  The pool
-    builder (T10) supplies the streaming backend provider and other
+    builder (T10) supplies the transport provider and other
     runtime collaborators via the keyword-only arguments of
     :meth:`build_agent`.
     """
@@ -60,7 +55,6 @@ class ExternalAgentBuilder:
     def __init__(self) -> None:
         self._backend_provider: BackendProvider | None = None
         self._session_store: ExternalSessionMapStore | None = None
-        self._parser: ProviderEventParser | None = None
         self._provider_kind: ProviderKind | None = None
         self._spec: ExternalEnvSpec | None = None
         self._base_env: dict[str, str] | None = None
@@ -80,10 +74,6 @@ class ExternalAgentBuilder:
 
     def with_session_store(self, store: ExternalSessionMapStore) -> ExternalAgentBuilder:
         self._session_store = store
-        return self
-
-    def with_parser(self, parser: ProviderEventParser) -> ExternalAgentBuilder:
-        self._parser = parser
         return self
 
     def with_provider_kind(self, kind: ProviderKind) -> ExternalAgentBuilder:
@@ -134,7 +124,6 @@ class ExternalAgentBuilder:
             for name, val in (
                 ("backend_provider", self._backend_provider),
                 ("session_store", self._session_store),
-                ("parser", self._parser),
                 ("provider_kind", self._provider_kind),
                 ("spec", self._spec),
             )
@@ -147,13 +136,11 @@ class ExternalAgentBuilder:
         # mypy narrowing via assert - removes need for type: ignore
         assert self._backend_provider is not None
         assert self._session_store is not None
-        assert self._parser is not None
         assert self._provider_kind is not None
         assert self._spec is not None
         return ExternalAgent(
             backend_provider=self._backend_provider,
             session_store=self._session_store,
-            parser=self._parser,
             provider_kind=self._provider_kind,
             spec=self._spec,
             base_env=self._base_env,
@@ -173,7 +160,6 @@ class ExternalAgentBuilder:
         *,
         backend_provider: BackendProvider | None = None,
         session_store: ExternalSessionMapStore | None = None,
-        parser: ProviderEventParser | None = None,
         provider_kind: ProviderKind | None = None,
         spec: ExternalEnvSpec | None = None,
         base_env: dict[str, str] | None = None,
@@ -196,7 +182,6 @@ class ExternalAgentBuilder:
             for name, val in (
                 ("backend_provider", backend_provider),
                 ("session_store", session_store),
-                ("parser", parser),
                 ("provider_kind", provider_kind),
                 ("spec", spec),
             )
@@ -210,13 +195,11 @@ class ExternalAgentBuilder:
         # mypy narrowing via assert - removes need for type: ignore
         assert backend_provider is not None
         assert session_store is not None
-        assert parser is not None
         assert provider_kind is not None
         assert spec is not None
         return ExternalAgent(
             backend_provider=backend_provider,
             session_store=session_store,
-            parser=parser,
             provider_kind=provider_kind,
             spec=spec,
             base_env=base_env,

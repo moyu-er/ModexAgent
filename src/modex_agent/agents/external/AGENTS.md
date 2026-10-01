@@ -1,28 +1,60 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-07-31 -->
+<!-- Updated: 2026-10-01 -->
 
 # external
 
 Framework harness for running external coding-agent CLIs as NORMAL main agents
 of dedicated pools. The module translates ModexAgent turn/session/peer identity
-into provider execution, projects provider events onto canonical `TurnEvent`
-models, and owns provider resources through one lifecycle interface.
+into provider execution and produces canonical core `TurnEvent` models
+directly — there is no external-private event vocabulary anymore (the retired
+`Emission` flat model, `ExternalEvent` enum, `ProviderEventParser` ABC, and
+`OpenCodeServerBackend` were replaced by the transport layer + shared
+normalizer in the W4 turn-event-stream refactor).
 
 ## Architecture
 
-- `ExternalAgent` owns turn orchestration and retryable agent stop. Every provider emission (`on_emission`) renews the pool dispatch deadline by `chunk_renew_seconds` — external turns share the same watchdog activity-renewal protocol as ReAct stream chunks.
-- `StreamingProviderBackend` is the execution and cleanup seam. Upper layers
-  call `execute_streaming()` and `close()` without branching on provider kind.
+- `ExternalAgent` owns turn orchestration and retryable agent stop. Every transport event renews the pool dispatch deadline by `chunk_renew_seconds` — external turns share the same watchdog activity-renewal protocol as ReAct stream chunks.
+- `ExternalTransport` (in `transports/abc.py`) is the access-form seam: one
+  `execute(opts, env, on_event, on_child_event) -> BackendResult` method per
+  turn that streams core `TurnEvent` records through the callbacks and returns
+  the terminal `BackendResult`. It is an ABC because two further access forms
+  are planned besides today's CLI subprocess transport: an editor-protocol
+  client transport (the external agent runs in an editor process and exchanges
+  structured messages with the harness) and an in-process SDK bridge (the
+  provider exposes a Python SDK, so the subprocess collapses into direct
+  awaitable calls). Only the contract exists for those forms — no speculative
+  implementations.
+- `OpenCodeTransport` (`transports/cli_transport.py`) is the one real
+  transport: it spawns/reuses the shared `opencode serve` CLI subprocess via
+  `OpenCodeServerManager`, drives one turn over the V1 session/prompt
+  endpoints, and reads the subprocess's event stream (JSONL lines on the
+  `/event` SSE endpoint) through `OpenCodeV2SseReader` +
+  `OpenCodeV2EventParser`, which map provider records onto core `TurnEvent`s.
+  `ScriptedTransport` (`transports/scripted.py`) is the deterministic test
+  double emitting `TurnEvent`s.
+- `ExternalEventNormalizer` (`normalizer.py`) wraps ANY transport's raw event
+  stream and owns every cross-transport concern, so no transport implements
+  these itself: child-session routing (discovery-sink mapping, child sink
+  factory called with a `TurnBinding`, lineage registration as a tracked
+  background task, per-child env snapshot), `seq` stamping on
+  `TurnToolResultEvent` (always present on the external plane), orphan
+  tool-result drop with a warning, turn lifecycle synthesis
+  (`TurnStartedEvent` at begin, exactly-one `TurnFinishedEvent` at terminal
+  status via the `BackendStatus -> StopReason` mapping), and dispatch-deadline
+  renewal.
 - `OpenCodeServerManager` is a process-wide singleton that owns the shared
-  `opencode serve` process across ALL OpenCode backends and ALL pools. Lazy
+  `opencode serve` process across ALL OpenCode transports and ALL pools. Lazy
   spawn on first `acquire()`, health watchdog, PID registry, orphan reaping.
-- `OpenCodeServerBackend` is a thin wrapper that borrows from the manager via
-  `acquire()`. Its `close()` is a no-op; the shared server lifecycle is the
-  manager's job, not the backend's.
+  `OpenCodeTransport` borrows from the manager via `acquire()`; its `close()`
+  is a no-op — the shared server lifecycle is the manager's job, not the
+  transport's.
 - `ExternalSessionMapStore` owns ModexAgent-to-provider session mappings. FILE
   and SQLite adapters share the same resolve/commit/invalidate contract.
-- `ProviderEventParser` isolates provider wire formats. The harness is the only
-  adapter from provider `Emission` records to canonical `TurnEvent` models.
+- `OpenCodeV2EventParser` maps one SSE JSON line to zero or more core
+  `TurnEvent`s, preserving the provider limits: tool-argument JSON synthesis
+  (`{"input": <raw>}` for non-object payloads), tool-name association from the
+  preceding `tool.called` (V2 success/failed events carry only `callID`), and
+  V1 `partID` semantics.
 - `ExternalEnvBuilder`, runtime AGENTS.md injection, and `ExternalPaths`
   centralize provider-visible identity and filesystem layout. `env_builder.py`
   also injects `OPENCODE_PERMISSION` to eliminate runtime permission prompts.
@@ -33,8 +65,11 @@ models, and owns provider resources through one lifecycle interface.
 
 | File | Responsibility |
 |------|----------------|
-| `agent.py` | Harness turn flow, stale-session fresh retry, event projection, shared retryable `stop()` |
-| `contracts.py` | Provider backend/parser ABCs |
+| `agent.py` | Harness turn flow, stale-session fresh retry, shared retryable `stop()` |
+| `normalizer.py` | `ExternalEventNormalizer` — child routing, `seq` stamping, orphan drop, lifecycle synthesis, watchdog renewal; `stop_reason_of` / `error_of_backend_result` terminal mapping |
+| `transports/abc.py` | `ExternalTransport` ABC (access-form seam), `TurnEventCallback` / `ChildTurnEventCallbackFactory`, `StaleSessionError` |
+| `transports/cli_transport.py` | `OpenCodeTransport` — the real CLI-subprocess transport (shared server + SSE event stream) |
+| `transports/scripted.py` | `ScriptedTransport` + `ScriptedProgramme`/`ScriptedStep` — provider-free deterministic test double |
 | `builder.py` | Explicit collaborator assembly for pool registration |
 | `session_store.py` | `ExternalSessionMapStore` ABC and local-file adapter |
 | `child_discovery.py` | `ChildSessionDiscoverySink` ABC + `ExternalChildSessionDiscoverySink` concrete sink |
@@ -43,13 +78,12 @@ models, and owns provider resources through one lifecycle interface.
 | `system_prompt.py` | Dynamic peer list and `modexctl send` instructions |
 | `paths.py` | Workdir-contained `.modex/external/` paths and `ProviderKind` |
 | `os_layer.py` | External-process spawn primitives + stable process-tree termination re-export |
-| `scripted_backend.py` | Provider-free deterministic test adapter |
 | `turn_runner.py` | Pipeline turn-runner adapter for external agents |
 | `providers/opencode_server_manager.py` | Singleton managing the shared `opencode serve` process: lazy spawn, liveness check, per-workdir SSE readers, orphan reaping, PID registry, watchdog health monitor, `lifecycle()` async context manager, `_respawn()` extension point |
-| `providers/opencode_server_backend.py` | Thin wrapper borrowing from manager via `acquire()`. V1 session ops. `close()` is a no-op. |
+
 | `providers/opencode_v2_client.py` | Typed HTTP client. V1 methods (`create_session_v1`, `prompt_async_v1`, `get_session_status_v1`, `get_messages_v1`, `abort_session_v1`) are live; V2 methods are kept for migration but unused. |
-| `providers/opencode_v2_parser.py` | SSE event parser for V1+V2 events. `_main_session_ids` set mutated via `add_main_session` / `remove_main_session`. |
-| `providers/opencode_v2_sse_reader.py` | Persistent `/event` SSE reader with per-session demux, child auto-discovery, stall reconnect, replay |
+| `providers/opencode/v2_parser.py` | SSE line → core `TurnEvent` parser for V1+V2 events (provider-limit behaviors preserved). |
+| `providers/opencode/v2_sse_reader.py` | Persistent `/event` SSE reader with per-session callback demux, child auto-discovery via the child-callback factory, stall reconnect, replay |
 
 ## Lifecycle Ownership
 
@@ -81,7 +115,7 @@ Lifecycle invariants:
 ## Shared OpenCode Server (OpenCodeServerManager)
 
 `OpenCodeServerManager` is a process-wide singleton. One `opencode serve`
-process serves every `OpenCodeServerBackend` in every pool.
+process serves every `OpenCodeTransport` in every pool.
 
 - **Lazy spawn**: first `acquire(workdir)` starts the process if it is not
   running. Subsequent acquires share it.
@@ -133,9 +167,13 @@ runtime:
 The SSE reader is **persistent and per-workdir**, owned by
 `OpenCodeServerManager`. It is not per-turn and not per-backend.
 
-- `register_session(sid, on_emission)` routes emissions to the correct turn
-  callback. Call before `start` so events route from the first connection.
-  **Output routes are preserved across turns** — `execute_streaming`'s
+- `register_session(sid, on_event, on_child_event?)` routes core events to
+  the correct turn callback; `on_child_event` is the factory used to obtain
+  delivery targets for provider-minted child sessions (core events carry no
+  session identity, so the reader's per-session callback demux is where the
+  source session attaches). Call before `start` so events route from the
+  first connection.
+  **Output routes are preserved across turns** — `OpenCodeTransport.execute`'s
   `finally` block does NOT call `unregister_session`. This enables subagent
   recovery output to flow into the same turn's emitter after the main session
   resumes from an `inject`. Stale sid cleanup is handled by LRU on the
@@ -144,9 +182,6 @@ The SSE reader is **persistent and per-workdir**, owned by
   URL changes.
 - `/event` filters by the `x-opencode-directory` header, so each workdir's
   reader only sees its own sessions.
-- The parser's `_main_session_ids` set (mutated via `add_main_session` /
-  `remove_main_session`) distinguishes main sessions from child sessions and
-  tags `Emission.source_session_id` accordingly.
 - `session.status` events with `status.type === "retry"` map to `BUSY`
   (the session is actively retrying, e.g. rate-limit backoff). This preserves
   the old polling semantics where `retry` was treated as active.
@@ -154,12 +189,12 @@ The SSE reader is **persistent and per-workdir**, owned by
 V1+V2 event types parsed by `OpenCodeV2EventParser` (payload in `data`, not V1
 `properties`):
 
-- `session.next.text.delta` → `TEXT_DELTA`
-- `session.next.reasoning.delta` → `THINKING`
-- `session.next.tool.called` → `TOOL_USE`
-- `session.next.tool.success` → `TOOL_RESULT` (content text or structured JSON)
-- `session.next.tool.failed` → `TOOL_RESULT` (error message)
-- `session.error` → `ERROR`
+- `session.next.text.delta` → `TurnTextEvent`
+- `session.next.reasoning.delta` → `TurnReasoningEvent`
+- `session.next.tool.called` → `TurnToolCallEvent`
+- `session.next.tool.success` → `TurnToolResultEvent` (content text or structured JSON; no error)
+- `session.next.tool.failed` → `TurnToolResultEvent` (error message; `error` filled)
+- `session.error` → `TurnErroredEvent`
 
 ## Turn Completion (Event-Driven)
 
@@ -192,7 +227,7 @@ session became busy (closing the `prompt_async` → busy race). After
 reconnect, `rebuild_subtree` does a full REST tree reconstruction. This
 is the ONLY use of polling — the primary path is fully event-driven.
 
-**Lifecycle:** the waiter is per-turn (created in `execute_streaming`,
+**Lifecycle:** the waiter is per-turn (created in `OpenCodeTransport.execute`,
 destroyed in `finally` via `unregister_waiter`). The registry is
 per-workdir (persistent across turns, attached to the SSE reader).
 
@@ -229,37 +264,36 @@ observe the same deterministic modex session_id.
 ### SSE-driven discovery
 
 `session.created` events carrying a `parentID` are picked up by the SSE
-reader, which auto-discovers the child session. The parser tags
-`Emission.source_session_id` from the event's `data.sessionID` when it
-differs from the main session. The JSONL stdout parsers
-(`OpenCodeEventParser`) do not carry per-event session
-IDs, so child sessions are invisible under `opencode run --format json`.
-Only the shared `opencode serve` SSE path surfaces child events.
+reader, which auto-discovers the child session and registers it with its OWN
+callback — obtained from the parent registration's `on_child_event` factory
+(the normalizer's `on_child_event(provider_child_sid)` on the other side).
+Events for sessions with neither a registered callback nor a discoverable
+parent factory are dropped.
 
-### Routing in `_handle_emission`
+### Routing in `ExternalEventNormalizer`
 
-When `Emission.source_session_id` is set (non-None), the emission
-originates from a provider-discovered child session. The first time a
-child is seen, discovery runs synchronously in the same call:
+Events delivered through a child callback (from `on_child_event`) originate
+from a provider-discovered child session. The first time a child is seen,
+discovery runs synchronously in the same call:
 
 1. `resolve_child_modex_session_id` → deterministic modex session_id
-2. Populate `turn_ctx.child_sid_to_modex_sid[provider_child_sid] = modex_sid`
-3. Create child sink via `child_emitter_factory(TurnBinding(session_id=child_modex_sid, agent_name=...))`
+2. Create child sink via `child_sink_factory(TurnBinding(session_id=child_modex_sid, agent_name=...))`
+3. Cache the child route for the turn
 4. Schedule `on_child_discovered` as a tracked background task
+5. Write the per-child env snapshot
 
-Steps 1-3 are sync so the first child emission is routed to the newly
-created child emitter in the same call, no drop. Step 4 is async
-fire-and-forget; the task reference is retained and gathered in
-`_run_turn`'s finally block so registration completes within the turn
-boundary.
+Steps 1-3 are sync so the first child event is routed to the newly
+created child sink in the same call, no drop. Step 4 is async
+fire-and-forget; the task reference is retained and gathered in the
+normalizer's `cleanup()` (called from `_run_turn`'s finally block) so
+registration completes within the turn boundary.
 
-Per-turn child routing state lives in `_TurnEmissionContext` (a dataclass
-created per `_run_turn` call, captured by the `on_emission` closure, passed
-to `_handle_emission`). This is **not** stored in instance attributes —
-the same `ExternalAgent` instance serves all sessions in its pool, so
-instance variables would crossover when multiple sessions run concurrent
-turns. The closure capture guarantees each turn sees its own `modex_sid`,
-`paths`, `spec`, and child maps.
+Per-turn child routing state lives in the `ExternalEventNormalizer` (one
+instance per `_run_turn` call). This is **not** stored in instance
+attributes — the same `ExternalAgent` instance serves all sessions in its
+pool, so instance variables would crossover when multiple sessions run
+concurrent turns. The per-turn normalizer guarantees each turn sees its
+own `modex_sid`, `paths`, `spec`, and child maps.
 
 ### Deterministic session IDs
 
@@ -308,8 +342,9 @@ frozen env and route messages to the wrong session — **crossover**.
    the subagent's session ID.
 
 2. **Per-session env snapshot files** (`<workdir>/.modex/external/env-snapshots/<provider_sid>.json`):
-   written by `server_backend.execute_streaming` after session creation (main
-   session) and by `_handle_emission` on child discovery (subagent session).
+   written by `OpenCodeTransport.execute` after session creation (main
+   session) and by the `ExternalEventNormalizer` on child discovery
+   (subagent session). Both converge on `env_builder.write_env_snapshot_for_session`.
    Each file contains the `MODEX_*` vars + `PATH` for that specific opencode
    session.
 
@@ -340,18 +375,19 @@ runtime via `Path(__file__)`.
 - Native agents use contextvar (`_modex_env`) which is asyncio-task-scoped →
   no crossover with opencode sessions or other native sessions.
 
-## Per-Turn State Isolation (_TurnEmissionContext)
+## Per-Turn State Isolation (ExternalEventNormalizer)
 
 The same `ExternalAgent` instance serves all sessions in its pool. Per-turn
-state (`modex_sid`, `paths`, `spec`, child routing maps, emitters, pending
-tasks) MUST NOT live in instance attributes — concurrent turns would
-overwrite each other, causing child discovery to register children under the
-wrong parent session.
+state (`modex_sid`, `paths`, `spec`, child routing maps, sinks, pending
+tasks, `seq` counters) MUST NOT live in instance attributes — concurrent turns
+would overwrite each other, causing child discovery to register children under
+the wrong parent session.
 
-**Solution**: `_TurnEmissionContext` dataclass, created per `_run_turn` call,
-captured by the `on_emission` closure, passed to `_handle_emission`. Each
-turn's closure sees its own values. The finally block clears `turn_ctx.*`
-(not `self.*`). No instance variables hold per-turn state.
+**Solution**: one `ExternalEventNormalizer` per `_run_turn` call, created by
+the agent and passed to the transport as the event-delivery target. Each
+turn's normalizer sees its own values. The turn's finally block calls
+`normalizer.cleanup()` (gathering background registrations). No instance
+variables hold per-turn state.
 
 This is the same isolation principle as `NativeEnvInjectionHook`'s contextvar
 (`_modex_env`): per-turn state must be task-scoped, not instance-scoped.
@@ -374,7 +410,7 @@ turn ends. For external subagents:
 
 ## Provider Behavior
 
-- OpenCode business wiring uses `OpenCodeServerBackend`, which borrows the
+- OpenCode business wiring uses `OpenCodeTransport`, which borrows the
   shared `opencode serve` process from `OpenCodeServerManager`. There is no
   fallback mechanism: the manager plus watchdog guarantee reliability, and the
   manager raises `RuntimeError` if the process cannot be brought up.
@@ -385,8 +421,9 @@ turn ends. For external subagents:
 
 ## Convergence Rules Applied
 
-- `set_main_session` removed; converged to `add_main_session` /
-  `remove_main_session` on the parser.
+- Parser main/child session tracking (`add_main_session` /
+  `remove_main_session`, `Emission.source_session_id` tagging) removed;
+  converged to the SSE reader's per-session callback demux (W4).
 - The fallback backend class was deleted; the manager plus watchdog guarantee
   reliability.
 - `SSEUnavailableError` deleted; never raised. The manager raises
@@ -397,7 +434,7 @@ turn ends. For external subagents:
 
 ## Testing
 
-- Unit tests never require real OpenCode APIs. Use scripted adapters or
+- Unit tests never require real OpenCode APIs. Use `ScriptedTransport` or
   mocked process/network boundaries.
 - Lifecycle tests cover readiness rollback, cancellation, final reap,
   spawn/close races, all-settled cleanup, close retry, concurrent agent/pool
@@ -411,7 +448,7 @@ turn ends. For external subagents:
 
 - Do not add provider-specific shutdown branches to `ExternalAgent`,
   `AgentPool`, workspace teardown, or service teardown.
-- Do not call `close()` on `OpenCodeServerBackend` expecting the shared
+- Do not call `close()` on `OpenCodeTransport` expecting the shared
   server to stop. It is a no-op. Use `OpenCodeServerManager.lifecycle()`.
 - Do not swallow `CancelledError` or cleanup failures at an ownership boundary.
 - Do not persist provider session mappings outside `ExternalSessionMapStore`.

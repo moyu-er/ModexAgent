@@ -11,26 +11,21 @@ Covers:
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from modex_agent.agents.external.agent import (
-    ExternalAgent,
-    ScriptedStreamingAdapter,
-)
+from modex_agent.agents.external.agent import ExternalAgent
 from modex_agent.agents.external.backend_provider import PoolScopedBackendProvider
 from modex_agent.agents.external.builder import ExternalAgentBuilder
 from modex_agent.agents.external.child_discovery import (
     ExternalChildSessionDiscoverySink,
 )
 from modex_agent.agents.external.paths import ExternalPaths
-from modex_agent.agents.external.providers.opencode.v2_parser import OpenCodeV2EventParser
-from modex_agent.agents.external.scripted_backend import (
-    ScriptedProgramme,
-    ScriptedProviderBackend,
-)
 from modex_agent.agents.external.session_store import LocalFileExternalSessionMapStore
+from modex_agent.agents.external.transports import (
+    ScriptedProgramme,
+    ScriptedTransport,
+)
 from modex_agent.agents.external.types import ExternalEnvSpec
 from modex_agent.core.agent import ProviderKind
 from modex_agent.core.emitter import TurnBinding, TurnEventSink, TurnEventSinkFactory
@@ -60,11 +55,10 @@ def _make_spec(workdir: Path, session_id: str = "pool1.agent1") -> ExternalEnvSp
 def _required_collaborators(
     tmp_path: Path,
 ) -> tuple[PoolScopedBackendProvider, LocalFileExternalSessionMapStore, ExternalEnvSpec]:
-    scripted = ScriptedProviderBackend(ScriptedProgramme(session_id="prov-1"))
-    adapter = ScriptedStreamingAdapter(scripted, OpenCodeV2EventParser())
+    transport = ScriptedTransport(ScriptedProgramme(session_id="prov-1"))
     spec = _make_spec(tmp_path)
     store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
-    return PoolScopedBackendProvider(adapter), store, spec
+    return PoolScopedBackendProvider(transport), store, spec
 
 
 def _make_child_emitter_factory() -> TurnEventSinkFactory:
@@ -85,7 +79,6 @@ class TestBuilderChildDiscoveryFluentApi:
             ExternalAgentBuilder()
             .with_backend_provider(backend_provider)
             .with_session_store(store)
-            .with_parser(OpenCodeV2EventParser())
             .with_provider_kind(ProviderKind.OPENCODE)
             .with_spec(spec)
             .with_child_discovery_sink(sink)
@@ -108,7 +101,6 @@ class TestBuilderChildDiscoveryFluentApi:
             ExternalAgentBuilder()
             .with_backend_provider(backend_provider)
             .with_session_store(store)
-            .with_parser(OpenCodeV2EventParser())
             .with_provider_kind(ProviderKind.OPENCODE)
             .with_spec(spec)
             .build()
@@ -139,7 +131,6 @@ class TestBuilderChildDiscoveryFluentApi:
             provider=None,
             backend_provider=backend_provider,
             session_store=store,
-            parser=OpenCodeV2EventParser(),
             provider_kind=ProviderKind.OPENCODE,
             spec=spec,
             child_discovery_sink=sink,
@@ -164,7 +155,6 @@ class TestBuilderChildDiscoveryFluentApi:
             provider=None,
             backend_provider=backend_provider,
             session_store=store,
-            parser=OpenCodeV2EventParser(),
             provider_kind=ProviderKind.OPENCODE,
             spec=spec,
         )

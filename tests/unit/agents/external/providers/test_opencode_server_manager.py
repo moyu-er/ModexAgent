@@ -20,12 +20,12 @@ import pytest
 pytest.importorskip("aiohttp", reason="aiohttp not installed")
 
 from modex_agent.agents.external.providers.opencode import server_manager as opencode_server_manager
-from modex_agent.agents.external.providers.opencode.server_backend import (
-    OpenCodeServerBackend,
-)
 from modex_agent.agents.external.providers.opencode.server_manager import (
     OpenCodeServerManager,
     _atexit_cleanup,
+)
+from modex_agent.agents.external.transports import (
+    OpenCodeTransport,
 )
 
 _PatchResult = tuple[AsyncMock, AsyncMock, list[AsyncMock], AsyncMock, AsyncMock]
@@ -286,12 +286,12 @@ class TestAcquireRespawnsOnDeadProcess:
 
 
 # ---------------------------------------------------------------------------
-# ServerHandle — register/unregister delegates to parser
+# ServerHandle — register/unregister tracks active sessions
 # ---------------------------------------------------------------------------
 
 
 class TestServerHandleRegisterUnregister:
-    async def test_register_session_calls_parser_add_main_session(
+    async def test_register_session_tracks_active_session(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -301,14 +301,13 @@ class TestServerHandleRegisterUnregister:
         _patch_spawn_chain(monkeypatch, process, kill_mock, tmp_path)
 
         handle = await OpenCodeServerManager.acquire(tmp_path, _make_env())
-        mock_parser = Mock()
-        handle.parser = mock_parser
+        mgr = OpenCodeServerManager._instance
 
         handle.register_session("sess-42")
 
-        mock_parser.add_main_session.assert_called_once_with("sess-42")
+        assert "sess-42" in mgr._active_sessions
 
-    async def test_unregister_session_calls_parser_remove_main_session(
+    async def test_unregister_session_discards_active_session(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -318,12 +317,12 @@ class TestServerHandleRegisterUnregister:
         _patch_spawn_chain(monkeypatch, process, kill_mock, tmp_path)
 
         handle = await OpenCodeServerManager.acquire(tmp_path, _make_env())
-        mock_parser = Mock()
-        handle.parser = mock_parser
+        mgr = OpenCodeServerManager._instance
+        handle.register_session("sess-99")
 
         handle.unregister_session("sess-99")
 
-        mock_parser.remove_main_session.assert_called_once_with("sess-99")
+        assert "sess-99" not in mgr._active_sessions
 
     async def test_release_is_noop(
         self,
@@ -1078,14 +1077,14 @@ class TestWaitBusyFallbackDeadProcess:
         OpenCodeServerManager._instance = mgr
 
         try:
-            backend = OpenCodeServerBackend()
+            transport = OpenCodeTransport()
             mock_client = AsyncMock()
             mock_client.get_session_status_v1 = AsyncMock(return_value="busy")
             mock_handle = Mock()
             mock_handle.client = mock_client
-            backend._handle = mock_handle
+            transport._handle = mock_handle
 
-            await backend._wait_busy_fallback("test-sess-dead", directory="/tmp/test")
+            await transport._wait_busy_fallback("test-sess-dead", directory="/tmp/test")
             mock_client.get_session_status_v1.assert_not_awaited()
         finally:
             OpenCodeServerManager.reset_for_tests()
@@ -1098,7 +1097,7 @@ class TestWaitBusyFallbackDeadProcess:
         OpenCodeServerManager._instance = mgr
 
         try:
-            backend = OpenCodeServerBackend()
+            transport = OpenCodeTransport()
             mock_client = AsyncMock()
 
             async def status_side_effect(
@@ -1112,9 +1111,9 @@ class TestWaitBusyFallbackDeadProcess:
             )
             mock_handle = Mock()
             mock_handle.client = mock_client
-            backend._handle = mock_handle
+            transport._handle = mock_handle
 
-            await backend._wait_busy_fallback("test-sess-conn", directory="/tmp/test")
+            await transport._wait_busy_fallback("test-sess-conn", directory="/tmp/test")
         finally:
             OpenCodeServerManager.reset_for_tests()
 

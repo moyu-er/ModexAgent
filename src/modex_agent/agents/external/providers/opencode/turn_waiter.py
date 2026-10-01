@@ -36,7 +36,7 @@ State machine semantics (design 5.3):
 
     max_turn_s: handled by the caller via ``asyncio.wait_for`` — the
     waiter itself does not implement timeout. CancelledError propagates
-    naturally; ``execute_streaming``'s finally block calls
+    naturally; ``OpenCodeTransport.execute``'s finally block calls
     ``unregister_waiter``.
 
 Key design point — ★ REST validation (the ONLY fatal gap in tree-quiescence):
@@ -71,7 +71,7 @@ class TurnCompletionWaiter:
     Hangs on ``asyncio.Event`` (zero CPU); woken by ``registry.touch()``.
     Quiesce window via ``asyncio.create_task(asyncio.sleep(...))``;
     any ``touch()`` cancels it and resets to ACTIVE. The waiter is
-    use-and-discard — ``execute_streaming`` creates one per turn and
+    use-and-discard — ``OpenCodeTransport.execute`` creates one per turn and
     unregisters it in the finally block.
     """
 
@@ -125,7 +125,7 @@ class TurnCompletionWaiter:
         event, checks for COMPLETE, and calls ``_recheck`` to transition.
 
         ``CancelledError`` is NOT caught — it propagates to the caller
-        (``execute_streaming``'s finally block handles ``unregister_waiter``).
+        (``OpenCodeTransport.execute``'s finally block handles ``unregister_waiter``).
         The quiesce task is cleaned up in the finally block here.
         """
         try:
