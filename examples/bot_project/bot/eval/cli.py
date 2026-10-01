@@ -945,7 +945,7 @@ async def _record_golden_case(case_dir: Path) -> None:
     from bot.eval.replay import GoldenMeta
     from bot.eval.task_output import EvalTaskOutput
     from bot.eval.task_spec import EvalItemSpec
-    from modex_agent.core.emitter import StopReason
+    from modex_agent.core.turn_events import StopReason
     from modex_agent.runtime.services import AgentRuntimeServices
     from modex_agent.trace.cassette import (
         CassetteCategory,

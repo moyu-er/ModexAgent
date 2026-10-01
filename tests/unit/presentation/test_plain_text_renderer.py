@@ -28,7 +28,12 @@ from modex_agent.core.stream_events import (
     TextDelta as StreamTextDelta,
 )
 from modex_agent.core.tool_manager import Tool
-from modex_agent.core.turn_events import TurnTextEvent
+from modex_agent.core.turn_events import (
+    StopReason,
+    TurnErroredEvent,
+    TurnFinishedEvent,
+    TurnTextEvent,
+)
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.presentation import (
     DefaultTurnEventProjector,
@@ -38,9 +43,7 @@ from modex_agent.presentation import (
     ToolArgsDelta,
     ToolCallStarted,
     ToolResult,
-    TurnEndedSignal,
     TurnErrored,
-    TurnFailedSignal,
     TurnFinished,
 )
 from modex_agent.tools.manager import InMemoryToolManager
@@ -154,13 +157,11 @@ async def test_plain_renderer_renders_scripted_turn_end_to_end() -> None:
 
 
 async def test_plain_renderer_renders_error_and_stop_surfaces() -> None:
-    from modex_agent.core.emitter import StopReason
-
     projector = DefaultTurnEventProjector(session_id="conv.main")
     events = [
         *projector.feed(TurnTextEvent(text="partial")),
-        *projector.feed(TurnFailedSignal(message="boom")),
-        *projector.feed(TurnEndedSignal(stop_reason=StopReason.ERROR, error="boom")),
+        *projector.feed(TurnErroredEvent(message="boom")),
+        *projector.feed(TurnFinishedEvent(stop_reason=StopReason.ERROR, error="boom")),
     ]
     out = PlainTextTurnRenderer().render_stream(events)
     assert "!! error: boom" in out

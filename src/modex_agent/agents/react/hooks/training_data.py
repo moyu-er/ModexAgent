@@ -34,8 +34,8 @@ import uuid
 from typing import TYPE_CHECKING
 
 from modex_agent.agents.react.state import get_react_state
-from modex_agent.core.emitter import StopReason
 from modex_agent.core.turn.enums import TurnCustomKey
+from modex_agent.core.turn_events import StopReason
 from modex_agent.hook.abc import OutcomeFinallyHook
 from modex_agent.trace.scoring import TrajectoryMetrics
 from modex_agent.trace.semconv import GenAiAttr, SpanKind, SpanName, SpanStatusCode

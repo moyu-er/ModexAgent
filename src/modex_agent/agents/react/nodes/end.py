@@ -15,8 +15,8 @@ from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
 from modex_agent.agents.react.constants import ReActHookPoint, ReActNode
 from modex_agent.agents.react.context import get_agent_ctx
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.core.emitter import StopReason
 from modex_agent.core.turn.enums import TurnPhase
+from modex_agent.core.turn_events import StopReason
 from modex_graph.constants import GraphNode
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput

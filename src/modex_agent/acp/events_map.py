@@ -28,9 +28,9 @@ from acp.schema import (
     StopReason as AcpStopReason,
 )
 
-from modex_agent.core.emitter import StopReason
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.turn_events import (
+    StopReason,
     TurnEvent,
     TurnReasoningEvent,
     TurnTextEvent,
@@ -119,14 +119,23 @@ def map_tool_result_event(
 
 
 def map_turn_event(event: TurnEvent, *, turn_id: str) -> SessionUpdateOut:
-    """Dispatch one framework turn event to its ACP session-update model."""
-    if event.kind == "text":
-        return map_text_event(event)
-    if event.kind == "reasoning":
-        return map_reasoning_event(event)
-    if event.kind == "tool_call":
-        return map_tool_call_event(event, turn_id=turn_id)
-    return map_tool_result_event(event, turn_id=turn_id)
+    """Dispatch one framework turn event to its ACP session-update model.
+
+    Only the four content/tool kinds map today (the external plane's
+    current producers); any other union member fails loudly instead of
+    being silently mis-mapped — later waves extend this dispatcher when
+    their producers exist.
+    """
+    match event:
+        case TurnTextEvent():
+            return map_text_event(event)
+        case TurnReasoningEvent():
+            return map_reasoning_event(event)
+        case TurnToolCallEvent():
+            return map_tool_call_event(event, turn_id=turn_id)
+        case TurnToolResultEvent():
+            return map_tool_result_event(event, turn_id=turn_id)
+    raise ValueError(f"TurnEvent kind has no ACP mapping: {event.kind}")
 
 
 _STOP_REASON_MAP: dict[StopReason, AcpStopReason] = {

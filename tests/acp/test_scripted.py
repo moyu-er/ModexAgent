@@ -22,7 +22,7 @@ from modex_agent.acp.types import (
     PermissionChoice,
     PermissionPrompt,
 )
-from modex_agent.core.emitter import StopReason
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.turn_events import (
     TurnEvent,
     TurnTextEvent,

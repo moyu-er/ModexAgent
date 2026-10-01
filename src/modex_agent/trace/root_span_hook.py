@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Literal, overload
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.emitter import StopReason
 from modex_agent.core.turn.enums import TurnCustomKey
+from modex_agent.core.turn_events import StopReason
 from modex_agent.hook.abc import (
     ClosableHook,
     FinallyGraphHook,

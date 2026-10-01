@@ -55,7 +55,8 @@ _BOT_PROJECT = _REPO_ROOT / "examples" / "bot_project"
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.prompt import SystemPromptProvider

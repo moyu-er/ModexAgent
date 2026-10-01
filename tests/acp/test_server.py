@@ -40,7 +40,8 @@ from modex_agent.acp.types import (
     PermissionChoice,
     PermissionPrompt,
 )
-from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.turn_events import TurnToolCallEvent
 

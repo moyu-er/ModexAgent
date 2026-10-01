@@ -561,7 +561,8 @@ class TestCheckpointRoundTrip:
         the case that was silently broken before ticket 01 fixed the per-channel
         codec's PEP 604 handling.
         """
-        from modex_agent.core.emitter import AgentResult, StopReason
+        from modex_agent.core.emitter import AgentResult
+        from modex_agent.core.turn_events import StopReason
         from modex_agent.core.turn.enums import CancellationSource
         from modex_agent.core.turn.models import CancellationState
 
@@ -951,7 +952,9 @@ class TestResultField:
         assert state.result is None
 
     def test_result_field_round_trips(self) -> None:
-        from modex_agent.core.emitter import AgentResult, StopReason
+        from modex_agent.core.emitter import AgentResult
+        from modex_agent.core.turn_events import StopReason
+        from modex_agent.core.turn_events import StopReason
 
         state = _make_state()
         state.result = AgentResult(
@@ -964,7 +967,9 @@ class TestResultField:
         assert restored.result.stop_reason == StopReason.COMPLETED
 
     def test_result_field_checkpoint_included(self) -> None:
-        from modex_agent.core.emitter import AgentResult, StopReason
+        from modex_agent.core.emitter import AgentResult
+        from modex_agent.core.turn_events import StopReason
+        from modex_agent.core.turn_events import StopReason
 
         state = _make_state()
         state.result = AgentResult(

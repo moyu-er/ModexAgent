@@ -10,7 +10,8 @@ from modex_agent.agents.react.hooks.length_guard import (
 )
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import MessageRole, ToolCall
 from modex_agent.core.session_id import SessionInfo

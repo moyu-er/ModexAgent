@@ -21,7 +21,8 @@ from unittest.mock import AsyncMock, MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
+from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.events import AgentEvent, EmitterConfig
 from modex_agent.core.session_id import SessionInfo
 

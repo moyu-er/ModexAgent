@@ -16,7 +16,7 @@ from acp.schema import (
 )
 
 from modex_agent.acp import events_map
-from modex_agent.core.emitter import StopReason
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.turn_events import (
     TurnReasoningEvent,

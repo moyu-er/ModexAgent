@@ -20,13 +20,13 @@ from bot.eval.experiment_runner import _NoopEmitter
 from bot.service.pool.declaration import boot_scope_spec
 from bot.workspace.handle import WorkspaceHandle
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.core.emitter import StopReason
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_vocabulary import ToolPreset
 from modex_agent.core.turn.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.core.turn.models import TurnIdentity
+from modex_agent.core.turn_events import StopReason
 from modex_agent.memory.context import ContextState
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.plugins.assembly.single_agent import (

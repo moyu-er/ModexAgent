@@ -7,7 +7,7 @@ from modex_agent.core.control import (
     LoopDetectedError,
     PolicyViolationError,
 )
-from modex_agent.core.emitter import StopReason
+from modex_agent.core.turn_events import StopReason
 
 
 def test_base_defaults():

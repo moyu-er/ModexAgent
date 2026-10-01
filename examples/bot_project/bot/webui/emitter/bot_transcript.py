@@ -12,13 +12,13 @@ tool node re-emits just ``TOOL_CALL_END``).
 
 ADR-0053 convergence: turn identity, tool-call argument pairing, and the
 runtime-event mapping live on the framework
-``DefaultTurnEventProjector``; this base feeds it the neutral
-``RuntimeTurnEvent`` inputs (core ``TurnEvent``s plus lifecycle signals)
-and derives its recording + projection behavior from the resulting
-``PresentationEvent``s. Segment accumulation for the bot's transcript
-format remains bot-side (the store's materialization detail). Projections
-receive full-fidelity facts (full tool args, full result, ``seq``,
-``part_id``) — display truncation is each projection's own concern.
+``DefaultTurnEventProjector``; this base feeds it the core ``TurnEvent``
+union (ADR-0054) and derives its recording + projection behavior from the
+resulting ``PresentationEvent``s. Segment accumulation for the bot's
+transcript format remains bot-side (the store's materialization detail).
+Projections receive full-fidelity facts (full tool args, full result,
+``seq``, ``part_id``) — display truncation is each projection's own
+concern.
 """
 
 from __future__ import annotations
@@ -37,8 +37,12 @@ from modex_agent.core.emitter import AgentResult
 from modex_agent.core.events import EmitterConfig
 from modex_agent.core.session_id import agent_of
 from modex_agent.core.turn_events import (
+    ToolArgsDeltaEvent,
+    TurnErroredEvent,
     TurnEvent,
+    TurnFinishedEvent,
     TurnReasoningEvent,
+    TurnStartedEvent,
     TurnTextEvent,
     TurnToolCallEvent,
     TurnToolResultEvent,
@@ -47,16 +51,12 @@ from modex_agent.messaging.models import OutputMessage
 from modex_agent.presentation import (
     DefaultTurnEventProjector,
     PresentationEvent,
-    RuntimeTurnEvent,
     TextDelta,
     ThinkingDelta,
     ToolArgsDelta,
-    ToolArgsDeltaSignal,
     ToolCallStarted,
     ToolResult,
-    TurnEndedSignal,
     TurnErrored,
-    TurnFailedSignal,
     TurnFinished,
 )
 
@@ -82,6 +82,37 @@ logger = logging.getLogger(__name__)
 def _empty_session_meta() -> SessionMeta:
     """Default resolver: no parent session known."""
     return SessionMeta()
+
+
+_REACT_TO_TURN_KINDS: dict[str, str | None] = {
+    ReActEvent.MODEL_OUTPUT.value: None,
+    ReActEvent.MODEL_REASONING.value: "reasoning",
+    ReActEvent.TOOL_ARGS_DELTA.value: "tool_args_delta",
+    ReActEvent.TOOL_CALL_START.value: "tool_call",
+    ReActEvent.TOOL_CALL_END.value: "tool_result",
+    ReActEvent.ITERATION_START.value: None,
+    ReActEvent.ITERATION_END.value: None,
+    ReActEvent.FINAL_OUTPUT.value: None,
+    ReActEvent.START.value: "turn_started",
+    ReActEvent.ERROR.value: "turn_errored",
+    ReActEvent.MAX_ITERATIONS.value: None,
+    ReActEvent.PROGRESS.value: None,
+}
+"""Declarative ReAct-enum → core ``TurnEvent`` kind mapping (ADR-0054).
+
+Every ``ReActEvent`` value maps to exactly one core kind literal or
+``None`` (declared ignored). ``None`` entries fall through to the
+streaming base (``StreamingAwareEmitter._on_event``) unchanged:
+
+- ``model_output``: duplicates the streaming-delta / folded-content
+  entries carrying the same text (``TurnTextEvent``).
+- ``iteration_start`` / ``iteration_end`` / ``progress``: intra-turn
+  bookkeeping with no sink here.
+- ``final_output`` / ``max_iterations``: terminal facts arrive via
+  ``emit_complete`` (``TurnFinishedEvent.stop_reason``).
+
+The architecture anchor introspects this table — no silent drops.
+"""
 
 
 class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
@@ -308,7 +339,7 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
     # Presentation dispatch (framework events -> record + projection)
     # ------------------------------------------------------------------
 
-    async def _feed(self, event: RuntimeTurnEvent) -> None:
+    async def _feed(self, event: TurnEvent) -> None:
         for presentation in self._projector.feed(event):
             await self._handle_presentation(presentation)
 
@@ -408,11 +439,15 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
     async def emit_complete(self, result: AgentResult) -> None:
         try:
             # Flush buffered segments FIRST — while the turn identity is
-            # still active — then feed the terminal signal (which resets the
+            # still active — then feed the terminal event (which resets the
             # projector), then forward completion and project turn end.
             await self._flush_active_segment()
             finished = self._projector.feed(
-                TurnEndedSignal(stop_reason=result.stop_reason, error=result.error)
+                TurnFinishedEvent(
+                    stop_reason=result.stop_reason,
+                    error=result.error,
+                    attachments=tuple(result.attachments),
+                )
             )
             await super().emit_complete(result)
             for presentation in finished:
@@ -427,25 +462,28 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
             self._segment_order = []
 
     async def emit_error(self, error: str) -> None:
-        await self._feed(TurnFailedSignal(message=error))
+        await self._feed(TurnErroredEvent(message=error))
 
     async def _on_event(self, event: ReActEvent, data: Any = None) -> None:
-        """Translate the ReAct enum stream onto neutral projector inputs.
+        """Translate the ReAct enum stream onto the core ``TurnEvent`` union.
 
-        Every translated value is a declared mapping; unlisted values fall
-        through to the streaming base (buffer/flush semantics unchanged).
-        The dispositions match the framework projector's declared
-        ``MAPPED_RUNTIME_EVENTS`` / ``IGNORED_RUNTIME_EVENTS``.
+        The disposition of every enum value is declared by
+        ``_REACT_TO_TURN_KINDS``: a kind literal is translated and fed to
+        the framework projector; ``None`` falls through to the streaming
+        base (buffer/flush semantics unchanged).
         """
+        if _REACT_TO_TURN_KINDS.get(event.value) is None:
+            await super()._on_event(event, data)
+            return
         match event:
             case ReActEvent.MODEL_REASONING:
                 await self._feed(TurnReasoningEvent(text=data))
             case ReActEvent.TOOL_ARGS_DELTA:
                 payload: ToolArgsDeltaPayload = data
                 await self._feed(
-                    ToolArgsDeltaSignal(
-                        tool_name=payload.tool_name,
+                    ToolArgsDeltaEvent(
                         call_id=payload.call_id,
+                        tool_name=payload.tool_name,
                         args_fragment=payload.args_fragment,
                     )
                 )
@@ -512,8 +550,15 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
                         end_payload.seq,
                     )
             case ReActEvent.ERROR:
-                await self._feed(TurnFailedSignal(message=str(data)))
+                await self._feed(TurnErroredEvent(message=str(data)))
+            case ReActEvent.START:
+                # Eager turn identity: the projector assigns the turn id on
+                # turn_started instead of waiting for the first content
+                # event. No bot-side record or wire frame derives from it.
+                await self._feed(TurnStartedEvent())
             case _:
+                # Unreachable: the table maps every value, None entries
+                # returned to the streaming base above.
                 await super()._on_event(event, data)
 
     # ------------------------------------------------------------------

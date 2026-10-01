@@ -16,7 +16,7 @@ The `core/` module defines foundational contracts and values used directly acros
 | `__init__.py` | Exact foundational facade; concrete implementations are not re-exported. |
 | `agent.py` | `Agent[E]`, `AgentContext`, agent identity/implementation enums, and `current_agent_context`. |
 | `capabilities.py` | `Modality`, `ModelCapabilities`, and `ModelInfo`. |
-| `emitter.py` | `ContentEmitter[E]`, `AgentResult`, and `StopReason`; concrete emitter behavior lives in `adapters/`. |
+| `emitter.py` | `ContentEmitter[E]` and `AgentResult`; concrete emitter behavior lives in `adapters/`. |
 | `events.py` | `AgentEvent` and `EmitterConfig`. |
 | `history.py` | `MessageHistory` ABC, the async history seam used directly by `AgentContext`; concrete histories live in `memory/history.py`. |
 | `llm_request.py` | Canonical `LLMRequest` and `ReasoningEffort`. |
@@ -32,7 +32,8 @@ The `core/` module defines foundational contracts and values used directly acros
 | `tool_manager.py` | Tool/manager contracts, execution values, and shared execution behavior; `ToolOrigin` + `ToolOrigin.OVERRIDE_PRIORITY` (name-slot overwrite arbitration — `tool.name` is the runtime identity, moved from `scope/compiler.py`); `InMemoryToolManager` lives in `tools/manager.py`. |
 | `tool_group.py` | Atomic group contracts: frozen compile-time `ToolGroupSpec` / `ToolGroupVariant`; runtime `ToolGroup` (anchor, selected variant, exact tools, optional resource); `ToolGroupResource` ABC with idempotent async `aclose()`. Concrete registration and ownership live in `tools/` and `plugins/assembly/`. |
 | `tool_vocabulary.py` | Tool-subset declaration vocabulary shared by `scope/` and `tools/` (same layering level — core is the only home legal for both): `ToolPreset`, `ContextMode`, and the fork-context truncation bounds. |
-| `turn_events.py` | Provider-neutral semantic `TurnEvent` variants. |
+| `turn_events.py` | The unified runtime `TurnEvent` union consumed by both execution planes (ADR-0054), plus `StopReason`. |
+| `turn_validator.py` | `TurnEventValidator` — per-session sequence state machine over the `TurnEvent` union (lenient/strict). |
 | `turn/` | Turn-execution vocabulary contract root (W1 layering surgery): `enums.py` (state/operation enums + `TurnCustomKey`), `models.py` (`TurnIdentity`, `ApprovalTransaction`, `TurnSnapshot`, ...), `dispatch.py` (`DispatchDeadline` watchdog deadline), `approval_types.py` (approval decision/status/tier + audit enums), `approval_decision.py` (audit entry/store ABCs + `ApprovalDecisionCoordinator`), `env_context.py` (env-injection ContextVars), `todo.py` (`TodoItem`/`TodoStatus`/`TodoStore`; the JSON-file implementation lives in `persistence/adapters/todo_store.py`). Import module-qualified — no facade re-exports. |
 
 ## For AI Agents

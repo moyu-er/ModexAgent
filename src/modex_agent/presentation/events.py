@@ -1,12 +1,13 @@
 """Neutral presentation event vocabulary (ADR-0053).
 
-The runtime already emits provider-neutral ``TurnEvent``s (core seam) and
-agent-specific enum events; a UI today must hand-roll the projection from
-those to renderable facts. This module owns the *presentation* half of
-that projection: a closed, frozen discriminated union of UI-facing events
+The runtime emits the provider-neutral core ``TurnEvent`` union (both
+execution planes); this module owns the *presentation* half of that
+projection: a closed, frozen discriminated union of UI-facing events
 covering the generic agent-turn envelope:
 
-- turn lifecycle — started / finished / errored / interrupted / resumed
+- turn lifecycle — started / finished (``StopReason``) / errored
+  (interruption classification rides ``TurnFinished.stop_reason``;
+  resume observation rides ``ApprovalResolved``)
 - streaming deltas — text / thinking / tool-call arguments
 - tool cards — call started / result (error carried on the card)
 - approval lifecycle — requested / resolved
@@ -16,9 +17,9 @@ covering the generic agent-turn envelope:
 Bot-specific concepts (pool-attribution display, attachments, block
 materialization for a specific frontend) stay consumer-side as
 enrichments layered on these events. Kinds without a default producer
-today (approval, interrupt/resume) exist so consumers can construct them
-at their own seams; the projector's ignore-list discipline
-(``DefaultTurnEventProjector``) documents which runtime inputs map and
+today (approval) exist so consumers can construct them at their own
+seams; the projector's disposition tables
+(``DefaultTurnEventProjector``) document which runtime inputs map and
 which are deliberately dropped.
 """
 
@@ -28,8 +29,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
-from modex_agent.core.emitter import StopReason
 from modex_agent.core.llm_struct import TokenUsage
+from modex_agent.core.turn_events import StopReason
 
 
 class PresentationEventBase(BaseModel):
@@ -80,23 +81,6 @@ class TurnErrored(PresentationEventBase):
 
     kind: Literal["turn_errored"] = "turn_errored"
     message: str
-
-
-class TurnInterrupted(PresentationEventBase):
-    """The turn was suspended (e.g. approval interruption).
-
-    No default producer today — consumers constructing approval flows
-    emit this at their own seam.
-    """
-
-    kind: Literal["turn_interrupted"] = "turn_interrupted"
-    reason: str
-
-
-class TurnResumed(PresentationEventBase):
-    """A previously interrupted turn resumed execution."""
-
-    kind: Literal["turn_resumed"] = "turn_resumed"
 
 
 # ── Streaming deltas (transient) ───────────────────────────────────────────
@@ -201,8 +185,6 @@ PresentationEvent = Annotated[
     TurnStarted
     | TurnFinished
     | TurnErrored
-    | TurnInterrupted
-    | TurnResumed
     | TextDelta
     | ThinkingDelta
     | ToolArgsDelta
@@ -227,8 +209,6 @@ __all__ = [
     "ToolResult",
     "TurnErrored",
     "TurnFinished",
-    "TurnInterrupted",
-    "TurnResumed",
     "TurnStarted",
     "UsageSummary",
 ]

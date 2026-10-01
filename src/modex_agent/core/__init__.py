@@ -13,7 +13,6 @@ from .capabilities import Modality, ModelCapabilities, ModelInfo
 from .emitter import (
     AgentResult,
     ContentEmitter,
-    StopReason,
 )
 
 # V2 新架构 - 核心抽象层
@@ -73,6 +72,7 @@ from .tool_manager import (
     get_tool_execution_context,
 )
 from .turn_events import (
+    StopReason,
     TurnEvent,
     TurnReasoningEvent,
     TurnTextEvent,

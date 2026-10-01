@@ -3,7 +3,7 @@
 
 # docs/adr
 
-Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0053; the historical ADR-0034 phase-c-preliminaries was merged into ADR-0033 and archived in `history/001-`; the original ADR-0035 direct-CLI design was superseded by the current ADR-0035 control-plane design and archived in `history/`).
+Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0054; the historical ADR-0034 phase-c-preliminaries was merged into ADR-0033 and archived in `history/001-`; the original ADR-0035 direct-CLI design was superseded by the current ADR-0035 control-plane design and archived in `history/`).
 
 ## Purpose
 
@@ -26,7 +26,7 @@ ADRs document significant architectural decisions, including the context driving
   existing ADR in place. New ADRs are for genuinely new decisions, not
   follow-up work on existing ones.
 
-### ADR Index (0001–0053, excluding archived)
+### ADR Index (0001–0054, excluding archived)
 
 | ADR  | Title |
 |------|-------|
@@ -83,5 +83,6 @@ ADRs document significant architectural decisions, including the context driving
 | 0051 | Package layering total-order tree and mechanical gate |
 | 0052 | Runtime as an EXECUTION_STRATEGY slot product and framework-runnable defaults |
 | 0053 | Neutral presentation event projection layer (vocabulary, projector, transcript contract) |
+| 0054 | Unified turn-event stream (one closed runtime union for both execution planes) |
 
 <!-- MANUAL -->

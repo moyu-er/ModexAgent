@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 from modex_agent.agents.react.hooks.deliver_retry import DeliverRetryHook
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.message import MessageRole
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool

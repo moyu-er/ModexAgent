@@ -5,7 +5,8 @@ import pytest
 
 from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import AgentContext, ExecutionStrategyKind
-from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.memory.history import ListMessageHistory

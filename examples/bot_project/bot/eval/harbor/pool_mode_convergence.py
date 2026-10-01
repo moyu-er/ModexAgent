@@ -25,8 +25,9 @@ import logging
 from typing import TYPE_CHECKING
 
 from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
+from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.message import MessageRole
+from modex_agent.core.turn_events import StopReason
 from modex_agent.memory.scope import MemoryContext
 
 if TYPE_CHECKING:

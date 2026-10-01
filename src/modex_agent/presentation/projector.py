@@ -1,19 +1,19 @@
-"""Runtime-event → presentation-event projector (ADR-0053).
+"""Runtime-event → presentation-event projector (ADR-0053, ADR-0054).
 
 The projector is a pure, synchronous projection engine over the neutral
-runtime seam: it consumes the core ``TurnEvent`` family plus the
-presentation-owned lifecycle signals below, and produces
+runtime seam: it consumes the core ``TurnEvent`` union (the runtime event
+vocabulary BOTH execution planes emit onto) and produces
 ``PresentationEvent``s. It owns exactly the state a turn projection needs
 — lazy turn identity, pending tool-call arguments, turn latency — so
 consumers (WebUI emitters, editors, consoles) translate its output to
 their sink without re-deriving turn bookkeeping.
 
-Layering: this package may not import concrete agent strategies, so the
-agent-specific enum stream (e.g. ``ReActEvent``) is translated to these
-neutral inputs by the consumer's emitter. The disposition of every enum
-value the ReAct runtime produces is declared below
-(``MAPPED_RUNTIME_EVENTS`` / ``IGNORED_RUNTIME_EVENTS``) — never a silent
-drop.
+Layering: this package may not import concrete agent strategies, so a
+plane still emitting its legacy enum stream translates that stream onto
+the core union in its consumer-side emitter (the migration path of
+ADR-0054); the disposition of every core event kind is declared below
+(``MAPPED_TURN_EVENT_KINDS`` / ``IGNORED_TURN_EVENT_KINDS``) — never a
+silent drop.
 """
 
 from __future__ import annotations
@@ -22,22 +22,32 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import ClassVar, Literal, TypedDict
+from typing import ClassVar, TypedDict
 
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import JsonValue
 
-from modex_agent.core.emitter import StopReason
-from modex_agent.core.llm_struct import TokenUsage
 from modex_agent.core.session_id import agent_of
 from modex_agent.core.turn_events import (
+    ApprovalRequestedEvent,
+    ApprovalResolvedEvent,
+    IterationFinishedEvent,
+    IterationStartedEvent,
+    ProgressEvent,
+    ToolArgsDeltaEvent,
+    TurnErroredEvent,
     TurnEvent,
+    TurnFinishedEvent,
     TurnReasoningEvent,
+    TurnStartedEvent,
     TurnTextEvent,
     TurnToolCallEvent,
     TurnToolResultEvent,
+    UsageEvent,
 )
 
 from .events import (
+    ApprovalRequested,
+    ApprovalResolved,
     PresentationEvent,
     TextDelta,
     ThinkingDelta,
@@ -50,66 +60,14 @@ from .events import (
     UsageSummary,
 )
 
-# ── Runtime lifecycle signals (projector inputs beyond core TurnEvent) ─────
-
-
-class _SignalBase(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-class ToolArgsDeltaSignal(_SignalBase):
-    """A streamed tool-argument fragment (``TOOL_ARGS_DELTA`` payloads)."""
-
-    kind: Literal["tool_args_delta"] = "tool_args_delta"
-
-    tool_name: str
-    call_id: str
-    args_fragment: str
-
-
-class TurnEndedSignal(_SignalBase):
-    """The emitter reported turn completion (``emit_complete``)."""
-
-    kind: Literal["turn_ended"] = "turn_ended"
-
-    stop_reason: StopReason
-    error: str | None = None
-
-
-class TurnFailedSignal(_SignalBase):
-    """An error surfaced through the emitter (``emit_error`` / ERROR event)."""
-
-    kind: Literal["turn_failed"] = "turn_failed"
-
-    message: str
-
-
-class UsageReportedSignal(_SignalBase):
-    """A token-usage snapshot for the current turn."""
-
-    kind: Literal["usage_reported"] = "usage_reported"
-
-    usage: TokenUsage
-
-
-RuntimeTurnEvent = (
-    TurnEvent
-    | ToolArgsDeltaSignal
-    | TurnEndedSignal
-    | TurnFailedSignal
-    | UsageReportedSignal
-)
-"""The closed input union: core ``TurnEvent``s plus lifecycle signals."""
-
-
 # ── Projector contract ─────────────────────────────────────────────────────
 
 
 class TurnEventProjector(ABC):
-    """Project neutral runtime events onto presentation events."""
+    """Project core runtime turn events onto presentation events."""
 
     @abstractmethod
-    def feed(self, event: RuntimeTurnEvent) -> list[PresentationEvent]:
+    def feed(self, event: TurnEvent) -> list[PresentationEvent]:
         """Feed one runtime event; return the presentation events it yields."""
 
 
@@ -132,10 +90,12 @@ class DefaultTurnEventProjector(TurnEventProjector):
 
     Semantics (pinned by ``tests/unit/presentation/``):
 
-    - **Lazy turn identity** — the first content-bearing event assigns a
-      turn id (``uuid4().hex[:12]`` by default) and emits ``TurnStarted``
+    - **Turn identity** — ``turn_started`` assigns it eagerly; a
+      content-first stream (a bridge path without ``turn_started``)
+      assigns it lazily — the first content-bearing event takes a turn
+      id (``uuid4().hex[:12]`` by default) and emits ``TurnStarted``
       ahead of the content event. Turn identity resets after
-      ``TurnEndedSignal``.
+      ``turn_finished``.
     - **Segment ids** — text/thinking deltas carry the runtime ``part_id``
       when present, else ``"_text"`` / ``"_reasoning"``.
     - **Tool pairing** — ``TurnToolCallEvent`` remembers the call's full
@@ -147,42 +107,35 @@ class DefaultTurnEventProjector(TurnEventProjector):
       start through the ``clock`` (injectable; wall clock by default).
     """
 
-    MAPPED_RUNTIME_EVENTS: ClassVar[frozenset[str]] = frozenset(
+    MAPPED_TURN_EVENT_KINDS: ClassVar[frozenset[str]] = frozenset(
         {
-            "model_reasoning",
+            "turn_started",
+            "turn_finished",
+            "turn_errored",
+            "text",
+            "reasoning",
             "tool_args_delta",
-            "tool_call_start",
-            "tool_call_end",
-            "error",
+            "tool_call",
+            "tool_result",
+            "approval_requested",
+            "approval_resolved",
+            "usage",
         }
     )
-    """ReAct enum values that map onto a projector input.
+    """Core ``TurnEvent`` kinds that map onto a presentation event."""
 
-    Text content reaches the projector via the emitter's delta/content
-    entries (``TurnTextEvent``), and turn completion via
-    ``TurnEndedSignal`` — both emitted alongside these enum values.
-    """
-
-    IGNORED_RUNTIME_EVENTS: ClassVar[frozenset[str]] = frozenset(
-        {
-            "start",
-            "model_output",
-            "iteration_start",
-            "iteration_end",
-            "progress",
-            "final_output",
-            "max_iterations",
-        }
+    IGNORED_TURN_EVENT_KINDS: ClassVar[frozenset[str]] = frozenset(
+        {"iteration_started", "iteration_finished", "progress"}
     )
-    """Documented ignore-list — ReAct enum values with no presentation mapping.
+    """Documented ignore-list — core event kinds with no presentation mapping.
 
-    - ``start``: turn identity is assigned lazily on first content.
-    - ``model_output``: duplicates the streaming delta / folded-content
-      entries carrying the same text.
-    - ``iteration_start`` / ``iteration_end`` / ``progress``: intra-turn
-      loop bookkeeping with no generic UI meaning.
-    - ``final_output`` / ``max_iterations``: terminal classification
-      arrives via ``TurnEndedSignal`` (``StopReason``).
+    - ``iteration_started`` / ``iteration_finished``: intra-turn loop
+      bookkeeping with no generic UI meaning.
+    - ``progress``: long-settlement heartbeat; consumers that want it
+      observe the core stream directly.
+
+    Their union with ``MAPPED_TURN_EVENT_KINDS`` must equal the full core
+    kind set — the architecture anchor enforces it.
     """
 
     def __init__(
@@ -222,8 +175,13 @@ class DefaultTurnEventProjector(TurnEventProjector):
             self._turn_started_at = self._clock()
         return self._current_turn_id
 
-    def feed(self, event: RuntimeTurnEvent) -> list[PresentationEvent]:
+    def feed(self, event: TurnEvent) -> list[PresentationEvent]:
         match event:
+            case TurnStartedEvent():
+                if self._turn_active:
+                    return []
+                self.ensure_turn_started()
+                return [TurnStarted(**self._envelope())]
             case TurnTextEvent(text=text, part_id=part_id):
                 segment = part_id if part_id else "_text"
                 return self._content_events(
@@ -272,8 +230,8 @@ class DefaultTurnEventProjector(TurnEventProjector):
                         arguments=merged,
                     )
                 )
-            case ToolArgsDeltaSignal(
-                tool_name=tool_name, call_id=call_id, args_fragment=fragment
+            case ToolArgsDeltaEvent(
+                call_id=call_id, tool_name=tool_name, args_fragment=fragment
             ):
                 return self._content_events(
                     lambda: ToolArgsDelta(
@@ -283,7 +241,7 @@ class DefaultTurnEventProjector(TurnEventProjector):
                         args_fragment=fragment,
                     )
                 )
-            case TurnEndedSignal(stop_reason=stop_reason, error=error):
+            case TurnFinishedEvent(stop_reason=stop_reason, error=error):
                 latency_ms = (
                     int((self._clock() - self._turn_started_at) * 1000)
                     if self._turn_active
@@ -297,10 +255,30 @@ class DefaultTurnEventProjector(TurnEventProjector):
                 )
                 self._reset()
                 return [finished]
-            case TurnFailedSignal(message=message):
+            case TurnErroredEvent(message=message):
                 return [TurnErrored(**self._envelope(), message=message)]
-            case UsageReportedSignal(usage=usage):
+            case ApprovalRequestedEvent(
+                tool_name=tool_name, call_id=call_id, prompt=prompt
+            ):
+                return [
+                    ApprovalRequested(
+                        **self._envelope(),
+                        tool_name=tool_name,
+                        call_id=call_id,
+                        prompt=prompt,
+                    )
+                ]
+            case ApprovalResolvedEvent(call_id=call_id, approved=approved):
+                return [
+                    ApprovalResolved(
+                        **self._envelope(), call_id=call_id, approved=approved
+                    )
+                ]
+            case UsageEvent(usage=usage):
                 return [UsageSummary(**self._envelope(), usage=usage)]
+            case IterationStartedEvent() | IterationFinishedEvent() | ProgressEvent():
+                # Declared ignore-list members (see IGNORED_TURN_EVENT_KINDS).
+                return []
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -340,10 +318,5 @@ class DefaultTurnEventProjector(TurnEventProjector):
 
 __all__ = [
     "DefaultTurnEventProjector",
-    "RuntimeTurnEvent",
-    "ToolArgsDeltaSignal",
-    "TurnEndedSignal",
     "TurnEventProjector",
-    "TurnFailedSignal",
-    "UsageReportedSignal",
 ]

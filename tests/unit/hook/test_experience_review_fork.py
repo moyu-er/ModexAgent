@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.memory.core.system import MemorySystem

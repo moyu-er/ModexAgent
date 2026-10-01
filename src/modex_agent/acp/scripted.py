@@ -17,9 +17,10 @@ from __future__ import annotations
 import asyncio
 from uuid import uuid4
 
-from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.emitter import AgentResult
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.turn_events import (
+    StopReason,
     TurnReasoningEvent,
     TurnTextEvent,
     TurnToolCallEvent,

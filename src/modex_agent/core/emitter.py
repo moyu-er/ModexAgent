@@ -6,7 +6,7 @@ generic ABC. The streaming-aware concrete emitter lives in
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from enum import Enum, StrEnum
+from enum import Enum
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -14,24 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from modex_agent.core.message import ChatMessage
 
 from .events import AgentEvent, EmitterConfig
-from .turn_events import TurnEvent
+from .turn_events import StopReason, TurnEvent
 
 logger = logging.getLogger(__name__)
-
-
-class StopReason(StrEnum):
-    """Reason an agent turn ended."""
-
-    COMPLETED = "completed"
-    ERROR = "error"
-    MAX_ITERATIONS = "max_iterations"
-    TURN_CANCELLED = "turn_cancelled"
-    TIMEOUT = "timeout"
-    CANCELLED = "cancelled"
-    MISSED_COMMUNICATION = "missed_communication"
-    COMMAND_INTERCEPTED = "command_intercepted"
-    DUPLICATE = "duplicate"
-    LOOP_DETECTED = "loop_detected"
 
 
 class AgentResult(BaseModel):

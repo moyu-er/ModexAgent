@@ -53,9 +53,9 @@ from typing import Any, assert_never
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.agent import AgentImplementation
-from modex_agent.core.emitter import StopReason
 from modex_agent.core.message import MessageRole
 from modex_agent.core.message_utils import sanitize_reminder_content, wrap_system_reminder
+from modex_agent.core.turn_events import StopReason
 from modex_agent.messaging.agent_messages import AgentMessageType
 from modex_agent.messaging.models import ReminderKind
 

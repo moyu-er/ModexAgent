@@ -51,9 +51,10 @@ from uuid import uuid4
 
 from modex_agent.adapters.emitter import StreamingAwareEmitter
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.emitter import AgentResult
 from modex_agent.core.message_utils import sanitize_reminder_content, wrap_system_reminder
 from modex_agent.core.turn.models import TurnIdentity
+from modex_agent.core.turn_events import StopReason
 from modex_agent.hook.abc import HookPayload, HookPoint
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.pipeline.turn_runner_abc import TurnRunner

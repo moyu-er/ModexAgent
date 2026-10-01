@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.emitter import StopReason
+from modex_agent.core.turn_events import StopReason
 from modex_agent.hook.abc import AfterGraphHook
 from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.snapshot import (

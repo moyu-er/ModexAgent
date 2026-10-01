@@ -4,14 +4,15 @@ Drives scripted turns through the REAL ``ReActAgent`` (scripted stream
 provider, real graph nodes, real tool execution) with a recording emitter
 that captures every runtime event the emitter seam produces — enum
 ``ReActEvent`` emissions, ``TurnEvent``s, streaming deltas, completion —
-then feeds each through ``DefaultTurnEventProjector``.
+then translates each onto the core ``TurnEvent`` union and feeds it
+through ``DefaultTurnEventProjector``.
 
 Anchors:
 
-1. **Disposition completeness** — every ``ReActEvent`` value is either
-   mapped to a projector input kind (``MAPPED_RUNTIME_EVENTS``) or listed
-   in the documented ignore-list (``IGNORED_RUNTIME_EVENTS``). No silent
-   drops are possible: a runtime event outside both sets fails the test.
+1. **Disposition completeness** — every core ``TurnEvent`` kind is either
+   mapped (``MAPPED_TURN_EVENT_KINDS``) or listed in the documented
+   ignore-list (``IGNORED_TURN_EVENT_KINDS``). No silent drops are
+   possible: a runtime kind outside both sets fails the test.
 2. **Coverage** — the scripted turns exercise ALL ``ReActEvent`` values.
 3. **Mapping** — feeding any mapped runtime event yields >= 1 presentation
    event.
@@ -23,6 +24,7 @@ Anchors:
 
 from __future__ import annotations
 
+import typing
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,7 +34,7 @@ import pytest
 
 from modex_agent.agents.react.agent import ReActAgent, ReActEvent
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
+from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import FinishReason
 from modex_agent.core.provider import LLMProvider
@@ -47,7 +49,13 @@ from modex_agent.core.stream_events import (
 )
 from modex_agent.core.tool_manager import Tool
 from modex_agent.core.turn_events import (
+    StopReason,
+    ToolArgsDeltaEvent,
+    TurnErroredEvent,
+    TurnEvent,
+    TurnFinishedEvent,
     TurnReasoningEvent,
+    TurnStartedEvent,
     TurnTextEvent,
     TurnToolCallEvent,
     TurnToolResultEvent,
@@ -57,10 +65,6 @@ from modex_agent.presentation import (
     DefaultTurnEventProjector,
     PresentationEvent,
     PresentationTranscriptStore,
-    RuntimeTurnEvent,
-    ToolArgsDeltaSignal,
-    TurnEndedSignal,
-    TurnFailedSignal,
     TurnFinished,
     materialize_turns,
 )
@@ -68,6 +72,20 @@ from modex_agent.presentation import (
     ToolResult as PresentationToolResult,
 )
 from modex_agent.tools.manager import InMemoryToolManager
+
+# ReAct enum values with no core-event translation in this harness: text
+# arrives via the delta/content entries, terminal facts via
+# ``TurnFinishedEvent``, loop bookkeeping is declared projector-ignored.
+_IGNORED_ENUM_VALUES = frozenset(
+    {
+        ReActEvent.MODEL_OUTPUT.value,
+        ReActEvent.ITERATION_START.value,
+        ReActEvent.ITERATION_END.value,
+        ReActEvent.FINAL_OUTPUT.value,
+        ReActEvent.MAX_ITERATIONS.value,
+        ReActEvent.PROGRESS.value,
+    }
+)
 
 # ── Scripted fixtures ──────────────────────────────────────────────────────
 
@@ -179,11 +197,12 @@ async def _run_turn(
     return emitter.calls, result
 
 
-def _translate(call: RecordedCall) -> RuntimeTurnEvent | None:
-    """Consumer-side translation: recorded seam call -> projector input.
+def _translate(call: RecordedCall) -> TurnEvent | None:
+    """Consumer-side translation: recorded seam call -> core runtime event.
 
-    Returns ``None`` for inputs with no presentation meaning (ignore-list
-    members and emitter-internal lifecycle entries like ``stream_end``).
+    Returns ``None`` for inputs with no presentation meaning (declared
+    ignore-list members and emitter-internal lifecycle entries like
+    ``stream_end``).
     """
     match call.kind:
         case "delta":
@@ -195,9 +214,9 @@ def _translate(call: RecordedCall) -> RuntimeTurnEvent | None:
                 case ReActEvent.MODEL_REASONING.value:
                     return TurnReasoningEvent(text=call.data)
                 case ReActEvent.TOOL_ARGS_DELTA.value:
-                    return ToolArgsDeltaSignal(
-                        tool_name=call.data.tool_name,
+                    return ToolArgsDeltaEvent(
                         call_id=call.data.call_id,
+                        tool_name=call.data.tool_name,
                         args_fragment=call.data.args_fragment,
                     )
                 case ReActEvent.TOOL_CALL_START.value:
@@ -216,16 +235,18 @@ def _translate(call: RecordedCall) -> RuntimeTurnEvent | None:
                         seq=payload.seq,
                         arguments=payload.tool_call.arguments,
                     )
+                case ReActEvent.START.value:
+                    return TurnStartedEvent()
                 case ReActEvent.ERROR.value:
-                    return TurnFailedSignal(message=str(call.data))
+                    return TurnErroredEvent(message=str(call.data))
                 case _:
                     return None
         case "complete":
-            return TurnEndedSignal(
+            return TurnFinishedEvent(
                 stop_reason=call.data.stop_reason, error=call.data.error
             )
         case "error":
-            return TurnFailedSignal(message=call.data)
+            return TurnErroredEvent(message=call.data)
     return None
 
 
@@ -266,14 +287,23 @@ async def _record_all_turns() -> list[RecordedCall]:
 # ── Anchor 1 + 2: disposition completeness and scripted coverage ───────────
 
 
-def test_react_event_dispositions_are_complete() -> None:
-    mapped = DefaultTurnEventProjector.MAPPED_RUNTIME_EVENTS
-    ignored = DefaultTurnEventProjector.IGNORED_RUNTIME_EVENTS
-    all_values = {event.value for event in ReActEvent}
-    assert mapped | ignored == all_values, (
-        f"undisposed ReActEvent values: {all_values - (mapped | ignored)}"
+def _turn_event_kinds() -> set[str]:
+    """Every ``kind`` literal in the core ``TurnEvent`` union."""
+    union = typing.get_args(TurnEvent)[0]
+    kinds: set[str] = set()
+    for variant in typing.get_args(union):
+        kinds.update(typing.get_args(variant.model_fields["kind"].annotation))
+    return kinds
+
+
+def test_turn_event_kind_dispositions_are_complete() -> None:
+    mapped = DefaultTurnEventProjector.MAPPED_TURN_EVENT_KINDS
+    ignored = DefaultTurnEventProjector.IGNORED_TURN_EVENT_KINDS
+    all_kinds = _turn_event_kinds()
+    assert mapped | ignored == all_kinds, (
+        f"undisposed TurnEvent kinds: {all_kinds - (mapped | ignored)}"
     )
-    assert not (mapped & ignored), "a value cannot be both mapped and ignored"
+    assert not (mapped & ignored), "a kind cannot be both mapped and ignored"
 
 
 async def test_scripted_turns_exercise_every_react_event_value() -> None:
@@ -293,13 +323,14 @@ async def test_projector_maps_every_runtime_event_and_round_trips(
     projector = DefaultTurnEventProjector(session_id="conv.main")
     store = PresentationTranscriptStore(tmp_path)
 
-    ignored = DefaultTurnEventProjector.IGNORED_RUNTIME_EVENTS
+    ignored_kinds = DefaultTurnEventProjector.IGNORED_TURN_EVENT_KINDS
+    assert {"iteration_started", "iteration_finished", "progress"} == ignored_kinds
     for call in calls:
         runtime_event = _translate(call)
         if runtime_event is None:
             # Never a silent drop: the untranslated call must be a declared
             # ignore-list member or an emitter-internal lifecycle entry.
-            assert call.name in ignored or call.kind in {
+            assert call.name in _IGNORED_ENUM_VALUES or call.kind in {
                 "stream_end",
                 "content",
             }, f"silent drop: {call}"
@@ -361,7 +392,7 @@ def test_projector_lazy_turn_identity_and_latency() -> None:
     assert [type(e).__name__ for e in started] == ["TurnStarted", "TextDelta"]
     assert projector.current_turn_id == "turn-0001"
 
-    finished = projector.feed(TurnEndedSignal(stop_reason=StopReason.COMPLETED))
+    finished = projector.feed(TurnFinishedEvent(stop_reason=StopReason.COMPLETED))
     assert len(finished) == 1
     assert isinstance(finished[0], TurnFinished)
     assert finished[0].turn_id == "turn-0001"
@@ -369,7 +400,7 @@ def test_projector_lazy_turn_identity_and_latency() -> None:
 
     # Turn ended: identity resets until the next content event.
     assert projector.current_turn_id == ""
-    next_events = projector.feed(TurnEndedSignal(stop_reason=StopReason.COMPLETED))
+    next_events = projector.feed(TurnFinishedEvent(stop_reason=StopReason.COMPLETED))
     assert next_events[0].turn_id == ""
 
 
@@ -404,13 +435,13 @@ def test_projector_merges_tool_call_arguments_into_result_card() -> None:
         (TurnTextEvent(text="x"), "text_delta"),
         (TurnReasoningEvent(text="x"), "thinking_delta"),
         (
-            ToolArgsDeltaSignal(tool_name="t", call_id="c", args_fragment='{"'),
+            ToolArgsDeltaEvent(call_id="c", tool_name="t", args_fragment='{"'),
             "tool_args_delta",
         ),
     ],
 )
 def test_streaming_inputs_project_deltas(
-    runtime_event: RuntimeTurnEvent, expected_kind: str
+    runtime_event: TurnEvent, expected_kind: str
 ) -> None:
     projector = DefaultTurnEventProjector(session_id="conv.main")
     events = projector.feed(runtime_event)

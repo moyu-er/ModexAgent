@@ -18,7 +18,8 @@ from bot.eval.harbor.entry import (
 
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
+from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider

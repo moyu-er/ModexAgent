@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from modex_agent.core.emitter import StopReason
+from modex_agent.core.turn_events import StopReason
 
 __all__ = [
     "AgentCancelledError",

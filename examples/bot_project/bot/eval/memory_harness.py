@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from bot.service.pool.declaration import boot_scope_spec
-from modex_agent.core.emitter import StopReason
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.turn.enums import TurnCustomKey
+from modex_agent.core.turn_events import StopReason
 from modex_agent.hook import HookSpec, OutcomeFinallyHook
 from modex_agent.memory.config import MemoryConfig
 from modex_agent.memory.consolidation.dream_engine import DreamEngine

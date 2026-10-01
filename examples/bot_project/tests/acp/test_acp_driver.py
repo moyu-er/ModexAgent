@@ -22,7 +22,7 @@ from modex_agent.acp.types import (
     PermissionChoice,
     PermissionPrompt,
 )
-from modex_agent.core.emitter import StopReason
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider

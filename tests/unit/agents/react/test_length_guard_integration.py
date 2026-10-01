@@ -31,7 +31,7 @@ from modex_agent.agents.react.nodes.after_turn import AfterTurnNode
 from modex_agent.agents.react.nodes.before_turn import BeforeTurnNode
 from modex_agent.agents.react.nodes.llm import LLMNode
 from modex_agent.agents.react.runtime import ReactGraphRuntime
-from modex_agent.core.emitter import StopReason
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import MessageRole
 from modex_agent.hook import HookRunner, HookSpec

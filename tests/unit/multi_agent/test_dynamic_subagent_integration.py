@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import StopReason
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.messaging.message_format import (
     ResultMeta,

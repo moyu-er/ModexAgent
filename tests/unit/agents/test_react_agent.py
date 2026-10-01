@@ -18,7 +18,8 @@ from modex_agent.adapters.platform import StreamingMode
 from modex_agent.agents.react import ReActAgent, ReActEvent
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
+from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.events import AgentEvent, EmitterConfig
 from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ToolCall

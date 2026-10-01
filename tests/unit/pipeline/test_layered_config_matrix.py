@@ -60,7 +60,8 @@ def _graph_ctx():
     return MagicMock(spec=GraphContext)
 
 from modex_agent.core import AgentCommKind as CommKind
-from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.tool_manager import Tool
 from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.multi_agent.communication.strategies.base import (

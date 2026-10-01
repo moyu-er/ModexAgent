@@ -48,7 +48,9 @@ class TestExperienceReviewHookExecution:
         # Mock the ReActAgent.run so we don't need a real LLM,
         # but make it emit a complete event so trace is written.
         async def _mock_run(context, emitter):
-            from modex_agent.core.emitter import AgentResult, StopReason
+            from modex_agent.core.emitter import AgentResult
+            from modex_agent.core.turn_events import StopReason
+            from modex_agent.core.turn_events import StopReason
 
             await emitter.emit_complete(
                 AgentResult(content="done", stop_reason=StopReason.COMPLETED)
@@ -96,7 +98,9 @@ class TestExperienceReviewHookExecution:
         meta = PerFileExperienceMetaStore(exp_dir)
 
         async def _mock_run(context, emitter):
-            from modex_agent.core.emitter import AgentResult, StopReason
+            from modex_agent.core.emitter import AgentResult
+            from modex_agent.core.turn_events import StopReason
+            from modex_agent.core.turn_events import StopReason
 
             await emitter.emit_complete(
                 AgentResult(content="done", stop_reason=StopReason.COMPLETED)
@@ -125,7 +129,8 @@ class TestExperienceReviewHookExecution:
     @pytest.mark.asyncio
     async def test_experience_review_hook_after_graph_logs_info(self, tmp_path: Path) -> None:
         """ExperienceReviewHook.after_graph must log INFO when triggering review."""
-        from modex_agent.core.emitter import AgentResult, StopReason
+        from modex_agent.core.emitter import AgentResult
+        from modex_agent.core.turn_events import StopReason
         from modex_agent.memory.history import ListMessageHistory
         from modex_agent.plugins.defaults.capabilities.experience.metadata import (
             PerFileExperienceMetaStore,

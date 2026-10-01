@@ -10,7 +10,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.turn_events import StopReason
 from modex_agent.hook.abc import ClosableHook, OutcomeFinallyHook
 
 if TYPE_CHECKING:

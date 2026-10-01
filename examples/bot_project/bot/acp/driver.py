@@ -15,10 +15,10 @@ from modex_agent.acp.types import (
     PermissionPrompt,
 )
 from modex_agent.approval.views import ApprovalRequestView
-from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.emitter import AgentResult
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.turn_events import TurnTextEvent
+from modex_agent.core.turn_events import StopReason, TurnTextEvent
 from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
 from modex_agent.multi_agent.session_tree.request_scope import (
     RequestBusyError,

@@ -22,8 +22,8 @@ from typing import Annotated, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 
-from modex_agent.core.emitter import StopReason
 from modex_agent.core.session_id import session_id_prefix_of
+from modex_agent.core.turn_events import StopReason
 from modex_agent.utils.file_io import safe_filename
 
 from .events import (

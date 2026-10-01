@@ -61,7 +61,8 @@ from modex_agent.agents.external.types import (
     ExternalEnvSpec,
 )
 from modex_agent.core.agent import AgentContext, ProviderKind
-from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
+from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.turn_events import (

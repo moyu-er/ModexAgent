@@ -17,7 +17,8 @@ from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.turn_events import StopReason
 from modex_agent.core.llm_struct import FinishReason
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.session_id import SessionInfo

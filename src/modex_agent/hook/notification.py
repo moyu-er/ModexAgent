@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Final
 
 from modex_agent.core import AgentCommKind
-from modex_agent.core.emitter import StopReason
+from modex_agent.core.turn_events import StopReason
 from modex_agent.hook.abc import OutcomeFinallyHook
 from modex_agent.messaging.models import OutputMessageType
 

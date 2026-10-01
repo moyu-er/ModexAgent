@@ -6,10 +6,11 @@ from pathlib import Path
 
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.emitter import AgentResult
 from modex_agent.core.message import MessageRole
 from modex_agent.core.message_utils import wrap_system_reminder
 from modex_agent.core.turn.enums import TurnCustomKey
+from modex_agent.core.turn_events import StopReason
 from modex_agent.hook.abc import AfterTurnHook, BeforeTurnHook
 
 _FINDINGS_TAIL_CHARS = 800
