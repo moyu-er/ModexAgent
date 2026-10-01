@@ -23,7 +23,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from modex_agent.ioc.configs.observability import TraceBackend
+from modex_agent.trace.observability import TraceBackend
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.semconv import GenAiAttr, SpanName
 from modex_agent.trace.store import SpanModel

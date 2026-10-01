@@ -46,27 +46,30 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
+from modex_agent.core.memory_hooks import MemoryHookRunner
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.tool_manager import Tool
 from modex_agent.hook.runner import HookRunner
 from modex_agent.memory.context import InMemoryContextManager, RuntimeInfoKey
-from modex_agent.memory.hooks import MemoryHookRunner
 from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.multi_agent.descriptor import AgentInstance
 from modex_agent.multi_agent.factory import AgentFactory
-from modex_agent.plugins.abc import (
-    ComponentFactory,
-    ComponentSlot,
-    SimpleFactory,
-)
 from modex_agent.plugins.assembly.context import AssemblyContext
 from modex_agent.plugins.assembly.native_core import (
     LlmDefaults,
     NativeAssemblyInputs,
     assemble_native_agent,
 )
-from modex_agent.plugins.capability import (
+from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.scope import (
+    AgentSpec,
+    PoolSpec,
+    ScopeKind,
+    ScopeSpec,
+    compile_scope,
+)
+from modex_agent.scope.capability import (
     AgentDeclarationView,
     Capability,
     CapabilityBinding,
@@ -75,14 +78,11 @@ from modex_agent.plugins.capability import (
     PromptSectionSpec,
     SectionPlacement,
 )
-from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.scope import (
-    AgentSpec,
-    PoolSpec,
-    ScopeKind,
-    ScopeSpec,
-    compile_scope,
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import (
+    ComponentFactory,
+    ComponentSlot,
+    SimpleFactory,
 )
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.context import WorkspaceContext

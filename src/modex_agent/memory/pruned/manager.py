@@ -173,7 +173,7 @@ class PrunedManager:
             )
         if session_id not in self._storages:
             from modex_agent.memory.pruned.storage import FilePrunedStorage
-            from modex_agent.memory.stores.utils import sanitize_scope_key
+            from modex_agent.utils.paths import sanitize_scope_key
 
             safe = sanitize_scope_key(session_id)
             self._storages[session_id] = FilePrunedStorage(self._base_dir / safe)

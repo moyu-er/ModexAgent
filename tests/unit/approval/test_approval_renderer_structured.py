@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from modex_agent.approval.views import ApprovalRequestView
-from modex_agent.pipeline.approval_renderer import approval_output_message, format_approval_prompt
+from modex_agent.approval.views import (
+    ApprovalRequestView,
+    approval_output_message,
+    format_approval_prompt,
+)
 
 
 def test_approval_output_message_carries_text_and_structured_view():

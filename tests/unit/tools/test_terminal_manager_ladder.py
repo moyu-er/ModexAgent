@@ -9,8 +9,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from modex_agent.core.terminal import TerminalVisibility
 from modex_agent.tools.terminal.managers import create_terminal_manager_or_none
-from modex_agent.tools.terminal.types import TerminalVisibility
 
 
 def _shell() -> SimpleNamespace:

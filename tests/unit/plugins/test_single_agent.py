@@ -21,22 +21,16 @@ from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_group import ToolGroupResource
 from modex_agent.core.tool_manager import Tool, ToolResult
+from modex_agent.core.tool_vocabulary import ToolPreset
 from modex_agent.hook import Hook
 from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.memory.context_governance import CompositeGovernance
 from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent.factory import DefaultAgentFactory
-from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
 from modex_agent.plugins.assembly.single_agent import (
     SingleAgentAssembled,
     SingleAgentInfra,
     assemble_declared_single_agent,
-)
-from modex_agent.plugins.capability import (
-    Capability,
-    CapabilityBinding,
-    CapabilityWiring,
-    PoolSupplyView,
 )
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.capabilities.skills import (
@@ -44,8 +38,15 @@ from modex_agent.plugins.defaults.capabilities.skills import (
     SkillsSupply,
 )
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.capability import (
+    Capability,
+    CapabilityBinding,
+    CapabilityWiring,
+    PoolSupplyView,
+)
 from modex_agent.scope.compiler import CompiledAgent, compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot, SimpleFactory
 from modex_agent.scope.defaults import defaults_for_position, memory_config_for_position
 from modex_agent.scope.spec import (
     AgentSpec,
@@ -55,7 +56,6 @@ from modex_agent.scope.spec import (
     ScopeSpec,
 )
 from modex_agent.tools.manager import InMemoryToolManager
-from modex_agent.tools.presets import ToolPreset
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 

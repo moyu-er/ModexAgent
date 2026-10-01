@@ -26,7 +26,7 @@ import asyncio
 import os
 import platform
 import sys
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from pathlib import Path
 from typing import Any
 
@@ -37,41 +37,16 @@ else:
     _PROCESS_GROUP_CREATION_FLAGS = 0
     _START_NEW_SESSION = True
 
-from modex_agent.core.tool_manager import ExclusiveTool
-from modex_agent.tools.terminal.types import (
+from modex_agent.core.terminal import (
     Platform,
+    ShellExecutor,
     ShellFamily,
     ShellInfo,
     _parse_platform,
     detect_platform_shell,
 )
+from modex_agent.core.tool_manager import ExclusiveTool
 from modex_agent.utils.process_tree import terminate_process_group
-
-
-class ShellLaunchOwner(ABC):
-    """Own launch selection; fallback is legal only before target submission."""
-
-    @abstractmethod
-    def shell_argv(self, session_id: str | None) -> tuple[str, ...] | None:
-        """Current launcher, or None for ordinary host shell detection."""
-
-    @abstractmethod
-    async def fallback(self, session_id: str | None, reason: str) -> bool:
-        """Record confirmed startup unavailability; True authorizes host startup."""
-
-
-class ShellExecutor(ABC):
-    """Abstract strategy for executing shell commands."""
-
-    @abstractmethod
-    async def execute(
-        self, command: str, working_dir: str | None = None, timeout: int | None = 300
-    ) -> str:
-        """Execute a shell command and return its output."""
-
-    @abstractmethod
-    def shell_info(self) -> ShellInfo:
-        """Return information about the shell for dynamic description generation."""
 
 
 def _default_fallback_shell() -> ShellInfo:
@@ -107,9 +82,9 @@ class SubprocessExecutor(ShellExecutor):
     async def execute(
         self, command: str, working_dir: str | None = None, timeout: int | None = None
     ) -> str:
-        from modex_agent.runtime.env_context import _modex_env
-        from modex_agent.tools.terminal.env import build_full_env
+        from modex_agent.core.turn.env_context import _modex_env
         from modex_agent.tools.terminal.prompt import sanitize_terminal_output
+        from modex_agent.utils.child_env import build_full_env
 
         overrides = _modex_env.get()
         cwd = working_dir or os.getcwd()

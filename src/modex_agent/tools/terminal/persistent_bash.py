@@ -58,7 +58,7 @@ def persistent_bash_supported() -> bool:
 def _routed_session(manager: PersistentShellManager) -> PersistentShellSession:
     """The shell for the CURRENT caller's conversation (default shell
     without a routing context)."""
-    from modex_agent.runtime.env_context import _current_session_id
+    from modex_agent.core.turn.env_context import _current_session_id
 
     return manager.session_for(_current_session_id.get())
 

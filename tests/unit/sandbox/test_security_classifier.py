@@ -15,19 +15,23 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
-from modex_agent.approval.constants import ApprovalTier
+from modex_agent.approval.config import (
+    AgentApprovalConfig,
+    ApprovalConfig,
+    ToolApprovalConfig,
+    ToolApprovalEntry,
+)
 from modex_agent.approval.runtime import TieredToolApprovalClassifier
+from modex_agent.approval.security import SecurityClassifier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
-from modex_agent.ioc.factories.approval import build_approval_runtime
+from modex_agent.core.turn.approval_types import ApprovalTier
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.sandbox.security_classifier import (
-    SecurityClassifier,
-    validate_approval_envelope,
-)
+from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
+from modex_agent.sandbox.approval_envelope import validate_approval_envelope
+from modex_agent.sandbox.decision import SecurityDecisionService
 from modex_agent.sandbox.settings import (
     GuardSettings,
     SandboxBackend,
@@ -35,7 +39,6 @@ from modex_agent.sandbox.settings import (
     WriteSurface,
 )
 from modex_agent.tools.manager import InMemoryToolManager
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 WS = Path("/ws/project")
 
@@ -91,8 +94,6 @@ def _classifier(
     inner: TieredToolApprovalClassifier | None = None,
     settings: SandboxSettings | None = None,
 ) -> SecurityClassifier:
-    from modex_agent.sandbox.decision import SecurityDecisionService
-
     return SecurityClassifier(
         decision=SecurityDecisionService(
             settings=settings or _settings(),
@@ -211,7 +212,7 @@ class TestCleanFallback:
         )
         # The inner matcher is optional in the dataclass; give it the real
         # ArgumentMatcher through the factory path for pattern resolution.
-        from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
+        from modex_agent.approval.argument_matcher import ArgumentMatcher
 
         inner.argument_matcher = ArgumentMatcher(root_provider=_FixedRoot(WS))
         classifier = _classifier(inner=inner)
@@ -222,7 +223,7 @@ class TestCleanFallback:
         inner = _inner(
             tools={"write": ToolApprovalConfig(allowed_paths=["./*"])}
         )
-        from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
+        from modex_agent.approval.argument_matcher import ArgumentMatcher
 
         inner.argument_matcher = ArgumentMatcher(root_provider=_FixedRoot(WS))
         classifier = _classifier(inner=inner)
@@ -424,8 +425,6 @@ class TestDenyMessageBuilder:
     """The builder re-shapes the deny reason into deployment copy."""
 
     def test_builder_output_replaces_recorded_reason(self) -> None:
-        from modex_agent.sandbox.decision import SecurityDecisionService
-
         classifier = SecurityClassifier(
             decision=SecurityDecisionService(
                 settings=_settings(), workspace_root_provider=_FixedRoot(WS)
@@ -458,15 +457,15 @@ class TestGuardOnlyRuntime:
     """The converge helper builds the escalate-off composite every caller shares."""
 
     def _rt(self, builder=None):  # type: ignore[no-untyped-def]
-        from modex_agent.sandbox.security_classifier import guard_only_runtime
+        from modex_agent.approval.security import guard_only_runtime
 
+        decision = SecurityDecisionService(
+            settings=_settings(), workspace_root_provider=_FixedRoot(WS)
+        )
         if builder is None:
-            return guard_only_runtime(
-                settings=_settings(), root_provider=_FixedRoot(WS)
-            )
+            return guard_only_runtime(decision=decision)
         return guard_only_runtime(
-            settings=_settings(),
-            root_provider=_FixedRoot(WS),
+            decision=decision,
             deny_message_builder=builder,
         )
 

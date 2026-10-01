@@ -1,7 +1,7 @@
 """SQLite decision coordinator — atomic snapshot + audit-entry write.
 
 When an approval decision is made, the pipeline must update the
-:class:`~modex_agent.runtime.models.TurnSnapshot` **and** append an
+:class:`~modex_agent.core.turn.models.TurnSnapshot` **and** append an
 :class:`~modex_agent.persistence.adapters.approval_audit_store.ApprovalAuditEntry`
 in one database transaction. This coordinator owns that atomic write.
 
@@ -29,18 +29,18 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from modex_agent.core.scope import RecordScope
-from modex_agent.runtime.approval_decision import (
+from modex_agent.core.turn.approval_decision import (
     ApprovalAuditEntry,
     ApprovalDecisionCoordinator,
 )
-from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import JsonValue, TurnSnapshot
-from modex_agent.runtime.store import ActiveTurnConflictError
+from modex_agent.core.turn.enums import TurnCustomKey, TurnPhase
+from modex_agent.core.turn.models import JsonValue, TurnSnapshot
+from modex_agent.core.turn.store import ActiveTurnConflictError
 from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:
+    from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
     from modex_agent.persistence.connection import ConnectionManager
-    from modex_agent.runtime.codec import RuntimeStateCodecRegistry
 
 _ACTIVE_PHASES = frozenset({TurnPhase.RUNNING, TurnPhase.SUSPENDED})
 _ACTIVE_PHASE_SQL = "'running', 'suspended'"

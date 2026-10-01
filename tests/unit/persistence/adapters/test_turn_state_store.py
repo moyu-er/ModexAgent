@@ -12,18 +12,16 @@ from modex_agent.agents.react.state import (
     ReActRuntimeStateCodec,
     ReActTurnState,
 )
-from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.persistence import ConnectionManager, DatabaseKind
-from modex_agent.persistence.adapters import SqliteTurnStateStore
-from modex_agent.runtime.codec import RuntimeStateCodecRegistry
-from modex_agent.runtime.enums import (
+from modex_agent.core.turn.approval_types import ApprovalDecision, ApprovalTier
+from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
+from modex_agent.core.turn.enums import (
     AgentKind,
     ApprovalSubjectType,
     SnapshotReason,
     TurnPhase,
 )
-from modex_agent.runtime.models import (
+from modex_agent.core.turn.models import (
     ApprovalRequestState,
     ApprovalTransaction,
     ResumePoint,
@@ -32,7 +30,9 @@ from modex_agent.runtime.models import (
     TurnIdentity,
     TurnSnapshot,
 )
-from modex_agent.runtime.store import ActiveTurnConflictError
+from modex_agent.core.turn.store import ActiveTurnConflictError
+from modex_agent.persistence import ConnectionManager, DatabaseKind
+from modex_agent.persistence.adapters import SqliteTurnStateStore
 
 # ---------------------------------------------------------------------------
 # Fixtures

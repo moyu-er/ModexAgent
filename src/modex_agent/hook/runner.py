@@ -11,7 +11,8 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
-from modex_agent.control.exceptions import AgentControlError
+from modex_agent.core.control import AgentControlError
+from modex_agent.core.turn.dispatch import renew_dispatch_deadline
 from modex_agent.hook.abc import (
     AfterApprovalHook,
     AfterGraphHook,
@@ -34,7 +35,6 @@ from modex_agent.hook.abc import (
     HookSpec,
     StartNodeTurnHook,
 )
-from modex_agent.runtime.dispatch import renew_dispatch_deadline
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from modex_agent.core.llm_struct import LLMResponse
     from modex_agent.core.message import ChatMessage, ToolCall
     from modex_agent.core.tool_manager import ToolResult
-    from modex_agent.runtime.models import ApprovalTransaction
+    from modex_agent.core.turn.models import ApprovalTransaction
 
 logger = logging.getLogger(__name__)
 
@@ -342,7 +342,7 @@ class HookRunner:
             pass
         elif spec.on_error == HookErrorPolicy.ABORT:
             error_type = "timeout" if is_timeout else "error"
-            from modex_agent.control.exceptions import PolicyViolationError
+            from modex_agent.core.control import PolicyViolationError
 
             raise PolicyViolationError(
                 f"Hook {hook_name}.{hook_point.value} {error_type} (policy=abort)"

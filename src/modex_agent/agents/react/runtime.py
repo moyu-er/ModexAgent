@@ -61,12 +61,12 @@ if TYPE_CHECKING:
     from modex_agent.agents.react.agent import ReActEvent
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.emitter import ContentEmitter
+    from modex_agent.core.turn.models import TurnStateBase
+    from modex_agent.core.turn.store import TurnStateStore
     from modex_agent.hook import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.memory.context_governance import ContextGovernance
-    from modex_agent.runtime.models import TurnStateBase
     from modex_agent.runtime.policy import SnapshotPolicy
-    from modex_agent.runtime.store import TurnStateStore
     from modex_graph.context import GraphContext
 
 
@@ -195,7 +195,7 @@ class ReactGraphRuntime(GraphRuntime):
         ``interceptor_chain.around_iteration``.
         """
         from modex_agent.agents.react.state import get_react_state
-        from modex_agent.interceptor.abc import IterationContext
+        from modex_agent.core.interceptor import IterationContext
 
         agent_ctx = get_agent_ctx(ctx)
         react_state = get_react_state(agent_ctx)
@@ -255,7 +255,7 @@ class ReactGraphRuntime(GraphRuntime):
         """
         if self._snapshot_policy is None or self._turn_state_store is None:
             return
-        from modex_agent.runtime.enums import SnapshotReason
+        from modex_agent.core.turn.enums import SnapshotReason
 
         agent_ctx = get_agent_ctx(ctx)
         if agent_ctx.runtime is None:

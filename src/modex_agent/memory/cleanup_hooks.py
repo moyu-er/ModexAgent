@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import logging
 
+from modex_agent.core.memory_hooks import CleanupFinishedHook, MemoryHookContext
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.message_utils import wrap_system_reminder
-from modex_agent.memory.hooks import CleanupFinishedHook, MemoryHookContext
-from modex_agent.runtime.todo import TodoItem, TodoStatus, TodoStore
+from modex_agent.core.turn.todo import TodoItem, TodoStatus, TodoStore
 
 logger = logging.getLogger(__name__)
 

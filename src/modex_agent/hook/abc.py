@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from modex_agent.core.llm_struct import LLMResponse
     from modex_agent.core.message import ChatMessage, ToolCall
     from modex_agent.core.tool_manager import ToolResult
-    from modex_agent.runtime.models import ApprovalTransaction
+    from modex_agent.core.turn.models import ApprovalTransaction
 
 
 class HookPoint(StrEnum):

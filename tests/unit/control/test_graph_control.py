@@ -8,14 +8,14 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from modex_agent.control.graph_control import (
+from modex_agent.core.control import ControlCommand, ControlScope
+from modex_agent.core.control import ControlCommandType as Command
+from modex_agent.orchestration import GraphOrchestrator, SqliteCoordinatorFactory
+from modex_agent.orchestration.graph_control import (
     GraphControlService,
     InMemoryGraphEngineController,
     LiveGraphEngineController,
 )
-from modex_agent.control.types import ControlCommand, ControlScope
-from modex_agent.control.types import ControlCommandType as Command
-from modex_agent.orchestration import GraphOrchestrator, SqliteCoordinatorFactory
 from modex_graph import (
     DefaultGraphState,
     DeliverConsumptionStatus,

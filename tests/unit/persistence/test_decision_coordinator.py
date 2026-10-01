@@ -14,25 +14,25 @@ from modex_agent.agents.react.state import (
 )
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.approval_decision import (
+    ApprovalAuditDecision,
+    ApprovalAuditEntry,
+)
+from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
+from modex_agent.core.turn.enums import AgentKind, SnapshotReason, TurnCustomKey, TurnPhase
+from modex_agent.core.turn.models import (
+    JsonValue,
+    ResumePoint,
+    TurnIdentity,
+    TurnSnapshot,
+)
+from modex_agent.core.turn.store import ActiveTurnConflictError
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.approval_audit_store import (
     SqliteApprovalAuditStore,
 )
 from modex_agent.persistence.adapters.turn_state_store import SqliteTurnStateStore
 from modex_agent.persistence.coordinator import SqliteDecisionCoordinator
-from modex_agent.runtime.approval_decision import (
-    ApprovalAuditDecision,
-    ApprovalAuditEntry,
-)
-from modex_agent.runtime.codec import RuntimeStateCodecRegistry
-from modex_agent.runtime.enums import AgentKind, SnapshotReason, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import (
-    JsonValue,
-    ResumePoint,
-    TurnIdentity,
-    TurnSnapshot,
-)
-from modex_agent.runtime.store import ActiveTurnConflictError
 
 
 class _PoolScopedRecordScope(RecordScope):

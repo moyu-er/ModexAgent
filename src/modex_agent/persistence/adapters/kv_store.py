@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.memory.core.split_stores import KVStore
+from modex_agent.core.stores import KVStore
 from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:

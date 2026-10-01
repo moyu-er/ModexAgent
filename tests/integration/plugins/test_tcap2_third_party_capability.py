@@ -64,18 +64,12 @@ from modex_agent.core.stream_events import LLMStreamEvent
 from modex_agent.core.tool_manager import Tool
 from modex_agent.hook import HookPayload, HookPoint
 from modex_agent.hook.abc import AfterTurnHook
-from modex_agent.ioc.factories.descriptors import build_session_only_memory
+from modex_agent.memory.assembly import build_session_only_memory
 from modex_agent.memory.scope import MemoryAgentRole
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.multi_agent.pool import AgentPool
-from modex_agent.plugins.abc import (
-    ComponentFactory,
-    PluginSource,
-    ReactHookFactory,
-    SimpleFactory,
-)
 from modex_agent.plugins.assembly.context import AssemblyContext, SupplyInfra
 from modex_agent.plugins.assembly.native_core import LlmDefaults, NativeAssemblyInputs
 from modex_agent.plugins.assembly.pipeline import AssemblyPipeline
@@ -84,16 +78,6 @@ from modex_agent.plugins.assembly.stages.infra_assemble import InfraAssembleStag
 from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
 from modex_agent.plugins.assembly.stages.workspace_materialize import (
     WorkspaceMaterializeStage,
-)
-from modex_agent.plugins.capability import (
-    Capability,
-    CapabilityBinding,
-    CapabilityContribution,
-    CapabilitySupply,
-    CapabilityWiring,
-    PoolSupplyView,
-    PromptSectionSpec,
-    TreePositionView,
 )
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.capabilities.skills import (
@@ -106,8 +90,23 @@ from modex_agent.plugins.loader import (
     PluginDiscoveryConfig,
     PluginRegistrationContext,
 )
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.capability import (
+    Capability,
+    CapabilityBinding,
+    CapabilityContribution,
+    CapabilitySupply,
+    CapabilityWiring,
+    PoolSupplyView,
+    PromptSectionSpec,
+    TreePositionView,
+)
 from modex_agent.scope.compiler import compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry, PluginSource
+from modex_agent.scope.components import (
+    ComponentFactory,
+    ReactHookFactory,
+    SimpleFactory,
+)
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths

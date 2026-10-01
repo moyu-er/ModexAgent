@@ -31,7 +31,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from modex_agent.runtime.env_context import _current_session_id, _modex_env
+from modex_agent.core.terminal import (
+    Platform,
+    ShellFamily,
+    ShellInfo,
+    TerminalVisibility,
+)
+from modex_agent.core.turn.env_context import _current_session_id, _modex_env
 from modex_agent.tools.terminal.backends.base import TerminalBackend
 from modex_agent.tools.terminal.command_tool import CommandTool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
@@ -40,12 +46,6 @@ from modex_agent.tools.terminal.poll_loop import PollOutcome, PollResult
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
 from modex_agent.tools.terminal.results import TerminalRead, TerminalSegment
 from modex_agent.tools.terminal.session import TerminalSession
-from modex_agent.tools.terminal.types import (
-    Platform,
-    ShellFamily,
-    ShellInfo,
-    TerminalVisibility,
-)
 
 
 @dataclass

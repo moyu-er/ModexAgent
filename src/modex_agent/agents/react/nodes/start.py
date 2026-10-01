@@ -5,7 +5,7 @@ from __future__ import annotations
 from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
 from modex_agent.agents.react.constants import ReActHookPoint, ReActNode
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.runtime.enums import TurnPhase
+from modex_agent.core.turn.enums import TurnPhase
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node

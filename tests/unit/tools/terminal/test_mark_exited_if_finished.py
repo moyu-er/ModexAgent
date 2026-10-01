@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from modex_agent.core.terminal import ProcessStatus
 from modex_agent.tools.terminal.poll_loop import PollOutcome, mark_exited_if_finished
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
-from modex_agent.tools.terminal.types import ProcessStatus
 
 
 def _running_session(registry: ProcessRegistry) -> str:

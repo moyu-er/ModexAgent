@@ -35,10 +35,8 @@ from typing import TYPE_CHECKING
 
 from modex_agent.commands.handlers import CommandHandler
 from modex_agent.commands.processor import SlashCommandProcessor
-from modex_agent.ioc.configs.observability import TraceBackend
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentDescriptor
-from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.capability_supply import (
     assemble_capability_supplies,
     stop_capability_supplies,
@@ -52,7 +50,9 @@ from modex_agent.plugins.assembly.context import (
 from modex_agent.plugins.assembly.interceptors import assemble_interceptor_chain
 from modex_agent.plugins.assembly.pipeline import AssemblyStage
 from modex_agent.plugins.assembly.resources import AssemblyResourceOwner
-from modex_agent.plugins.capability import PoolSupplyView
+from modex_agent.scope.capability import PoolSupplyView
+from modex_agent.scope.components import ComponentSlot
+from modex_agent.trace.observability import TraceBackend
 
 if TYPE_CHECKING:
     from modex_agent.commands.models import CommandProcessor
@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     )
     from modex_agent.plugins.assembly.builder import AssemblyBuilder
     from modex_agent.plugins.assembly.context import AssemblyContext
-    from modex_agent.plugins.assembly.spec import AssemblySpec
+    from modex_agent.scope.assembly_spec import AssemblySpec
 
 def _capability_supply_view(
     specs: tuple[AssemblySpec, ...],

@@ -27,15 +27,17 @@ from pathlib import Path
 import pytest
 
 from modex_agent.core.scope import RecordScope
+from modex_agent.messaging.agent_messages import (
+    AgentAddress,
+    AgentMessageEnvelope,
+    AgentMessageType,
+)
 from modex_agent.messaging.broker import AddressKind
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.inbox_poller import InboxPoller
-from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.session_tree.models import (
     MessageTrack,

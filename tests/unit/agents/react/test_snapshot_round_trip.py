@@ -25,10 +25,10 @@ from modex_agent.agents.react.state import (
     ReActSnapshotPolicy,
     ReActTurnState,
 )
-from modex_agent.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.runtime.codec import RuntimeStateCodecConfig
-from modex_agent.runtime.enums import (
+from modex_agent.core.turn.approval_types import ApprovalDecision, ApprovalStatus, ApprovalTier
+from modex_agent.core.turn.codec import RuntimeStateCodecConfig
+from modex_agent.core.turn.enums import (
     AgentKind,
     ApprovalSubjectType,
     SnapshotReason,
@@ -37,7 +37,7 @@ from modex_agent.runtime.enums import (
     TurnCustomKey,
     TurnPhase,
 )
-from modex_agent.runtime.models import (
+from modex_agent.core.turn.models import (
     ApprovalRequestState,
     ApprovalTransaction,
     JsonValue,
@@ -562,8 +562,8 @@ class TestCheckpointRoundTrip:
         codec's PEP 604 handling.
         """
         from modex_agent.core.emitter import AgentResult, StopReason
-        from modex_agent.runtime.enums import CancellationSource
-        from modex_agent.runtime.models import CancellationState
+        from modex_agent.core.turn.enums import CancellationSource
+        from modex_agent.core.turn.models import CancellationState
 
         state = _make_state()
         state.cancellation = CancellationState(
@@ -624,8 +624,8 @@ class TestCheckpointRoundTrip:
         Pydantic ``BaseModel`` fields) survive the per-channel codec.
         """
         from modex_agent.core.message import ChatMessage
-        from modex_agent.runtime.enums import MessageDeltaSource
-        from modex_agent.runtime.models import MessageDelta
+        from modex_agent.core.turn.enums import MessageDeltaSource
+        from modex_agent.core.turn.models import MessageDelta
 
         state = _make_state()
 
@@ -708,7 +708,7 @@ class TestSnapshotParity:
         """OLD path: _build_payload → TurnSnapshot → state_from_snapshot."""
         state = _make_state()
         old_payload = _old_build_payload(state)
-        from modex_agent.runtime.models import ResumePoint
+        from modex_agent.core.turn.models import ResumePoint
 
         snapshot = TurnSnapshot(
             identity=state.identity,
@@ -760,7 +760,7 @@ class TestSnapshotParity:
 
         # OLD round-trip
         old_payload = _old_build_payload(state)
-        from modex_agent.runtime.models import ResumePoint
+        from modex_agent.core.turn.models import ResumePoint
 
         old_snapshot = TurnSnapshot(
             identity=state.identity,
@@ -994,8 +994,8 @@ class TestMessageDeltaPartsContentCodec:
 
     def _snapshot_with_parts_delta(self) -> TurnSnapshot:
         from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, TextPart
-        from modex_agent.runtime.enums import MessageDeltaSource
-        from modex_agent.runtime.models import MessageDelta, ResumePoint
+        from modex_agent.core.turn.enums import MessageDeltaSource
+        from modex_agent.core.turn.models import MessageDelta, ResumePoint
 
         message = ChatMessage(
             role="tool",
@@ -1037,8 +1037,8 @@ class TestMessageDeltaPartsContentCodec:
 
     def test_string_content_round_trips_unchanged(self) -> None:
         from modex_agent.core.message import ChatMessage
-        from modex_agent.runtime.enums import MessageDeltaSource
-        from modex_agent.runtime.models import MessageDelta, ResumePoint
+        from modex_agent.core.turn.enums import MessageDeltaSource
+        from modex_agent.core.turn.models import MessageDelta, ResumePoint
 
         codec = ReActRuntimeStateCodec()
         snapshot = TurnSnapshot(
@@ -1079,8 +1079,8 @@ class TestMessageDeltaReasoningReplayCodec:
 
     def _snapshot_with_reasoning_delta(self) -> TurnSnapshot:
         from modex_agent.core.message import ChatMessage, ToolCall
-        from modex_agent.runtime.enums import MessageDeltaSource
-        from modex_agent.runtime.models import MessageDelta, ResumePoint
+        from modex_agent.core.turn.enums import MessageDeltaSource
+        from modex_agent.core.turn.models import MessageDelta, ResumePoint
 
         message = ChatMessage(
             role="assistant",

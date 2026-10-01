@@ -19,7 +19,7 @@ from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 
 if TYPE_CHECKING:
-    from modex_agent.memory.hooks import MemoryHook
+    from modex_agent.core.memory_hooks import MemoryHook
 
 
 class MemorySystem(ABC):

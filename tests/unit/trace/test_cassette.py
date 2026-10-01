@@ -24,7 +24,6 @@ from modex_agent.core.message import (
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.tool_group import ToolGroup
 from modex_agent.core.tool_manager import Tool, ToolConfig, ToolManager, ToolOrigin, ToolResult
-from modex_agent.ioc.configs.observability import CassetteScope
 from modex_agent.trace.cassette import (
     CassetteCategory,
     CassetteRecorder,
@@ -33,6 +32,7 @@ from modex_agent.trace.cassette import (
     llm_call_key,
     tool_call_key,
 )
+from modex_agent.trace.observability import CassetteScope
 
 # ------------------------------------------------------------------
 # Test doubles

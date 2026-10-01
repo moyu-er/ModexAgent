@@ -10,22 +10,22 @@ import asyncio
 import logging
 import time
 
-from modex_agent.agents.summarizer.abc import CoreMemoryConsolidatorBase
-from modex_agent.memory.archive_models import ArchiveChannel
-from modex_agent.memory.core.layers import ArchiveMemoryManager, CoreMemoryManager
-from modex_agent.memory.core.models import ArchiveEntry, CoreMemoryContents
-from modex_agent.memory.hooks import (
+from modex_agent.core.memory_hooks import (
     ConsolidationFinishedPayload,
     MemoryHookContext,
     MemoryHookPoint,
     MemoryHookRunner,
 )
+from modex_agent.memory.archive_models import ArchiveChannel
+from modex_agent.memory.core.layers import ArchiveMemoryManager, CoreMemoryManager
+from modex_agent.memory.core.models import ArchiveEntry, CoreMemoryContents
 from modex_agent.memory.registry.base import MemoryStoreRegistry
 from modex_agent.memory.scope import (
     MemoryAgentRole,
     MemoryContext,
     MemoryLayerName,
 )
+from modex_agent.memory.summarizer import CoreMemoryConsolidatorBase
 from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 
 logger = logging.getLogger(__name__)

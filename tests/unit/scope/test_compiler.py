@@ -25,11 +25,11 @@ from functools import lru_cache
 from pathlib import Path
 
 from modex_agent.core.tool_manager import ToolOrigin
-from modex_agent.plugins.assembly.spec import ToolEntry
+from modex_agent.core.tool_vocabulary import ToolPreset
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope import load_scope_declaration
+from modex_agent.scope.assembly_spec import ToolEntry
 from modex_agent.scope.compiler import (
     AgentProvenance,
     CompiledAgent,
@@ -38,6 +38,7 @@ from modex_agent.scope.compiler import (
     ToolEntryProvenance,
     compile_scope,
 )
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.defaults import RegistrationTiming
 from modex_agent.scope.profile import STANDARD_PROFILES, Profile, ProfileStore
 from modex_agent.scope.spec import (
@@ -50,7 +51,7 @@ from modex_agent.scope.spec import (
     WorkspaceSpec,
 )
 from modex_agent.scope.validator import RuleId, validate_effective_configs
-from modex_agent.tools.presets import ToolPreset, get_preset_tools
+from modex_agent.tools.presets import get_preset_tools
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 

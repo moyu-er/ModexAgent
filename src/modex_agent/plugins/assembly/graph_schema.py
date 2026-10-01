@@ -22,9 +22,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from pydantic import Field, create_model
+from pydantic import BaseModel, Field, create_model
 
-from modex_agent.plugins.registry import ComponentNotFoundError, ComponentRegistry
+from modex_agent.scope.component_registry import ComponentNotFoundError, ComponentRegistry
+from modex_agent.scope.components import ComponentSlot, SimpleFactory
 from modex_graph import FieldSpec, GraphState
 
 # Built-in type name -> Python type. These are the primitive types that
@@ -49,6 +50,45 @@ _ZERO_DEFAULTS: dict[str, Any] = {
 }
 
 
+def resolve_namespace_model(registry: ComponentRegistry, name: str) -> type[BaseModel]:
+    """Return the Pydantic model class for namespace *name*.
+
+    ``DATA_NAMESPACE`` slot only. Registered namespaces are plugin data
+    namespaces — ``SimpleFactory`` wrapping a ``type[BaseModel]``.
+
+    The factory stored under this slot MUST be a ``SimpleFactory`` whose
+    wrapped ``instance`` is the model CLASS (``type[BaseModel]``), not a
+    model instance. This function reads the class directly — it does NOT
+    call ``factory.create()`` (which requires an ``AssemblyContext``).
+
+    Lives at the graph-schema consumer (not on the scope registry) so the
+    scope package keeps zero non-CAPABILITY slot accesses (G-CAP1).
+
+    Raises:
+        ComponentNotFoundError: if *name* is not registered under
+            ``DATA_NAMESPACE``.
+        TypeError: if the factory is not a ``SimpleFactory`` or its
+            wrapped instance is not a ``BaseModel`` subclass.
+    """
+    factory = registry.resolve(ComponentSlot.DATA_NAMESPACE, name)
+    # isinstance is justified here: DATA_NAMESPACE is the one slot whose
+    # factory contract is "SimpleFactory wrapping a model class" — a real
+    # extension boundary where the concrete type must be inspected to
+    # extract the model class without calling create().
+    if not isinstance(factory, SimpleFactory):
+        raise TypeError(
+            f"DATA_NAMESPACE factory {name!r} must be a SimpleFactory, "
+            f"got {type(factory).__name__}"
+        )
+    model = factory._instance  # noqa: SLF001 — SimpleFactory value access
+    if not isinstance(model, type) or not issubclass(model, BaseModel):
+        raise TypeError(
+            f"DATA_NAMESPACE {name!r} factory instance must be a "
+            f"BaseModel subclass, got {model!r}"
+        )
+    return model
+
+
 def _resolve_type_name(
     type_name: str,
     registry: ComponentRegistry,
@@ -57,13 +97,13 @@ def _resolve_type_name(
     """Resolve a type name to a Python type.
 
     Built-in types map directly. Custom types resolve via
-    ``registry.resolve_namespace_model`` (DATA_NAMESPACE slot). Unknown
+    :func:`resolve_namespace_model` (DATA_NAMESPACE slot). Unknown
     types raise ``ValueError`` with an actionable message.
     """
     if type_name in _BUILTIN_TYPES:
         return _BUILTIN_TYPES[type_name]
     try:
-        return registry.resolve_namespace_model(type_name)
+        return resolve_namespace_model(registry, type_name)
     except ComponentNotFoundError:
         raise ValueError(
             f"Unknown state_schema type {type_name!r} for field "

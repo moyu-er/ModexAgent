@@ -39,17 +39,20 @@ if TYPE_CHECKING:
     from modex_agent.core.emitter import ContentEmitter
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.store import TurnStateStore
     from modex_agent.memory.context import ContextManager, ContextState
+    from modex_agent.messaging.agent_messages import RouteResult
     from modex_agent.messaging.models import InputMessage
     from modex_agent.multi_agent import AgentDescriptor
-    from modex_agent.multi_agent.router import RouteResult
     from modex_agent.pipeline.turn_context_config import TurnContextDescriptor
-    from modex_agent.runtime.store import TurnStateStore
     from modex_agent.workspace import WorkspaceManager
 
 from modex_agent.approval.views import ApprovalRequestView, view_from_request
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
+from modex_agent.core.turn.dispatch import renew_dispatch_deadline
+from modex_agent.core.turn.enums import TurnCustomKey
+from modex_agent.core.turn.models import TurnSnapshot
 from modex_agent.messaging.models import ApprovalAction
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
@@ -58,9 +61,6 @@ from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_outcome import TurnSuspension
 from modex_agent.pipeline.turn_runner_abc import TurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.runtime.dispatch import renew_dispatch_deadline
-from modex_agent.runtime.enums import TurnCustomKey
-from modex_agent.runtime.models import TurnSnapshot
 from modex_agent.workspace.runtime import bind_workspace_root
 from modex_graph.exceptions import GraphInterrupt
 

@@ -13,12 +13,12 @@ from typing import Any, Final
 
 from modex_agent.core.agent import current_agent_context
 from modex_agent.core.tool_manager import ExclusiveTool, ToolConfig
-from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.core.turn.enums import TurnCustomKey
+from modex_agent.media.file_read import paginate_file
 from modex_agent.tools.graph_knowledge_capabilities import KnowledgeToolCapabilities
 from modex_agent.tools.standard.file_tool import (
     _build_unified_diff,
     _find_actual_string,
-    _paginate_file,
     _read_file,
     _write_file,
 )
@@ -191,7 +191,7 @@ class GraphKnowledgeBaseTool(ExclusiveTool):
                 f"Use action='write' with pattern='{pattern}' to create it "
                 f"and record your {pattern}."
             )
-        result = _paginate_file(path, int(kwargs.get("offset", 0)), int(kwargs.get("limit", 200)))
+        result = paginate_file(path, int(kwargs.get("offset", 0)), int(kwargs.get("limit", 200)))
         if not result.startswith("Error:"):
             self._increment_read_count()
         return result

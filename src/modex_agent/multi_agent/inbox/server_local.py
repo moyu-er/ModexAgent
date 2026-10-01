@@ -28,9 +28,9 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .server import InboxMQ
+from modex_agent.core.inbox import InboxMessage, InboxMQ
+
 from .tracker import DeliveredIdTracker, FileDeliveredIdTracker
-from .types import InboxMessage
 
 logger = logging.getLogger(__name__)
 

@@ -4,9 +4,9 @@ import secrets
 import time
 from dataclasses import dataclass, field
 
+from modex_agent.core.terminal import ProcessStatus
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.pty_keys import CursorKeyMode
-from modex_agent.tools.terminal.types import ProcessStatus
 
 
 @dataclass

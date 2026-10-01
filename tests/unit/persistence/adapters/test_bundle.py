@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from modex_agent.core.scope import RecordScope
-from modex_agent.memory.core.split_stores import MemoryStoreBundle
+from modex_agent.core.stores import MemoryStoreBundle
 from modex_agent.persistence.adapters.archive_store import SqliteArchiveStore
 from modex_agent.persistence.adapters.cursor_store import SqliteCursorStore
 from modex_agent.persistence.adapters.kv_store import SqliteKVStore

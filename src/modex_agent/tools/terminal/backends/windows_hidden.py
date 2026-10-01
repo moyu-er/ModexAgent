@@ -20,13 +20,13 @@ import logging
 import shutil
 import sys
 
-from modex_agent.tools.terminal.results import SlidingOutputBuffer
-from modex_agent.tools.terminal.types import (
+from modex_agent.core.terminal import (
     Platform,
     ShellFamily,
     TerminalVisibility,
     _family_from_path,
 )
+from modex_agent.tools.terminal.results import SlidingOutputBuffer
 
 from .winpty_transport import WinptyBackend
 

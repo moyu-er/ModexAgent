@@ -50,14 +50,14 @@ SHORT_TERMINAL_RESULT = (
 # ── detection helper tests ──
 
 def test_get_truncatable_paths_returns_none_for_plain_text() -> None:
-    from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
+    from modex_agent.core.terminal import get_terminal_xml_truncatable_paths
 
     assert get_terminal_xml_truncatable_paths("plain text output") is None
     assert get_terminal_xml_truncatable_paths("") is None
 
 
 def test_get_truncatable_paths_detects_command_result() -> None:
-    from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
+    from modex_agent.core.terminal import get_terminal_xml_truncatable_paths
 
     paths = get_terminal_xml_truncatable_paths(COMMAND_RESULT)
     assert paths is not None
@@ -65,14 +65,14 @@ def test_get_truncatable_paths_detects_command_result() -> None:
 
 
 def test_get_truncatable_paths_detects_process_result() -> None:
-    from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
+    from modex_agent.core.terminal import get_terminal_xml_truncatable_paths
 
     paths = get_terminal_xml_truncatable_paths(PROCESS_RESULT)
     assert paths == ["output"]
 
 
 def test_get_truncatable_paths_detects_terminal_result() -> None:
-    from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
+    from modex_agent.core.terminal import get_terminal_xml_truncatable_paths
 
     paths = get_terminal_xml_truncatable_paths(TERMINAL_RESULT)
     assert paths is not None

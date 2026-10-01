@@ -6,11 +6,17 @@ from collections.abc import Sequence
 
 import pytest
 
-from modex_agent.approval.constants import ApprovalTier
-from modex_agent.control.exceptions import PolicyViolationError
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.control import PolicyViolationError
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.approval_types import ApprovalTier
+from modex_agent.core.turn.enums import ApprovalSubjectType
+from modex_agent.core.turn.models import (
+    ApprovalRequestState,
+    ApprovalTransaction,
+    ToolArguments,
+)
 from modex_agent.hook import (
     AfterApprovalHook,
     BeforeGraphHook,
@@ -22,12 +28,6 @@ from modex_agent.hook import (
     HookSpec,
 )
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.enums import ApprovalSubjectType
-from modex_agent.runtime.models import (
-    ApprovalRequestState,
-    ApprovalTransaction,
-    ToolArguments,
-)
 from modex_agent.tools.manager import InMemoryToolManager
 
 # ---------------------------------------------------------------------------

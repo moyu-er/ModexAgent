@@ -56,22 +56,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from modex_agent.runtime.env_context import _current_session_id, _modex_env
-from modex_agent.tools.terminal.backends.base import TerminalBackend
-from modex_agent.tools.terminal.command_tool import CommandTool
-from modex_agent.tools.terminal.config import TerminalRuntimeConfig
-from modex_agent.tools.terminal.env import build_full_env
-from modex_agent.tools.terminal.managers import BaseTerminalManager
-from modex_agent.tools.terminal.poll_loop import PollOutcome, PollResult
-from modex_agent.tools.terminal.process_registry import ProcessRegistry
-from modex_agent.tools.terminal.results import TerminalRead, TerminalSegment
-from modex_agent.tools.terminal.subprocess_tool import create_subprocess_executor
-from modex_agent.tools.terminal.types import (
+from modex_agent.core.terminal import (
     Platform,
     ShellFamily,
     ShellInfo,
     TerminalVisibility,
 )
+from modex_agent.core.turn.env_context import _current_session_id, _modex_env
+from modex_agent.tools.terminal.backends.base import TerminalBackend
+from modex_agent.tools.terminal.command_tool import CommandTool
+from modex_agent.tools.terminal.config import TerminalRuntimeConfig
+from modex_agent.tools.terminal.managers import BaseTerminalManager
+from modex_agent.tools.terminal.poll_loop import PollOutcome, PollResult
+from modex_agent.tools.terminal.process_registry import ProcessRegistry
+from modex_agent.tools.terminal.results import TerminalRead, TerminalSegment
+from modex_agent.tools.terminal.subprocess_tool import create_subprocess_executor
+from modex_agent.utils.child_env import build_full_env
 
 pytestmark = pytest.mark.integration
 

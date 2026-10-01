@@ -8,8 +8,8 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from modex_agent.control.graph_recovery import GraphRecoveryService
 from modex_agent.orchestration import GraphOrchestrator, SqliteCoordinatorFactory
+from modex_agent.orchestration.graph_recovery import GraphRecoveryService
 from modex_graph import (
     DefaultGraphState,
     EdgeSpec,

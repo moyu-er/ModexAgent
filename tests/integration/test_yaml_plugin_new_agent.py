@@ -40,21 +40,15 @@ from pydantic import BaseModel, ConfigDict
 from modex_agent.core.tool_manager import Tool
 from modex_agent.hook import Hook, HookRunner
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
-from modex_agent.plugins.abc import (
-    HookRunnerKind,
-    SimpleFactory,
-)
 from modex_agent.plugins.assembly.builder import AssemblyBuilder
 from modex_agent.plugins.assembly.context import (
     AssemblyContext,
     PoolRuntimeDeps,
 )
 from modex_agent.plugins.assembly.native_core import LlmDefaults, NativeAssemblyInputs
-from modex_agent.plugins.assembly.spec import AssemblySpec
 from modex_agent.plugins.assembly.stages.agent_assemble import (
     AgentAssembleStage,
 )
-from modex_agent.plugins.capability import PoolSupplyAgentEntry, PoolSupplyView
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.capabilities.skills.capability import SkillsCapability
 from modex_agent.plugins.defaults.capabilities.subagents import SubagentsSupply
@@ -64,8 +58,14 @@ from modex_agent.plugins.loader import (
     PluginDiscoveryConfig,
     PluginRegistrationContext,
 )
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.assembly_spec import AssemblySpec
+from modex_agent.scope.capability import PoolSupplyAgentEntry, PoolSupplyView
 from modex_agent.scope.compiler import compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import (
+    HookRunnerKind,
+    SimpleFactory,
+)
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.context import WorkspaceContext

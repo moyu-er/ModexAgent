@@ -2,6 +2,7 @@
 import pytest
 
 from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.agents.react.hooks.loop_detection import LoopDetectionHook
 from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import StopReason
@@ -9,13 +10,12 @@ from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.enums import AgentKind, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
-from modex_agent.hook.builtin import SubagentAutoSendHook
-from modex_agent.hook.builtin.loop_detection import LoopDetectionHook
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.multi_agent.message_type import AgentMessageType
-from modex_agent.runtime.enums import AgentKind, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
+from modex_agent.messaging.agent_messages import AgentMessageType
+from modex_agent.plugins.defaults.capabilities.subagents.auto_send import SubagentAutoSendHook
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
 

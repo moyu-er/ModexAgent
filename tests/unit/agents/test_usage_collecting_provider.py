@@ -4,9 +4,9 @@ import logging
 from collections.abc import Sequence
 
 from modex_agent.core.llm_struct import LLMResponse
+from modex_agent.core.memory_hooks import LlmUsage
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.memory.hooks import LlmUsage
 
 
 class _ResponseProvider(CallbackStreamProvider):

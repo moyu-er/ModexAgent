@@ -32,11 +32,11 @@ from typing import Any
 
 import pytest
 
-from modex_agent.plugins.abc import AgentType
 from modex_agent.plugins.assembly.builder import AssembledAgent, AssemblyBuilder
 from modex_agent.plugins.assembly.context import AssemblyContext
 from modex_agent.plugins.assembly.pipeline import AssemblyPipeline, AssemblyStage
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides
+from modex_agent.scope.components import AgentType
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 

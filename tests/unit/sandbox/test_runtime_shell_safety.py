@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.core.tool_group import ToolGroup
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.plugins.assembly.context import AgentContext
-from modex_agent.plugins.capability import CapabilityWiring
 from modex_agent.plugins.defaults.capabilities.shell import (
     SHELL_CAPABILITY_NAME,
     SHELL_WIRING_KEY,
@@ -34,12 +34,12 @@ from modex_agent.sandbox.settings import (
 )
 from modex_agent.sandbox.shell_plan import SandboxBinding
 from modex_agent.sandbox.types import EnforcementLevel
+from modex_agent.scope.capability import CapabilityWiring
 from modex_agent.tools.terminal.persistent_bash import (
     BashInputTool,
     PersistentBashTool,
 )
-from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
+from modex_agent.tools.terminal.subprocess_tool import SubprocessTool, create_subprocess_executor
 
 
 class FixedRoot(WorkspaceRootProvider):
@@ -219,7 +219,7 @@ async def test_oci_one_shot_translates_windows_cwd(monkeypatch: pytest.MonkeyPat
     process.returncode = 0
     spawn = AsyncMock(return_value=process)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
-    await ContainerShellExecutor(["podman", "exec", "fixture"]).execute("pwd", r"F:\work space\sub")
+    await ContainerShellExecutor(["podman", "exec", "fixture"], host_executor_factory=create_subprocess_executor).execute("pwd", r"F:\work space\sub")
     assert spawn.call_args.args[:5] == ("podman", "exec", "-w", "/f/work space/sub", "fixture")
 
 
@@ -315,7 +315,7 @@ async def test_oci_dead_result_reports_uncertainty_without_replay(monkeypatch: p
     process.returncode = 1
     spawn = AsyncMock(return_value=process)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
-    result = await ContainerShellExecutor(["docker", "exec", "fixture"]).execute("do-work")
+    result = await ContainerShellExecutor(["docker", "exec", "fixture"], host_executor_factory=create_subprocess_executor).execute("do-work")
     assert "uncertain" in result
     assert "side effect happened" in result
     assert spawn.await_count == 1
@@ -330,7 +330,7 @@ async def test_operation_permission_denied_keeps_executor(monkeypatch: pytest.Mo
     process.returncode = 1
     spawn = AsyncMock(return_value=process)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
-    executor = ContainerShellExecutor(["docker", "exec", "fixture"])
+    executor = ContainerShellExecutor(["docker", "exec", "fixture"], host_executor_factory=create_subprocess_executor)
     result = await executor.execute("do-work")
     assert "Operation not permitted" in result
     assert spawn.await_count == 1
@@ -426,7 +426,7 @@ async def test_real_bwrap_writes_permitted_relative_extra_root(tmp_path: Path) -
     assert SecurityDecisionService(settings, FixedRoot(workspace)).evaluate_file_tool("write", "../shared/value").is_clean
     resolved = await BwrapRuntime().resolve_available(settings, workspace)
     assert resolved.backend is SandboxBackend.LOCAL, resolved.degraded_reason
-    executor = ContainerShellExecutor(resolved.one_shot_command_argv_prefix, backend=SandboxBackend.LOCAL)
+    executor = ContainerShellExecutor(resolved.one_shot_command_argv_prefix, backend=SandboxBackend.LOCAL, host_executor_factory=create_subprocess_executor)
     output = await executor.execute("printf permitted > ../shared/value", working_dir=str(workspace))
     assert (shared / "value").is_file(), output
     assert (shared / "value").read_text() == "permitted"
@@ -458,9 +458,9 @@ async def assembled_shell(
 
 
 async def invoke_shell(guard, tool, command, state):
+    from modex_agent.core.interceptor import ToolCallContext
     from modex_agent.core.message import ToolCall
     from modex_agent.core.tool_manager import ToolResult
-    from modex_agent.interceptor.abc import ToolCallContext
     call = ToolCallContext(tool_call=ToolCall(tool_name="bash", arguments={"command": command}, call_id="call"),
                            tool_name="bash", arguments={"command": command}, session_id="fixture", turn_id="turn")
     async def execute():
@@ -473,7 +473,7 @@ async def test_bound_start_failure_runs_host_once_and_keeps_companion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from modex_agent.agents.react.state import ReActTurnState
-    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.core.turn.enums import TurnCustomKey
     argv = [str(tmp_path / "missing-engine")]
     resolved = local_substrate().model_copy(update={"shell_argv": argv})
     guard, group = await assembled_shell(tmp_path, resolved, True, monkeypatch)
@@ -503,7 +503,7 @@ async def test_bound_start_failure_runs_host_once_and_keeps_companion(
 @pytest.mark.parametrize("backend", [SandboxBackend.LOCAL, SandboxBackend.OCI])
 async def test_bound_missing_cli_runs_host_once_and_reports_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: SandboxBackend) -> None:
     from modex_agent.agents.react.state import ReActTurnState
-    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.core.turn.enums import TurnCustomKey
     prefix = [str(tmp_path / "missing-engine")]
     if backend is SandboxBackend.OCI:
         prefix.extend(["exec", "fixture"])
@@ -525,7 +525,7 @@ async def test_bound_missing_cli_runs_host_once_and_reports_host(tmp_path: Path,
 @pytest.mark.parametrize("tail", ["exit", "printf 'Operation not permitted' >&2; false"])
 async def test_bound_target_failure_never_changes_substrate_or_replays(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tail: str) -> None:
     from modex_agent.agents.react.state import ReActTurnState
-    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.core.turn.enums import TurnCustomKey
     guard, group = await assembled_shell(tmp_path, local_substrate(), True, monkeypatch)
     tool = group.tools[0]
     assert isinstance(tool, PersistentBashTool)
@@ -544,7 +544,7 @@ async def test_bound_target_failure_never_changes_substrate_or_replays(tmp_path:
 
 async def test_bound_nonzero_cli_exit_never_falls_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from modex_agent.agents.react.state import ReActTurnState
-    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.core.turn.enums import TurnCustomKey
     script = f"from pathlib import Path; import sys; Path({str(tmp_path / 'effect')!r}).write_text('once'); sys.stderr.write('container is not running'); sys.exit(125)"
     engine_script = tmp_path / "fake_engine.py"
     engine_script.write_text(script)
@@ -562,8 +562,8 @@ async def test_bound_nonzero_cli_exit_never_falls_back(tmp_path: Path, monkeypat
 @pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX PTY")
 async def test_fallback_does_not_replace_another_conversations_live_shell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from modex_agent.agents.react.state import ReActTurnState
-    from modex_agent.runtime.enums import TurnCustomKey
-    from modex_agent.runtime.env_context import _current_session_id
+    from modex_agent.core.turn.enums import TurnCustomKey
+    from modex_agent.core.turn.env_context import _current_session_id
     launcher = tmp_path / "launcher"
     launcher.write_text("#!/bin/sh\nexec /bin/bash --noprofile --norc -i\n")
     launcher.chmod(0o700)

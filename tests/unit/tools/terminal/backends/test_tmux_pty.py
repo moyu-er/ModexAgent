@@ -35,8 +35,8 @@ if "libtmux" not in sys.modules:
     _fake_libtmux.Server = MagicMock(side_effect=lambda: MagicMock())
     sys.modules["libtmux"] = _fake_libtmux
 
+from modex_agent.core.terminal import ShellFamily
 from modex_agent.tools.terminal.backends.tmux_pty import TmuxPtyBackend
-from modex_agent.tools.terminal.types import ShellFamily
 
 
 def _make_backend() -> TmuxPtyBackend:

@@ -22,8 +22,9 @@ from typing import Any
 
 import pytest
 
+from modex_agent.core.terminal import Platform, ShellFamily
 from modex_agent.sandbox.container_executor import ContainerShellExecutor
-from modex_agent.tools.terminal.types import Platform, ShellFamily
+from modex_agent.tools.terminal.subprocess_tool import create_subprocess_executor
 
 _PREFIX = ["docker", "exec", "modex-sbx-test"]
 
@@ -55,7 +56,7 @@ class TestContainerShellExecutor:
             return _FakeProcess()
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        executor = ContainerShellExecutor(command_prefix=list(_PREFIX))
+        executor = ContainerShellExecutor(command_prefix=list(_PREFIX), host_executor_factory=create_subprocess_executor)
         result = await executor.execute("python3 -c 'print(1)'")
 
         assert seen["argv"] == (*_PREFIX, "/bin/bash", "--noprofile", "--norc", "-c", "python3 -c 'print(1)'")
@@ -72,7 +73,7 @@ class TestContainerShellExecutor:
             return _FakeProcess()
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        executor = ContainerShellExecutor(command_prefix=list(_PREFIX))
+        executor = ContainerShellExecutor(command_prefix=list(_PREFIX), host_executor_factory=create_subprocess_executor)
         await executor.execute("ls", working_dir="/ws/project/sub")
 
         argv = seen["argv"]
@@ -96,7 +97,7 @@ class TestContainerShellExecutor:
         original = ce_mod.asyncio.create_subprocess_exec
         ce_mod.asyncio.create_subprocess_exec = fake_exec
         try:
-            executor = ContainerShellExecutor(command_prefix=list(_PREFIX))
+            executor = ContainerShellExecutor(command_prefix=list(_PREFIX), host_executor_factory=create_subprocess_executor)
             await executor.execute("printf '%s' 'a b' | cat > result && cat result")
         finally:
             ce_mod.asyncio.create_subprocess_exec = original
@@ -105,7 +106,7 @@ class TestContainerShellExecutor:
         assert argv[-2:] == ("-c", "printf '%s' 'a b' | cat > result && cat result")
 
     async def test_shell_info_reports_container_bash(self) -> None:
-        executor = ContainerShellExecutor(command_prefix=list(_PREFIX))
+        executor = ContainerShellExecutor(command_prefix=list(_PREFIX), host_executor_factory=create_subprocess_executor)
         info = executor.shell_info()
         assert info.family is ShellFamily.BASH
         assert info.platform is Platform.LINUX
@@ -118,10 +119,10 @@ class TestContainerShellExecutor:
             return _FakeProcess(exit_code=2)
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        executor = ContainerShellExecutor(command_prefix=list(_PREFIX))
+        executor = ContainerShellExecutor(command_prefix=list(_PREFIX), host_executor_factory=create_subprocess_executor)
         result = await executor.execute("false")
         assert "Exit code: 2" in result
 
     async def test_empty_prefix_rejected(self) -> None:
         with pytest.raises(ValueError, match="command_prefix"):
-            ContainerShellExecutor(command_prefix=[])
+            ContainerShellExecutor(command_prefix=[], host_executor_factory=create_subprocess_executor)

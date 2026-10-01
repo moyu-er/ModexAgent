@@ -43,10 +43,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from modex_agent.plugins.abc import AgentType
 from modex_agent.plugins.assembly.builder import AssembledAgent, AssemblyBuilder
 from modex_agent.plugins.assembly.context import AssemblyContext
-from modex_agent.plugins.assembly.spec import AssemblySpec
+from modex_agent.scope.assembly_spec import AssemblySpec
+from modex_agent.scope.components import AgentType
 
 
 class AssemblyStage(ABC):

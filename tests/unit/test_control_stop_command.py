@@ -9,7 +9,7 @@ import pytest
 from modex_agent.commands.constants import CommandAction, CommandDispatchPolicy
 from modex_agent.commands.handlers import ControlCommandHandler
 from modex_agent.commands.models import CommandContext, SlashCommandInvocation
-from modex_agent.control.types import ControlCommandType
+from modex_agent.core.control import ControlCommandType
 
 
 def _make_invocation(command: str = "stop", args: str = "") -> SlashCommandInvocation:

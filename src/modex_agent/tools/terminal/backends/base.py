@@ -13,9 +13,9 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 
+from modex_agent.core.terminal import Platform, ShellFamily, TerminalVisibility
 from modex_agent.tools.terminal.prompt import drain_windows_startup
 from modex_agent.tools.terminal.results import SlidingOutputBuffer, TerminalRead, TerminalSegment
-from modex_agent.tools.terminal.types import Platform, ShellFamily, TerminalVisibility
 
 
 def extract_current_segment_from_buffer(text: str) -> TerminalSegment:

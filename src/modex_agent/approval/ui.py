@@ -72,7 +72,7 @@ class IMUserInterface(ApprovalUserInterface):
         return msg_id
 
     async def render_approval_prompt(self, session_id: str, view: ApprovalRequestView) -> None:
-        from modex_agent.pipeline.approval_renderer import approval_output_message
+        from modex_agent.approval.views import approval_output_message
 
         try:
             await self._output.send(approval_output_message(view), session_id)

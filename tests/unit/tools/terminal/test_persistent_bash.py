@@ -77,7 +77,7 @@ async def test_spawn_env_has_pager_cat_and_no_color(monkeypatch):
 
 async def test_spawn_env_carries_modex_env_overrides():
     """_modex_env overrides set before the first command (spawn) are visible."""
-    from modex_agent.runtime.env_context import _modex_env
+    from modex_agent.core.turn.env_context import _modex_env
 
     token = _modex_env.set({"MODEX_TEST_SPAWN_OVERRIDE": "visible-42"})
     try:
@@ -94,7 +94,7 @@ async def test_spawn_env_carries_modex_env_overrides():
 async def test_modex_env_set_after_spawn_does_not_reach_shell():
     """Persistent-shell semantics: the env is fixed at spawn; overrides set
     after the shell exists do NOT reach it (exports mutate it instead)."""
-    from modex_agent.runtime.env_context import _modex_env
+    from modex_agent.core.turn.env_context import _modex_env
 
     tool = PersistentBashTool(timeout_seconds=30)
     try:

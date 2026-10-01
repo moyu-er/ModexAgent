@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.pool import AgentPool
     from modex_agent.plugins.assembly.context import AssemblyContext, SupplyInfra
     from modex_agent.plugins.assembly.resources import AssemblyResourceOwner
-    from modex_agent.plugins.capability import CapabilityWiring
+    from modex_agent.scope.capability import CapabilityWiring
 
 logger = logging.getLogger(__name__)
 

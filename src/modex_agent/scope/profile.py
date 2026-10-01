@@ -30,9 +30,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from modex_agent.core.tool_vocabulary import ToolPreset
 from modex_agent.scope.spec import MemoryDeclaration, SessionMemoryOverride
 from modex_agent.scope.validator import ProfileDeclaration
-from modex_agent.tools.presets import ToolPreset
 
 
 class Profile(BaseModel):

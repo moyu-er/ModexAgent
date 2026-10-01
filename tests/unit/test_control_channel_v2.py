@@ -3,7 +3,7 @@
 import asyncio
 
 from modex_agent.control.channel import InMemoryControlChannel
-from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
+from modex_agent.core.control import ControlCommand, ControlCommandType, ControlScope
 
 
 def _cmd(cid: str, ctype: ControlCommandType, sid: str = "s1",

@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, assert_never
 
+from modex_agent.core.terminal import ShellFamily, TerminalCommandStatus
 from modex_agent.tools.terminal.prompt import (
     _strip_ansi_and_da1,
     extract_last_command_output,
@@ -22,13 +23,12 @@ from modex_agent.tools.terminal.pty_keys import (
     strip_smkx_rmkx,
 )
 from modex_agent.tools.terminal.results import TerminalRead, TerminalSegment
-from modex_agent.tools.terminal.types import ShellFamily, TerminalCommandStatus
 
 if TYPE_CHECKING:
+    from modex_agent.core.terminal import ShellInfo
     from modex_agent.tools.terminal.backends.base import TerminalBackend
     from modex_agent.tools.terminal.config import TerminalRuntimeConfig
     from modex_agent.tools.terminal.poll_loop import PollResult
-    from modex_agent.tools.terminal.types import ShellInfo
 
 
 @dataclass
@@ -180,7 +180,7 @@ class TerminalSession:
 
     def _startup_env(self) -> dict[str, str]:
         """Return environment for agent-managed terminal sessions."""
-        from modex_agent.tools.terminal.env import build_full_env
+        from modex_agent.utils.child_env import build_full_env
 
         return build_full_env(self._env)
 

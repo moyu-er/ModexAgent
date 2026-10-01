@@ -8,7 +8,7 @@ Provides:
 - Built-in interceptor implementations
 """
 
-from modex_agent.interceptor.abc import (
+from modex_agent.core.interceptor import (
     Interceptor,
     InterceptorScope,
     IterationContext,

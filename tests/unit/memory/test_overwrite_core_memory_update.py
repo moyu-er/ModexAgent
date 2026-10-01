@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from modex_agent.memory.core.split_stores import MemoryStoreBundle
+from modex_agent.core.stores import MemoryStoreBundle
 from modex_agent.memory.scope import MemoryContext, MemoryLayerName
 from modex_agent.memory.stores.markdown_core import MarkdownCoreMemoryStorage
 
@@ -51,7 +51,7 @@ class TestOverwriteCoreMemoryUpdate:
         )
 
         context = MemoryContext(session_id="test", user_id="user1")
-        result = await manager.apply_update(context, update)
+        await manager.apply_update(context, update)
 
         # File should be completely replaced
         file_content = (tmp_path / "USER.md").read_text(encoding="utf-8")

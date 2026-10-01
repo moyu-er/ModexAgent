@@ -23,15 +23,15 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from modex_agent.core.llm_struct import DEFAULT_TOOL_TIMEOUT_SECONDS
-from modex_agent.core.message import ContentFormat, TextPart
-from modex_agent.core.tool_manager import ToolResult
-from modex_agent.interceptor.abc import (
+from modex_agent.core.interceptor import (
     ToolCallContext,
     ToolCallInterceptor,
     ToolCallNext,
 )
-from modex_agent.runtime.dispatch import renew_dispatch_deadline
+from modex_agent.core.llm_struct import DEFAULT_TOOL_TIMEOUT_SECONDS
+from modex_agent.core.message import ContentFormat, TextPart
+from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.turn.dispatch import renew_dispatch_deadline
 from modex_agent.utils.xml import xml_text
 
 if TYPE_CHECKING:

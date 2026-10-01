@@ -4,11 +4,11 @@ Concrete store implementations (``DefaultScopedStorage``,
 ``DirArchiveStorage``, ``MarkdownCoreMemoryStorage``,
 ``InMemoryScopedStorage``) inherit :class:`StoreMetadata` to expose two
 capabilities that sit outside the data-access ABCs
-(:class:`~modex_agent.memory.core.split_stores.MessageStore` etc.):
+(:class:`~modex_agent.core.stores.MessageStore` etc.):
 
 - ``get_lock()`` — the shared read/write lock used by layer managers for
   compound (multi-store) atomic operations within a
-  :class:`~modex_agent.memory.core.split_stores.MemoryStoreBundle`.
+  :class:`~modex_agent.core.stores.MemoryStoreBundle`.
 - ``base_path`` — the filesystem directory backing the store (``None`` for
   non-file backends like in-memory).
 

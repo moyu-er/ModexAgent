@@ -27,6 +27,7 @@ from modex_agent.commands.models import (
 )
 from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.approval_decision import ApprovalAuditStore
 from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.memory.context import ContextState, InMemoryContextManager
 from modex_agent.memory.context_governance import CompositeGovernance
@@ -39,7 +40,6 @@ from modex_agent.pipeline.turn_context_config import (
     TurnContextDescriptor,
 )
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.runtime.approval_decision import ApprovalAuditStore
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.sandbox.delegation import DelegationSnapshot
@@ -410,7 +410,7 @@ async def test_build_runtime_and_context_emitter_factory_used_when_wired() -> No
 
 @pytest.mark.asyncio
 async def test_build_runtime_and_context_propagates_model_info() -> None:
-    from modex_agent.ioc.configs.llm import Modality, ModelCapabilities, ModelInfo
+    from modex_agent.providers.llm_config import Modality, ModelCapabilities, ModelInfo
     from modex_agent.runtime.services import AgentRuntimeServices
 
     info = ModelInfo(
@@ -491,7 +491,7 @@ async def test_build_runtime_and_context_governance_only_propagates_media_store(
 
 @pytest.mark.asyncio
 async def test_subagent_shares_parent_trace_id() -> None:
-    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.core.turn.enums import TurnCustomKey
 
     builder = _make_builder(
         agent=_agent_mock(),
@@ -511,7 +511,7 @@ async def test_subagent_shares_parent_trace_id() -> None:
 
 @pytest.mark.asyncio
 async def test_subagent_root_span_parent_is_handoff() -> None:
-    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.core.turn.enums import TurnCustomKey
 
     builder = _make_builder(
         agent=_agent_mock(),
@@ -531,7 +531,7 @@ async def test_subagent_root_span_parent_is_handoff() -> None:
 
 @pytest.mark.asyncio
 async def test_no_parent_trace_when_metadata_absent() -> None:
-    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.core.turn.enums import TurnCustomKey
 
     builder = _make_builder(
         agent=_agent_mock(),

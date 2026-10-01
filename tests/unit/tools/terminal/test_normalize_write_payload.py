@@ -3,6 +3,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from modex_agent.core.terminal import (
+    Platform,
+    ProcessStatus,
+    ShellFamily,
+    ShellInfo,
+    TerminalVisibility,
+)
 from modex_agent.tools.terminal.backends.base import TerminalBackend
 from modex_agent.tools.terminal.command_tool import CommandTool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
@@ -13,13 +20,6 @@ from modex_agent.tools.terminal.process_tool import ProcessTool
 from modex_agent.tools.terminal.pty_keys import normalize_write_payload
 from modex_agent.tools.terminal.results import TerminalRead, TerminalSegment
 from modex_agent.tools.terminal.session import TerminalSession
-from modex_agent.tools.terminal.types import (
-    Platform,
-    ProcessStatus,
-    ShellFamily,
-    ShellInfo,
-    TerminalVisibility,
-)
 
 
 class _SilentBackend(TerminalBackend):

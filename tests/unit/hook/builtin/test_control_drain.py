@@ -5,8 +5,12 @@ from __future__ import annotations
 import pytest
 
 from modex_agent.control.channel import InMemoryControlChannel
-from modex_agent.control.exceptions import AgentCancelledError
-from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
+from modex_agent.core.control import (
+    AgentCancelledError,
+    ControlCommand,
+    ControlCommandType,
+    ControlScope,
+)
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.hook.builtin.control_drain import (
     ControlDrainInterceptor,

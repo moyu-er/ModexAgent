@@ -16,17 +16,17 @@ from typing import Any
 
 import pytest
 
+from modex_agent.core.memory_hooks import MemoryHookContext
 from modex_agent.core.message import ChatMessage, MessageRole
+from modex_agent.core.turn.todo import TodoItem, TodoStatus, TodoStore
 from modex_agent.memory.cleanup import CleanupResult
 from modex_agent.memory.cleanup_hooks import TodoReorientationHook
 from modex_agent.memory.core.layers import SessionMemoryManager
 from modex_agent.memory.history import ScopedMessageHistory
-from modex_agent.memory.hooks import MemoryHookContext
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.recorder import MemoryAppendRecorder
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 from modex_agent.memory.scope import MemoryContext
-from modex_agent.runtime.todo import TodoItem, TodoStatus, TodoStore
 
 # ---------------------------------------------------------------------------
 # Fakes

@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Final
 
 from modex_agent.core.tool_manager import Tool
+from modex_agent.core.tool_vocabulary import ToolPreset
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.standard import (
     EditFileTool,
@@ -17,27 +19,7 @@ from modex_agent.tools.standard import (
     SearchFilesTool,
     WriteFileTool,
 )
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider, wrap_standard_tools
-
-
-class ToolPreset(StrEnum):
-    """Declarative tool preset for subagent assignment.
-
-    Values map to tool factory lists in TOOL_PRESETS.
-    """
-
-    FULL = "full"  # all scalar standard tools
-    READ_WRITE = "read_write"  # read + write + edit + grep/glob
-    READ_ONLY = "read_only"  # read + grep/glob
-    NONE = "none"  # no standard tools — communication tools only (MCP still loaded)
-    WEB = "web"  # web search + web reader (opt-in, not included in FULL)
-
-
-class ContextMode(StrEnum):
-    """Subagent context mode — controls memory inheritance strategy."""
-
-    FRESH = "fresh"  # clean session, no parent context inherited
-    FORK = "fork"  # system-prompt injection of truncated parent context as read-only reference
+from modex_agent.tools.workspace_scoped import wrap_standard_tools
 
 
 class ThinkingBudget(StrEnum):
@@ -46,13 +28,6 @@ class ThinkingBudget(StrEnum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
-
-
-# Fork-context truncation bounds (only meaningful when context_mode == FORK).
-# Centralized so the AgentTemplate default, the bot payload schema, and the
-# registry loader share one source of truth.
-DEFAULT_FORK_MAX_MESSAGES: int = 80
-MAX_FORK_MAX_MESSAGES: int = 100
 
 
 def _make_standard_read() -> list[Tool]:

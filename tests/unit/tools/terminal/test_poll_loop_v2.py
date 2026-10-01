@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+from modex_agent.core.terminal import ProcessStatus
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.poll_loop import PollOutcome, poll_until_settled
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
 from modex_agent.tools.terminal.results import TerminalRead, TerminalSegment
 from modex_agent.tools.terminal.session import TerminalSession
-from modex_agent.tools.terminal.types import ProcessStatus
 
 
 def _quiet_session(stdin_wait_evidence: bool) -> MagicMock:

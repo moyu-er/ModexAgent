@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 
+from modex_agent.core.terminal import ProcessStatus
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
 from modex_agent.tools.terminal.prompt import (
@@ -13,7 +14,6 @@ from modex_agent.tools.terminal.prompt import (
 )
 from modex_agent.tools.terminal.results import TerminalSegment
 from modex_agent.tools.terminal.session import TerminalSession
-from modex_agent.tools.terminal.types import ProcessStatus
 
 
 def mark_exited_if_finished(

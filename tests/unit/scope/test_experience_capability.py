@@ -33,16 +33,6 @@ import pytest
 from pydantic import ValidationError
 
 from modex_agent.core.tool_manager import ToolOrigin
-from modex_agent.plugins.abc import ComponentSlot
-from modex_agent.plugins.assembly.spec import ToolEntry
-from modex_agent.plugins.capability import (
-    AgentDeclarationView,
-    AgentDeclaredFields,
-    CapabilityBinding,
-    FinalRosterView,
-    PromptSectionSpec,
-    TreePositionView,
-)
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.capabilities.experience import (
     EXPERIENCE_TOOL_NAME,
@@ -52,8 +42,18 @@ from modex_agent.plugins.defaults.capabilities.experience.config import (
     ExperienceCapabilityConfig,
 )
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.assembly_spec import ToolEntry
+from modex_agent.scope.capability import (
+    AgentDeclarationView,
+    AgentDeclaredFields,
+    CapabilityBinding,
+    FinalRosterView,
+    PromptSectionSpec,
+    TreePositionView,
+)
 from modex_agent.scope.compiler import CompiledAgent, compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot
 from modex_agent.scope.defaults import POSITION_DEFAULT_HOOKS
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.tools.presets import EXPERIENCE_REVIEW_HOOK_NAME

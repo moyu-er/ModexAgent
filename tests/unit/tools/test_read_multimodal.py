@@ -253,9 +253,9 @@ async def test_image_chain_tool_to_message_to_injection(tmp_path: Path) -> None:
     from modex_agent.agents.react.state import ReActTurnState
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.enums import AgentKind, TurnPhase
+    from modex_agent.core.turn.models import TurnIdentity
     from modex_agent.memory.history import ListMessageHistory
-    from modex_agent.runtime.enums import AgentKind, TurnPhase
-    from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
     img = tmp_path / "chain.png"

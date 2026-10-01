@@ -16,15 +16,15 @@ from modex_agent.agents.react.nodes.start import StartNode
 from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.tool_executor import ToolExecutor
-from modex_agent.approval.constants import ApprovalTier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.llm_struct import FinishReason
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.turn.approval_types import ApprovalTier
+from modex_agent.core.turn.enums import TurnCustomKey, TurnPhase
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_graph.constants import GraphNode
 
@@ -240,7 +240,7 @@ class TestLLMNode:
         BEFORE the LLM call, so a fresh iteration always gets a full
         no-progress budget regardless of the previous iteration's tail."""
         from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-        from modex_agent.runtime.dispatch import (
+        from modex_agent.core.turn.dispatch import (
             DispatchDeadline,
             current_dispatch_deadline,
         )
@@ -407,8 +407,7 @@ class _TierByNameClassifier:
     """t1 -> NORMAL, everything else HARDLINE."""
 
     def classify(self, tc, ctx):
-        from modex_agent.approval.classification import ToolClassification
-        from modex_agent.approval.constants import ApprovalTier
+        from modex_agent.core.turn.approval_types import ApprovalTier, ToolClassification
 
         if tc.tool_name == "t1":
             return ToolClassification.tier_result(ApprovalTier.NORMAL)
@@ -419,8 +418,7 @@ class _AlwaysHardlineClassifier:
     """Every call HARDLINE."""
 
     def classify(self, tc, ctx):
-        from modex_agent.approval.classification import ToolClassification
-        from modex_agent.approval.constants import ApprovalTier
+        from modex_agent.core.turn.approval_types import ApprovalTier, ToolClassification
 
         return ToolClassification.tier_result(ApprovalTier.HARDLINE)
 
@@ -536,7 +534,7 @@ class TestToolNode:
         tc2 = ToolCall(tool_name="t2", arguments={}, call_id="c2")
 
         from modex_agent.approval.runtime import ApprovalRuntime
-        from modex_agent.runtime.enums import ApprovalDenyPolicy
+        from modex_agent.core.turn.enums import ApprovalDenyPolicy
 
         runtime = make_runtime()
         runtime.state.iteration = 1
@@ -571,7 +569,7 @@ class TestToolNode:
         tc = ToolCall(tool_name="write", arguments={"path": "/tmp/x"}, call_id="c1")
 
         from modex_agent.approval.runtime import ApprovalRuntime
-        from modex_agent.runtime.enums import ApprovalDenyPolicy
+        from modex_agent.core.turn.enums import ApprovalDenyPolicy
 
         runtime = make_runtime()
         runtime.state.iteration = 1

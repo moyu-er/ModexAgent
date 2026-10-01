@@ -13,25 +13,25 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.approval.classification import (
-    ClassificationSource,
-    ToolClassification,
-)
 from modex_agent.approval.config import AgentApprovalConfig
-from modex_agent.approval.constants import ApprovalTier
 from modex_agent.approval.runtime import (
     ApprovalClassifier,
     TieredToolApprovalClassifier,
 )
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.guard import GuardCategory
 from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.approval_decision import (
+from modex_agent.core.turn.approval_decision import (
     ApprovalAuditDecision,
     DecisionActor,
 )
-from modex_agent.sandbox.verdict import GuardCategory
+from modex_agent.core.turn.approval_types import (
+    ApprovalTier,
+    ClassificationSource,
+    ToolClassification,
+)
+from modex_agent.memory.history import ListMessageHistory
 from modex_agent.tools.manager import InMemoryToolManager
 
 WS = Path("/ws/project")
@@ -53,8 +53,8 @@ def _tiered() -> TieredToolApprovalClassifier:
 
 
 def _guard_classifier():  # type: ignore[no-untyped-def]
+    from modex_agent.approval.security import SecurityClassifier
     from modex_agent.sandbox.decision import SecurityDecisionService
-    from modex_agent.sandbox.security_classifier import SecurityClassifier
     from modex_agent.sandbox.settings import (
         GuardSettings,
         SandboxBackend,
@@ -115,7 +115,7 @@ class TestValueContract:
         assert result.audit is None
 
     def test_audit_fact_rejects_approved(self) -> None:
-        from modex_agent.approval.classification import GuardAuditFact
+        from modex_agent.core.turn.approval_types import GuardAuditFact
 
         with pytest.raises(ValidationError):
             GuardAuditFact(
@@ -124,7 +124,7 @@ class TestValueContract:
             )
 
     def test_audit_fact_requires_guard_source(self) -> None:
-        from modex_agent.approval.classification import GuardAuditFact
+        from modex_agent.core.turn.approval_types import GuardAuditFact
 
         with pytest.raises(ValidationError):
             ToolClassification(
@@ -189,8 +189,8 @@ class TestSecurityClassifierReturnsClassification:
         assert clean.reason is None
 
     def test_deny_message_builder_shapes_reason(self) -> None:
+        from modex_agent.approval.security import SecurityClassifier
         from modex_agent.sandbox.decision import SecurityDecisionService
-        from modex_agent.sandbox.security_classifier import SecurityClassifier
         from modex_agent.sandbox.settings import (
             GuardSettings,
             SandboxBackend,

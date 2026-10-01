@@ -10,11 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 def validate_allow_patterns(patterns: list[str]) -> list[str]:
     """Shared boundary check: every allow pattern must be a compilable regex.
 
-    Both approval config models (framework + ioc) validate through this
-    one function, so a broken pattern fails fast at parse time with a
-    useful message instead of surfacing as a runtime error on the
-    approval path. Matching semantics: case-insensitive
-    ``re.fullmatch`` against the whole command string.
+    Both approval config models (runtime ``ToolApprovalConfig`` and the
+    YAML ``ToolApprovalEntry`` face) validate through this one function,
+    so a broken pattern fails fast at parse time with a useful message
+    instead of surfacing as a runtime error on the approval path.
+    Matching semantics: case-insensitive ``re.fullmatch`` against the
+    whole command string.
     """
     for pattern in patterns:
         try:
@@ -63,3 +64,37 @@ class AgentApprovalConfig(BaseModel):
 
     enabled: bool = False
     tools: dict[str, ToolApprovalConfig] = Field(default_factory=dict)
+
+
+class ToolApprovalEntry(BaseModel):
+    """Per-tool approval rules (YAML face).
+
+    allowed_paths:
+        []      = per-tool approval unless a command exemption matches
+        ["*"]   = skip per-tool path prompts
+        ["./*"] = exempt paths under the active workspace/project anchor
+        These prompt exemptions never expand the sandbox boundary.
+    allow_patterns:
+        Gray-zone noise-reduction whitelist for command tools (full-command
+        regex, case-insensitive ``re.fullmatch`` against the command
+        string). A hit classifies NORMAL without a card; deny rules
+        always win. Default [] = behavior unchanged.
+    """
+
+    allowed_paths: list[str] = []
+    allow_patterns: list[str] = []
+
+    _validate = field_validator("allow_patterns")(validate_allow_patterns)
+
+
+class ApprovalConfig(BaseModel):
+    """Agent approval configuration. Default OFF — set ``enabled: true`` to opt in.
+
+    Unlisted tools skip per-tool prompts, not active guard judgments.
+    Enabled main-agent approval still escalates sandbox BOUNDARY findings
+    with an empty tools map. Disabled approval leaves guard denials active
+    without prompts; native subagents have no human approval channel.
+    """
+
+    enabled: bool = False
+    tools: dict[str, ToolApprovalEntry] = Field(default_factory=dict)

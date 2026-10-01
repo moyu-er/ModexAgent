@@ -12,7 +12,7 @@ Public API:
 
 from __future__ import annotations
 
-from modex_agent.multi_agent.inbox.types import SessionWork
+from modex_agent.core.inbox import SessionWork
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.session_tree.models import (
     MessageTrack,

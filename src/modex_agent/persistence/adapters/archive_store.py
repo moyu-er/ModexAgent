@@ -1,4 +1,4 @@
-"""SQLite-backed :class:`~modex_agent.memory.core.split_stores.ArchiveStore`.
+"""SQLite-backed :class:`~modex_agent.core.stores.ArchiveStore`.
 
 Append-only archive log + per-channel partitioned logs backed by
 ``memory_archive_entries`` (metadata) and ``memory_archive_state`` (generation
@@ -16,7 +16,7 @@ import json
 from sqlite3 import Row
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.memory.core.split_stores import ArchiveStore
+from modex_agent.core.stores import ArchiveStore
 from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:

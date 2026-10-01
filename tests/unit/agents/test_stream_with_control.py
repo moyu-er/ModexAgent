@@ -57,9 +57,9 @@ def _make_fake_ctx(*, interceptor_chain=None, control_channel=None):
     from modex_agent.agents.react.state import ReActTurnState
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.enums import AgentKind, TurnPhase
+    from modex_agent.core.turn.models import TurnIdentity
     from modex_agent.memory.history import ListMessageHistory
-    from modex_agent.runtime.enums import AgentKind, TurnPhase
-    from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
     from modex_agent.tools.manager import InMemoryToolManager
     state = ReActTurnState(
@@ -222,7 +222,7 @@ class TestMidTurnCancelViaInterceptor:
         before chat_stream returns.  This is the fast path: one content delta
         fires, the drain finds CANCEL_TURN, the provider aborts the stream."""
         from modex_agent.control.channel import InMemoryControlChannel
-        from modex_agent.control.types import (
+        from modex_agent.core.control import (
             ControlCommand,
             ControlCommandType,
             ControlScope,
@@ -275,7 +275,7 @@ class TestMidTurnCancelViaInterceptor:
     @pytest.mark.asyncio
     async def test_mid_stream_cancel_aborts_turn(self):
         from modex_agent.control.channel import InMemoryControlChannel
-        from modex_agent.control.types import (
+        from modex_agent.core.control import (
             ControlCommand,
             ControlCommandType,
             ControlScope,

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.control.exceptions import PolicyViolationError
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.control import PolicyViolationError
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.hook import (

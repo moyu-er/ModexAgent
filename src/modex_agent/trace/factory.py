@@ -17,21 +17,20 @@ returns ``[]`` regardless of tier.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
 from modex_agent.hook.abc import Hook, HookErrorPolicy, HookSpec
-from modex_agent.ioc.configs.observability import (
-    ObservabilityConfig,
-    TraceBackend,
-    TraceSpanMode,
-)
 from modex_agent.trace.agent_start_hook import AgentStartSpanHook
 from modex_agent.trace.approval_span_hook import ApprovalSpanHook
 from modex_agent.trace.chat_span_hook import ChatSpanHook
 from modex_agent.trace.handoff_span_hook import HandoffSpanHook
-from modex_agent.trace.iteration_span_hook import IterationSpanHook
+from modex_agent.trace.observability import (
+    ObservabilityConfig,
+    TraceBackend,
+    TraceSpanMode,
+)
 from modex_agent.trace.prompt_capture import build_prompt_capture
 from modex_agent.trace.root_span_hook import RootSpanHook
 from modex_agent.trace.session_state import TraceSessionState
@@ -65,6 +64,7 @@ def build_trace_hooks(
     score_injector: L2ScoreInjector | None,
     store: OtelSpanTraceStore | None,
     pricebook_yml_path: Path | None = None,
+    extra_full_hooks: Callable[[_BaseHookArgs], list[Hook]] | None = None,
 ) -> list[HookSpec]:
     """Assemble the trace span hook list for an agent from observability config.
 
@@ -75,7 +75,9 @@ def build_trace_hooks(
 
     - ``MINIMAL`` -- :class:`RootSpanHook` only (turn root span).
     - ``STANDARD`` -- root, chat, tool, handoff, approval spans (5 hooks).
-    - ``FULL`` -- STANDARD plus agent-start and iteration spans (7 hooks).
+    - ``FULL`` -- STANDARD plus agent-start and iteration spans (7 hooks);
+  the iteration span hook is caller-injected via *extra_full_hooks* (it is
+  a ReAct-state hook living in the agents package, above trace).
 
     :class:`RootSpanHook` is always registered first (it seeds the trace/root
     span IDs every other hook parents to), and :class:`ToolSpanHook` precedes
@@ -133,7 +135,13 @@ def build_trace_hooks(
                 prompt_capture=prompt_capture,
                 capture_tools=config.capture_tools,
             ),
-            IterationSpanHook(**base),
         ]
+        # ReAct-state span hooks live in the agents package (they read
+        # ``ReActTurnState``), above the trace package — the caller injects
+        # them (W3b): every production caller passes
+        # ``[IterationSpanHook(**base)]`` so the FULL tier keeps its 7-hook
+        # set unchanged.
+        if extra_full_hooks is not None:
+            hooks.extend(extra_full_hooks(base))
 
     return [HookSpec(hook=h, on_error=HookErrorPolicy.LOG) for h in hooks]

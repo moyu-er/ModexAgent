@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from collections.abc import Sequence
 
-from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
+from modex_agent.core.control import ControlCommand, ControlCommandType, ControlScope
 
 logger = logging.getLogger(__name__)
 

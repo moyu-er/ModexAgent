@@ -15,11 +15,11 @@ from __future__ import annotations
 from typing import Any, get_args
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
-from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
 from modex_agent.plugins.assembly.graph_schema import build_state_schema_compiler
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot, SimpleFactory
 from modex_graph import (
     EdgeSpec,
     FieldSpec,
@@ -217,7 +217,7 @@ class TestBuildStateSchemaCompilerInstantiation:
     def test_compiled_state_rejects_extra_fields(self) -> None:
         compiler = build_state_schema_compiler(ComponentRegistry())
         state_cls = compiler({"count": FieldSpec(type="int", initial=0)})
-        with pytest.raises(Exception):  # ValidationError
+        with pytest.raises(ValidationError):
             state_cls.model_validate({"unknown_field": "bad"})
 
     def test_multiple_fields_compiled(self) -> None:

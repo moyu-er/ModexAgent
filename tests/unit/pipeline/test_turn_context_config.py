@@ -12,6 +12,8 @@ from pydantic import ValidationError
 from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool
+from modex_agent.core.turn.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity, TurnStateBase
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.pipeline.turn_context_config import (
     GraphApprovalConfigurator,
@@ -25,8 +27,6 @@ from modex_agent.pipeline.turn_context_config import (
     TurnContextConfigurator,
     TurnContextDescriptor,
 )
-from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import TurnIdentity, TurnStateBase
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_graph.context import GraphContext

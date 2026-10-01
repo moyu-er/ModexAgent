@@ -26,19 +26,19 @@ from xml.etree import ElementTree as ET
 
 import pytest
 
-from modex_agent.tools.terminal.command_tool import CommandTool
-from modex_agent.tools.terminal.config import TerminalRuntimeConfig
-from modex_agent.tools.terminal.managers import BaseTerminalManager, create_terminal_manager
-from modex_agent.tools.terminal.process_registry import ProcessRegistry
-from modex_agent.tools.terminal.process_tool import ProcessTool
-from modex_agent.tools.terminal.tool import TerminalTool
-from modex_agent.tools.terminal.types import (
+from modex_agent.core.terminal import (
     Platform,
     ShellFamily,
     ShellInfo,
     TerminalCommandStatus,
     TerminalVisibility,
 )
+from modex_agent.tools.terminal.command_tool import CommandTool
+from modex_agent.tools.terminal.config import TerminalRuntimeConfig
+from modex_agent.tools.terminal.managers import BaseTerminalManager, create_terminal_manager
+from modex_agent.tools.terminal.process_registry import ProcessRegistry
+from modex_agent.tools.terminal.process_tool import ProcessTool
+from modex_agent.tools.terminal.tool import TerminalTool
 
 pytestmark = [
     pytest.mark.skipif(

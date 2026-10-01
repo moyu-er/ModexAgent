@@ -15,7 +15,7 @@ pytest.importorskip("opentelemetry.sdk")  # skip if opentelemetry-sdk not instal
 
 _SENDER_DEADLINE = 15.0
 
-from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
+from modex_agent.trace.observability import ObservabilityConfig, TraceBackend
 from modex_agent.trace.otel_store import (
     OtelSpanTraceStore,
     build_trace_stores,

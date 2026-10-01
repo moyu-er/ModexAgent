@@ -8,6 +8,14 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 
+from modex_agent.core.memory_hooks import (
+    ConsolidationFinishedPayload,
+    CoreMemoryUpdatedPayload,
+    MemoryHookContext,
+    MemoryHookPoint,
+    MemoryHookRunner,
+    MemoryUpdateRef,
+)
 from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 from modex_agent.memory.core.layers import CoreMemoryManager
 from modex_agent.memory.core.models import CoreMemoryContents
@@ -15,14 +23,6 @@ from modex_agent.memory.core.store_metadata import StoreMetadata
 from modex_agent.memory.core_memory_search import (
     CoreMemorySearchStrategy,
     FullDumpCoreMemoryStrategy,
-)
-from modex_agent.memory.hooks import (
-    ConsolidationFinishedPayload,
-    CoreMemoryUpdatedPayload,
-    MemoryHookContext,
-    MemoryHookPoint,
-    MemoryHookRunner,
-    MemoryUpdateRef,
 )
 from modex_agent.memory.layers.config import CoreMemoryConfig, StorageFactory
 from modex_agent.memory.scope import MemoryContext, Scope

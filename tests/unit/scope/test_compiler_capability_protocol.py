@@ -33,9 +33,19 @@ import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
-from modex_agent.plugins.abc import ComponentSlot
-from modex_agent.plugins.assembly.spec import ToolEntry
-from modex_agent.plugins.capability import (
+from modex_agent.core.tool_vocabulary import ToolPreset
+from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.scope import (
+    POSITION_DEFAULT_HOOKS,
+    AgentSpec,
+    PoolSpec,
+    ScopeKind,
+    ScopeSpec,
+    compile_scope,
+    spec_hash,
+)
+from modex_agent.scope.assembly_spec import ToolEntry
+from modex_agent.scope.capability import (
     AgentDeclarationView,
     Capability,
     CapabilityBinding,
@@ -46,18 +56,8 @@ from modex_agent.plugins.capability import (
     FinalRosterView,
     TreePositionView,
 )
-from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentNotFoundError, ComponentRegistry
-from modex_agent.scope import (
-    POSITION_DEFAULT_HOOKS,
-    AgentSpec,
-    PoolSpec,
-    ScopeKind,
-    ScopeSpec,
-    compile_scope,
-    spec_hash,
-)
-from modex_agent.tools.presets import ToolPreset
+from modex_agent.scope.component_registry import ComponentNotFoundError, ComponentRegistry
+from modex_agent.scope.components import ComponentSlot
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 

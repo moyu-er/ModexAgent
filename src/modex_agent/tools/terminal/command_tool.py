@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, assert_never
 if TYPE_CHECKING:
     from modex_agent.core.message import ContentFormat
 
+from modex_agent.core.terminal import CommandResultStatus, ProcessStatus
 from modex_agent.core.tool_manager import ExclusiveTool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.guard import TerminalGuardResult, check_command_writable
@@ -15,7 +16,6 @@ from modex_agent.tools.terminal.managers import TerminalManagerBase
 from modex_agent.tools.terminal.poll_loop import mark_exited_if_finished
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
 from modex_agent.tools.terminal.prompt import sanitize_terminal_output
-from modex_agent.tools.terminal.types import CommandResultStatus, ProcessStatus
 from modex_agent.utils.xml import xml_text
 
 logger = logging.getLogger(__name__)
@@ -104,14 +104,14 @@ class CommandTool(ExclusiveTool):
 
     def result_metadata(self, result: Any) -> tuple[ContentFormat | None, list[str] | None]:
         """Declare XML truncation metadata for <command_result> output."""
-        from modex_agent.tools.terminal.types import terminal_result_metadata
+        from modex_agent.core.terminal import terminal_result_metadata
 
         return terminal_result_metadata(result)
 
     async def execute(self, command: str = "", **_kwargs: object) -> str:
-        from modex_agent.runtime.env_context import _modex_env
-        from modex_agent.tools.terminal.env import build_full_env
+        from modex_agent.core.turn.env_context import _modex_env
         from modex_agent.tools.terminal.poll_loop import PollOutcome, poll_until_settled
+        from modex_agent.utils.child_env import build_full_env
 
         overrides = _modex_env.get()
         session = await self._manager.get_default()

@@ -116,7 +116,7 @@ def write_enforcement_snapshot(
     vocabulary is loaded locally when writing telemetry; this integration
     still depends on the framework runtime contract.
     """
-    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.core.turn.enums import TurnCustomKey
 
     state_custom[TurnCustomKey.SANDBOX_ENFORCEMENT] = SandboxEnforcementSnapshot(
         backend=resolved.backend,

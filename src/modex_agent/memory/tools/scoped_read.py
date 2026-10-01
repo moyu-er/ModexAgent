@@ -8,13 +8,13 @@ from typing import Any
 from modex_agent.core.capabilities import Modality, ModelCapabilities
 from modex_agent.core.media import Kind
 from modex_agent.core.tool_manager import ParallelTool, ToolResult
+from modex_agent.media.file_read import (
+    DEFAULT_READ_LIMIT,
+    paginate_file,
+    read_image_as_multimodal,
+)
 from modex_agent.media.mime import classify_kind, sniff_mime
 from modex_agent.memory.tools._utils import validate_scoped_path
-from modex_agent.tools.standard.file_tool import (
-    _DEFAULT_LIMIT,
-    _paginate_file,
-    _read_image_as_multimodal,
-)
 
 
 class ScopedReadFileTool(ParallelTool):
@@ -24,7 +24,7 @@ class ScopedReadFileTool(ParallelTool):
     """Mirrors ``ReadFileTool.produced_modalities`` — image files may be
     returned as ``image_url`` content blocks when the active model supports
     IMAGE. Declared as produced (not required) so the tool stays visible to
-    text-only models and degrades at runtime via ``_read_image_as_multimodal``.
+    text-only models and degrades at runtime via ``read_image_as_multimodal``.
     """
 
     def __init__(self, allowed_dirs: list[Path]) -> None:
@@ -51,8 +51,8 @@ class ScopedReadFileTool(ParallelTool):
                     },
                     "limit": {
                         "type": "integer",
-                        "description": f"Maximum number of lines to read (default: {_DEFAULT_LIMIT})",
-                        "default": _DEFAULT_LIMIT,
+                        "description": f"Maximum number of lines to read (default: {DEFAULT_READ_LIMIT})",
+                        "default": DEFAULT_READ_LIMIT,
                     },
                 },
                 "required": ["path"],
@@ -88,7 +88,7 @@ class ScopedReadFileTool(ParallelTool):
     async def execute(self, **kwargs: Any) -> ToolResult:
         raw_path = kwargs.get("path", "")
         offset = kwargs.get("offset", 0)
-        limit = kwargs.get("limit", _DEFAULT_LIMIT)
+        limit = kwargs.get("limit", DEFAULT_READ_LIMIT)
 
         try:
             resolved = validate_scoped_path(raw_path, self._allowed_dirs)
@@ -112,10 +112,10 @@ class ScopedReadFileTool(ParallelTool):
         kind = classify_kind(mime) if mime else Kind.OTHER
 
         if kind is Kind.IMAGE:
-            return await _read_image_as_multimodal(resolved, mime or "image/png")
+            return await read_image_as_multimodal(resolved, mime or "image/png")
 
         try:
-            result = _paginate_file(resolved, offset=offset, limit=limit)
+            result = paginate_file(resolved, offset=offset, limit=limit)
             if result.startswith("Error:"):
                 return ToolResult(tool_name=self.name, error=result)
             return ToolResult.from_text(self.name, result)

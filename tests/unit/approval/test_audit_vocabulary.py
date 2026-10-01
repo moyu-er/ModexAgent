@@ -12,15 +12,15 @@ from importlib.resources import files
 from pathlib import Path
 
 from modex_agent.core.scope import RecordScope
-from modex_agent.persistence import ConnectionManager, DatabaseKind
-from modex_agent.persistence.adapters.approval_audit_store import (
-    SqliteApprovalAuditStore,
-)
-from modex_agent.runtime.approval_decision import (
+from modex_agent.core.turn.approval_decision import (
     ApprovalAuditDecision,
     ApprovalAuditEntry,
     ApprovalAuditSource,
     DecisionActor,
+)
+from modex_agent.persistence import ConnectionManager, DatabaseKind
+from modex_agent.persistence.adapters.approval_audit_store import (
+    SqliteApprovalAuditStore,
 )
 
 

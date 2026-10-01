@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from modex_agent.core.scope import RecordScope
-from modex_agent.memory.core.split_stores import CursorStore
+from modex_agent.core.stores import CursorStore
 from modex_agent.memory.scope import MemoryLayerName
 from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
 from modex_agent.persistence import ConnectionManager, DatabaseKind

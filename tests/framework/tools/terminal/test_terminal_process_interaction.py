@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from modex_agent.tools.terminal.types import TerminalCommandStatus, TerminalVisibility
+from modex_agent.core.terminal import TerminalCommandStatus, TerminalVisibility
 
 from .conftest import output_of, run_command, wait_for_status
 

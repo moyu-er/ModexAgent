@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from modex_agent.core.emitter import ContentEmitter
     from modex_agent.core.provider import LLMProvider
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.workspace_root import WorkspaceRootProvider
     from modex_agent.hook.notification import AgentNotificationService
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.multi_agent.execution_strategy import (
@@ -49,12 +50,11 @@ if TYPE_CHECKING:
 
     # Forward references to types defined elsewhere:
     # - ComponentRegistry (``plugins/registry.py``)
-    from modex_agent.plugins.assembly.spec import AssemblySpec
-    from modex_agent.plugins.capability import CapabilitySupply, CapabilityWiring
-    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.scope.assembly_spec import AssemblySpec
+    from modex_agent.scope.capability import CapabilitySupply, CapabilityWiring
+    from modex_agent.scope.component_registry import ComponentRegistry
     from modex_agent.scope.spec import WorkspaceSpec
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
-    from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
     # Aliased: the per-workspace identity/paths type must not collide with
     # the assembly-time WorkspaceContext LAYER carrier defined below.

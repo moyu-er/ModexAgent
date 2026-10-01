@@ -6,6 +6,10 @@ one :class:`ConnectionManager`.
 
 from __future__ import annotations
 
+from modex_agent.core.turn.approval_decision import (
+    ApprovalAuditEntry,
+    ApprovalAuditStore,
+)
 from modex_agent.persistence.adapters.approval_audit_store import (
     SqliteApprovalAuditStore,
 )
@@ -26,10 +30,6 @@ from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
 from modex_agent.persistence.adapters.turn_state_store import SqliteTurnStateStore
 from modex_agent.persistence.adapters.workspace_registry_store import (
     SqliteScopeRegistryStore,
-)
-from modex_agent.runtime.approval_decision import (
-    ApprovalAuditEntry,
-    ApprovalAuditStore,
 )
 
 __all__ = [

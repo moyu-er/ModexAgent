@@ -11,18 +11,18 @@ from collections.abc import Collection
 from pathlib import Path
 from typing import cast
 
-from modex_agent.memory.archive_models import (
-    CONTEXT_ARCHIVE_FILE_KEY,
-    CONTEXT_ARCHIVE_FILENAME,
-    CORE_ARCHIVE_FILE_KEY,
-    CORE_ARCHIVE_FILENAME,
-)
-from modex_agent.memory.core.split_stores import (
+from modex_agent.core.stores import (
     ArchiveStore,
     CursorStore,
     KVStore,
     MemoryStoreBundle,
     MessageStore,
+)
+from modex_agent.memory.archive_models import (
+    CONTEXT_ARCHIVE_FILE_KEY,
+    CONTEXT_ARCHIVE_FILENAME,
+    CORE_ARCHIVE_FILE_KEY,
+    CORE_ARCHIVE_FILENAME,
 )
 from modex_agent.memory.core.store_metadata import StoreMetadata
 from modex_agent.memory.registry.base import MemoryStoreRegistry
@@ -37,8 +37,8 @@ from modex_agent.memory.scope import (
 )
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
-from modex_agent.memory.stores.utils import sanitize_scope_key
 from modex_agent.utils.file_io import read_json_robust
+from modex_agent.utils.paths import sanitize_scope_key
 
 _SCOPE_FILE = ".scope.json"
 

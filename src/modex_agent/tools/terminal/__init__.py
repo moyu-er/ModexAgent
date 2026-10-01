@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from modex_agent.core.terminal import ShellExecutor
 from modex_agent.tools.terminal.command_tool import CommandTool
 from modex_agent.tools.terminal.manager import TerminalManager
 from modex_agent.tools.terminal.managers import (
@@ -16,7 +17,6 @@ from modex_agent.tools.terminal.session import TerminalInfo, TerminalSession
 from modex_agent.tools.terminal.subprocess_tool import (
     CmdSubprocessExecutor,
     PosixSubprocessExecutor,
-    ShellExecutor,
     SubprocessExecutor,
     SubprocessTool,
     create_subprocess_executor,

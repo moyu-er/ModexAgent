@@ -8,20 +8,20 @@ import pytest
 
 from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
-from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.approval.response import parse_approval_action
-from modex_agent.approval.views import ApprovalRequestView
+from modex_agent.approval.views import ApprovalRequestView, format_approval_prompt
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.messaging.models import InputMessage
-from modex_agent.pipeline.approval_renderer import ApprovalRenderer, format_approval_prompt
-from modex_agent.runtime.enums import AgentKind, ApprovalSubjectType, SnapshotReason, TurnPhase
-from modex_agent.runtime.models import (
+from modex_agent.core.turn.approval_types import ApprovalDecision, ApprovalTier
+from modex_agent.core.turn.enums import AgentKind, ApprovalSubjectType, SnapshotReason, TurnPhase
+from modex_agent.core.turn.models import (
     ApprovalRequestState,
     ApprovalTransaction,
     ToolArguments,
     TurnIdentity,
     TurnSnapshot,
 )
+from modex_agent.messaging.models import InputMessage
+from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 
 
 def _pending_snapshot(session_id: str = "s1") -> TurnSnapshot:

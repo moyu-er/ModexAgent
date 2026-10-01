@@ -522,9 +522,9 @@ async def test_graph_workflow_provider_emits_deliver_routing_guidance() -> None:
     from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.enums import TurnCustomKey
+    from modex_agent.core.turn.models import TurnIdentity
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
-    from modex_agent.runtime.enums import TurnCustomKey
-    from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
     from modex_graph.context import GraphContext
 
@@ -563,9 +563,9 @@ async def test_graph_workflow_provider_emits_topology_and_role_from_turn_state()
     from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.enums import TurnCustomKey
+    from modex_agent.core.turn.models import TurnStateBase
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
-    from modex_agent.runtime.enums import TurnCustomKey
-    from modex_agent.runtime.models import TurnStateBase
     from modex_agent.runtime.services import AgentRuntime
     from modex_graph.context import GraphContext
 
@@ -600,9 +600,9 @@ async def test_graph_workflow_provider_emits_knowledge_base_section_when_knowled
     from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.enums import TurnCustomKey
+    from modex_agent.core.turn.models import TurnStateBase
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
-    from modex_agent.runtime.enums import TurnCustomKey
-    from modex_agent.runtime.models import TurnStateBase
     from modex_agent.runtime.services import AgentRuntime
     from modex_graph.context import GraphContext
 
@@ -640,9 +640,9 @@ async def test_graph_workflow_provider_omits_knowledge_base_section_when_knowled
     from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.enums import TurnCustomKey
+    from modex_agent.core.turn.models import TurnStateBase
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
-    from modex_agent.runtime.enums import TurnCustomKey
-    from modex_agent.runtime.models import TurnStateBase
     from modex_agent.runtime.services import AgentRuntime
     from modex_graph.context import GraphContext
 
@@ -701,9 +701,9 @@ async def test_graph_workflow_provider_end_only_emits_final_reply_pattern() -> N
     from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.enums import TurnCustomKey
+    from modex_agent.core.turn.models import TurnIdentity
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
-    from modex_agent.runtime.enums import TurnCustomKey
-    from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
     from modex_graph.context import GraphContext
 
@@ -742,9 +742,9 @@ async def test_graph_workflow_provider_both_downstream_emits_all_patterns() -> N
     from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.enums import TurnCustomKey
+    from modex_agent.core.turn.models import TurnIdentity
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
-    from modex_agent.runtime.enums import TurnCustomKey
-    from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
     from modex_graph.context import GraphContext
 
@@ -782,9 +782,9 @@ async def test_graph_workflow_provider_no_downstream_omits_deliver_guidelines() 
     from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.enums import TurnCustomKey
+    from modex_agent.core.turn.models import TurnIdentity
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
-    from modex_agent.runtime.enums import TurnCustomKey
-    from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
     from modex_graph.context import GraphContext
 
@@ -817,9 +817,9 @@ async def test_graph_workflow_provider_version_encodes_downstream_types() -> Non
     from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.enums import TurnCustomKey
+    from modex_agent.core.turn.models import TurnIdentity
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
-    from modex_agent.runtime.enums import TurnCustomKey
-    from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
     from modex_graph.context import GraphContext
 
@@ -878,9 +878,9 @@ async def test_graph_workflow_provider_version_changes_with_node_description() -
     from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.enums import TurnCustomKey
+    from modex_agent.core.turn.models import TurnIdentity
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
-    from modex_agent.runtime.enums import TurnCustomKey
-    from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
     from modex_graph.context import GraphContext
 
@@ -924,9 +924,9 @@ async def test_graph_workflow_provider_version_empty_description_is_stable() -> 
     from modex_agent.core import MessageHistory
     from modex_agent.core.agent import AgentContext, current_agent_context
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.enums import TurnCustomKey
+    from modex_agent.core.turn.models import TurnIdentity
     from modex_agent.memory.prompt_pipeline.providers import GraphWorkflowProvider
-    from modex_agent.runtime.enums import TurnCustomKey
-    from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
     from modex_graph.context import GraphContext
 

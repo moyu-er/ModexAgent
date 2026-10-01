@@ -26,15 +26,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.plugins.abc import AgentType
 from modex_agent.plugins.assembly.builder import AssemblyBuilder
 from modex_agent.plugins.assembly.context import AssemblyContext, SupplyInfra
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
 from modex_agent.plugins.assembly.stages.infra_assemble import InfraAssembleStage
 from modex_agent.plugins.assembly.stages.workspace_materialize import (
     WorkspaceMaterializeStage,
 )
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import AgentType
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 

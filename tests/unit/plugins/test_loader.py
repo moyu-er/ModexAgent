@@ -23,19 +23,24 @@ from __future__ import annotations
 
 import sys
 import textwrap
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
 from pydantic import BaseModel
 
-from modex_agent.plugins.abc import ComponentSlot, PluginSource, SimpleFactory
 from modex_agent.plugins.loader import (
     ComponentRegistryLoader,
     Plugin,
     PluginDiscoveryConfig,
     PluginRegistrationContext,
 )
-from modex_agent.plugins.registry import ComponentNotFoundError, ComponentRegistry
+from modex_agent.scope.component_registry import (
+    ComponentNotFoundError,
+    ComponentRegistry,
+    PluginSource,
+)
+from modex_agent.scope.components import ComponentSlot, SimpleFactory
 
 # ---- Test helpers --------------------------------------------------------
 
@@ -184,9 +189,11 @@ class TestPluginRegistrationContext:
     def test_discard_on_exception(self):
         registry = ComponentRegistry()
         plugin = _FailingPlugin()
-        with pytest.raises(ValueError, match="plugin failed"):
-            with PluginRegistrationContext(registry) as ctx:
-                plugin.register(ctx)
+        with (
+            pytest.raises(ValueError, match="plugin failed"),
+            PluginRegistrationContext(registry) as ctx,
+        ):
+            plugin.register(ctx)
         with pytest.raises(ComponentNotFoundError):
             registry.resolve(ComponentSlot.TOOL, "fail_tool")
 
@@ -194,9 +201,11 @@ class TestPluginRegistrationContext:
         """Plugin registers 4 factories then raises — NONE in registry."""
         registry = ComponentRegistry()
         plugin = _AtomicFailPlugin()
-        with pytest.raises(ValueError, match="atomic failure"):
-            with PluginRegistrationContext(registry) as ctx:
-                plugin.register(ctx)
+        with (
+            pytest.raises(ValueError, match="atomic failure"),
+            PluginRegistrationContext(registry) as ctx,
+        ):
+            plugin.register(ctx)
         for name in ("t1", "t2", "t3", "t4"):
             with pytest.raises(ComponentNotFoundError):
                 registry.resolve(ComponentSlot.TOOL, name)
@@ -236,7 +245,7 @@ class TestPluginDiscoveryConfig:
             bundled_factories=(),
             project_plugin_paths=(),
         )
-        with pytest.raises(Exception):  # FrozenInstanceError
+        with pytest.raises(FrozenInstanceError):
             config.entry_point_group = "other"  # type: ignore[misc]
 
     def test_defaults(self):
@@ -315,7 +324,7 @@ class TestComponentRegistryLoader:
         plugin_file.write_text(
             textwrap.dedent(
                 """
-                from modex_agent.plugins.abc import SimpleFactory
+                from modex_agent.scope.components import SimpleFactory
                 from modex_agent.plugins.loader import (
                     Plugin,
                     PluginRegistrationContext,
@@ -389,7 +398,7 @@ class TestComponentRegistryLoader:
 
 _PROJECT_COLLIDING_PLUGIN = textwrap.dedent(
     """
-    from modex_agent.plugins.abc import SimpleFactory
+    from modex_agent.scope.components import SimpleFactory
     from modex_agent.plugins.loader import (
         Plugin,
         PluginRegistrationContext,
@@ -421,7 +430,7 @@ _PROJECT_COLLIDING_PLUGIN = textwrap.dedent(
 
 _USER_COLLIDING_PLUGIN = textwrap.dedent(
     """
-    from modex_agent.plugins.abc import SimpleFactory
+    from modex_agent.scope.components import SimpleFactory
     from modex_agent.plugins.loader import (
         Plugin,
         PluginRegistrationContext,
@@ -708,7 +717,7 @@ class TestCrossSourcePriority:
 
 _STABLE_TOOL_PLUGIN = textwrap.dedent(
     """
-    from modex_agent.plugins.abc import SimpleFactory
+    from modex_agent.scope.components import SimpleFactory
     from modex_agent.plugins.loader import (
         Plugin,
         PluginRegistrationContext,
@@ -733,7 +742,9 @@ _STABLE_TOOL_PLUGIN = textwrap.dedent(
 
 
 def _discovered_module_names() -> set[str]:
-    return {name for name in sys.modules if name.startswith("_modex_discovered_")}
+    from modex_agent.plugins.loader import USER_PLUGIN_PACKAGE_PREFIX
+
+    return {name for name in sys.modules if name.startswith(USER_PLUGIN_PACKAGE_PREFIX)}
 
 
 class TestDeterministicModuleImport:
@@ -743,6 +754,10 @@ class TestDeterministicModuleImport:
     every scan leaked a module entry forever and the same file discovered
     twice produced two UNRELATED Plugin class objects (isinstance /
     issubclass always False between them).
+
+    W6: discovery loads files under QUALIFIED synthetic package names
+    (``modex_agent_userplugins_<dir-sha>.<module>``) — no top-level
+    ``sys.modules`` entries, no ``sys.path`` mutation.
     """
 
     async def test_same_directory_loaded_twice_reuses_module(
@@ -750,8 +765,9 @@ class TestDeterministicModuleImport:
     ):
         """Two full discovery scans over the same directory (a fresh
         registry each) do not raise, register the names once per registry,
-        and grow ``_modex_discovered_*`` by exactly 1 across BOTH loads —
-        the second scan reuses the already-executed module."""
+        and grow the qualified-plugin namespace by exactly 2 entries
+        (one synthetic parent package + one plugin module) across BOTH
+        loads — the second scan reuses the already-executed module."""
         (tmp_path / "stable_plugin.py").write_text(
             _STABLE_TOOL_PLUGIN, encoding="utf-8"
         )
@@ -767,7 +783,7 @@ class TestDeterministicModuleImport:
         )
         assert registry_one.names(ComponentSlot.TOOL) == ("stable_tool",)
         after_first = _discovered_module_names()
-        assert len(after_first - before) == 1
+        assert len(after_first - before) == 2
 
         registry_two = ComponentRegistry()
         await ComponentRegistryLoader.load(
@@ -780,15 +796,15 @@ class TestDeterministicModuleImport:
         assert registry_two.names(ComponentSlot.TOOL) == ("stable_tool",)
         # Deterministic-name reuse: the second load added NO new module.
         assert _discovered_module_names() == after_first
-        assert len(_discovered_module_names() - before) == 1
+        assert len(_discovered_module_names() - before) == 2
 
     async def test_same_file_via_two_paths_single_module_identity(
         self, tmp_path: Path
     ):
         """Two different Path objects pointing at the SAME plugin file
         (a real dir + a symlinked dir) resolve to ONE module: both loads
-        succeed (no ValueError), exactly one module entry is created, and
-        both discoveries return the SAME Plugin class object."""
+        succeed (no ValueError), the package + module pair is created
+        once, and both discoveries return the SAME Plugin class object."""
         real_dir = tmp_path / "real"
         real_dir.mkdir()
         plugin_file = real_dir / "linked_plugin.py"
@@ -809,7 +825,7 @@ class TestDeterministicModuleImport:
         )
         assert registry_one.names(ComponentSlot.TOOL) == ("stable_tool",)
         after_first = _discovered_module_names()
-        assert len(after_first - before) == 1
+        assert len(after_first - before) == 2
 
         registry_two = ComponentRegistry()
         await ComponentRegistryLoader.load(
@@ -825,9 +841,12 @@ class TestDeterministicModuleImport:
         assert _discovered_module_names() == after_first
 
         # Direct identity check: both path objects yield the same class.
-        classes_real = ComponentRegistryLoader._import_plugin_classes(plugin_file)
+        package_name = ComponentRegistryLoader._directory_package_name(real_dir)
+        classes_real = ComponentRegistryLoader._import_plugin_classes(
+            plugin_file, package_name
+        )
         classes_link = ComponentRegistryLoader._import_plugin_classes(
-            link_dir / "linked_plugin.py"
+            link_dir / "linked_plugin.py", package_name
         )
         assert len(classes_real) == 1
         assert classes_real[0] is classes_link[0]

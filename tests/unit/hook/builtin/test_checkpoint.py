@@ -7,6 +7,10 @@ from typing import Any
 import pytest
 
 from modex_agent.agents.react.constants import ReActNode
+from modex_agent.agents.react.hooks.checkpoint import (
+    CheckpointHook,
+    list_iteration_checkpoints,
+)
 from modex_agent.agents.react.state import (
     ReActRuntimeStateCodec,
     ReActSnapshotPolicy,
@@ -14,24 +18,20 @@ from modex_agent.agents.react.state import (
 )
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.hook import HookErrorPolicy, HookPayload, HookPoint, HookRunner, HookSpec
-from modex_agent.hook.abc import AfterIterationHook
-from modex_agent.hook.builtin.checkpoint import (
-    CheckpointHook,
-    list_iteration_checkpoints,
-)
-from modex_agent.ioc.configs.observability import ObservabilityConfig
-from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.enums import AgentKind, SnapshotReason, TurnPhase
-from modex_agent.runtime.models import (
+from modex_agent.core.turn.enums import AgentKind, SnapshotReason, TurnPhase
+from modex_agent.core.turn.models import (
     StateQueryScope,
     TurnIdentity,
     TurnSnapshot,
     TurnStateBase,
 )
+from modex_agent.core.turn.store import TurnStateStore
+from modex_agent.hook import HookErrorPolicy, HookPayload, HookPoint, HookRunner, HookSpec
+from modex_agent.hook.abc import AfterIterationHook
+from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-from modex_agent.runtime.store import TurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager
+from modex_agent.trace.observability import ObservabilityConfig
 
 
 class _RecordingStore(TurnStateStore):
@@ -197,7 +197,7 @@ async def test_after_iteration_does_not_raise_on_store_failure(
     state = _react_state(iteration=2)
     ctx = _ctx(state, store)
 
-    with caplog.at_level("WARNING", logger="modex_agent.hook.builtin.checkpoint"):
+    with caplog.at_level("WARNING", logger="modex_agent.agents.react.hooks.checkpoint"):
         await _fire(ctx, CheckpointHook())
 
     assert store.saved == []

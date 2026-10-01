@@ -1,28 +1,25 @@
 """Integration test for DefaultPlugin — the FW-bundled defaults aggregator (task 14).
 
-``DefaultPlugin`` (in ``src/modex_agent/plugins/defaults/__init__.py``) is a
-single ``Plugin`` entry point that calls all 8 ``register_default_*``
-functions. This test loads it through the real
+``DefaultPlugin`` (in ``src/modex_agent/plugins/defaults/__init__.py`` is a
+single ``Plugin`` entry point that calls every ``register_default_*``
+function. This test loads it through the real
 ``ComponentRegistryLoader.load`` path (not direct ``register_default_*``
 calls) and asserts the EXACT name set registered into each of the 11
 ``ComponentSlot`` values.
 
-Design decision — 4 slots are EMPTY by FW design:
-- ``EXECUTION_STRATEGY`` — empty. Strategies (``react``, ``external``) are
-  business-layer concerns registered by ``BotStrategiesPlugin``
-  (``examples/bot_project/plugins/bot_strategies.py``), NOT framework
-  defaults. The FW ships only the ``ExecutionStrategy`` ABC.
+Design decision — 1 slot is EMPTY by FW design:
 - ``INPUT_STAGE`` — empty. Input pipeline stages (``/cd``, ``/pool``,
   ``/stop`` interception, skill parsing) are IM/WebUI business wiring from
-  ``examples/bot_project/bot/input_pipeline/``, NOT framework defaults.
-- ``MEMORY_SYSTEM`` — empty. No built-in memory-system factory (SPEC
-  Errata-7); users register their own.
-- ``DATA_NAMESPACE`` — empty. The FW registers no default data
-  namespaces; plugins supply their own (the former default trigger
-  configs were dead registrations and were removed).
+  ``examples/bot_project/bot/input_pipeline/``, registered by the bot's
+  ``IMInputStagesPlugin`` — NOT framework defaults.
 
-The other 7 slots are populated by the 8 ``register_default_*`` functions
-(tools counts twice: preset tools + derived communication entries).
+The other 10 slots are populated:
+- ``EXECUTION_STRATEGY`` (W4a): the bundled ``react`` / ``external`` shapes.
+- ``MEMORY_SYSTEM`` (W6): the bundled ``default`` framework memory system
+  (``plugins/defaults/context_manager.py``).
+- ``DATA_NAMESPACE`` (W6): the bundled ``default`` graph-state model
+  (``plugins/defaults/namespaces.py``).
+
 ``CAPABILITY`` holds the FW-bundled capability packages (``aci``,
 ``ast_grep``, ``experience``, ``subagents``, ``todo``; ADR-0047 — grows
 one package per migration wave).
@@ -32,16 +29,18 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from modex_agent.plugins.abc import ComponentSlot
+from modex_agent.core.tool_vocabulary import (
+    ToolPreset,
+)
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import (
     ComponentRegistryLoader,
     Plugin,
     PluginDiscoveryConfig,
 )
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot
 from modex_agent.tools.presets import (
-    ToolPreset,
     get_preset_tools,
 )
 
@@ -73,8 +72,9 @@ _EXPECTED_HOOK_NAMES: frozenset[str] = frozenset(
     }
 )
 
-#: LLM_PROVIDER slot — single ``default`` factory (task 13).
-_EXPECTED_LLM_PROVIDER_NAMES: frozenset[str] = frozenset({"default"})
+#: LLM_PROVIDER slot — ``default`` (single-provider model.yml) + ``multi``
+#: (per-turn selection over the multi-provider model registry, W4b).
+_EXPECTED_LLM_PROVIDER_NAMES: frozenset[str] = frozenset({"default", "multi"})
 
 #: SYSTEM_PROMPT_PROVIDER slot — single ``file_prompt`` factory (task 13).
 _EXPECTED_PROMPT_PROVIDER_NAMES: frozenset[str] = frozenset({"file_prompt"})
@@ -196,8 +196,8 @@ class TestDefaultPluginClass:
 class TestPerSlotNameSets:
     """Assert the EXACT name set registered into each of the 11 slots.
 
-    7 slots are populated by the 8 ``register_default_*`` functions; 4 are
-    empty by FW design (EXECUTION_STRATEGY, INPUT_STAGE, MEMORY_SYSTEM,
+    8 slots are populated by the 9 ``register_default_*`` functions; 3 are
+    empty by FW design (INPUT_STAGE, MEMORY_SYSTEM,
     DATA_NAMESPACE — see module docstring).
     """
 
@@ -252,18 +252,20 @@ class TestPerSlotNameSets:
 
     # ---- Empty slots (FW design — bot plugin territory) -----------------
 
-    async def test_execution_strategy_slot_is_empty(self) -> None:
-        """EXECUTION_STRATEGY is empty — strategies come from BotStrategiesPlugin.
+    async def test_execution_strategy_slot_registers_bundled_shapes(self) -> None:
+        """EXECUTION_STRATEGY carries the bundled ``react`` + ``external`` shapes.
 
-        The FW ships only the ``ExecutionStrategy`` ABC; ``react`` and
-        ``external`` strategy implementations live in
-        ``examples/bot_project/bot/service/`` and are registered by the
-        business-layer ``BotStrategiesPlugin``, NOT by framework defaults.
+        W4a (plan SD-7): the strategies were promoted from
+        ``examples/bot_project/bot/service/`` into
+        ``modex_agent.plugins.assembly.strategies`` and registered by the
+        framework defaults, so a framework-only registry assembles a
+        runnable pool. The deployment keeps its own LLM factory (e.g.
+        ``bot_default``) in its plugin.
         """
         registry = await _load_default_plugin()
         actual = _slot_names(registry, ComponentSlot.EXECUTION_STRATEGY)
-        assert actual == set(), (
-            f"EXECUTION_STRATEGY must be empty (bot plugin territory), got {actual}"
+        assert actual == {"react", "external"}, (
+            f"EXECUTION_STRATEGY must register the bundled shapes, got {actual}"
         )
 
     async def test_input_stage_slot_is_empty(self) -> None:
@@ -271,50 +273,57 @@ class TestPerSlotNameSets:
 
         Input pipeline stages (environment control, session control, skill
         parsing, etc.) are business wiring in
-        ``examples/bot_project/bot/input_pipeline/``, NOT framework
-        defaults.
+        ``examples/bot_project/bot/input_pipeline/``, registered by the
+        bot's ``IMInputStagesPlugin`` — NOT framework defaults.
         """
         registry = await _load_default_plugin()
         actual = _slot_names(registry, ComponentSlot.INPUT_STAGE)
         assert actual == set(), f"INPUT_STAGE must be empty (bot IM plugin territory), got {actual}"
 
-    async def test_data_namespace_slot_is_empty(self) -> None:
-        """DATA_NAMESPACE is empty — no default data namespaces.
+    async def test_memory_system_slot_has_bundled_default(self) -> None:
+        """MEMORY_SYSTEM carries the bundled ``default`` factory (W6) — the
+        framework memory system construction the position defaults use,
+        selectable via ``memory_system: default``."""
+        registry = await _load_default_plugin()
+        actual = _slot_names(registry, ComponentSlot.MEMORY_SYSTEM)
+        assert actual == {"default"}, (
+            f"MEMORY_SYSTEM must register the bundled default, got {actual}"
+        )
 
-        Plugins register their own data-namespace models (the former
-        default trigger configs were dead registrations and were removed).
-        """
+    async def test_data_namespace_slot_has_bundled_default(self) -> None:
+        """DATA_NAMESPACE carries the bundled ``default`` graph-state model
+        (W6) — previously hand-imported by deployment graph wiring, never
+        slot-registered."""
         registry = await _load_default_plugin()
         actual = _slot_names(registry, ComponentSlot.DATA_NAMESPACE)
-        assert actual == set(), f"DATA_NAMESPACE must be empty, got {actual}"
+        assert actual == {"default"}, (
+            f"DATA_NAMESPACE must register the bundled default, got {actual}"
+        )
 
 
 # ---- Aggregate: all 11 slots accounted for ------------------------------
 
 
 class TestAllSlotsAccounted:
-    """The 7 populated + 4 empty slots cover all 11 ComponentSlot values.
+    """The 10 populated + 1 empty slots cover all 11 ComponentSlot values.
 
     This is a structural assertion: every slot is either populated with a
     known name set or explicitly empty by design. No slot is left
     unaccounted.
     """
 
-    async def test_populated_slots_count_is_7(self) -> None:
+    async def test_populated_slots_count_is_10(self) -> None:
         registry = await _load_default_plugin()
         populated = {slot for slot in ComponentSlot if _slot_names(registry, slot)}
-        assert len(populated) == 7, (
-            f"Expected 7 populated slots, got {len(populated)}: {[s.value for s in populated]}"
+        assert len(populated) == 10, (
+            f"Expected 10 populated slots, got {len(populated)}: {[s.value for s in populated]}"
         )
 
-    async def test_empty_slots_are_exactly_the_4_designated(self) -> None:
+    async def test_empty_slots_are_exactly_the_1_designated(self) -> None:
         registry = await _load_default_plugin()
         empty = {slot for slot in ComponentSlot if not _slot_names(registry, slot)}
         expected_empty = {
-            ComponentSlot.EXECUTION_STRATEGY,
             ComponentSlot.INPUT_STAGE,
-            ComponentSlot.MEMORY_SYSTEM,
-            ComponentSlot.DATA_NAMESPACE,
         }
         assert empty == expected_empty, (
             f"Empty slots drift: unexpected_empty="

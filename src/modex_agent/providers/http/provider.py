@@ -66,7 +66,7 @@ class HTTPStreamProvider(LLMProvider):
     factory, plugin defaults, the multi_agent fallback) construct one
     provider per assembly that lives as long as the assembly does — no
     per-turn construction, so no framework-level cache is needed. The bot
-    side caches per (provider, model) in ``BotModelProvider`` (T19 wires
+    side caches per (provider, model) in ``ModelSelectionProvider`` (T19 wires
     its ``aclose`` chain). Per-turn model switching therefore never builds
     a provider plus HTTP client per turn.
 

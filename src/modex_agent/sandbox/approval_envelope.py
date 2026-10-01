@@ -12,9 +12,9 @@ from modex_agent.sandbox.settings import WriteSurface
 from modex_agent.workspace.boundary import PathEnvelope
 
 if TYPE_CHECKING:
-    from modex_agent.ioc.configs.approval import ApprovalConfig
+    from modex_agent.approval.config import ApprovalConfig
+    from modex_agent.core.workspace_root import WorkspaceRootProvider
     from modex_agent.sandbox.settings import SandboxSettings
-    from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 __all__ = ["validate_approval_envelope"]
 

@@ -1,6 +1,5 @@
 """framework.trace — Unified OTel span trace system for all agents."""
 
-from modex_agent.ioc.configs.observability import PromptCaptureMode, TraceSpanMode
 from modex_agent.trace.agent_start_hook import AgentStartSpanHook
 from modex_agent.trace.approval_span_hook import ApprovalSpanHook
 from modex_agent.trace.base_hook import BaseTraceHook
@@ -22,7 +21,6 @@ from modex_agent.trace.experiment_attrs import (
 )
 from modex_agent.trace.factory import build_trace_hooks
 from modex_agent.trace.handoff_span_hook import HandoffSpanHook
-from modex_agent.trace.iteration_span_hook import IterationSpanHook
 from modex_agent.trace.langfuse_query import (
     LangfuseClient,
     LangfuseTraceQuery,
@@ -30,6 +28,7 @@ from modex_agent.trace.langfuse_query import (
     SessionSummary,
 )
 from modex_agent.trace.memory_trace_hook import MemoryTelemetryCounters, MemoryTraceHook
+from modex_agent.trace.observability import PromptCaptureMode, TraceSpanMode
 from modex_agent.trace.otel_store import (
     OtelSpanTraceStore,
     build_trace_stores,
@@ -83,7 +82,6 @@ __all__ = [
     "GenAiAttr",
     "HandoffSpanHook",
     "HashPromptCapture",
-    "IterationSpanHook",
     "JsonlSpanQuery",
     "L2ScoreInjector",
     "LangfuseClient",

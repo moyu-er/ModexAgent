@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.memory.hooks import (
+from modex_agent.core.memory_hooks import (
     CleanupFinishedHook,
     CleanupTriggeredHook,
     ConsolidationFinishedHook,

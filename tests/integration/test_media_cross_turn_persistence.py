@@ -41,12 +41,12 @@ from modex_agent.core.message import (
 )
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.stores import MemoryStoreBundle
 from modex_agent.core.tool_manager import ToolExecutionContext
-from modex_agent.ioc.configs.llm import InterfaceFormat, LLMConfig
-from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.core.turn.enums import AgentKind, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.memory.core.layers import MemoryLayerSet
-from modex_agent.memory.core.split_stores import MemoryStoreBundle
 from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.history import ListMessageHistory, ScopedMessageHistory
 from modex_agent.memory.layers.session import ScopedSessionMemoryManager
@@ -56,9 +56,9 @@ from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.cursor_store import SqliteCursorStore
 from modex_agent.persistence.adapters.kv_store import SqliteKVStore
 from modex_agent.persistence.adapters.message_store import SqliteMessageStore
+from modex_agent.providers.factory import create_llm_provider
 from modex_agent.providers.http.provider import HTTPStreamProvider
-from modex_agent.runtime.enums import AgentKind, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
+from modex_agent.providers.llm_config import InterfaceFormat, LLMConfig
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.standard.file_tool import ReadFileTool

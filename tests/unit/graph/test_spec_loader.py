@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.graph.spec_loader import GraphSpecLoader
+from modex_agent.orchestration.spec_loader import GraphSpecLoader
 from modex_graph import InMemoryGraphSpecStore
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]

@@ -4,9 +4,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from modex_agent.agents.summarizer.abc import (
-    ArchiveGenerator,
-)
 from modex_agent.core.scope import (
     RecordScope,
 )
@@ -20,7 +17,7 @@ from modex_agent.memory.core.models import ArchiveEntry
 from modex_agent.memory.injection.archive import ArchiveInjectionConfig
 from modex_agent.memory.layers.config import ArchiveMemoryConfig, MemoryLayerConfigSet
 from modex_agent.memory.pruned.manager import PrunedManager
-from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+from modex_agent.memory.registry import DefaultMemoryStoreRegistry, HybridMemoryStoreRegistry
 from modex_agent.memory.scope import (
     MemoryContext,
     MemoryLayerName,
@@ -29,11 +26,13 @@ from modex_agent.memory.scope import (
 )
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 from modex_agent.memory.stores.markdown_core import MarkdownCoreMemoryStorage
+from modex_agent.memory.summarizer import (
+    ArchiveGenerator,
+)
 from modex_agent.memory.system import MemorySystemContextManager, create_memory_system
 from modex_agent.memory.token_estimator import TokenEstimator
 from modex_agent.persistence.adapters.archive_store import SqliteArchiveStore
 from modex_agent.persistence.managers import WorkspacePersistenceManager
-from modex_agent.persistence.memory_registry import HybridMemoryStoreRegistry
 
 
 class _PoolScopedRecordScope(RecordScope):

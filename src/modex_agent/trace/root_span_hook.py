@@ -12,13 +12,13 @@ from typing import TYPE_CHECKING, Literal, overload
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.emitter import StopReason
+from modex_agent.core.turn.enums import TurnCustomKey
 from modex_agent.hook.abc import (
     ClosableHook,
     FinallyGraphHook,
     StartNodeTurnHook,
     is_suspend_leg,
 )
-from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.trace.base_hook import BaseTraceHook
 from modex_agent.trace.pricing import PriceBook, compute_turn_cost, load_pricebook
 from modex_agent.trace.score_injector import INJECTOR_VERSION, L2ScoreInjector, ScoreSpec

@@ -5,14 +5,15 @@ from pathlib import Path
 import pytest
 
 from modex_agent.agents.react.nodes.tool_classification import decision_of
-from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
+from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
 from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
-from modex_agent.ioc.factories.approval import build_approval_runtime
+from modex_agent.core.turn.approval_types import ApprovalDecision, ApprovalTier
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
 from modex_agent.sandbox.settings import (
     ExclusiveConfig,
     SandboxBackend,
@@ -20,7 +21,6 @@ from modex_agent.sandbox.settings import (
     WriteSurface,
 )
 from modex_agent.tools.manager import InMemoryToolManager
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 
 def test_returns_none_when_config_disabled():

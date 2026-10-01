@@ -25,8 +25,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from modex_agent.agents.summarizer.abc import _get_registry
-from modex_agent.agents.summarizer.outcomes import CompactionOutcome
 from modex_agent.agents.summarizer.scoped_file_agent import (
     ScopedFileAgent,
     UsageCollectingProvider,
@@ -34,6 +32,7 @@ from modex_agent.agents.summarizer.scoped_file_agent import (
 from modex_agent.core.message import MessageRole
 from modex_agent.core.provider import LLMProvider
 from modex_agent.memory.budget import ContextBudget
+from modex_agent.memory.summarizer import CompactionOutcome, SessionCompactor, _get_registry
 from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.utils.helpers import strip_think
@@ -115,7 +114,7 @@ class _CallCounter:
         return True
 
 
-class SessionCompactorAgent(ScopedFileAgent):
+class SessionCompactorAgent(ScopedFileAgent, SessionCompactor):
     """Generate a structured compact summary from pruned session messages.
 
     A tool-less agent that makes LLM calls to produce a structured summary

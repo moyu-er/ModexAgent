@@ -15,8 +15,8 @@ from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.runtime.enums import AgentKind, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
+from modex_agent.core.turn.enums import AgentKind, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
 if TYPE_CHECKING:
@@ -161,7 +161,7 @@ class TestReActAgentControlCancel:
     @pytest.mark.asyncio
     async def test_control_cancel_emits_turn_end(self):
         from modex_agent.control.channel import InMemoryControlChannel
-        from modex_agent.control.types import (
+        from modex_agent.core.control import (
             ControlCommand,
             ControlCommandType,
             ControlScope,

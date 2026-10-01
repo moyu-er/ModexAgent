@@ -24,6 +24,10 @@ import pytest
 from modex_agent.agents.react.state import ReActRuntimeStateCodec
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
+from modex_agent.core.turn.enums import AgentKind, SnapshotReason, TurnPhase
+from modex_agent.core.turn.models import ResumePoint, TurnIdentity, TurnSnapshot
+from modex_agent.core.turn.store import ActiveTurnConflictError
 from modex_agent.persistence import ConnectionManager, DatabaseKind, MigrationRunner
 from modex_agent.persistence.adapters.approval_audit_store import (
     ApprovalAuditEntry,
@@ -32,10 +36,6 @@ from modex_agent.persistence.adapters.approval_audit_store import (
 from modex_agent.persistence.adapters.inbox_mq import SqliteInboxMQ
 from modex_agent.persistence.adapters.session_store import SqliteSessionStore
 from modex_agent.persistence.adapters.turn_state_store import SqliteTurnStateStore
-from modex_agent.runtime.codec import RuntimeStateCodecRegistry
-from modex_agent.runtime.enums import AgentKind, SnapshotReason, TurnPhase
-from modex_agent.runtime.models import ResumePoint, TurnIdentity, TurnSnapshot
-from modex_agent.runtime.store import ActiveTurnConflictError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -142,7 +142,7 @@ class TestWALConcurrency:
 
     async def test_deliver_and_receive_coexist(self, tmp_path: Path) -> None:
         """Framework process (async) + CLI process (sync) write to the same DB."""
-        from modex_agent.multi_agent.inbox.types import InboxMessage
+        from modex_agent.core.inbox import InboxMessage
 
         db_path = tmp_path / "workspace.db"
         mgr = ConnectionManager(db_path, DatabaseKind.WORKSPACE)
@@ -188,7 +188,7 @@ class TestWALConcurrency:
         """Two threads each open their own sqlite3 connection and deliver
         messages to the same session — WAL + busy_timeout must serialize them
         without data loss or corruption."""
-        from modex_agent.multi_agent.inbox.types import InboxMessage
+        from modex_agent.core.inbox import InboxMessage
 
         db_path = tmp_path / "workspace.db"
         mgr = ConnectionManager(db_path, DatabaseKind.WORKSPACE)

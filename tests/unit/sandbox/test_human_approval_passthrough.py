@@ -26,29 +26,30 @@ from modex_agent.agents.react.state import (
     ReActSnapshotPolicy,
     ReActTurnState,
 )
-from modex_agent.approval.constants import ApprovalTier
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.interceptor import ToolCallContext
 from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.interceptor.abc import ToolCallContext
-from modex_agent.memory.history import ListMessageHistory
-from modex_agent.messaging.models import ApprovalAction
-from modex_agent.pipeline.approval_resumer import ApprovalResumer
-from modex_agent.runtime.enums import (
+from modex_agent.core.turn.approval_types import ApprovalTier
+from modex_agent.core.turn.enums import (
     AgentKind,
     ApprovalSubjectType,
     SnapshotReason,
     TurnCustomKey,
     TurnPhase,
 )
-from modex_agent.runtime.models import (
+from modex_agent.core.turn.models import (
     ApprovalRequestState,
     ApprovalTransaction,
     ToolArguments,
     TurnIdentity,
     TurnSnapshot,
 )
+from modex_agent.core.workspace_root import WorkspaceRootProvider
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.messaging.models import ApprovalAction
+from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.sandbox.decision import GuardCategory, SecurityDecisionService
 from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
@@ -60,7 +61,6 @@ from modex_agent.sandbox.settings import (
 )
 from modex_agent.sandbox.types import EnforcementLevel
 from modex_agent.tools.manager import InMemoryToolManager
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_agent.workspace.boundary import canonicalize_path
 from modex_agent.workspace.runtime import bind_workspace_root
 
@@ -455,13 +455,13 @@ class TestEndToEndWhiteApproval:
     async def test_classify_card_approve_execute_loop(self) -> None:
         """PRD 验收标准 2: outside-envelope path → DANGEROUS card →
         /approve → the guard that would deny now executes."""
+        from modex_agent.approval.argument_matcher import ArgumentMatcher
         from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
         from modex_agent.approval.runtime import (
             ApprovalRuntime,
             TieredToolApprovalClassifier,
         )
-        from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
-        from modex_agent.sandbox.security_classifier import SecurityClassifier
+        from modex_agent.approval.security import SecurityClassifier
 
         classifier = SecurityClassifier(
             decision=_service(_FixedRoot(WS)),

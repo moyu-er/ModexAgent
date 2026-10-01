@@ -19,8 +19,8 @@ from modex_agent.messaging.models import InputMessage, OutputMessage
 if TYPE_CHECKING:
     from modex_agent.commands.models import CommandProcessor
     from modex_agent.control.channel import InMemoryControlChannel
-    from modex_agent.input_pipeline.context import InputContext
-    from modex_agent.input_pipeline.pipeline import UserInputPipeline
+    from modex_agent.pipeline.input.context import InputContext
+    from modex_agent.pipeline.input.pipeline import UserInputPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +169,7 @@ class InputAdapter(ABC):
             return False
 
         # Dedup: already a pending CANCEL_TURN for this session?
-        from modex_agent.control.types import ControlCommandType, ControlScope
+        from modex_agent.core.control import ControlCommandType, ControlScope
 
         existing = await channel.peek(
             ControlScope(session_id=session_id),

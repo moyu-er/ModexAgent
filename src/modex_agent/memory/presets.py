@@ -4,13 +4,13 @@ Single source of truth for native-agent memory presets, owned by the
 memory package (SPEC §6.7). Production wiring — ``native_core``'s
 subagent default and the BIZ pool wiring — imports the presets from
 here. Plain functions only: there is no factory indirection. The module
-imports exclusively from ``modex_agent.ioc.configs.memory`` so it
+imports exclusively from ``modex_agent.memory.config`` so it
 introduces no new package dependency.
 """
 
 from __future__ import annotations
 
-from modex_agent.ioc.configs.memory import (
+from modex_agent.memory.config import (
     ArchiveConfig,
     CoreMemoryConfig,
     DreamEngineConfig,

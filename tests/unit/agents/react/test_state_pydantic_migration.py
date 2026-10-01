@@ -22,13 +22,13 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from modex_agent.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
-from modex_agent.runtime.enums import (
+from modex_agent.core.turn.approval_types import ApprovalDecision, ApprovalStatus, ApprovalTier
+from modex_agent.core.turn.enums import (
     ApprovalSubjectType,
     ToolBatchStatus,
     ToolCallStatus,
 )
-from modex_agent.runtime.models import (
+from modex_agent.core.turn.models import (
     ApprovalRequestState,
     ApprovalTransaction,
     ToolArguments,

@@ -10,12 +10,12 @@ import pytest
 pytestmark = pytest.mark.integration
 
 from modex_agent.core.emitter import AgentResult
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.multi_agent import (
     AgentDescriptor,
     AgentLLMConfig,
     DefaultAgentFactory,
 )
-from modex_agent.multi_agent.address import AgentAddress
 
 
 @pytest.mark.asyncio

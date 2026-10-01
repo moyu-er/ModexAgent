@@ -84,7 +84,7 @@ Tabs are independent (own shell, cwd, environment). You rarely need more than on
 
     def result_metadata(self, result: Any) -> tuple[ContentFormat | None, list[str] | None]:
         """Declare XML truncation metadata for <terminal_result> output."""
-        from modex_agent.tools.terminal.types import terminal_result_metadata
+        from modex_agent.core.terminal import terminal_result_metadata
 
         return terminal_result_metadata(result)
 

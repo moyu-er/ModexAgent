@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from modex_agent.core.message import ChatMessage, MessageRole
-from modex_agent.hook.builtin.todo_planning_nudge import (
+from modex_agent.agents.react.hooks.todo_planning_nudge import (
     ToolNudgeVerdict,
     scan_tool_usage_in_turn,
 )
+from modex_agent.core.message import ChatMessage, MessageRole
 
 _TOOLS = frozenset({"task"})
 

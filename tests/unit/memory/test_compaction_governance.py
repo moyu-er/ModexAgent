@@ -81,7 +81,7 @@ class _NullCompactor:
         session_id: str = "session-compactor",
         budget: ContextBudget | None = None,
     ) -> Any:
-        from modex_agent.agents.summarizer.outcomes import CompactionOutcome
+        from modex_agent.memory.summarizer import CompactionOutcome
 
         _ = messages, previous_summary, session_id, budget
         return CompactionOutcome(

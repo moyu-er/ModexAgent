@@ -1,6 +1,6 @@
 """Tests for ApprovalDenialContext."""
 
-from modex_agent.runtime.models import ApprovalDenialContext
+from modex_agent.core.turn.models import ApprovalDenialContext
 
 
 class TestApprovalDenialContext:

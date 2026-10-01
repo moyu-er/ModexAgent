@@ -1,31 +1,24 @@
 """framework.control — runtime control plane.
 
-Provides:
-- Unified termination exceptions (AgentControlError etc.)
-- ControlCommand / ControlScope control command types
-- InMemoryControlChannel command input channel
-- GraphControlService — external control for graph instances
+The shared control vocabulary (``ControlCommand`` / ``ControlScope`` /
+``ControlCommandType``) and the unified termination exceptions
+(``AgentControlError`` family) sank to :mod:`modex_agent.core.control`
+(W3b) — Hook / Interceptor / Commands share them at level 1. This package
+keeps the in-memory command channel implementation.
+
+Graph control/recovery moved to ``orchestration`` (W2) — the graph
+lifecycle services belong to the orchestration vertical.
 """
 
 from modex_agent.control.channel import InMemoryControlChannel
-from modex_agent.control.exceptions import (
+from modex_agent.core.control import (
     AgentCancelledError,
     AgentControlError,
     AgentTimeoutError,
-    PolicyViolationError,
-)
-from modex_agent.control.graph_control import (
-    GraphControlService,
-    GraphEngineController,
-    InMemoryGraphEngineController,
-)
-from modex_agent.control.graph_recovery import (
-    GraphRecoveryService,
-)
-from modex_agent.control.types import (
     ControlCommand,
     ControlCommandType,
     ControlScope,
+    PolicyViolationError,
 )
 
 __all__ = [
@@ -40,10 +33,4 @@ __all__ = [
     "ControlScope",
     # Channel
     "InMemoryControlChannel",
-    # Graph control
-    "GraphControlService",
-    "GraphEngineController",
-    "InMemoryGraphEngineController",
-    # Graph recovery
-    "GraphRecoveryService",
 ]

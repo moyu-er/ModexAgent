@@ -21,15 +21,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from modex_agent.runtime.env_context import _modex_env
-from modex_agent.tools.terminal.env import build_full_env
+from modex_agent.core.terminal import Platform, ShellFamily, ShellInfo
+from modex_agent.core.turn.env_context import _modex_env
 from modex_agent.tools.terminal.subprocess_tool import (
     CmdSubprocessExecutor,
     PosixSubprocessExecutor,
     PowerShellSubprocessExecutor,
     create_subprocess_executor,
 )
-from modex_agent.tools.terminal.types import Platform, ShellFamily, ShellInfo
+from modex_agent.utils.child_env import build_full_env
 
 
 def _make_fake_process(

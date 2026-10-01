@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.ioc.configs.memory import MemoryConfig
-from modex_agent.multi_agent.pool_config.media import MediaConfig
+from modex_agent.core.media import MediaConfig
+from modex_agent.memory.config import MemoryConfig
 
 
 class PoolAssemblyDeps(BaseModel):

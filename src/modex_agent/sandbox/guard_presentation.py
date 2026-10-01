@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modex_agent.interceptor.abc import ToolCallContext
+from modex_agent.core.interceptor import ToolCallContext
 from modex_agent.sandbox.decision import (
     GuardCategory,
     GuardVerdict,

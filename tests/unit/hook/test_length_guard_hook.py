@@ -2,21 +2,21 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from modex_agent.agents.react.hooks.length_guard import (
+    MAX_NUDGES,
+    NUDGE_NO_OUTPUT,
+    NUDGE_TRUNCATED,
+    LengthGuardHook,
+)
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import MessageRole, ToolCall
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.hook.builtin.length_guard import (
-    MAX_NUDGES,
-    NUDGE_NO_OUTPUT,
-    NUDGE_TRUNCATED,
-    LengthGuardHook,
-)
+from modex_agent.core.turn.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.manager import InMemoryToolManager
 

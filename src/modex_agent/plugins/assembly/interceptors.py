@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import asyncio
 
+from modex_agent.core.interceptor import Interceptor
 from modex_agent.core.tool_group import ToolGroupResource
-from modex_agent.interceptor.abc import Interceptor
 from modex_agent.interceptor.chain import InterceptorChain
-from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.context import AgentContext
 from modex_agent.plugins.assembly.resources import AssemblyResourceOwner
-from modex_agent.plugins.assembly.spec import AssemblySpec
 from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
+from modex_agent.scope.assembly_spec import AssemblySpec
+from modex_agent.scope.components import ComponentSlot
 
 SANDBOX_GUARD_INTERCEPTOR = "sandbox_guard"
 

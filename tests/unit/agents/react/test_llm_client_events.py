@@ -26,8 +26,13 @@ from modex_agent.agents.react.constants import ToolArgsDeltaPayload
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.control.channel import InMemoryControlChannel
-from modex_agent.control.exceptions import AgentCancelledError
-from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
+from modex_agent.core.control import (
+    AgentCancelledError,
+    ControlCommand,
+    ControlCommandType,
+    ControlScope,
+)
+from modex_agent.core.interceptor import LLMStreamInterceptor
 from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import (
     FinishReason,
@@ -50,12 +55,11 @@ from modex_agent.core.stream_events import (
     ToolCallDelta,
     UsageSnapshot,
 )
+from modex_agent.core.turn.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.hook.builtin.control_drain import LlmCancelInterceptor
-from modex_agent.interceptor.abc import LLMStreamInterceptor
 from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
 

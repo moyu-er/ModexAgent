@@ -10,16 +10,16 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from modex_agent.agents.summarizer.abc import (
-    CoreMemoryConsolidatorBase,
-    _get_registry,
-)
-from modex_agent.agents.summarizer.outcomes import ConsolidationOutcome
 from modex_agent.agents.summarizer.scoped_file_agent import (
     ScopedFileAgent,
     UsageCollectingProvider,
 )
 from modex_agent.core.provider import LLMProvider
+from modex_agent.memory.summarizer import (
+    ConsolidationOutcome,
+    CoreMemoryConsolidatorBase,
+    _get_registry,
+)
 
 logger = logging.getLogger(__name__)
 

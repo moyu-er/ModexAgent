@@ -8,13 +8,13 @@ for CLI cross-process use). ``InboxServer`` is kept as a deprecated alias.
 ``DeliveredIdTracker`` is deprecated (merged into ``InboxMQ`` internal).
 """
 
+from modex_agent.core.inbox import InboxMessage, InboxMQ, InboxServer
+
 from .consumer import InboxConsumer
 from .producer import InboxProducer
-from .server import InboxMQ, InboxServer
 from .server_local import LocalFileInboxMQ, LocalFileInboxServer
 from .server_memory import InMemoryInboxServer
 from .tracker import DeliveredIdTracker, FileDeliveredIdTracker
-from .types import InboxMessage
 
 __all__ = [
     "InboxMessage",

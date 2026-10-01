@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock
 
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.session_tree.request_scope import REQUEST_SCOPE_ID_KEY
+from modex_agent.plugins.defaults.capabilities.subagents.auto_send import SubagentAutoSendHook
 from modex_agent.tools.manager import InMemoryToolManager
 
 

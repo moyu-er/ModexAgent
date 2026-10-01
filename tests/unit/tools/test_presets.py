@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from modex_agent.core.tool_vocabulary import (
+    ToolPreset,
+)
 from modex_agent.tools.presets import (
     EXPERIENCE_REVIEW_HOOK_NAME,
-    ToolPreset,
     get_preset_tools,
     make_aci_edit_tool,
     make_ast_grep_tools,
@@ -112,7 +114,6 @@ class TestExperienceReviewHookName:
         """EXPERIENCE_REVIEW_HOOK_NAME is importable and equals the name
         the experience feature's registration entry registers the review
         hook under (the capability contributes it into hook rosters)."""
-        from modex_agent.plugins.abc import ComponentSlot
         from modex_agent.plugins.defaults.capabilities.experience.hook_factory import (
             ExperienceReviewHookFactory,
         )
@@ -120,7 +121,8 @@ class TestExperienceReviewHookName:
             register_experience_feature,
         )
         from modex_agent.plugins.loader import PluginRegistrationContext
-        from modex_agent.plugins.registry import ComponentRegistry
+        from modex_agent.scope.component_registry import ComponentRegistry
+        from modex_agent.scope.components import ComponentSlot
 
         assert EXPERIENCE_REVIEW_HOOK_NAME == "experience_review"
         registry = ComponentRegistry()

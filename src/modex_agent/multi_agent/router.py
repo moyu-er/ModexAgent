@@ -1,36 +1,12 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from modex_agent.core.session_id import SessionInfo
+from modex_agent.messaging.agent_messages import AgentMessageRouter, AgentMessageType, RouteResult
 from modex_agent.messaging.models import InputMessage
-from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
     from modex_agent.persistence.session_registry import SessionRegistry
-
-
-@dataclass
-class RouteResult:
-    """Result of routing an input message to an agent-owned session."""
-
-    session: SessionInfo
-    envelope_metadata: dict[str, Any] | None = None
-    is_envelope: bool = False
-
-
-class AgentMessageRouter(ABC):
-    """Decides the agent-owned session for an incoming message."""
-
-    @abstractmethod
-    def route(
-        self,
-        input_msg: InputMessage,
-    ) -> RouteResult:
-        """Route an input message and return the complete agent session id."""
-        ...
 
 
 class DefaultMeshRouter(AgentMessageRouter):

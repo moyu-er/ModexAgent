@@ -12,9 +12,9 @@ from modex_agent.agents.react.state import ReActTurnState, get_react_state
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.message import ChatMessage, MessageRole
+from modex_agent.core.turn.enums import MessageDeltaSource, TurnCustomKey, TurnPhase
+from modex_agent.core.turn.models import MessageDelta
 from modex_agent.hook import AfterTurnHook, HookRunner, HookSpec
-from modex_agent.runtime.enums import MessageDeltaSource, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import MessageDelta
 from modex_agent.runtime.services import (
     AgentRuntime,
     require_runtime_state,

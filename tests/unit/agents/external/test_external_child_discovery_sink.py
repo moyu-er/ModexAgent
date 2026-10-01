@@ -25,8 +25,8 @@ from unittest.mock import AsyncMock, MagicMock
 from modex_agent.agents.external.child_discovery import (
     ExternalChildSessionDiscoverySink,
 )
-from modex_agent.agents.external.session_store import ExternalSessionMapStore
 from modex_agent.core.agent import ProviderKind
+from modex_agent.core.external_session import ExternalSessionMapStore
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.persistence.session_registry import SessionRegistry
 

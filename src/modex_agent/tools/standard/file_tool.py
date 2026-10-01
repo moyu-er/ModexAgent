@@ -4,23 +4,24 @@
 
 from __future__ import annotations
 
-import asyncio
 import difflib
 import logging
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from ...core.capabilities import Modality, ModelCapabilities
-from ...core.media import Kind, StoredMediaKind
-from ...core.message import ImageUrl, ImageUrlPart, TextPart, build_media_ref
+from ...core.media import Kind
 from ...core.tool_manager import (
     ExclusiveTool,
     ParallelTool,
     ToolResult,
-    get_tool_execution_context,
 )
-from ...media.media_utils import compress_image
+from ...media.file_read import (
+    DEFAULT_READ_LIMIT,
+    MAX_READ_LIMIT,
+    paginate_file,
+    read_image_as_multimodal,
+)
 from ...media.mime import classify_kind, sniff_mime
 
 logger = logging.getLogger(__name__)
@@ -258,144 +259,6 @@ def _find_actual_string(file_content: str, search_string: str) -> str | None:
 # -- 分页读取核心逻辑 -------------------------------------------------------
 
 
-# 分页读取内部常量
-_DEFAULT_LIMIT = 200
-_MAX_LIMIT = 300
-_MAX_CHARS = 20_000
-
-
-def _paginate_file(
-    file_path: Path,
-    offset: int = 0,
-    limit: int = _DEFAULT_LIMIT,
-    max_chars: int = _MAX_CHARS,
-) -> str:
-    """分页读取文件，返回带结构化元数据的结果字符串。
-
-    参数:
-        file_path: 已校验的文件路径
-        offset: 跳过前 N 行 (0-based)
-        limit: 最多读取行数 (自动 clamp 到 _MAX_LIMIT)
-        max_chars: 总字符数硬上限
-
-    返回:
-        带结构化后缀的文件内容字符串，或错误信息字符串
-    """
-    # ── 参数校验 ─────────────────────────────────────────────
-    if offset < 0:
-        return f"Error: offset must be >= 0, got {offset}"
-    if limit < 1:
-        return f"Error: limit must be >= 1, got {limit}"
-
-    # clamp limit
-    if limit > _MAX_LIMIT:
-        limit = _MAX_LIMIT
-
-    # ── 第一遍：统计总行数 ──────────────────────────────────
-    total_lines = 0
-    with file_path.open("r", encoding="utf-8") as f:
-        for _line in f:
-            total_lines += 1
-
-    # ── 空文件 ──────────────────────────────────────────────
-    if total_lines == 0:
-        return "(empty file)\n\ntotal_lines: 0\noffset: 0\nread_status: empty"
-
-    # ── offset 超出范围 ──────────────────────────────────────
-    if offset >= total_lines:
-        return (
-            f"Error: offset ({offset}) exceeds file length ({total_lines} lines).\n"
-            f"File has {total_lines} lines (line numbers 1-{total_lines}).\n"
-            f"Valid offset range: 0 ~ {total_lines - 1}.\n"
-            f"hint: use offset=0 to read from the beginning"
-        )
-
-    # ── 第二遍：分页读取 ─────────────────────────────────────
-    selected_lines: list[str] = []
-    accumulated_chars = 0
-    char_truncated = False
-    last_line_read = offset  # 0-based, 最后成功读取的行索引
-
-    with file_path.open("r", encoding="utf-8") as f:
-        line_idx = 0  # 0-based
-        lines_collected = 0
-
-        for raw_line in f:
-            # 跳过 offset 之前的行
-            if line_idx < offset:
-                line_idx += 1
-                continue
-
-            # limit 用尽 → 还有更多行
-            if lines_collected >= limit:
-                break
-
-            line = raw_line.rstrip("\n\r")
-
-            # 字符数软上限：先带上该行，再判断是否截断
-            selected_lines.append(line)
-            accumulated_chars += len(line) + 1  # +1 for newline
-            last_line_read = line_idx
-            lines_collected += 1
-            line_idx += 1
-
-            if accumulated_chars > max_chars:
-                char_truncated = True
-                break
-
-        # 检查读完之后是否还有更多行（仅当 limit 未触发且 char 也未触发时）
-        has_more_by_limit = lines_collected >= limit
-        # 如果没有被 char 截断，检查文件是否已读完
-        remaining = (
-            total_lines - (last_line_read + 1)
-            if not char_truncated
-            else total_lines - (last_line_read + 1)
-        )
-
-    # ── 计算状态 ─────────────────────────────────────────────
-    actual_start = offset + 1  # 1-based 显示
-    actual_end = last_line_read + 1  # 1-based 显示
-
-    is_complete = (not char_truncated) and (actual_end == total_lines)
-    is_truncated_by_limit = has_more_by_limit and not char_truncated
-
-    # ── 构建结果 ─────────────────────────────────────────────
-    content = "\n".join(selected_lines)
-    parts: list[str] = [content, ""]
-
-    # metadata
-    parts.append(f"total_lines: {total_lines}")
-    parts.append(f"offset: {offset}")
-
-    if is_complete and not is_truncated_by_limit:
-        # 完整读取
-        if lines_collected < limit:
-            parts.append(
-                f"read_lines: {actual_start}-{actual_end} (requested {limit}, file has {lines_collected} remaining)"
-            )
-        else:
-            parts.append(f"read_lines: {actual_start}-{actual_end}")
-        parts.append("read_status: complete")
-
-    elif is_truncated_by_limit:
-        # 行数截断
-        parts.append(f"read_lines: {actual_start}-{actual_end} (limit reached)")
-        parts.append(f"remaining_lines: {remaining}")
-        parts.append("read_status: truncated_by_limit")
-        parts.append(f"hint: use offset={last_line_read + 1} to read next chunk")
-
-    elif char_truncated:
-        # 字符数截断（limit 未用尽就提前返回）
-        parts.append(f"read_lines: {actual_start}-{actual_end} (stopped before limit)")
-        parts.append(f"remaining_lines: {remaining}")
-        parts.append("read_status: truncated_by_chars")
-        parts.append(
-            f"warning: char limit ({max_chars}) reached, "
-            f"only read {lines_collected} of requested {limit} lines"
-        )
-        parts.append(f"hint: use offset={last_line_read + 1} to read next chunk")
-
-    return "\n".join(parts)
 
 
 # -- diff 生成 ---------------------------------------------------------------
@@ -428,79 +291,6 @@ def _build_unified_diff(old: str, new: str, path: str) -> str:
     return "\n".join(diff_lines)
 
 
-# -- 多模态文件读取 ---------------------------------------------------------
-
-
-async def _read_image_as_multimodal(
-    file_path: Path,
-    mime: str,
-) -> ToolResult:
-    """Read an image file → compress → persist to the media store → reference.
-
-    Capability gate: when the current model lacks ``Modality.IMAGE``, returns
-    a brief text result stating the file is an image but visual content is
-    not available.  The capability limitation itself is surfaced via the tool
-    description (``get_dynamic_schema_for`` adjusts it for text-only models);
-    the tool result only states the objective fact — no system diagnosis or
-    action advice — so the agent can decide how to proceed.
-
-    When the model is image-capable AND a media store is wired to the tool
-    execution context, the compressed bytes are persisted into the READS
-    subtree (persist-before-return: the ``media://<aid>`` reference handed
-    back is always backed by stored bytes) and the result carries the text
-    hint plus an :class:`ImageUrlPart` holding the reference. The reference —
-    never a data URL — is what persists into history; the injection layer
-    resolves it back to bytes at each LLM call.
-
-    Degradations (always text-only, never a data-URL part): no media store
-    wired, or undecodable image bytes.
-    """
-    ctx = get_tool_execution_context()
-    if ctx is None or not ctx.supports(Modality.IMAGE):
-        # Tool results are the agent's observations — not a system log channel.
-        # The capability limitation is already surfaced via the tool description
-        # (get_dynamic_schema_for adjusts it for text-only models).  The result
-        # should only state the objective fact and let the agent decide what
-        # to do next (skip, ask the user, infer from filename, etc.).  Do NOT put
-        # system diagnosis ("model lacks IMAGE capability"), file sizes, or
-        # action advice ("use a vision-capable model") here — the agent may
-        # have called read autonomously, not at the user's request.
-        degradation_text = f"Image file: {file_path} ({mime}). Visual content not available."
-        return ToolResult.from_text("read", degradation_text)
-
-    if ctx.media_store is None or ctx.session_id is None:
-        return ToolResult.from_text(
-            "read",
-            f"Image file: {file_path}. Visual content not available (no media store wired).",
-        )
-
-    try:
-        raw = await asyncio.to_thread(file_path.read_bytes)
-        compressed = compress_image(raw, mime)
-        if compressed is None:
-            return ToolResult.from_text(
-                "read",
-                f"Image file: {file_path} ({mime}). Visual content not available.",
-            )
-        aid = uuid4().hex
-        ctx.media_store.save(
-            ctx.session_id, aid, compressed.data, kind=StoredMediaKind.READS
-        )
-        text_hint = f"[Image read: {file_path} ({mime})]"
-        return ToolResult(
-            tool_name="read",
-            content=[
-                TextPart(text=text_hint),
-                ImageUrlPart(image_url=ImageUrl(url=build_media_ref(aid))),
-            ],
-        )
-    except Exception as exc:
-        return ToolResult(
-            tool_name="read",
-            error=f"Failed to read image {file_path.name}: {exc}",
-        )
-
-
 # -- 工具类 -----------------------------------------------------------------
 
 
@@ -511,7 +301,7 @@ class ReadFileTool(ParallelTool):
     """ReadFileTool may produce an image_url block when the file is an image
     and the active model supports IMAGE. Declared as produced (not required)
     so the tool stays visible to text-only models — it degrades at runtime
-    via :func:`_read_image_as_multimodal` instead."""
+    via :func:`read_image_as_multimodal` instead."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -524,7 +314,7 @@ class ReadFileTool(ParallelTool):
     def description(self) -> str:
         return (
             "Read the contents of a file at the given path. "
-            f"Returns up to {_DEFAULT_LIMIT} lines from the beginning by default; "
+            f"Returns up to {DEFAULT_READ_LIMIT} lines from the beginning by default; "
             "use offset to skip lines and limit to control how many lines to read.\n"
             "Usage:\n"
             "- Use this tool even if you have read the file before — file contents "
@@ -565,8 +355,8 @@ class ReadFileTool(ParallelTool):
                 },
                 "limit": {
                     "type": "integer",
-                    "description": f"Maximum number of lines to read (default: {_DEFAULT_LIMIT}, max: {_MAX_LIMIT})",
-                    "default": _DEFAULT_LIMIT,
+                    "description": f"Maximum number of lines to read (default: {DEFAULT_READ_LIMIT}, max: {MAX_READ_LIMIT})",
+                    "default": DEFAULT_READ_LIMIT,
                 },
             },
             "required": ["path"],
@@ -594,7 +384,7 @@ class ReadFileTool(ParallelTool):
     async def execute(self, **kwargs: Any) -> str | ToolResult:
         path = kwargs["path"]
         offset = kwargs.get("offset", 0)
-        limit = kwargs.get("limit", _DEFAULT_LIMIT)
+        limit = kwargs.get("limit", DEFAULT_READ_LIMIT)
         try:
             file_path = _resolve_path(path)
             if not file_path.exists():
@@ -614,9 +404,9 @@ class ReadFileTool(ParallelTool):
             kind = classify_kind(mime) if mime else Kind.OTHER
 
             if kind is Kind.IMAGE:
-                return await _read_image_as_multimodal(file_path, mime or "image/png")
+                return await read_image_as_multimodal(file_path, mime or "image/png")
 
-            result = _paginate_file(file_path, offset=offset, limit=limit)
+            result = paginate_file(file_path, offset=offset, limit=limit)
             if result.startswith("Error: "):
                 return ToolResult(tool_name=self.name, error=result[len("Error: ") :])
             return result

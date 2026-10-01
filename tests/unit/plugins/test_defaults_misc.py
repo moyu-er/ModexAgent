@@ -7,9 +7,9 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.plugins.abc import ComponentFactory, ComponentSlot
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentFactory, ComponentSlot
 
 # ---- helpers ---------------------------------------------------------------
 
@@ -46,7 +46,7 @@ class TestRegisterDefaultLLM:
         assert "path" in DefaultLLMProviderConfig.model_fields
         # frozen + extra forbid
         cfg = DefaultLLMProviderConfig(path="model.yml")
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             cfg.path = "other"  # type: ignore[misc]
         with pytest.raises(ValidationError):
             DefaultLLMProviderConfig(path="x", unknown="y")  # type: ignore[call-arg]
@@ -72,7 +72,7 @@ class TestRegisterDefaultPrompts:
 
         assert "path" in FilePromptConfig.model_fields
         cfg = FilePromptConfig(path="agents/main.md")
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             cfg.path = "other"  # type: ignore[misc]
 
 

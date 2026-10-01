@@ -7,9 +7,9 @@ from typing import Final, assert_never
 from modex_agent.agents.summarizer.consolidator import CoreMemoryConsolidator
 from modex_agent.agents.summarizer.session_compactor import SessionCompactorAgent
 from modex_agent.core.llm_struct import LLMResponse
+from modex_agent.core.memory_hooks import LlmUsage
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.memory.hooks import LlmUsage
 
 _MODEL: Final = "scripted-model"
 

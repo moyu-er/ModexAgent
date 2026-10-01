@@ -17,7 +17,7 @@ import sys
 
 import pytest
 
-from modex_agent.runtime.env_context import _current_session_id
+from modex_agent.core.turn.env_context import _current_session_id
 from modex_agent.tools.terminal.persistent_bash import BashInputTool, PersistentBashTool
 
 _HAS_PERSISTENT_BASH = (

@@ -67,6 +67,7 @@ pexpect = pytest.importorskip("pexpect", reason="pexpect required for PTY tests"
 from modex_agent.tools.terminal._persistent_session import (  # noqa: E402
     PersistentShellSession,
 )
+from modex_agent.tools.terminal.subprocess_tool import create_subprocess_executor  # noqa: E402
 
 
 def _docker(*args: str, timeout: float = 60.0) -> subprocess.CompletedProcess[str]:
@@ -209,8 +210,7 @@ class TestContainerShellExecutorIntegration:
     ) -> None:
         resolved = await engine.resolve(settings, workspace)
         executor = ContainerShellExecutor(
-            command_prefix=list(resolved.one_shot_command_argv_prefix)
-        )
+            command_prefix=list(resolved.one_shot_command_argv_prefix), host_executor_factory=create_subprocess_executor)
         out = await executor.execute("id -u", timeout=30)
         assert "1000" in out
 
@@ -219,8 +219,7 @@ class TestContainerShellExecutorIntegration:
     ) -> None:
         resolved = await engine.resolve(settings, workspace)
         executor = ContainerShellExecutor(
-            command_prefix=list(resolved.one_shot_command_argv_prefix)
-        )
+            command_prefix=list(resolved.one_shot_command_argv_prefix), host_executor_factory=create_subprocess_executor)
         out = await executor.execute("pwd", working_dir=str(workspace), timeout=30)
         assert str(workspace) in out
 

@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from modex_agent.plugins.abc import ComponentFactory
 from modex_agent.plugins.assembly.context import PoolContext
+from modex_agent.scope.components import ComponentFactory
 
 
 class _ProbeConfig(BaseModel):

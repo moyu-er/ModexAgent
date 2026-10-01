@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from modex_agent.core.terminal import ProcessStatus
 from modex_agent.core.tool_manager import Tool
 from modex_agent.tools.terminal import subprocess_tool
 from modex_agent.tools.terminal._persistent_session import (
@@ -23,7 +24,6 @@ from modex_agent.tools.terminal.process_registry import ProcessRegistry
 from modex_agent.tools.terminal.process_tool import ProcessTool
 from modex_agent.tools.terminal.subprocess_tool import SubprocessExecutor, SubprocessTool
 from modex_agent.tools.terminal.tool import TerminalTool
-from modex_agent.tools.terminal.types import ProcessStatus
 
 
 class _AlivePersistentProcess:

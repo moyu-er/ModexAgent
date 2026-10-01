@@ -11,13 +11,13 @@ import sys
 
 import pytest
 
-from modex_agent.runtime.env_context import _current_session_id
+from modex_agent.core.terminal import Platform, ShellFamily, ShellInfo, TerminalVisibility
+from modex_agent.core.turn.env_context import _current_session_id
 from modex_agent.tools.terminal.command_tool import CommandTool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.managers import create_terminal_manager
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
 from modex_agent.tools.terminal.tool import TerminalTool
-from modex_agent.tools.terminal.types import Platform, ShellFamily, ShellInfo, TerminalVisibility
 
 
 def _platform_shell_info() -> ShellInfo:

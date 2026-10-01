@@ -28,9 +28,8 @@ from pathlib import Path
 
 import pytest
 
+from modex_agent.core.inbox import InboxMessage, InboxMQ
 from modex_agent.core.scope import RecordScope
-from modex_agent.multi_agent.inbox.server import InboxMQ
-from modex_agent.multi_agent.inbox.types import InboxMessage
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.inbox_mq import SqliteInboxMQ
 from modex_agent.persistence.session_artifacts import SqliteSessionDatabaseCleaner

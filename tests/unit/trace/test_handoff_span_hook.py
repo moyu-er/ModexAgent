@@ -7,11 +7,11 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.turn.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.hook.abc import HookPayload, HookPoint, HookSpec
 from modex_agent.hook.runner import HookRunner
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.trace.handoff_span_hook import HandoffSpanHook

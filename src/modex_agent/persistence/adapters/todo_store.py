@@ -1,17 +1,21 @@
-"""SQLite-backed :class:`~modex_agent.runtime.todo.TodoStore`.
+"""Todo store adapters — SQLite and JSON-file :class:`TodoStore` implementations.
 
-Stores per-session todo lists in the ``todos`` table. Each session gets one
-row keyed by ``session_id``; the todo items are serialized as a JSON array
-in the ``items_json`` column. All methods are async and go through the
-``ConnectionManager``.
+Stores per-session todo lists. :class:`SqliteTodoStore` uses the ``todos``
+table: each session gets one row keyed by ``session_id``; the todo items are
+serialized as a JSON array in the ``items_json`` column. All methods are
+async and go through the ``ConnectionManager``.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modex_agent.runtime.todo import TodoItem, TodoStore
+from modex_agent.core.turn.todo import TodoItem, TodoStore
+from modex_agent.utils.file_io import read_json_robust
 
 if TYPE_CHECKING:
     from modex_agent.core.scope import RecordScope
@@ -24,7 +28,7 @@ class SqliteTodoStore(TodoStore):
     The ``scope_key`` column is populated from the injected ``RecordScope``'s
     canonical JSON. Todo items are serialized as a JSON array of
     ``{"content", "status"}`` dicts in the ``items_json`` column (same format
-    as :class:`~modex_agent.runtime.todo.JsonFileTodoStore`).
+    as :class:`JsonFileTodoStore`).
     ``created_at``/``updated_at`` are owned by the schema DEFAULT + the
     ``trg_todos_auto_updated_at`` trigger (ADR-0029), so the adapter does not
     write them explicitly.
@@ -86,3 +90,59 @@ class SqliteTodoStore(TodoStore):
             "DELETE FROM todos WHERE session_id = ?",
             (session_id,),
         )
+
+
+class JsonFileTodoStore(TodoStore):
+    """One JSON file per session: ``<base_dir>/<session_id>.json``.
+
+    ``base_dir`` is injected by the caller (pool-aware in production; a tmp dir
+    in tests). Atomic write via tmp + os.replace.
+
+    ``_safe_segment`` only neutralizes characters that are genuinely unsafe on
+    common filesystems (``/``, ``\\``, ``:``, ``*``, ``?``, ``"``, ``<``, ``>``,
+    ``|``). Session ids in this system are ``{prefix}.{agent}[.{invocation_id}]``,
+    so the resulting filename is essentially the session id plus ``.json``.
+    """
+
+    _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+    def __init__(self, base_dir: Path) -> None:
+        self._base_dir = base_dir
+        self._base_dir.mkdir(parents=True, exist_ok=True)
+
+    @classmethod
+    def _safe_segment(cls, raw: str) -> str:
+        return cls._SAFE_RE.sub("_", raw)
+
+    def _path(self, session_id: str) -> Path:
+        return self._base_dir / f"{self._safe_segment(session_id)}.json"
+
+    async def save(self, session_id: str, todos: list[TodoItem]) -> None:
+        payload = [todo.to_dict() for todo in todos]
+        target = self._path(session_id)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        try:
+            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, target)
+        except Exception:
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
+            raise
+
+    async def get(self, session_id: str) -> list[TodoItem]:
+        data = read_json_robust(self._path(session_id))
+        if not isinstance(data, list):
+            return []
+        items: list[TodoItem] = []
+        for entry in data:
+            if isinstance(entry, dict):
+                try:
+                    items.append(TodoItem.from_dict(entry))
+                except (KeyError, ValueError):
+                    continue
+        return items
+
+    async def delete(self, session_id: str) -> None:
+        path = self._path(session_id)
+        if path.exists():
+            path.unlink()

@@ -101,7 +101,7 @@ class EnvironmentBuilder:
 
         On Windows, the STANDARD policy reads from the injected full-env
         provider when present (e.g. the assembly layer injects
-        :func:`modex_agent.tools.terminal.env.build_full_env` to pick up
+        :func:`modex_agent.utils.child_env.build_full_env` to pick up
         registry PATH entries missing from ``os.environ``). Without a
         provider, ``os.environ`` is the source; this module has no
         dependency on ``tools.terminal``.

@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING
 from modex_agent.messaging.broker import AddressKind
 
 if TYPE_CHECKING:
-    from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+    from modex_agent.core.inbox import InboxMessage, SessionWork
+    from modex_agent.messaging.agent_messages import AgentMessageEnvelope
     from modex_agent.multi_agent.inbox.consumer import InboxConsumer
     from modex_agent.multi_agent.inbox.producer import BaseInboxProducer
-    from modex_agent.multi_agent.inbox.types import InboxMessage, SessionWork
     from modex_agent.multi_agent.inbox_poller import InboxPoller
     from modex_agent.persistence.session_registry import SessionRegistry
 
@@ -163,8 +163,7 @@ class LocalAgentMessageBus(AgentMessageBus):
 
     @staticmethod
     def _reconstruct(msg: InboxMessage, session_id: str) -> AgentMessageEnvelope:
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.messaging.agent_messages import AgentAddress, AgentMessageEnvelope
 
         payload = msg.metadata.get("payload") if msg.metadata else None
         if payload is None:

@@ -27,14 +27,14 @@ from modex_agent.core.message import (
     build_media_ref,
 )
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.enums import AgentKind, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.memory.context_governance import ContextGovernance
 from modex_agent.memory.history import ScopedMessageHistory
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 from modex_agent.memory.scope import MemoryContext
-from modex_agent.runtime.enums import AgentKind, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_graph import create_null_coordinator
 

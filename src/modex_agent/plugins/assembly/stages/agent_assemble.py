@@ -13,7 +13,7 @@ from modex_agent.plugins.assembly.pipeline import AssemblyStage
 if TYPE_CHECKING:
     from modex_agent.plugins.assembly.builder import AssemblyBuilder
     from modex_agent.plugins.assembly.context import AssemblyContext
-    from modex_agent.plugins.assembly.spec import AssemblySpec
+    from modex_agent.scope.assembly_spec import AssemblySpec
 
 
 NativeInputsFactory = Callable[

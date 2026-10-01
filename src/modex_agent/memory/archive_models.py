@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.runtime.models import JsonValue
+from modex_agent.core.turn.models import JsonValue
 
 ARCHIVE_SCHEMA = "archive"
 CONTEXT_ARCHIVE_FILE_KEY = "context_archive"

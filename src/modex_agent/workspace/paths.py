@@ -1,15 +1,14 @@
 """Path primitives layer for the workspace manager.
 
-Converges the two prior sanitizers — ``persistence/session_store.py::
-safe_filename`` and ``runtime/store.py::
-JsonFileTurnStateStore._safe_segment`` — into a single ``safe_segment`` plus a
-frozen :class:`WorkspacePaths` value object that guarantees no accessor can
-escape its root.
+The ``safe_segment`` transform itself lives in
+:mod:`modex_agent.utils.paths` (W3b) so packages that must not import the
+workspace package (media) share the identical segment derivation; this
+module composes it into the frozen :class:`WorkspacePaths` value object that
+guarantees no accessor can escape its root.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,24 +44,7 @@ _RUNTIME_LEAVES: frozenset[str] = frozenset(
     {SUBDIR_TURNS, SUBDIR_COMMANDS, SUBDIR_TRACE, SUBDIR_OUTPUT, SUBDIR_TODOS}
 )
 
-# Anything outside [A-Za-z0-9_-] is neutralized to ``_``. Dots are excluded
-# from the allowed set to converge with ``JsonFileTurnStateStore._SAFE_RE``
-# (the stricter of the two source implementations named in the module docstring).
-_UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9_-]")
-
-
-def safe_segment(name: str) -> str:
-    """Sanitize a single path segment so it cannot escape a root.
-
-    Replaces every character outside ``[A-Za-z0-9_-]`` with ``_``, strips
-    whitespace, removes any residual ``..`` (already neutered by the regex,
-    but belt-and-braces), and returns ``"_"`` for empty/whitespace-only input.
-    """
-    # Strip whitespace first so whitespace-only input collapses to empty.
-    stripped = name.strip()
-    sanitized = _UNSAFE_CHARS.sub("_", stripped)
-    sanitized = sanitized.replace("..", "")
-    return sanitized or "_"
+from modex_agent.utils.paths import safe_segment
 
 
 def is_reserved_segment(segment: str) -> bool:

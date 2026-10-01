@@ -25,7 +25,6 @@ from modex_agent.hook.runner import HookRunner
 from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.multi_agent.descriptor import AgentInstance
 from modex_agent.multi_agent.factory import AgentFactory
-from modex_agent.plugins.abc import AgentType, ComponentSlot
 from modex_agent.plugins.assembly.context import AssemblyContext
 from modex_agent.plugins.assembly.native_core import (
     LlmDefaults,
@@ -33,10 +32,11 @@ from modex_agent.plugins.assembly.native_core import (
     NativeAssemblyResult,
     assemble_native_agent,
 )
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides, ToolEntry
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry, SimpleFactory
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides, ToolEntry
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import AgentType, ComponentSlot, SimpleFactory
 from modex_agent.tools.aci.edit_tool import AciEditTool
 from modex_agent.tools.standard.file_tool import EditFileTool
 from modex_agent.workspace.context import WorkspaceContext

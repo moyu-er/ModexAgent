@@ -25,7 +25,7 @@ MODULE_MARKERS: tuple[str, ...] = (
     "modex_agent.multi_agent",
     "modex_agent.memory",
     "modex_agent.runtime",
-    "modex_agent.ioc",
+    "modex_agent.app",
 )
 
 # Concrete business resource types/functions the framework must not name.
@@ -50,7 +50,7 @@ def test_framework_package_has_no_business_imports() -> None:
     for path in _framework_files():
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            if not isinstance(node, ast.Import | ast.ImportFrom):
                 continue
             module = node.module if isinstance(node, ast.ImportFrom) else ""
             for marker in MODULE_MARKERS:

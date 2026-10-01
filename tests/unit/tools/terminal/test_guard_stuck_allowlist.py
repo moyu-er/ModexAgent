@@ -4,12 +4,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from modex_agent.core.terminal import TerminalCommandStatus
 from modex_agent.tools.terminal.guard import (
     check_command_writable,
     check_process_writable,
 )
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
-from modex_agent.tools.terminal.types import TerminalCommandStatus
 
 
 def _session_with_status(status: TerminalCommandStatus) -> MagicMock:

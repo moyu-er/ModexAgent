@@ -16,8 +16,8 @@ share almost nothing (in-process vs subprocess+socket, see ADR-0010 Decision
 
 from __future__ import annotations
 
+from modex_agent.core.terminal import Platform
 from modex_agent.tools.terminal.backends.base import TerminalBackend
-from modex_agent.tools.terminal.types import Platform
 
 
 class WinptyBackend(TerminalBackend):

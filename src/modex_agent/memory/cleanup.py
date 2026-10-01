@@ -24,6 +24,12 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.memory_hooks import (
+    LlmUsage,
+    MemoryHookContext,
+    MemoryHookPoint,
+    MemoryHookRunner,
+)
 from modex_agent.core.message import (
     ChatMessage,
     ImageUrlPart,
@@ -38,12 +44,6 @@ from modex_agent.memory.core.layers import (
     SessionMemoryManager,
 )
 from modex_agent.memory.core.models import CompressionReason
-from modex_agent.memory.hooks import (
-    LlmUsage,
-    MemoryHookContext,
-    MemoryHookPoint,
-    MemoryHookRunner,
-)
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
@@ -57,9 +57,8 @@ from modex_agent.memory.token_estimator import (
 from modex_agent.utils.timezone import get_user_timezone
 
 if TYPE_CHECKING:
-    from modex_agent.agents.summarizer.abc import ArchiveGenerator
-    from modex_agent.agents.summarizer.session_compactor import SessionCompactorAgent
     from modex_agent.memory.stores.dir_archive import DirArchiveStorage
+    from modex_agent.memory.summarizer import ArchiveGenerator, SessionCompactor
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +250,7 @@ async def _prepare_cleanup_phase(
 
 
 async def _compact_generation_phase(
-    compactor: SessionCompactorAgent | None,
+    compactor: SessionCompactor | None,
     pruned_messages: list[dict[str, Any]],
     context: MemoryContext,
     budget: ContextBudget,
@@ -260,7 +259,7 @@ async def _compact_generation_phase(
 
     Extracts previous compact summary from pruned messages (COMPACT role),
     removes it from the message list, serializes remaining messages to plain
-    text, and calls the SessionCompactorAgent to generate a structured summary.
+    text, and calls the session compactor to generate a structured summary.
     The turn's ``budget`` is handed to the compactor so it can size its
     summarization calls (single-pass vs segmented map+reduce) against the
     CURRENT model's window.
@@ -537,7 +536,7 @@ async def cleanup_session(
     context: MemoryContext,
     budget: ContextBudget,
     source: CompactionSource | None = None,
-    compactor: SessionCompactorAgent | None = None,
+    compactor: SessionCompactor | None = None,
     max_token_ratio: float = 0.85,
     max_backups: int = 10,
     pruned_manager: PrunedManager | None = None,

@@ -19,15 +19,15 @@ from modex_agent.multi_agent.descriptor import AgentInstance
 from modex_agent.multi_agent.factory import AgentFactory
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.state import AgentState
-from modex_agent.plugins.abc import AgentType, ComponentFactory, ComponentSlot, SimpleFactory
 from modex_agent.plugins.assembly.context import AssemblyContext
 from modex_agent.plugins.assembly.native_core import (
     LlmDefaults,
     NativeAssemblyInputs,
     assemble_native_agent,
 )
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides, ToolEntry
-from modex_agent.plugins.registry import ComponentNotFoundError, ComponentRegistry
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides, ToolEntry
+from modex_agent.scope.component_registry import ComponentNotFoundError, ComponentRegistry
+from modex_agent.scope.components import AgentType, ComponentFactory, ComponentSlot, SimpleFactory
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.trace.cassette import CassetteRecorder
 from modex_agent.workspace.context import WorkspaceContext

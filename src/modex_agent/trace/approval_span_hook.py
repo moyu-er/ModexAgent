@@ -10,10 +10,10 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from modex_agent.approval.constants import ApprovalStatus
+from modex_agent.core.turn.approval_types import ApprovalStatus
+from modex_agent.core.turn.enums import TurnCustomKey
+from modex_agent.core.turn.models import ApprovalTransaction
 from modex_agent.hook.abc import AfterApprovalHook
-from modex_agent.runtime.enums import TurnCustomKey
-from modex_agent.runtime.models import ApprovalTransaction
 from modex_agent.trace.base_hook import BaseTraceHook
 from modex_agent.trace.semconv import (
     GenAiAttr,

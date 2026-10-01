@@ -464,8 +464,8 @@ def test_command_processor_exposes_dispatch_policy_before_lock() -> None:
     from modex_agent.commands.models import CommandContext
     from modex_agent.commands.processor import SlashCommandProcessor
     from modex_agent.core.session_id import SessionInfo
-    from modex_agent.runtime.enums import AgentKind, SnapshotReason, TurnPhase
-    from modex_agent.runtime.models import ResumePoint, TurnIdentity, TurnSnapshot
+    from modex_agent.core.turn.enums import AgentKind, SnapshotReason, TurnPhase
+    from modex_agent.core.turn.models import ResumePoint, TurnIdentity, TurnSnapshot
 
     processor = SlashCommandProcessor.default()
     parse_result = processor.parse("/approve")

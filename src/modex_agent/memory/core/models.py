@@ -8,7 +8,9 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from modex_agent.core.memory_hooks import SectionProvenance
 from modex_agent.core.message import ChatMessage
+from modex_agent.core.stores import StorageRevision
 from modex_agent.memory.archive_models import (
     ARCHIVE_SCHEMA,
     DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS,
@@ -20,22 +22,7 @@ from modex_agent.memory.archive_models import (
     ArchiveState,
     ArchiveWrite,
 )
-from modex_agent.memory.hooks import SectionProvenance
 from modex_agent.memory.sanitizer import ToolChainSanitizationIssue
-
-
-@dataclass(frozen=True)
-class StorageRevision:
-    """Revision metadata returned by scoped storage writes.
-
-    ``updated_at`` is a Unix-epoch millisecond integer (ADR-0029 §6). Both
-    file and SQLite backends pass ``now_ms()`` directly — no ``datetime``
-    bridge at the adapter boundary.
-    """
-
-    message_count: int
-    updated_at: int
-    version: int = 0
 
 
 class CompressionReason(StrEnum):
@@ -170,6 +157,5 @@ __all__ = [
     "MemoryBudget",
     "MemoryUpdate",
     "MemoryUpdateMode",
-    "StorageRevision",
     "UnprocessedResult",
 ]

@@ -2,7 +2,7 @@
 
 - :class:`WorkspacePersistenceManager` — opens/closes the per-workspace SQLite
   DB (``DatabaseKind.WORKSPACE``) and constructs DB-backed
-  :class:`~modex_agent.memory.core.split_stores.MemoryStoreBundle` instances.
+  :class:`~modex_agent.core.stores.MemoryStoreBundle` instances.
 - :class:`RegistryPersistenceManager` — opens/closes the global registry
   SQLite DB (``DatabaseKind.REGISTRY``) at BotService initialize/stop.
 """

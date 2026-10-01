@@ -19,13 +19,13 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from modex_agent.core.tool_vocabulary import ToolPreset
 from modex_agent.scope import (
     ScopeDeclarationError,
     ScopeKind,
     load_dynamic_workspace_declarations,
     load_scope_declaration,
 )
-from modex_agent.tools.presets import ToolPreset
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "scope"
 

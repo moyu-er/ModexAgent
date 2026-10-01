@@ -14,11 +14,11 @@ import pytest
 
 from modex_agent.agents.react.state import ReActRuntimeStateCodec
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
+from modex_agent.core.turn.enums import AgentKind, SnapshotReason, TurnPhase
+from modex_agent.core.turn.models import ResumePoint, StateQueryScope, TurnIdentity, TurnSnapshot
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.turn_state_store import SqliteTurnStateStore
-from modex_agent.runtime.codec import RuntimeStateCodecRegistry
-from modex_agent.runtime.enums import AgentKind, SnapshotReason, TurnPhase
-from modex_agent.runtime.models import ResumePoint, StateQueryScope, TurnIdentity, TurnSnapshot
 from modex_agent.runtime.store import JsonFileTurnStateStore, TurnStateStore
 
 

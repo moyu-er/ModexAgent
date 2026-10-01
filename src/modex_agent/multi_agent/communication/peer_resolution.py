@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict
 from modex_agent.core.agent import AgentCommKind, ExecutionStrategyKind
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.scope.execution_kind import strategy_name_of
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeSpec
 
 
@@ -43,7 +44,9 @@ class PeerLink(BaseModel):
     static consumers like the env-spec agent-pool map read it; the booted
     runtime facts still resolve from the bundle)."""
     peer_description: str = ""
-    peer_execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT
+    peer_execution_strategy: str = ExecutionStrategyKind.REACT
+    """The peer root's execution-strategy NAME (W5 — a registry key, compared
+    against :class:`ExecutionStrategyKind` members via StrEnum equality)."""
 
 
 def peer_links_from_declaration(spec: ScopeSpec) -> dict[str, tuple[PeerLink, ...]]:
@@ -69,7 +72,7 @@ def peer_links_from_declaration(spec: ScopeSpec) -> dict[str, tuple[PeerLink, ..
                     peer_pool=peer_name,
                     peer_agent=peer_root.name,
                     peer_description=peer_root.description,
-                    peer_execution_strategy=ExecutionStrategyKind(peer_root.execution_strategy),
+                    peer_execution_strategy=strategy_name_of(peer_root.execution_strategy),
                 )
             )
         links[pool.name] = tuple(pool_links)

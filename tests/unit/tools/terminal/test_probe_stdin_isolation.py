@@ -36,8 +36,8 @@ from unittest.mock import patch
 
 import pytest
 
-from modex_agent.tools.terminal import types as terminal_types
-from modex_agent.tools.terminal.types import _verify_bash, _verify_wsl
+from modex_agent.core import terminal as terminal_types
+from modex_agent.core.terminal import _verify_bash, _verify_wsl
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -48,14 +48,14 @@ _IS_WINDOWS = sys.platform == "win32"
 
 
 def test_verify_bash_probe_detaches_stdin() -> None:
-    with patch("modex_agent.tools.terminal.types.subprocess.run") as run:
+    with patch("modex_agent.core.terminal.subprocess.run") as run:
         run.return_value = SimpleNamespace(returncode=0, stdout="GNU bash")
         assert _verify_bash(r"X:\Git\bin\bash.exe") is not None
         assert run.call_args.kwargs.get("stdin") is subprocess.DEVNULL
 
 
 def test_verify_wsl_probe_detaches_stdin() -> None:
-    with patch("modex_agent.tools.terminal.types.subprocess.run") as run:
+    with patch("modex_agent.core.terminal.subprocess.run") as run:
         run.return_value = SimpleNamespace(returncode=0, stdout="Ubuntu")
         assert _verify_wsl(r"C:\Windows\System32\wsl.exe") is True
         assert run.call_args.kwargs.get("stdin") is subprocess.DEVNULL
@@ -63,9 +63,9 @@ def test_verify_wsl_probe_detaches_stdin() -> None:
 
 @pytest.mark.skipif(not _IS_WINDOWS, reason="CREATE_NO_WINDOW is Windows-only")
 def test_verify_bash_probe_creates_no_window() -> None:
-    from modex_agent.tools.terminal.types import _CREATE_NO_WINDOW
+    from modex_agent.core.terminal import _CREATE_NO_WINDOW
 
-    with patch("modex_agent.tools.terminal.types.subprocess.run") as run:
+    with patch("modex_agent.core.terminal.subprocess.run") as run:
         run.return_value = SimpleNamespace(returncode=0, stdout="GNU bash")
         assert _verify_bash(r"X:\Git\bin\bash.exe") is not None
         assert run.call_args.kwargs.get("creationflags", 0) & _CREATE_NO_WINDOW
@@ -92,7 +92,7 @@ _FAKE_BASH_CMD = (
 _DRIVER = """
 import json, sys
 sys.path.insert(0, sys.argv[2])
-from modex_agent.tools.terminal.types import _verify_bash
+from modex_agent.core.terminal import _verify_bash
 info = _verify_bash(sys.argv[1])
 print(json.dumps({"verified": info is not None}))
 """

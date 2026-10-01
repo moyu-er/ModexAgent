@@ -15,7 +15,7 @@ declaration-driven BIZ hook (model_choice_bind, shipped via bot.yml):
   ``deliver_retry``, the pool/workspace facts for ``native_env``).
 
 The retired ``register_tree_aware_hooks`` convergence function and the
-BIZ ``_wire_main_pipeline`` injection sites died with this wave.
+BIZ ``wire_main_pipeline`` injection sites died with this wave.
 """
 
 from __future__ import annotations
@@ -25,11 +25,10 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from modex_agent.agents.external.types import ExternalEnvSpec
+from modex_agent.agents.react.hooks.deliver_retry import DeliverRetryHook
+from modex_agent.agents.react.hooks.length_guard import LengthGuardHook
 from modex_agent.core.agent import AgentCommKind, ProviderKind
-from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
-from modex_agent.hook.builtin.length_guard import LengthGuardHook
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
-from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.context import (
     PoolRuntimeDeps,
     agent_context_chain,
@@ -43,13 +42,14 @@ from modex_agent.plugins.defaults.hooks import (
     NativeEnvInjectionHookFactory,
 )
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import (
     HookOrigin,
     ProvenanceLayer,
     ScopeCompilation,
     compile_scope,
 )
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths

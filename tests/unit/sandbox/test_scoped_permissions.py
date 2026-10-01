@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.sandbox.decision import GuardCategory, SecurityDecisionService
 from modex_agent.sandbox.delegation import DelegationSnapshot, resolve_agent_sandbox
 from modex_agent.sandbox.settings import (
@@ -18,7 +19,6 @@ from modex_agent.sandbox.tool_matrix import (
     describe_tool_security,
     extract_call_target,
 )
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 
 class FixedRoot(WorkspaceRootProvider):

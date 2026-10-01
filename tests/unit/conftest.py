@@ -7,7 +7,7 @@ from typing import Any, Final
 import pytest
 
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.core.turn.enums import TurnCustomKey
 
 _MAX_PARALLEL_ENV: Final = "PYTEST_MAX_PARALLEL_TOOL_CALLS"
 

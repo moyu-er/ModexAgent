@@ -20,9 +20,9 @@ from __future__ import annotations
 import hashlib
 from typing import Final
 
-from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import ScopeCompilation, compile_scope
-from modex_agent.scope.derivation import _DEFAULT_LLM_PROVIDER
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.derivation import DEFAULT_LLM_PROVIDER
 from modex_agent.scope.profile import STANDARD_PROFILES, ProfileStore
 from modex_agent.scope.spec import ScopeSpec
 from modex_agent.workspace.context import WorkspaceContext
@@ -70,7 +70,7 @@ class ScopeGenerationTracker:
         *,
         workspace_ctx: WorkspaceContext,
         profiles: ProfileStore = STANDARD_PROFILES,
-        default_llm_provider: str = _DEFAULT_LLM_PROVIDER,
+        default_llm_provider: str = DEFAULT_LLM_PROVIDER,
         registry: ComponentRegistry | None = None,
     ) -> ScopeCompilation:
         """Pure compile plus one generation bump per hosted pool.

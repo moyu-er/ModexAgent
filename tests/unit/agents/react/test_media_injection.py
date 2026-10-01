@@ -35,10 +35,10 @@ from modex_agent.core.message import (
     build_media_ref,
 )
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.enums import AgentKind, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.enums import AgentKind, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
 _LOGGER_NAME = "modex_agent.agents.react.media_injection"

@@ -35,8 +35,8 @@ from modex_agent.agents.external.types import ExternalEnvSpec
 from modex_agent.core.agent import ProviderKind
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.messaging.broker import AddressKind
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.persistence.session_registry import SessionRegistry
 

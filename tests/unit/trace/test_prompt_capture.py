@@ -16,7 +16,7 @@ from modex_agent.core.message import (
     TextPart,
     ToolCall,
 )
-from modex_agent.ioc.configs.observability import PromptCaptureMode
+from modex_agent.trace.observability import PromptCaptureMode
 from modex_agent.trace.prompt_capture import (
     FullPromptCapture,
     HashPromptCapture,

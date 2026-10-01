@@ -20,6 +20,11 @@ LOCAL keeps the prefix intact and uses subprocess cwd; OCI inserts exec -w.
 Only a confirmed missing launcher before child creation can select HOST via
 the shared binding. Nonzero exits, timeouts, and uncertain operations never
 authorize replay on the host.
+
+``host_executor_factory`` is the injected host-shell seam (W3b): the
+sandbox package must not import the tools package, so the caller (shell
+capability assembly / tests) supplies ``create_subprocess_executor`` for
+the confirmed-HOST replay paths.
 """
 
 from __future__ import annotations
@@ -30,9 +35,9 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modex_agent.tools.terminal.subprocess_tool import ShellExecutor, create_subprocess_executor
-from modex_agent.tools.terminal.types import (
+from modex_agent.core.terminal import (
     Platform,
+    ShellExecutor,
     ShellFamily,
     ShellInfo,
 )
@@ -42,6 +47,8 @@ from .oci_support import ContainerMount
 from .settings import SandboxBackend
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .shell_plan import SandboxBinding
 
 if sys.platform == "win32":
@@ -68,6 +75,7 @@ class ContainerShellExecutor(ShellExecutor):
         self, command_prefix: list[str], *, backend: SandboxBackend = SandboxBackend.OCI,
         shell_path: str = "/bin/bash",
         binding: SandboxBinding | None = None,
+        host_executor_factory: Callable[[], ShellExecutor],
     ) -> None:
         if not command_prefix:
             raise ValueError("command_prefix must be a non-empty argv prefix")
@@ -77,6 +85,7 @@ class ContainerShellExecutor(ShellExecutor):
         self._backend = backend
         self._shell_path = shell_path
         self._binding = binding
+        self._host_executor_factory = host_executor_factory
 
     async def execute(
         self,
@@ -84,11 +93,11 @@ class ContainerShellExecutor(ShellExecutor):
         working_dir: str | None = None,
         timeout: int | None = 300,
     ) -> str:
-        from modex_agent.runtime.env_context import _current_session_id, _modex_env
-        from modex_agent.tools.terminal.env import build_full_env
+        from modex_agent.core.turn.env_context import _current_session_id, _modex_env
+        from modex_agent.utils.child_env import build_full_env
 
         if self._binding is not None and self._binding.current().backend is SandboxBackend.HOST:
-            return await create_subprocess_executor().execute(command, working_dir, timeout)
+            return await self._host_executor_factory().execute(command, working_dir, timeout)
 
         # exec options must precede the container operand (CLI parsing):
         # engine, exec, [-w, dir], container, command...
@@ -119,7 +128,7 @@ class ContainerShellExecutor(ShellExecutor):
                 raise
             if not await self._binding.fallback(_current_session_id.get(), str(exc)):
                 raise
-            return await create_subprocess_executor().execute(command, working_dir, timeout)
+            return await self._host_executor_factory().execute(command, working_dir, timeout)
         try:
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(), timeout=timeout
@@ -149,7 +158,7 @@ class ContainerShellExecutor(ShellExecutor):
     def shell_info(self) -> ShellInfo:
         """The container runs Linux bash — report that honestly."""
         if self._binding is not None and self._binding.current().backend is SandboxBackend.HOST:
-            return create_subprocess_executor().shell_info()
+            return self._host_executor_factory().shell_info()
         return ShellInfo(
             family=ShellFamily.BASH,
             path=self._prefix[0],

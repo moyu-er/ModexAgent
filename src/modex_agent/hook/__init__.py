@@ -3,7 +3,7 @@
 提供：
 - Hook 协议与 HookPoint 调度点枚举
 - HookRunner 调度器
-- 内置 Hook 实现（logging、inbox_flush、subagent_auto_send）
+- Built-in generic hook implementations (logging, current_time); domain-specific hooks have moved back to their domains (agents/react/hooks, multi_agent/inbox, trace, etc.)
 """
 
 from modex_agent.hook.abc import (

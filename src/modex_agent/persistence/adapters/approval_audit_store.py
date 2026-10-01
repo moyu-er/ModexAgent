@@ -11,9 +11,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from modex_agent.approval.constants import ApprovalAuditSource, DecisionActor
+from modex_agent.core.turn.approval_decision import ApprovalAuditEntry, ApprovalAuditStore
+from modex_agent.core.turn.approval_types import ApprovalAuditSource, DecisionActor
 from modex_agent.persistence.connection import SqlParameter
-from modex_agent.runtime.approval_decision import ApprovalAuditEntry, ApprovalAuditStore
 
 if TYPE_CHECKING:
     from modex_agent.core.scope import RecordScope

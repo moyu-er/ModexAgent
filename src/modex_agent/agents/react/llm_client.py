@@ -28,6 +28,11 @@ from modex_agent.agents.react.error_recovery import (
 )
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.interceptor import (
+    InterceptorScope,
+    LLMStreamContext,
+    aclose_llm_stream,
+)
 from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage
@@ -40,13 +45,8 @@ from modex_agent.core.stream_events import (
     ToolCallComplete,
     ToolCallDelta,
 )
-from modex_agent.interceptor.abc import (
-    InterceptorScope,
-    LLMStreamContext,
-    aclose_llm_stream,
-)
-from modex_agent.runtime.dispatch import renew_dispatch_deadline
-from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.core.turn.dispatch import renew_dispatch_deadline
+from modex_agent.core.turn.enums import TurnCustomKey
 
 logger = logging.getLogger(__name__)
 

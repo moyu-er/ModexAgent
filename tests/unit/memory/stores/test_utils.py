@@ -1,6 +1,6 @@
 """Tests for storage utilities."""
 
-from modex_agent.memory.stores.utils import sanitize_scope_key
+from modex_agent.utils.paths import sanitize_scope_key
 
 
 class TestSanitizeScopeKey:

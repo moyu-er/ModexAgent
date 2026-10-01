@@ -6,17 +6,17 @@ from collections.abc import Callable
 
 import pytest
 
-from modex_agent.tools.terminal.backends.base import TerminalBackend
-from modex_agent.tools.terminal.managers import BaseTerminalManager
-from modex_agent.tools.terminal.process_registry import ProcessRegistry
-from modex_agent.tools.terminal.results import TerminalRead
-from modex_agent.tools.terminal.types import (
+from modex_agent.core.terminal import (
     Platform,
     ProcessStatus,
     ShellFamily,
     ShellInfo,
     TerminalVisibility,
 )
+from modex_agent.tools.terminal.backends.base import TerminalBackend
+from modex_agent.tools.terminal.managers import BaseTerminalManager
+from modex_agent.tools.terminal.process_registry import ProcessRegistry
+from modex_agent.tools.terminal.results import TerminalRead
 from modex_agent.tools.terminal.watchdog import TerminalWatchdog
 
 

@@ -460,10 +460,10 @@ class TestConcurrentCleanupSession:
         Before Fix 3 (atomic archive_id reservation with write lock),
         both could read the same next_archive_id and one's data would be lost.
         """
-        from modex_agent.agents.summarizer.abc import ArchiveGenerator
         from modex_agent.memory.archive_models import ArchiveDocuments, ArchiveGenerationResult
         from modex_agent.memory.budget import ContextBudget
         from modex_agent.memory.cleanup import cleanup_session
+        from modex_agent.memory.summarizer import ArchiveGenerator
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
@@ -541,10 +541,10 @@ class TestConcurrentCleanupSession:
         numbering from 1.  This verifies user-level scope isolation in
         the archive_id counter — not a shared global counter.
         """
-        from modex_agent.agents.summarizer.abc import ArchiveGenerator
         from modex_agent.memory.archive_models import ArchiveDocuments, ArchiveGenerationResult
         from modex_agent.memory.budget import ContextBudget
         from modex_agent.memory.cleanup import cleanup_session
+        from modex_agent.memory.summarizer import ArchiveGenerator
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()

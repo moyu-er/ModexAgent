@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.agent_messages import AgentAddress, AgentMessageEnvelope
 from modex_agent.multi_agent.communication.result import AgentSendResult, format_send_ack
 from modex_agent.multi_agent.communication.strategies.base import (
     SendDeps,
@@ -29,7 +29,6 @@ from modex_agent.multi_agent.communication.strategies.subagent_dispatch import (
     SubagentDispatchStrategy,
 )
 from modex_agent.multi_agent.communication.topology import TopologyPolicy
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.registry import AgentRegistry
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore

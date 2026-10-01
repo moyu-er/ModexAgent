@@ -33,9 +33,8 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.graph.spec_loader import GraphSpecLoader
 from modex_agent.orchestration import GraphOrchestrator, SqliteCoordinatorFactory
-from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
+from modex_agent.orchestration.spec_loader import GraphSpecLoader
 from modex_agent.plugins.assembly.graph_schema import build_state_schema_compiler
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import (
@@ -44,7 +43,8 @@ from modex_agent.plugins.loader import (
     PluginDiscoveryConfig,
     PluginRegistrationContext,
 )
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot, SimpleFactory
 from modex_graph import (
     DefaultGraphState,
     FieldSpec,
@@ -142,9 +142,13 @@ async def test_custom_data_namespace_type_reaches_state_schema_compilation(
             project_plugin_paths=(),
         ),
     )
-    # The bundled defaults register NOTHING in the data-namespace slot; the
-    # probe plugin supplies the only registration (on-demand semantics).
-    assert registry.names(ComponentSlot.DATA_NAMESPACE) == (_PROBE_TYPE_NAME,)
+    # W6: the bundled defaults register the framework ``default`` graph-state
+    # namespace; the probe plugin adds its own name alongside (on-demand
+    # semantics for custom namespaces).
+    assert registry.names(ComponentSlot.DATA_NAMESPACE) == (
+        "default",
+        _PROBE_TYPE_NAME,
+    )
 
     graphs_dir = tmp_path / "graphs"
     graphs_dir.mkdir()

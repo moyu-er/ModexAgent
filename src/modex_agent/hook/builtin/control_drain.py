@@ -11,9 +11,8 @@ import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
-from modex_agent.control.types import ControlCommandType, ControlScope
-from modex_agent.core.tool_manager import ToolResult
-from modex_agent.interceptor.abc import (
+from modex_agent.core.control import ControlCommandType, ControlScope
+from modex_agent.core.interceptor import (
     LLMStreamContext,
     LLMStreamEvents,
     LLMStreamInterceptor,
@@ -22,6 +21,7 @@ from modex_agent.interceptor.abc import (
     ToolCallNext,
     aclose_llm_stream,
 )
+from modex_agent.core.tool_manager import ToolResult
 
 if TYPE_CHECKING:
     from modex_agent.control.channel import InMemoryControlChannel
@@ -95,7 +95,7 @@ async def drain_control_channel(
                 str(ctx.session),
                 turn_uuid,
             )
-            from modex_agent.control.exceptions import AgentCancelledError
+            from modex_agent.core.control import AgentCancelledError
 
             raise AgentCancelledError("User requested /stop")
 

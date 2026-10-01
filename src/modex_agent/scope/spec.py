@@ -26,16 +26,16 @@ from pydantic import (
     model_validator,
 )
 
+from modex_agent.approval.config import ApprovalConfig
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
-from modex_agent.ioc.configs.approval import ApprovalConfig
-from modex_agent.persistence.config import PersistenceBackend
-from modex_agent.sandbox.settings import SandboxSettings
-from modex_agent.tools.presets import (
+from modex_agent.core.tool_vocabulary import (
     DEFAULT_FORK_MAX_MESSAGES,
     MAX_FORK_MAX_MESSAGES,
     ContextMode,
     ToolPreset,
 )
+from modex_agent.persistence.config import PersistenceBackend
+from modex_agent.sandbox.settings import SandboxSettings
 
 ExecutionStrategyName = ExecutionStrategyKind | str
 """Execution-strategy reference — an :class:`ExecutionStrategyKind` member

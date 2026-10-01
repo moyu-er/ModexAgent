@@ -15,9 +15,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.core.tool_vocabulary import ToolPreset
+from modex_agent.core.turn.enums import TurnCustomKey
 from modex_agent.tools.graph_knowledge_capabilities import KnowledgeToolCapabilities
-from modex_agent.tools.presets import ToolPreset
 from modex_agent.workspace.paths import (
     SUBDIR_GRAPH_INSTANCES,
     SUBDIR_GRAPH_KNOWLEDGE,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 
-from modex_agent.tools.terminal.types import ProcessStatus
+from modex_agent.core.terminal import ProcessStatus
 
 
 @dataclass(frozen=True)

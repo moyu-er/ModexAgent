@@ -3,8 +3,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
-from modex_agent.memory.hooks import (
+from modex_agent.core.memory_hooks import (
     ConsolidationFinishedHook,
     ConsolidationFinishedPayload,
     CoreMemoryUpdatedHook,
@@ -12,6 +11,7 @@ from modex_agent.memory.hooks import (
     MemoryHookContext,
     MemoryHookRunner,
 )
+from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 from modex_agent.memory.layers.core import ScopedCoreMemoryManager
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry

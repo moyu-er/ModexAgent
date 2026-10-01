@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, assert_never
 if TYPE_CHECKING:
     from modex_agent.core.message import ContentFormat
 
+from modex_agent.core.terminal import CommandResultStatus, ProcessStatus
 from modex_agent.core.tool_manager import ExclusiveTool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.guard import TerminalGuardResult, check_process_writable
@@ -23,7 +24,6 @@ from modex_agent.tools.terminal.process_registry import (
 from modex_agent.tools.terminal.prompt import sanitize_terminal_output
 from modex_agent.tools.terminal.pty_keys import normalize_write_payload
 from modex_agent.tools.terminal.session import TerminalSession
-from modex_agent.tools.terminal.types import CommandResultStatus, ProcessStatus
 from modex_agent.utils.xml import xml_text
 
 __all__ = ["ProcessTool"]
@@ -163,7 +163,7 @@ class ProcessTool(ExclusiveTool):
 
     def result_metadata(self, result: Any) -> tuple[ContentFormat | None, list[str] | None]:
         """Declare XML truncation metadata for <process_result> output."""
-        from modex_agent.tools.terminal.types import terminal_result_metadata
+        from modex_agent.core.terminal import terminal_result_metadata
 
         return terminal_result_metadata(result)
 

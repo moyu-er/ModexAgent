@@ -6,9 +6,9 @@ Written FIRST, drives the implementation of
 - ``ComponentNotFoundError`` exception contract.
 - ``ComponentRegistry.register`` — conflict (ValueError) + overwrite.
 - ``ComponentRegistry.resolve`` — found + not-found.
-- ``ComponentRegistry.resolve_namespace_model`` — returns the model CLASS
+- ``resolve_namespace_model`` (graph_schema consumer face) — returns the model CLASS
   without calling ``factory.create``.
-- ``ComponentRegistry.resolve_bundle`` + ``TypedBundle`` round-trip with a
+- ``TypedBundle`` round-trip (built via the graph_schema namespace accessor) with a
   real FILE-backend ``DefaultScopedStorage`` (not mock).
 - Scope isolation — different ``RecordScope`` values produce isolated
   keyspaces.
@@ -22,15 +22,16 @@ import pytest
 from pydantic import BaseModel
 
 from modex_agent.core.scope import RecordScope
-from modex_agent.memory.core.split_stores import KVStore
+from modex_agent.core.stores import KVStore
 from modex_agent.memory.scope import MemoryLayerName
 from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
-from modex_agent.plugins.abc import ComponentFactory, ComponentSlot, SimpleFactory
-from modex_agent.plugins.registry import (
+from modex_agent.plugins.assembly.graph_schema import resolve_namespace_model
+from modex_agent.scope.component_registry import (
     ComponentNotFoundError,
     ComponentRegistry,
     TypedBundle,
 )
+from modex_agent.scope.components import ComponentFactory, ComponentSlot, SimpleFactory
 
 # ---- Test helpers --------------------------------------------------------
 
@@ -154,7 +155,7 @@ class TestResolve:
         assert registry.names(ComponentSlot.INPUT_STAGE) == ()
 
 
-# ---- resolve_namespace_model ---------------------------------------------
+# ---- resolve_namespace_model (graph_schema consumer face) ----------------
 
 
 class TestResolveNamespaceModel:
@@ -165,7 +166,7 @@ class TestResolveNamespaceModel:
             "player",
             _make_namespace_factory(_PlayerProfile),
         )
-        model_cls = registry.resolve_namespace_model("player")
+        model_cls = resolve_namespace_model(registry, "player")
         assert model_cls is _PlayerProfile
         # Must be a class, not an instance.
         assert isinstance(model_cls, type)
@@ -174,7 +175,7 @@ class TestResolveNamespaceModel:
     def test_unknown_namespace_raises_not_found(self) -> None:
         registry = ComponentRegistry()
         with pytest.raises(ComponentNotFoundError):
-            registry.resolve_namespace_model("nope")
+            resolve_namespace_model(registry, "nope")
 
     def test_non_simple_factory_raises_type_error(self) -> None:
         registry = ComponentRegistry()
@@ -191,7 +192,7 @@ class TestResolveNamespaceModel:
             _BadFactory(),  # type: ignore[arg-type]
         )
         with pytest.raises(TypeError, match="SimpleFactory"):
-            registry.resolve_namespace_model("bad")
+            resolve_namespace_model(registry, "bad")
 
 
 # ---- TypedBundle FILE-backend round-trip ---------------------------------
@@ -211,7 +212,7 @@ class TestTypedBundleFileRoundTrip:
             tmp_path / "kv",
             layer=MemoryLayerName.SESSION,
         )
-        bundle = registry.resolve_bundle("player", kv_store)
+        bundle = TypedBundle("player", resolve_namespace_model(registry, "player"), kv_store)
         scope = RecordScope(session_id="s1", agent_id="main")
 
         original = _PlayerProfile(name="Alice", level=30, tags=["warrior", "fire"])
@@ -235,7 +236,7 @@ class TestTypedBundleFileRoundTrip:
             tmp_path / "kv",
             layer=MemoryLayerName.SESSION,
         )
-        bundle = registry.resolve_bundle("player", kv_store)
+        bundle = TypedBundle("player", resolve_namespace_model(registry, "player"), kv_store)
         scope = RecordScope(session_id="s1")
         assert await bundle.get("nope", scope) is None
 
@@ -250,7 +251,7 @@ class TestTypedBundleFileRoundTrip:
             tmp_path / "kv",
             layer=MemoryLayerName.SESSION,
         )
-        bundle = registry.resolve_bundle("player", kv_store)
+        bundle = TypedBundle("player", resolve_namespace_model(registry, "player"), kv_store)
         scope = RecordScope(session_id="s1")
 
         model = _PlayerProfile(name="Bob", level=5, tags=[])
@@ -273,7 +274,7 @@ class TestTypedBundleFileRoundTrip:
             tmp_path / "kv",
             layer=MemoryLayerName.SESSION,
         )
-        bundle = registry.resolve_bundle("player", kv_store)
+        bundle = TypedBundle("player", resolve_namespace_model(registry, "player"), kv_store)
         scope = RecordScope(session_id="s1")
 
         await bundle.set("k1", _PlayerProfile(name="A", level=1, tags=[]), scope)
@@ -293,7 +294,7 @@ class TestTypedBundleFileRoundTrip:
             tmp_path / "kv",
             layer=MemoryLayerName.SESSION,
         )
-        bundle = registry.resolve_bundle("player", kv_store)
+        bundle = TypedBundle("player", resolve_namespace_model(registry, "player"), kv_store)
         scope = RecordScope(session_id="s1")
 
         v1 = _PlayerProfile(name="Old", level=1, tags=[])
@@ -322,7 +323,7 @@ class TestTypedBundleScopeIsolation:
             tmp_path / "kv",
             layer=MemoryLayerName.SESSION,
         )
-        bundle = registry.resolve_bundle("player", kv_store)
+        bundle = TypedBundle("player", resolve_namespace_model(registry, "player"), kv_store)
 
         scope_a = RecordScope(session_id="session_a")
         scope_b = RecordScope(session_id="session_b")
@@ -353,7 +354,7 @@ class TestTypedBundleScopeIsolation:
             tmp_path / "kv",
             layer=MemoryLayerName.SESSION,
         )
-        bundle = registry.resolve_bundle("player", kv_store)
+        bundle = TypedBundle("player", resolve_namespace_model(registry, "player"), kv_store)
 
         scope_a = RecordScope(session_id="a")
         scope_b = RecordScope(session_id="b")

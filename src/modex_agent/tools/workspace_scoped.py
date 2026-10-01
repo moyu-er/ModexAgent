@@ -19,30 +19,14 @@ The swap is one implementation; callers and wrappers stay unchanged.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.tool_manager import ExecutionMode, Tool
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.workspace.boundary import canonicalize_path
 
 if TYPE_CHECKING:
     from modex_agent.core.capabilities import ModelCapabilities
-
-
-class WorkspaceRootProvider(ABC):
-    """Provides the active workspace working directory (the ``target`` the
-    user ``/cd``'d into — the agent's working dir, NOT the ``.modex`` data
-    root).
-
-    Implementations must be cheap and read live state, since it is called
-    on every tool execution.
-    """
-
-    @abstractmethod
-    def current(self) -> Path:
-        """Return the absolute path of the active workspace working dir."""
-        ...
 
 
 class WorkspaceScopedTool(Tool):

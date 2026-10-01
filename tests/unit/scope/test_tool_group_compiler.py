@@ -6,15 +6,15 @@ import pytest
 from pydantic import BaseModel
 
 from modex_agent.core.tool_group import ToolGroupSpec, ToolGroupVariant
-from modex_agent.plugins.capability import (
+from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.scope.capability import (
     Capability,
     CapabilityContribution,
     CapabilityWiring,
     TreePositionView,
 )
-from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths

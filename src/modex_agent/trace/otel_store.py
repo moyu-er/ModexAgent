@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
+from modex_agent.trace.observability import ObservabilityConfig, TraceBackend
 from modex_agent.trace.semconv import GenAiAttr, SpanKind, SpanStatusCode
 from modex_agent.trace.store import SpanModel, TraceQuery
 

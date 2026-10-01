@@ -44,9 +44,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, assert_never
 
+from modex_agent.core.terminal import ShellFamily, detect_platform_shell
 from modex_agent.sandbox.platform import Platform, get_platform
 from modex_agent.sandbox.settings import SandboxBackend
-from modex_agent.tools.terminal.types import ShellFamily, detect_platform_shell
 
 try:
     import bashlex

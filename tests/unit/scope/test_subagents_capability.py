@@ -40,16 +40,6 @@ from typing import Any
 import pytest
 
 from modex_agent.core.tool_manager import ToolOrigin
-from modex_agent.plugins.abc import ComponentSlot
-from modex_agent.plugins.assembly.spec import ToolEntry
-from modex_agent.plugins.capability import (
-    AgentDeclarationView,
-    AgentDeclaredFields,
-    CapabilityError,
-    ChildSummary,
-    PromptSectionSpec,
-    TreePositionView,
-)
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.capabilities.subagents import (
     SUBAGENTS_AUTO_SEND_HOOK_NAME,
@@ -57,8 +47,18 @@ from modex_agent.plugins.defaults.capabilities.subagents import (
     SubagentsCapabilityConfig,
 )
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.assembly_spec import ToolEntry
+from modex_agent.scope.capability import (
+    AgentDeclarationView,
+    AgentDeclaredFields,
+    CapabilityError,
+    ChildSummary,
+    PromptSectionSpec,
+    TreePositionView,
+)
 from modex_agent.scope.compiler import compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.scope.validator import RuleId, validate_effective_configs

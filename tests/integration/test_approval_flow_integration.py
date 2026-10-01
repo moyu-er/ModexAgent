@@ -28,6 +28,7 @@ import pytest
 
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
 from modex_agent.approval.ui import IMUserInterface
 from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.core.llm_struct import LLMResponse
@@ -35,8 +36,8 @@ from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool
-from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
-from modex_agent.ioc.factories.approval import build_approval_runtime
+from modex_agent.core.turn.enums import SnapshotReason, TurnPhase
+from modex_agent.core.turn.models import StateQueryScope
 from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.messaging.models import (
     ApprovalAction,
@@ -45,8 +46,7 @@ from modex_agent.messaging.models import (
     OutputMessage,
 )
 from modex_agent.pipeline.pipeline import AgentPipeline
-from modex_agent.runtime.enums import SnapshotReason, TurnPhase
-from modex_agent.runtime.models import StateQueryScope
+from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager
@@ -770,8 +770,8 @@ async def test_snapshot_and_resume_connect_across_different_agent_ids(
     approve click does nothing (the production bug). This test reproduces the
     real wiring (agent_descriptor set) where the previous tests' blind spot hid.
     """
+    from modex_agent.messaging.agent_messages import AgentAddress
     from modex_agent.multi_agent import AgentDescriptor
-    from modex_agent.multi_agent.address import AgentAddress
 
     descriptor = AgentDescriptor(address=AgentAddress(name="main"), system_prompt_template="x")
     provider = _ValidatingProvider(
@@ -829,8 +829,8 @@ async def test_resume_isolated_by_session_id_no_cross_contamination(
     an approve for session B must NOT resume session A's suspended snapshot.
     Locks the isolation guarantee so the scope fix can't be regressed into
     cross-session leakage."""
+    from modex_agent.messaging.agent_messages import AgentAddress
     from modex_agent.multi_agent import AgentDescriptor
-    from modex_agent.multi_agent.address import AgentAddress
 
     descriptor = AgentDescriptor(address=AgentAddress(name="main"), system_prompt_template="x")
     provider = _ValidatingProvider(
@@ -946,8 +946,8 @@ async def test_resume_with_file_turn_store_feeds_llm_well_formed_history(
     the suspended assistant ``tool_calls`` message but no tool results -> 400.
     """
     from modex_agent.agents.react.state import ReActRuntimeStateCodec
-    from modex_agent.runtime.codec import RuntimeStateCodecRegistry
-    from modex_agent.runtime.enums import AgentKind
+    from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
+    from modex_agent.core.turn.enums import AgentKind
     from modex_agent.runtime.store import JsonFileTurnStateStore
 
     codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})

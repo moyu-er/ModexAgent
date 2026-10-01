@@ -103,7 +103,12 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
-from modex_agent.runtime.env_context import _modex_env
+from modex_agent.core.terminal import (
+    ShellFamily,
+    ShellLaunchOwner,
+    detect_platform_shell,
+)
+from modex_agent.core.turn.env_context import _modex_env
 from modex_agent.tools.overflow.truncate import render_overflow_text, split_head_tail
 from modex_agent.tools.terminal._foreground_probe import (
     controlling_tty_device,
@@ -112,14 +117,9 @@ from modex_agent.tools.terminal._foreground_probe import (
     parse_proc_stat,
     stdin_probe_available,
 )
-from modex_agent.tools.terminal.env import build_full_env
 from modex_agent.tools.terminal.prompt import _strip_ansi_and_da1, is_waiting_for_input
 from modex_agent.tools.terminal.pty_keys import CTRL_C, ENTER_KEY
-from modex_agent.tools.terminal.subprocess_tool import ShellLaunchOwner
-from modex_agent.tools.terminal.types import (
-    ShellFamily,
-    detect_platform_shell,
-)
+from modex_agent.utils.child_env import build_full_env
 
 logger = logging.getLogger(__name__)
 

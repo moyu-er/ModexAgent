@@ -5,16 +5,19 @@ from pathlib import Path
 
 import pytest
 from bot.service.pool.declaration import boot_scope_spec
-from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
-from plugins.bot_hooks import SEND_FILE_TO_USER_TOOL_NAME
+from bot_plugins.bot_hooks import SEND_FILE_TO_USER_TOOL_NAME
 
-from modex_agent.ioc.configs.approval import ApprovalConfig
-from modex_agent.plugins.assembly.spec import ToolEntry
+from modex_agent.approval.config import ApprovalConfig
+from modex_agent.core.tool_vocabulary import (
+    ToolPreset,
+)
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.capabilities.experience import EXPERIENCE_TOOL_NAME
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.assembly_spec import ToolEntry
 from modex_agent.scope.compiler import CompiledAgent, compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.overlay import (
     AgentOverlay,
@@ -33,7 +36,6 @@ from modex_agent.scope.spec import (
 )
 from modex_agent.tools.presets import (
     EXPERIENCE_REVIEW_HOOK_NAME,
-    ToolPreset,
 )
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
@@ -324,7 +326,7 @@ def test_benchmark_shaped_overlay_boots_real_bot_declaration(
         project_dir=BOT_BASE,
         data_dir=tmp_path / ".modex",
         graphs_dirs=(),
-        default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        default_llm_provider=MULTI_LLM_PROVIDER,
         registry=_shipped_registry(),
     )
 

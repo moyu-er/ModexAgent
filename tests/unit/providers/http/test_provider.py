@@ -331,7 +331,7 @@ async def test_escaped_tool_args_delta_prevents_retry(
 
 
 def test_stream_retry_defaults_agree_across_layers() -> None:
-    from modex_agent.ioc.configs.safety import SafetyConfig
+    from modex_agent.providers.safety_config import SafetyConfig
 
     assert LLMTimeoutPolicy().framework_max_retries == 3
     assert SafetyConfig().llm.max_retries == 3

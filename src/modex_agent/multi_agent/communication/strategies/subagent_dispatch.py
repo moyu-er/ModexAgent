@@ -5,13 +5,15 @@ from __future__ import annotations
 import uuid as _uuid_mod
 
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.messaging.agent_messages import (
+    AgentAddress,
+    AgentMessageEnvelope,
+    AgentMessageType,
+)
+from modex_agent.messaging.message_format import build_dispatch_message
 from modex_agent.messaging.models import ReminderKind
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.communication.strategies.base import SendRequest, SendStrategy
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
-from modex_agent.multi_agent.message_format import build_dispatch_message
-from modex_agent.multi_agent.message_type import AgentMessageType
 
 _TASK_ID_BYTES = 8
 

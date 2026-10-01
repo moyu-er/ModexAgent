@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.sandbox.decision import GuardCategory, SecurityDecisionService
 from modex_agent.sandbox.guard_presentation import verdict_to_denial
 from modex_agent.sandbox.settings import SandboxSettings, WriteSurface
@@ -36,7 +37,6 @@ from modex_agent.sandbox.tool_matrix import (
     describe_tool_security,
     extract_call_target,
 )
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 WS = Path("/ws/project")
 

@@ -10,7 +10,7 @@ import contextlib
 import logging
 
 from modex_agent.core.agent import AgentContext
-from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.core.turn.enums import TurnCustomKey
 
 logger = logging.getLogger(__name__)
 

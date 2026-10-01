@@ -14,15 +14,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from modex_agent.agents.summarizer.abc import (
-    ArchiveGenerator,
-    _get_registry,
-)
 from modex_agent.agents.summarizer.scoped_file_agent import ScopedFileAgent
 from modex_agent.core.message import MessageRole
 from modex_agent.memory.archive_models import (
     ArchiveDocuments,
     ArchiveGenerationResult,
+)
+from modex_agent.memory.summarizer import (
+    ArchiveGenerator,
+    _get_registry,
 )
 
 logger = logging.getLogger(__name__)

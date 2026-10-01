@@ -35,13 +35,15 @@ if TYPE_CHECKING:
     from modex_agent.core.emitter import ContentEmitter
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.tool_manager import ToolManager
+    from modex_agent.core.turn.models import TurnSnapshot
+    from modex_agent.core.turn.store import TurnStateStore
     from modex_agent.hook.runner import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.memory.context import ContextManager, ContextState
     from modex_agent.memory.context_governance import ContextGovernance
+    from modex_agent.messaging.agent_messages import RouteResult
     from modex_agent.messaging.models import InputMessage
     from modex_agent.multi_agent import AgentDescriptor
-    from modex_agent.multi_agent.router import RouteResult
     from modex_agent.multi_agent.session_tree.session_binding import (
         SessionBindingStore,
     )
@@ -50,8 +52,6 @@ if TYPE_CHECKING:
         TurnContextDescriptor,
     )
     from modex_agent.runtime.context import RuntimeContextManager
-    from modex_agent.runtime.models import TurnSnapshot
-    from modex_agent.runtime.store import TurnStateStore
     from modex_agent.utils.context_builder import MultiAgentContextBuilder
     from modex_graph.context import GraphContext
 
@@ -439,7 +439,7 @@ class TurnContextBuilder:
         # ---- typed TurnIdentity (new) ----
         from uuid import uuid4
 
-        from modex_agent.runtime.models import TurnIdentity
+        from modex_agent.core.turn.models import TurnIdentity
 
         agent_id = (
             self._agent_descriptor.address.name
@@ -487,8 +487,8 @@ class TurnContextBuilder:
         # ---- typed AgentRuntime with ReActTurnState (new) ----
         if snapshot_turn_store is not None or governance is not None or base_services is not None:
             from modex_agent.agents.react.state import ReActTurnState
-            from modex_agent.runtime.enums import AgentKind, TurnCustomKey
-            from modex_agent.runtime.enums import TurnPhase as RTurnPhase
+            from modex_agent.core.turn.enums import AgentKind, TurnCustomKey
+            from modex_agent.core.turn.enums import TurnPhase as RTurnPhase
             from modex_agent.runtime.services import AgentRuntime
 
             react_state = ReActTurnState(
@@ -529,7 +529,7 @@ class TurnContextBuilder:
 
         # Trace linkage metadata for the turn's spans (subagent parentage).
         if agent_context.runtime is not None and input_metadata is not None:
-            from modex_agent.runtime.enums import TurnCustomKey
+            from modex_agent.core.turn.enums import TurnCustomKey
 
             trace_id = input_metadata.get("trace_id")
             if trace_id is not None:

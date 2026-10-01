@@ -1,6 +1,6 @@
 """SQLite-backed ``InboxMQ`` adapter (T20).
 
-Implements the full :class:`~modex_agent.multi_agent.inbox.server.InboxMQ`
+Implements the full :class:`~modex_agent.core.inbox.InboxMQ`
 contract against the workspace DB schema (T06 / ADR-0031):
 
 - **Async surface** (``receive``/``consume``/``peek``/``count``/``clear``/
@@ -40,9 +40,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from modex_agent.core.inbox import InboxMessage, InboxMQ
 from modex_agent.core.scope import RecordScope
-from modex_agent.multi_agent.inbox.server import InboxMQ
-from modex_agent.multi_agent.inbox.types import InboxMessage
 from modex_agent.persistence.column_projection import (
     ColumnField,
     ColumnProjection,

@@ -45,9 +45,9 @@ from modex_agent.core.llm_struct import LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.memory.context import InMemoryContextManager
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.factory import DefaultAgentFactory
@@ -83,8 +83,8 @@ class _FakePoolData:
 
     def __init__(self, runtime_dir: Path, memory_dir: Path, main_ctx_mgr: Any) -> None:
         from modex_agent.agents.react.state import ReActRuntimeStateCodec
-        from modex_agent.runtime.codec import RuntimeStateCodecRegistry
-        from modex_agent.runtime.enums import AgentKind
+        from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
+        from modex_agent.core.turn.enums import AgentKind
         from modex_agent.runtime.store import (
             JsonFileTurnStateStore,
         )
@@ -200,7 +200,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     # --- component registry (the capability compile input, ticket 12) ---
     from modex_agent.plugins.defaults import DefaultPlugin
     from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
-    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.scope.component_registry import ComponentRegistry
 
     component_registry = ComponentRegistry()
     await ComponentRegistryLoader.load(
@@ -314,6 +314,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     # materializes on first drain.
     from modex_agent.multi_agent.context_fork import ContextForkBuilder
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
+    from modex_agent.plugins.assembly.subagent_materializer import SubagentMaterializer
     from modex_agent.workspace.scope_path import ScopePath
 
     scope_path = ScopePath(workspace_root=tmp_path / "workspace", pool_name="main")
@@ -349,9 +350,9 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     # runtime_state/main/output — not the CWD fallback.
     from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-    from modex_agent.plugins.capability import PoolSupplyAgentEntry, PoolSupplyView
     from modex_agent.plugins.defaults.capabilities.skills.capability import SkillsCapability
     from modex_agent.plugins.defaults.capabilities.subagents import SubagentsCapability
+    from modex_agent.scope.capability import PoolSupplyAgentEntry, PoolSupplyView
 
     pool_assembly_ctx = PoolAssemblyContext(
         pool_name="main",
@@ -388,6 +389,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         )
     )
     deps = AgentMaterializeDeps(
+        materializer=SubagentMaterializer(),
         agent_factory=factory,
         pool=pool,
         session_factory=session_factory,

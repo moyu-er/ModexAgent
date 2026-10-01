@@ -13,13 +13,6 @@ from modex_agent.hook.runner import HookRunner
 from modex_agent.memory.context import ContextManager, InMemoryContextManager
 from modex_agent.multi_agent.descriptor import AgentInstance
 from modex_agent.multi_agent.factory import AgentFactory
-from modex_agent.plugins.abc import (
-    AgentType,
-    ComponentFactory,
-    ComponentSlot,
-    HookRunnerKind,
-    SimpleFactory,
-)
 from modex_agent.plugins.assembly.builder import AssemblyBuilder
 from modex_agent.plugins.assembly.context import AssemblyContext
 from modex_agent.plugins.assembly.native_core import (
@@ -28,9 +21,16 @@ from modex_agent.plugins.assembly.native_core import (
     NativeAssemblyResult,
     assemble_native_agent,
 )
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides, ToolEntry
 from modex_agent.plugins.assembly.stages.agent_assemble import AgentAssembleStage
-from modex_agent.plugins.registry import ComponentNotFoundError, ComponentRegistry
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides, ToolEntry
+from modex_agent.scope.component_registry import ComponentNotFoundError, ComponentRegistry
+from modex_agent.scope.components import (
+    AgentType,
+    ComponentFactory,
+    ComponentSlot,
+    HookRunnerKind,
+    SimpleFactory,
+)
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 

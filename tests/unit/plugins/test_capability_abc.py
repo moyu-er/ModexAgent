@@ -26,8 +26,8 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from modex_agent.plugins.abc import ComponentSlot, PluginSource
-from modex_agent.plugins.capability import (
+from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.scope.capability import (
     AgentDeclarationView,
     AgentDeclaredFields,
     Capability,
@@ -43,8 +43,12 @@ from modex_agent.plugins.capability import (
     SectionPlacement,
     TreePositionView,
 )
-from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentNotFoundError, ComponentRegistry
+from modex_agent.scope.component_registry import (
+    ComponentNotFoundError,
+    ComponentRegistry,
+    PluginSource,
+)
+from modex_agent.scope.components import ComponentSlot
 
 # ---- Test helpers --------------------------------------------------------
 

@@ -19,8 +19,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from modex_agent.core.terminal import ShellFamily
 from modex_agent.tools.terminal.backends.pexpect_pty import PexpectPtyBackend
-from modex_agent.tools.terminal.types import ShellFamily
 
 
 def _make_backend() -> PexpectPtyBackend:

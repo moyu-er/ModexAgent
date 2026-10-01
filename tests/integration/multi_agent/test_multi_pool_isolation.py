@@ -23,12 +23,11 @@ from modex_agent.pipeline.turn_outcome import TurnOutcome
 pytestmark = pytest.mark.integration
 
 from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.messaging.agent_messages import AgentAddress, AgentMessageEnvelope
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import AgentDescriptor, SessionRetentionPolicy
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer

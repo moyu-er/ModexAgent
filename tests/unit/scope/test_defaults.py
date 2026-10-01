@@ -1,6 +1,6 @@
 """Ticket 02 — position-derived defaults table (SPEC §3.2), row by row.
 
-Root = archive/core memory eligibility + approval eligibility + 
+Root = archive/core memory eligibility + approval eligibility +
 eager registration + toolset profile ``full``. Non-root = session-only
 memory + lazy materialization + toolset profile ``read-write``. Every
 default yields to the node's own declaration (framework default < node
@@ -10,6 +10,7 @@ profiles — split-brain parity with the legacy Main/Sub type defaults.
 
 from __future__ import annotations
 
+from modex_agent.core.tool_vocabulary import ToolPreset
 from modex_agent.scope import (
     AgentSpec,
     MemoryDeclaration,
@@ -19,7 +20,6 @@ from modex_agent.scope import (
     effective_defaults,
     memory_config_for_position,
 )
-from modex_agent.tools.presets import ToolPreset
 
 
 class TestDefaultsForPosition:

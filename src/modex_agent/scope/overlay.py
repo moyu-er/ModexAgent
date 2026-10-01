@@ -20,6 +20,7 @@ from typing import Any, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.core.tool_vocabulary import ToolPreset
 from modex_agent.scope.profile import merge_memory_declarations
 from modex_agent.scope.spec import (
     AgentSpec,
@@ -28,7 +29,6 @@ from modex_agent.scope.spec import (
     ScopeKind,
     ScopeSpec,
 )
-from modex_agent.tools.presets import ToolPreset
 
 
 class AgentOverlay(BaseModel):

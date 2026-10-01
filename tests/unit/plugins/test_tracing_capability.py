@@ -44,21 +44,9 @@ from pydantic import ValidationError
 
 pytest.importorskip("aiohttp")  # transitive: bot.service → web_ui_service → aiohttp
 
+from modex_agent.agents.react.hooks.iteration_span import IterationSpanHook
 from modex_agent.hook.abc import HookSpec
-from modex_agent.ioc.configs.observability import (
-    ObservabilityConfig,
-    TraceBackend,
-    TraceSpanMode,
-)
-from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.context import AgentContext, PoolRuntimeDeps
-from modex_agent.plugins.capability import (
-    CapabilityBinding,
-    FinalRosterView,
-    PoolSupplyAgentEntry,
-    PoolSupplyView,
-    TreePositionView,
-)
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.capabilities.tracing import (
     TraceSupply,
@@ -76,15 +64,27 @@ from modex_agent.plugins.defaults.hooks import (
     TraceToolHookFactory,
 )
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.capability import (
+    CapabilityBinding,
+    FinalRosterView,
+    PoolSupplyAgentEntry,
+    PoolSupplyView,
+    TreePositionView,
+)
 from modex_agent.scope.compiler import compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.trace.agent_start_hook import AgentStartSpanHook
 from modex_agent.trace.approval_span_hook import ApprovalSpanHook
 from modex_agent.trace.chat_span_hook import ChatSpanHook
 from modex_agent.trace.factory import build_trace_hooks
 from modex_agent.trace.handoff_span_hook import HandoffSpanHook
-from modex_agent.trace.iteration_span_hook import IterationSpanHook
+from modex_agent.trace.observability import (
+    ObservabilityConfig,
+    TraceBackend,
+    TraceSpanMode,
+)
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.root_span_hook import RootSpanHook
 from modex_agent.trace.score_injector import L2ScoreInjector
@@ -759,7 +759,8 @@ def _bot_project_on_path() -> None:
 def _shipped_spec() -> object:
     _bot_project_on_path()
     from bot.service.pool.declaration import load_scope_declaration
-    from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER  # noqa: F401
+
+    from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER  # noqa: F401
 
     return load_scope_declaration(_BOT_PROJECT / "config" / "scopes" / "bot.yml")
 
@@ -883,6 +884,7 @@ class TestBizFallback:
                 request_params=None,
                 score_injector=None,
                 store=_store(Path(".")),
+                extra_full_hooks=lambda base: [IterationSpanHook(**base)],
             )
         }
         registration_by_type = {

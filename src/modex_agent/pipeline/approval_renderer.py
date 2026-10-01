@@ -4,20 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
-from modex_agent.approval.constants import ApprovalDecision
-from modex_agent.approval.views import ApprovalRequestView
-from modex_agent.messaging.models import (
-    ApprovalAction,
-    InputMessage,
-    OutputMessage,
-    OutputMessageType,
-)
-from modex_agent.runtime.models import ToolArguments, TurnSnapshot
+from modex_agent.core.turn.approval_types import ApprovalDecision
+from modex_agent.core.turn.models import TurnSnapshot
+from modex_agent.messaging.models import ApprovalAction, InputMessage
 
 if TYPE_CHECKING:
     from modex_agent.approval.ui import ApprovalUserInterface
@@ -25,41 +19,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _UNRELATED_INPUT_PREVIEW_LIMIT = 50
-
-
-def _format_arguments(args: ToolArguments | Mapping[str, object] | None) -> str:
-    if args is None:
-        return ""
-    if isinstance(args, ToolArguments):
-        values: Mapping[str, object] = args.values
-    else:
-        values = args
-    return ", ".join(f"{key}={value}" for key, value in values.items())
-
-
-def format_approval_prompt(view: ApprovalRequestView) -> str:
-    """Format an approval request view for display to the user."""
-    args_str = _format_arguments(view.arguments)
-    return (
-        f"Approval Required [{view.tier.upper()}]\n"
-        f"Tool: {view.tool_name}\n"
-        f"ID: {view.tool_call_id}\n"
-        f"Args: {args_str}\n"
-        f"Reply /approve or /deny"
-    )
-
-
-def approval_output_message(view: ApprovalRequestView) -> OutputMessage:
-    """One message serving both channels: IM text (content) + webui structured (metadata).
-
-    IM/QQ adapters read ``content`` and are unchanged; ``WebSocketOutputAdapter``
-    branches on ``message_type == "approval_request"`` to emit a structured envelope.
-    """
-    return OutputMessage(
-        content=format_approval_prompt(view),
-        message_type=OutputMessageType.APPROVAL_REQUEST,
-        metadata={"approval": view.to_dict()},
-    )
 
 
 class ApprovalRenderer:

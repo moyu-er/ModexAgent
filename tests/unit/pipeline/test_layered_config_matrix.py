@@ -22,11 +22,13 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from modex_agent.agents.react.hooks.deliver_retry import DeliverRetryHook
+from modex_agent.agents.react.hooks.knowledge_hook import KnowledgeHook, _has_knowledge_config
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
-from modex_agent.hook.builtin.knowledge_hook import KnowledgeHook, _has_knowledge_config
+from modex_agent.core.turn.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.memory.prompt_pipeline.providers import (
     GraphWorkflowProvider,
@@ -43,8 +45,6 @@ from modex_agent.pipeline.turn_context_config import (
     TurnContextConfigPipeline,
     TurnContextDescriptor,
 )
-from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_graph.context import GraphContext
 
@@ -62,7 +62,7 @@ def _graph_ctx():
 from modex_agent.core import AgentCommKind as CommKind
 from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.tool_manager import Tool
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.multi_agent.communication.strategies.base import (
     SendDeps,
     SendRequest,

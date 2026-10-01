@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.memory.hooks import MemoryHookRunner
+from modex_agent.core.memory_hooks import MemoryHookRunner
 from modex_agent.memory.injection.archive import ArchiveInjectionConfig
 from modex_agent.memory.system import MemorySystemContextManager
 

@@ -11,9 +11,9 @@ The structural tests (defaults + dead-fields-gone) remain.
 
 from __future__ import annotations
 
+from modex_agent.core.tool_vocabulary import ContextMode, ToolPreset
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.scope.spec import AgentSpec
-from modex_agent.tools.presets import ContextMode, ToolPreset
 
 
 class TestAgentTemplateDefaults:

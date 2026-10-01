@@ -3,22 +3,22 @@ from __future__ import annotations
 from pathlib import Path
 
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.enums import (
+from modex_agent.core.turn.approval_types import ApprovalDecision, ApprovalStatus, ApprovalTier
+from modex_agent.core.turn.enums import (
     AgentKind,
     ApprovalSubjectType,
     TurnCustomKey,
     TurnPhase,
 )
-from modex_agent.runtime.models import (
+from modex_agent.core.turn.models import (
     ApprovalRequestState,
     ApprovalTransaction,
     ToolArguments,
     TurnIdentity,
 )
+from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.trace.approval_span_hook import ApprovalSpanHook

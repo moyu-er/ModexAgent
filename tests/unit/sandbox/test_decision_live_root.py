@@ -12,12 +12,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.sandbox.decision import GuardCategory, SecurityDecisionService
 from modex_agent.sandbox.settings import (
     SandboxBackend,
     SandboxSettings,
 )
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 
 class _SwitchableRoot(WorkspaceRootProvider):

@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.agents.summarizer.outcomes import ConsolidationOutcome
-from modex_agent.ioc.configs.memory import DreamEngineConfig
+from modex_agent.memory.config import DreamEngineConfig
 from modex_agent.memory.consolidation.dream_engine import DreamEngine
 from modex_agent.memory.core.models import ArchiveEntry, UnprocessedResult
+from modex_agent.memory.summarizer import ConsolidationOutcome
 
 
 class TestDreamEngineConfigHasConsumePerRunField:

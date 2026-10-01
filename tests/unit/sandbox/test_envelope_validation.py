@@ -18,16 +18,16 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
+from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
+from modex_agent.core.workspace_root import WorkspaceRootProvider
+from modex_agent.sandbox.approval_envelope import validate_approval_envelope
 from modex_agent.sandbox.delegation import resolve_agent_sandbox
-from modex_agent.sandbox.security_classifier import validate_approval_envelope
 from modex_agent.sandbox.settings import (
     ExclusiveConfig,
     SandboxBackend,
     SandboxSettings,
     WriteSurface,
 )
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 IS_WINDOWS = sys.platform == "win32"
 

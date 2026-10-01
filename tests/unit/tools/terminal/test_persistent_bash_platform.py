@@ -13,6 +13,11 @@ import sys
 
 import pytest
 
+from modex_agent.core.terminal import (
+    Platform,
+    ShellFamily,
+    ShellInfo,
+)
 from modex_agent.tools.terminal._persistent_session import (
     PersistentShellSession,
     PersistentShellUnsupportedError,
@@ -21,11 +26,6 @@ from modex_agent.tools.terminal.persistent_bash import (
     BashInputTool,
     PersistentBashTool,
     persistent_bash_supported,
-)
-from modex_agent.tools.terminal.types import (
-    Platform,
-    ShellFamily,
-    ShellInfo,
 )
 
 # ── persistent_bash_supported ──

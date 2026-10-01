@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from modex_agent.core.agent import AgentImplementation, ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.messaging.agent_messages import (
+    AgentAddress,
+    AgentMessageEnvelope,
+    AgentMessageType,
+)
+from modex_agent.messaging.message_format import SourceLabel, build_agent_comm_message
 from modex_agent.messaging.models import ReminderKind
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.communication.strategies.base import SendRequest, SendStrategy
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
-from modex_agent.multi_agent.message_format import SourceLabel, build_agent_comm_message
-from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.tools import CommunicationTarget
 
 

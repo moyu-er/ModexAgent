@@ -14,11 +14,11 @@ from __future__ import annotations
 from typing import Any
 
 from modex_agent.core.agent import ProviderKind
-from modex_agent.plugins.abc import AgentType
-from modex_agent.tools.presets import ToolPreset, get_preset_tools
+from modex_agent.core.tool_vocabulary import PRESET_TOOL_NAMES, ToolPreset
+from modex_agent.scope.components import AgentType
 
 # Default LLM provider component name (SPEC §5.7 — v1 framework default).
-_DEFAULT_LLM_PROVIDER: str = "default"
+DEFAULT_LLM_PROVIDER: str = "default"
 
 # Default system prompt provider component name (SPEC §5.6).
 _FILE_PROMPT_PROVIDER: str = "file_prompt"
@@ -41,13 +41,12 @@ def _derive_agent_type(
 def _expand_preset_tool_names(preset: ToolPreset) -> list[str]:
     """Expand a ToolPreset to its component tool names.
 
-    ``get_preset_tools`` returns the scalar standard tools. Additive runtime
-    groups such as shell enter through capability contributions instead of
-    preset-specific injection.
+    ``PRESET_TOOL_NAMES`` is the static name table for the scalar standard
+    tools (``tools/presets.py`` stays the construction authority for the
+    Tool instances). Additive runtime groups such as shell enter through
+    capability contributions instead of preset-specific injection.
     """
-    tools = get_preset_tools(preset)
-    names = [t.name for t in tools]
-    return names
+    return list(PRESET_TOOL_NAMES[preset])
 
 
 def _merge_tools(
@@ -101,7 +100,7 @@ def _merge_hooks(
     """Merge hooks +/- increments into the final hook list (SPEC §5.3, C2).
 
     The roster ``hooks`` list is an INCREMENT over the code-wired default
-    hook set (wired by ``_wire_main_pipeline`` / ``materialize`` — the
+    hook set (wired by ``wire_main_pipeline`` / ``materialize`` — the
     defaults never enter the roster), so unlike ``_merge_tools`` there is
     no preset base to replace:
 

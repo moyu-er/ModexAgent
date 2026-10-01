@@ -7,23 +7,23 @@ from typing import Any
 import pytest
 
 from modex_agent.agents.react.constants import ReActNode
+from modex_agent.agents.react.hooks.training_data import TRAINING_RELEVANT_ATTR, TrainingDataHook
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.hook import HookErrorPolicy, HookPayload, HookPoint, HookRunner, HookSpec
-from modex_agent.hook.abc import FinallyGraphHook
-from modex_agent.hook.builtin.training_data import TRAINING_RELEVANT_ATTR, TrainingDataHook
-from modex_agent.ioc.configs.observability import ObservabilityConfig
-from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.enums import (
+from modex_agent.core.turn.enums import (
     AgentKind,
     TurnCustomKey,
     TurnPhase,
 )
-from modex_agent.runtime.models import TurnIdentity
+from modex_agent.core.turn.models import TurnIdentity
+from modex_agent.hook import HookErrorPolicy, HookPayload, HookPoint, HookRunner, HookSpec
+from modex_agent.hook.abc import FinallyGraphHook
+from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.manager import InMemoryToolManager
+from modex_agent.trace.observability import ObservabilityConfig
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.root_span_hook import RootSpanHook
 from modex_agent.trace.scoring import TrajectoryMetrics
@@ -431,7 +431,7 @@ async def test_token_gate_reads_root_hook_stash_in_factory_order() -> None:
 
 
 async def test_noop_when_state_not_react() -> None:
-    from modex_agent.runtime.models import TurnStateBase
+    from modex_agent.core.turn.models import TurnStateBase
 
     store = _RecordingOtelStore()
     plain = TurnStateBase(
@@ -478,7 +478,7 @@ async def test_save_failure_does_not_raise(
     state = _react_state(iteration=1)
     ctx = _ctx(state, store)
 
-    with caplog.at_level("WARNING", logger="modex_agent.hook.builtin.training_data"):
+    with caplog.at_level("WARNING", logger="modex_agent.agents.react.hooks.training_data"):
         await _fire(ctx, TrainingDataHook(), _result())
 
     assert store.saved == []

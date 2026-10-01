@@ -17,26 +17,27 @@ if TYPE_CHECKING:
     from modex_agent.commands.skill import SkillResolver
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.tool_manager import ToolManager
+    from modex_agent.core.turn.store import TurnStateStore
     from modex_agent.hook.runner import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.memory.context import ContextManager
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
     from modex_agent.runtime.context import RuntimeContextManager
-    from modex_agent.runtime.store import TurnStateStore
 
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.commands.models import (
     CommandContext,
     CommandProcessor,
 )
-from modex_agent.control.exceptions import AgentControlError
 from modex_agent.core.agent import Agent
+from modex_agent.core.control import AgentControlError
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.turn.models import TurnSnapshot
 from modex_agent.memory.consolidation import DreamEngine
+from modex_agent.messaging.agent_messages import AgentMessageRouter
 from modex_agent.messaging.models import InputMessage, OutputMessage, OutputMessageType
-from modex_agent.multi_agent.router import AgentMessageRouter
 from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.pipeline.busy_input import BusyInputMode
 from modex_agent.pipeline.dream_scanner import DreamScanner
@@ -44,7 +45,6 @@ from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_outcome import TurnOutcome, TurnSuspension
 from modex_agent.pipeline.turn_runner_abc import TurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.runtime.models import TurnSnapshot
 from modex_agent.utils.deduplicator import MessageDeduplicator
 from modex_graph.exceptions import GraphInterrupt
 
@@ -357,7 +357,7 @@ class AgentPipeline:
                 return TurnOutcome.handled()
             elif self.busy_input_mode == BusyInputMode.STEER:
                 if self.control_channel is not None:
-                    from modex_agent.control.types import (
+                    from modex_agent.core.control import (
                         ControlCommand,
                         ControlCommandType,
                         ControlScope,

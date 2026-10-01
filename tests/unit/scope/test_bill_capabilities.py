@@ -5,22 +5,8 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from modex_agent.core.tool_manager import ToolOrigin
-from modex_agent.plugins.abc import PluginSource
 from modex_agent.plugins.assembly.context import AgentContext as AssemblyAgentContext
-from modex_agent.plugins.capability import (
-    AgentDeclarationView,
-    Capability,
-    CapabilityBinding,
-    CapabilityContribution,
-    CapabilityWiring,
-    DerivedToolOrigin,
-    DerivedToolSpec,
-    FinalRosterView,
-    PromptSectionSpec,
-    TreePositionView,
-)
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope import (
     AgentSpec,
     CapabilityContributionKind,
@@ -32,6 +18,19 @@ from modex_agent.scope import (
     ScopeSpec,
     compile_scope,
 )
+from modex_agent.scope.capability import (
+    AgentDeclarationView,
+    Capability,
+    CapabilityBinding,
+    CapabilityContribution,
+    CapabilityWiring,
+    DerivedToolOrigin,
+    DerivedToolSpec,
+    FinalRosterView,
+    PromptSectionSpec,
+    TreePositionView,
+)
+from modex_agent.scope.component_registry import ComponentRegistry, PluginSource
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 

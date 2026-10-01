@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.tools.presets import ToolPreset
+from modex_agent.core.tool_vocabulary import ToolPreset
 
 if TYPE_CHECKING:
     from modex_agent.core.tool_manager import ToolManager

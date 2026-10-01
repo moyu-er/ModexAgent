@@ -187,7 +187,7 @@ class ControlCommandHandler(CommandHandler):
     ) -> CommandHandlingResult:
         from uuid import uuid4
 
-        from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
+        from modex_agent.core.control import ControlCommand, ControlCommandType, ControlScope
 
         cmd_type_str = self._COMMAND_MAP[invocation.command]
         cmd_type = ControlCommandType(cmd_type_str)

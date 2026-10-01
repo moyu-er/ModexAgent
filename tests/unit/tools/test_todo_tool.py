@@ -4,7 +4,8 @@ from types import SimpleNamespace
 import pytest
 
 from modex_agent.core.agent import current_agent_context
-from modex_agent.runtime.todo import JsonFileTodoStore, TodoItem, TodoStatus
+from modex_agent.core.turn.todo import TodoItem, TodoStatus
+from modex_agent.persistence.adapters.todo_store import JsonFileTodoStore
 from modex_agent.tools.standard.todo_tool import (
     ACTIVE_VIEW_PREFIX,
     FINISHED_VIEW_SUFFIX,

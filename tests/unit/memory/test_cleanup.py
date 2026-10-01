@@ -8,10 +8,15 @@ from typing import Any
 
 import pytest
 
-from modex_agent.agents.summarizer.abc import ArchiveGenerator
-from modex_agent.agents.summarizer.outcomes import CompactionOutcome
 from modex_agent.agents.summarizer.session_compactor import SessionCompactorAgent
+from modex_agent.core.memory_hooks import (
+    CleanupFinishedHook,
+    CleanupTriggeredHook,
+    MemoryHookContext,
+    MemoryHookRunner,
+)
 from modex_agent.core.message import ChatMessage
+from modex_agent.core.stores import MemoryStoreBundle
 from modex_agent.memory.archive_models import ArchiveDocuments, ArchiveGenerationResult
 from modex_agent.memory.budget import ContextBudget
 from modex_agent.memory.cleanup import (
@@ -23,18 +28,12 @@ from modex_agent.memory.cleanup import (
 )
 from modex_agent.memory.core.layers import MemoryLayerSet, SessionMemoryManager
 from modex_agent.memory.core.models import CompressionReason, StorageRevision
-from modex_agent.memory.core.split_stores import MemoryStoreBundle
-from modex_agent.memory.hooks import (
-    CleanupFinishedHook,
-    CleanupTriggeredHook,
-    MemoryHookContext,
-    MemoryHookRunner,
-)
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.layers.session import ScopedSessionMemoryManager
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry, MemoryStoreRegistry
 from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
+from modex_agent.memory.summarizer import ArchiveGenerator, CompactionOutcome
 from modex_agent.memory.token_estimator import TokenEstimator
 from modex_agent.persistence.managers.workspace import WorkspacePersistenceManager
 

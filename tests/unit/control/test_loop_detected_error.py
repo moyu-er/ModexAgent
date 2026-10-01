@@ -1,6 +1,6 @@
 """LoopDetectedError and AgentControlError attribute tests."""
 
-from modex_agent.control.exceptions import (
+from modex_agent.core.control import (
     AgentCancelledError,
     AgentControlError,
     AgentTimeoutError,

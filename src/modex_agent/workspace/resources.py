@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from modex_agent.pipeline.snapshot import PoolDataSnapshot
+    from modex_agent.workspace.context import WorkspaceContext
 
 
 class WorkspaceResources(ABC):
@@ -35,6 +36,11 @@ class WorkspaceResources(ABC):
     """
 
     pool_data: Mapping[str, PoolDataSnapshot]
+
+    ctx: WorkspaceContext
+    """Workspace identity (target/paths/is_home); the framework reads
+    ``ctx.paths.sessions_dir`` as the emitters' sessions-dir provider
+    (``create_pool`` wires it onto every created emitter)."""
 
     @property
     @abstractmethod

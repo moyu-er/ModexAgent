@@ -24,10 +24,11 @@ import pytest
 from pydantic import ValidationError
 
 from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.core.interceptor import ToolCallContext
 from modex_agent.core.message import ToolCall
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.interceptor.abc import ToolCallContext
-from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.core.turn.enums import TurnCustomKey
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.sandbox.decision import SecurityDecisionService
 from modex_agent.sandbox.interceptor import (
     SandboxGuardInterceptor,
@@ -43,7 +44,6 @@ from modex_agent.sandbox.settings import (
     WriteSurface,
 )
 from modex_agent.sandbox.types import EnforcementLevel
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 WS = Path("/ws/project")
 
@@ -587,12 +587,12 @@ class TestShellArgvCarrying:
 
 class TestSandboxGuardFactory:
     def test_registered_in_interceptor_slot(self) -> None:
-        from modex_agent.plugins.abc import ComponentFactory, ComponentSlot
         from modex_agent.plugins.defaults.interceptors import (
             register_default_interceptors,
         )
         from modex_agent.plugins.loader import PluginRegistrationContext
-        from modex_agent.plugins.registry import ComponentRegistry
+        from modex_agent.scope.component_registry import ComponentRegistry
+        from modex_agent.scope.components import ComponentFactory, ComponentSlot
 
         registry = ComponentRegistry()
         with PluginRegistrationContext(registry) as registration:

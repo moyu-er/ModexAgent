@@ -14,7 +14,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
-from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.core.turn.enums import TurnCustomKey
 from modex_agent.trace.semconv import GenAiAttr
 from modex_agent.trace.store import SpanModel, SpanStatus
 

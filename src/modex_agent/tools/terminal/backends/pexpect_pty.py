@@ -21,6 +21,12 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from modex_agent.core.terminal import (
+    Platform,
+    ShellFamily,
+    TerminalVisibility,
+    _family_from_path,
+)
 from modex_agent.tools.terminal._foreground_probe import (
     controlling_tty_device,
     foreground_pgid,
@@ -28,12 +34,6 @@ from modex_agent.tools.terminal._foreground_probe import (
     stdin_probe_available,
 )
 from modex_agent.tools.terminal.results import SlidingOutputBuffer
-from modex_agent.tools.terminal.types import (
-    Platform,
-    ShellFamily,
-    TerminalVisibility,
-    _family_from_path,
-)
 
 from .base import TerminalBackend
 

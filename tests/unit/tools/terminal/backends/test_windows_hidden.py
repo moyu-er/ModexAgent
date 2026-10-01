@@ -17,8 +17,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from modex_agent.core.terminal import ShellFamily
 from modex_agent.tools.terminal.backends.windows_hidden import WinptyHiddenBackend
-from modex_agent.tools.terminal.types import ShellFamily
 
 
 def _make_backend() -> WinptyHiddenBackend:

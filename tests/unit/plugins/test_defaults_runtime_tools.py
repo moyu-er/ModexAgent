@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from modex_agent.plugins.abc import ComponentSlot, PrototypeFactory
+from modex_agent.core.turn.todo import TodoItem, TodoStore
 from modex_agent.plugins.assembly.context import (
     AgentContext,
     PoolRuntimeDeps,
@@ -12,8 +12,8 @@ from modex_agent.plugins.assembly.context import (
 from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
 from modex_agent.plugins.defaults.tools import ToolConfig, register_default_tools
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.runtime.todo import TodoItem, TodoStore
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot, PrototypeFactory
 from modex_agent.tools.aci.edit_tool import AciEditTool
 
 

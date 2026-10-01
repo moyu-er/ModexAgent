@@ -4,8 +4,8 @@ import hashlib
 import time
 from typing import TYPE_CHECKING
 
+from modex_agent.core.turn.enums import TurnCustomKey
 from modex_agent.hook.abc import StartNodeTurnHook
-from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.trace.base_hook import BaseTraceHook
 from modex_agent.trace.prompt_capture import OffPromptCapture
 from modex_agent.trace.semconv import (

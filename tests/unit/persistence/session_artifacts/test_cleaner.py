@@ -198,10 +198,10 @@ def test_artifact_paths_correct_naming(tmp_path: Path) -> None:
     # todos: dot-preserving -> sid.json
     assert (paths.runtime_dir(pool, "todos") / "009fc886ecba.coding.json") in ap
     # turns: hash-suffix segment under agent/session dirs
-    from modex_agent.runtime.store import JsonFileTurnStateStore
+    from modex_agent.core.turn.store import safe_turn_segment
 
-    seg_agent = JsonFileTurnStateStore._safe_segment("coding")
-    seg_sid = JsonFileTurnStateStore._safe_segment(sid)
+    seg_agent = safe_turn_segment("coding")
+    seg_sid = safe_turn_segment(sid)
     assert (paths.runtime_dir(pool, "turns") / seg_agent / seg_sid) in ap
 
 

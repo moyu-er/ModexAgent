@@ -32,6 +32,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import assert_never
 
+from modex_agent.core.guard import GuardCategory, GuardVerdict
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.sandbox.guard import CommandGuard, CommandPatternGuard, GuardResult
 from modex_agent.sandbox.guard_network import NetworkGuard, NetworkGuardConfig
 from modex_agent.sandbox.guard_path import PathBoundaryConfig, PathBoundaryGuard
@@ -47,8 +49,6 @@ from modex_agent.sandbox.tool_matrix import (
     describe_tool_security,
     extract_call_target,
 )
-from modex_agent.sandbox.verdict import GuardCategory, GuardVerdict
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_agent.workspace.boundary import (
     PathCanonicalizationError,
     PathEnvelope,
@@ -127,7 +127,7 @@ class SecurityDecisionService:
     def _declared_roots(self) -> tuple[Path, ...]:
         """``writable_roots`` anchored to the live workspace root."""
         root = self._live_root()
-        return PathEnvelope(self._settings.exclusive.writable_roots, base=root).roots
+        return PathEnvelope(tuple(self._settings.exclusive.writable_roots), base=root).roots
 
     def _write_roots(self) -> tuple[Path, ...]:
         """The write surface anchored live; empty under none/full."""

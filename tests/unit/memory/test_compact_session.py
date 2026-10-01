@@ -19,21 +19,21 @@ from typing import Any
 
 import pytest
 
-from modex_agent.agents.summarizer.outcomes import CompactionOutcome
 from modex_agent.agents.summarizer.session_compactor import SessionCompactorAgent
+from modex_agent.core.memory_hooks import (
+    CleanupFinishedHook,
+    CleanupTriggeredHook,
+    MemoryHookContext,
+)
 from modex_agent.core.message import ChatMessage
 from modex_agent.memory.budget import ContextBudget
 from modex_agent.memory.cleanup import CleanupResult, CompactionSource
 from modex_agent.memory.core.system import ContextManagedMemorySystem
 from modex_agent.memory.default_system import DefaultMemorySystem
-from modex_agent.memory.hooks import (
-    CleanupFinishedHook,
-    CleanupTriggeredHook,
-    MemoryHookContext,
-)
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 from modex_agent.memory.scope import MemoryContext
+from modex_agent.memory.summarizer import CompactionOutcome
 from modex_agent.memory.token_estimator import TokenEstimator
 
 # ---------------------------------------------------------------------------

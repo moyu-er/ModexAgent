@@ -8,14 +8,14 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.memory.core.lock import AioRWLock, StorageLock
-from modex_agent.memory.core.models import StorageRevision
-from modex_agent.memory.core.split_stores import (
+from modex_agent.core.stores import (
     ArchiveStore,
     CursorStore,
     KVStore,
     MessageStore,
+    StorageRevision,
 )
+from modex_agent.memory.core.lock import AioRWLock, StorageLock
 from modex_agent.memory.core.store_metadata import StoreMetadata
 from modex_agent.utils.file_io import read_json_robust
 from modex_agent.utils.time import now_ms

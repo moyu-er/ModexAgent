@@ -2,7 +2,7 @@
 
 ToolNode classifies each ToolCall exactly once and derives approval
 decisions, denial copy, and guard audit rows from the stored
-:class:`~modex_agent.approval.classification.ToolClassification` values —
+:class:`~modex_agent.core.turn.approval_types.ToolClassification` values —
 no re-classification, no side channels.
 """
 
@@ -13,14 +13,14 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from modex_agent.agents.react.context import get_agent_ctx
-from modex_agent.approval.classification import ToolClassification
-from modex_agent.approval.constants import (
+from modex_agent.core.turn.approval_decision import ApprovalAuditEntry
+from modex_agent.core.turn.approval_types import (
     ApprovalAuditDecision,
     ApprovalAuditSource,
     ApprovalDecision,
     ApprovalTier,
+    ToolClassification,
 )
-from modex_agent.runtime.approval_decision import ApprovalAuditEntry
 
 if TYPE_CHECKING:
     from modex_agent.agents.react.state import ReActTurnState

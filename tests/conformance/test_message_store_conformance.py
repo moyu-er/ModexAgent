@@ -16,7 +16,7 @@ import pytest
 
 from modex_agent.core.message import MessageRole
 from modex_agent.core.scope import RecordScope
-from modex_agent.memory.core.split_stores import MessageStore
+from modex_agent.core.stores import MessageStore
 from modex_agent.memory.scope import MemoryLayerName
 from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
 from modex_agent.memory.stores.scoped_in_memory import InMemoryScopedStorage

@@ -9,15 +9,15 @@ from modex_agent.commands.constants import (
     CommandDispatchPolicy,
     CommandParseStatus,
 )
+from modex_agent.core.turn.models import JsonValue, TurnSnapshot
 from modex_agent.messaging.models import ApprovalAction, InputMessage
-from modex_agent.runtime.models import JsonValue, TurnSnapshot
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from modex_agent.commands.skill import SkillResolver
-    from modex_agent.control.types import ControlCommand
-    from modex_agent.runtime.store import TurnStateStore
+    from modex_agent.core.control import ControlCommand
+    from modex_agent.core.turn.store import TurnStateStore
 
 
 @dataclass(frozen=True)

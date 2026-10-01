@@ -7,6 +7,11 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 
+from modex_agent.core.terminal import (
+    ShellInfo,
+    TerminalVisibility,
+    detect_platform_shell,
+)
 from modex_agent.tools.terminal.backends.base import TerminalBackend
 from modex_agent.tools.terminal.backends.factory import (
     UnsupportedVisibilityForTransport,
@@ -14,11 +19,6 @@ from modex_agent.tools.terminal.backends.factory import (
 )
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.session import TerminalInfo, TerminalSession
-from modex_agent.tools.terminal.types import (
-    ShellInfo,
-    TerminalVisibility,
-    detect_platform_shell,
-)
 
 logger = logging.getLogger(__name__)
 

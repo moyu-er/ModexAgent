@@ -72,8 +72,8 @@ from modex_agent.core.turn_events import (
     TurnToolResultEvent,
 )
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.multi_agent.message_format import SourceLabel, build_agent_comm_message
-from modex_agent.multi_agent.message_type import AgentMessageType
+from modex_agent.messaging.agent_messages import AgentMessageType
+from modex_agent.messaging.message_format import SourceLabel, build_agent_comm_message
 from modex_agent.tools.manager import InMemoryToolManager
 
 _MODEX_ENV_KEYS = (
@@ -414,7 +414,7 @@ class TestExternalAgentFullTurn:
         """Every provider emission is an activity signal: on_emission renews
         the dispatch deadline by its default amount (chunk_renew_seconds) —
         same watchdog protocol as ReAct stream chunks."""
-        from modex_agent.runtime.dispatch import (
+        from modex_agent.core.turn.dispatch import (
             DispatchDeadline,
             current_dispatch_deadline,
         )

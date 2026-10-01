@@ -15,9 +15,9 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from modex_agent.control.graph_control import GraphControlService
-from modex_agent.control.graph_recovery import GraphRecoveryService
-from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
+from modex_agent.core.control import ControlCommand, ControlCommandType, ControlScope
+from modex_agent.orchestration.graph_control import GraphControlService
+from modex_agent.orchestration.graph_recovery import GraphRecoveryService
 from modex_agent.runtime.constants import EXECUTOR_PROCESS_ID_KEY
 from modex_agent.runtime.process_identity import ProcessIdentity
 from modex_graph import (

@@ -1,4 +1,4 @@
-"""SQLite-backed :class:`~modex_agent.memory.core.split_stores.CursorStore`.
+"""SQLite-backed :class:`~modex_agent.core.stores.CursorStore`.
 
 Named cursors track how far a consumer has read through an append-only stream.
 The composite primary key ``(scope_key, cursor_name)`` enforces one value per
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from modex_agent.memory.core.split_stores import CursorStore
+from modex_agent.core.stores import CursorStore
 from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:

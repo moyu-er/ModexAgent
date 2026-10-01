@@ -4,18 +4,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from modex_agent.agents.react.hooks.iteration_span import IterationSpanHook
 from modex_agent.hook.abc import HookErrorPolicy, HookSpec
-from modex_agent.ioc.configs.observability import (
-    ObservabilityConfig,
-    TraceBackend,
-    TraceSpanMode,
-)
 from modex_agent.trace.agent_start_hook import AgentStartSpanHook
 from modex_agent.trace.approval_span_hook import ApprovalSpanHook
 from modex_agent.trace.chat_span_hook import ChatSpanHook
 from modex_agent.trace.factory import build_trace_hooks
 from modex_agent.trace.handoff_span_hook import HandoffSpanHook
-from modex_agent.trace.iteration_span_hook import IterationSpanHook
+from modex_agent.trace.observability import (
+    ObservabilityConfig,
+    TraceBackend,
+    TraceSpanMode,
+)
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.root_span_hook import RootSpanHook
 from modex_agent.trace.session_state import TraceSessionState
@@ -42,6 +42,7 @@ def _build(
         request_params=None,
         score_injector=None,
         store=store,
+        extra_full_hooks=lambda base: [IterationSpanHook(**base)],
     )
 
 
@@ -136,6 +137,7 @@ def test_environment_version_tags_threaded_to_hooks(tmp_path: Path) -> None:
         request_params=None,
         score_injector=None,
         store=store,
+        extra_full_hooks=lambda base: [IterationSpanHook(**base)],
     )
     assert len(specs) > 0
     for spec in specs:

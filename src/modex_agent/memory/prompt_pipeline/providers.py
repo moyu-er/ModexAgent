@@ -20,6 +20,7 @@ from modex_agent.core.agent import AgentContext, AgentRole, current_agent_contex
 from modex_agent.core.capabilities import Modality, ModelInfo
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
+from modex_agent.core.turn.enums import TurnCustomKey
 from modex_agent.memory.context import _NO_DIR_SENTINEL, format_working_directory_line
 from modex_agent.memory.injection.archive import (
     ArchiveInjectionConfig,
@@ -27,7 +28,6 @@ from modex_agent.memory.injection.archive import (
     build_archive_injection_section,
 )
 from modex_agent.memory.scope import MemoryContext
-from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.utils.timezone import get_user_timezone
 
 if TYPE_CHECKING:

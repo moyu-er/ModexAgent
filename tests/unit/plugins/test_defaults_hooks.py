@@ -50,14 +50,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
-from modex_agent.plugins.abc import (
-    AgentType,
-    ComponentFactory,
-    HookRunnerKind,
-    MemoryHookFactory,
-    ReactHookFactory,
-    SimpleFactory,
-)
+from modex_agent.core.turn.todo import TodoItem, TodoStore
 from modex_agent.plugins.assembly.context import AgentContext, PoolRuntimeDeps
 from modex_agent.plugins.defaults.capabilities.experience import ExperienceSupply
 from modex_agent.plugins.defaults.capabilities.experience.hook_factory import (
@@ -79,8 +72,15 @@ from modex_agent.plugins.defaults.hooks import (
     register_default_hooks,
 )
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry, ComponentSlot
-from modex_agent.runtime.todo import TodoItem, TodoStore
+from modex_agent.scope.component_registry import ComponentRegistry, ComponentSlot
+from modex_agent.scope.components import (
+    AgentType,
+    ComponentFactory,
+    HookRunnerKind,
+    MemoryHookFactory,
+    ReactHookFactory,
+    SimpleFactory,
+)
 
 # ---- Sentinel agent-type sets from the SPEC table ------------------------
 
@@ -796,7 +796,7 @@ def _auto_send_ctx(
     """A full-chain ctx carrying the declared pool tree the factory
     derives its per-agent fields from."""
     from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
-    from modex_agent.plugins.assembly.spec import AssemblySpec
+    from modex_agent.scope.assembly_spec import AssemblySpec
     from modex_agent.scope.spec import AgentSpec, PoolSpec
 
     pool_spec = PoolSpec(
@@ -824,7 +824,7 @@ def _auto_send_ctx(
 
 
 async def test_auto_send_factory_derives_fields_from_the_chain() -> None:
-    from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
+    from modex_agent.plugins.defaults.capabilities.subagents.auto_send import SubagentAutoSendHook
     from modex_agent.plugins.defaults.hooks import SubagentAutoSendHookConfig
 
     runtime_dir = MagicMock(name="runtime_dir")
@@ -837,13 +837,13 @@ async def test_auto_send_factory_derives_fields_from_the_chain() -> None:
     assert hook._self_name == "sub"  # noqa: SLF001
     assert hook._parent_name == "root"  # noqa: SLF001
     assert hook._runtime_dir is runtime_dir  # noqa: SLF001
-    assert hook._execution_strategy.value == "react"  # noqa: SLF001
+    assert hook._execution_strategy == "react"  # noqa: SLF001
     assert hook._tree is tree  # noqa: SLF001
 
 
 async def test_auto_send_factory_loud_when_the_chain_lacks_the_pool_tree() -> None:
-    from modex_agent.plugins.assembly.spec import AssemblySpec
     from modex_agent.plugins.defaults.hooks import SubagentAutoSendHookConfig
+    from modex_agent.scope.assembly_spec import AssemblySpec
 
     spec = MagicMock(spec=AssemblySpec)
     spec.execution_strategy = "react"

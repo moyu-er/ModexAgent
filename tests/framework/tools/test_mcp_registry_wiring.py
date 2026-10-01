@@ -20,8 +20,7 @@ from typing import Any
 
 import pytest
 
-from modex_agent.ioc.configs.mcp import MCPConfig, MCPServerEntry
-from modex_agent.ioc.factories.tools import connect_mcp
+from modex_agent.plugins.assembly.tools_factory import connect_mcp
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.mcp.client import BaseMCPClient
 from modex_agent.tools.mcp.injector import MCPTransportInjector
@@ -29,6 +28,7 @@ from modex_agent.tools.mcp.registry import (
     McpConnectionRegistry,
     SharedMcpBackend,
 )
+from modex_agent.tools.mcp_config import MCPConfig, MCPServerEntry
 from modex_agent.tools.mcp_loader import load_per_agent_mcp
 
 

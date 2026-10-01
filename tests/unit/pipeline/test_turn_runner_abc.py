@@ -11,8 +11,8 @@ from modex_agent.pipeline.turn_runner_abc import TurnRunner
 if TYPE_CHECKING:
     from modex_agent.core.emitter import AgentResult
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.messaging.agent_messages import RouteResult
     from modex_agent.messaging.models import InputMessage
-    from modex_agent.multi_agent.router import RouteResult
 
 
 def test_turn_runner_abc_cannot_be_instantiated() -> None:

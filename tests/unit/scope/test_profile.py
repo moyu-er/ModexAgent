@@ -18,6 +18,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from modex_agent.core.tool_vocabulary import ToolPreset
 from modex_agent.scope.profile import (
     STANDARD_PROFILES,
     Profile,
@@ -29,7 +30,6 @@ from modex_agent.scope.spec import (
     SessionMemoryOverride,
 )
 from modex_agent.scope.validator import ProfileDeclaration
-from modex_agent.tools.presets import ToolPreset
 
 
 class TestProfileType:

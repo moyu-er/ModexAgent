@@ -22,17 +22,17 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from modex_agent.core.memory_hooks import MemoryHookRunner
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.memory.context import RuntimeInfoKey
-from modex_agent.memory.hooks import MemoryHookRunner
 from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
 from modex_agent.memory.system import MemorySystemContextManager
-from modex_agent.plugins.capability import CapabilityBinding, PromptSectionSpec
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.capabilities.todo import TodoCapability
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.capability import CapabilityBinding, PromptSectionSpec
 from modex_agent.scope.compiler import compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths

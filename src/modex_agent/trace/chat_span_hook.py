@@ -5,8 +5,8 @@ import time
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from modex_agent.core.turn.enums import TurnCustomKey
 from modex_agent.hook.abc import AfterLLMResponseHook, BeforeLLMHook
-from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.trace.base_hook import BaseTraceHook
 from modex_agent.trace.semconv import (
     GenAiAttr,

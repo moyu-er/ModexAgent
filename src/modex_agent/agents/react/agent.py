@@ -10,15 +10,15 @@ from typing import Any, Literal
 
 from modex_agent.agents.react.constants import InterruptReason
 from modex_agent.agents.react.state import get_react_state
-from modex_agent.control.exceptions import (
+from modex_agent.core.control import (
     AgentCancelledError,
     AgentControlError,
     AgentTimeoutError,
     LoopDetectedError,
     PolicyViolationError,
 )
+from modex_agent.core.turn.enums import TurnCustomKey, TurnPhase
 from modex_agent.hook import HookPayload, HookPoint
-from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
 
 from ...core.agent import Agent, AgentContext, current_agent_context
 from ...core.emitter import AgentResult, ContentEmitter, StopReason
@@ -110,8 +110,8 @@ async def _persist_interrupted_partial(ctx: AgentContext, reason: str) -> None:
     transcript. No-op when no partial was captured (normal completion, or an
     interrupt that produced nothing).
     """
-    from modex_agent.runtime.enums import MessageDeltaSource
-    from modex_agent.runtime.models import MessageDelta
+    from modex_agent.core.turn.enums import MessageDeltaSource
+    from modex_agent.core.turn.models import MessageDelta
 
     state = get_react_state(ctx)
     if state is None:
@@ -199,8 +199,8 @@ class ReActAgent(Agent[ReActEvent]):
         # Use prebuilt runtime if already set on context; otherwise build clean runtime.
         if context.runtime is None:
             from modex_agent.agents.react.state import ReActTurnState
-            from modex_agent.runtime.enums import AgentKind
-            from modex_agent.runtime.models import TurnIdentity
+            from modex_agent.core.turn.enums import AgentKind
+            from modex_agent.core.turn.models import TurnIdentity
             from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
             state = ReActTurnState(
@@ -308,7 +308,7 @@ class ReActAgent(Agent[ReActEvent]):
 
         try:
             if runtime.interceptors is not None:
-                from modex_agent.interceptor.abc import InterceptorScope
+                from modex_agent.core.interceptor import InterceptorScope
 
                 if runtime.interceptors.has_scope(InterceptorScope.TURN):
                     result = await runtime.interceptors.around_turn(context, actual_turn)
@@ -413,7 +413,7 @@ class ReActAgent(Agent[ReActEvent]):
                     if runtime is not None and runtime.services.turn_store is not None:
                         try:
                             from modex_agent.agents.react.state import ReActSnapshotPolicy
-                            from modex_agent.runtime.enums import SnapshotReason
+                            from modex_agent.core.turn.enums import SnapshotReason
 
                             terminal_snapshot = ReActSnapshotPolicy().capture(
                                 final_state, SnapshotReason.TURN_INTERRUPTED

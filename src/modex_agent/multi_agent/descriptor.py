@@ -14,9 +14,9 @@ from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.tool_group import ToolGroupResource
-from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.memory.config import MemoryConfig
 from modex_agent.memory.context import ContextManager
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.agent_messages import AgentAddress
 
 if TYPE_CHECKING:
     from modex_agent.pipeline.pipeline import AgentPipeline
@@ -87,9 +87,13 @@ class AgentDescriptor(BaseModel):
     allowed_tools: list[str] | None = None
     denied_tools: list[str] | None = None
     max_iterations: int = 15
-    execution_strategy: ExecutionStrategyKind = (
-        ExecutionStrategyKind.REACT
-    )  # ExecutionStrategyKind member
+    execution_strategy: str = ExecutionStrategyKind.REACT
+    """The EXECUTION_STRATEGY slot NAME the runtime resolves through the
+    strategy registry (a registered component name — ``"react"``,
+    ``"external"``, or any plugin-registered loop shape). The bundled
+    names are :class:`ExecutionStrategyKind` members; the field itself is
+    an open string because the strategy set is registry-owned (W5 — the
+    agent factory no longer branches on a closed enum)."""
     provider_kind: ProviderKind | None = None
     """External-coding provider discriminator — symmetric with
     ``execution_strategy``. Set iff ``execution_strategy`` is

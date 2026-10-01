@@ -33,12 +33,16 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from modex_agent.core.tool_manager import ToolResult
-from modex_agent.interceptor.abc import (
+from modex_agent.core.guard import (
+    APPROVABLE_CATEGORIES,
+    GuardVerdict,
+)
+from modex_agent.core.interceptor import (
     ToolCallContext,
     ToolCallInterceptor,
     ToolCallNext,
 )
+from modex_agent.core.tool_manager import ToolResult
 from modex_agent.sandbox.decision import SecurityDecisionService
 from modex_agent.sandbox.guard_presentation import (
     anchor_matches_approval,
@@ -62,14 +66,10 @@ from modex_agent.sandbox.tool_matrix import (
     describe_tool_security,
     extract_call_target,
 )
-from modex_agent.sandbox.verdict import (
-    APPROVABLE_CATEGORIES,
-    GuardVerdict,
-)
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
-    from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
+    from modex_agent.core.workspace_root import WorkspaceRootProvider
 
 __all__ = [
     "SandboxGuardInterceptor",
@@ -234,7 +234,7 @@ class SandboxGuardInterceptor(ToolCallInterceptor):
         if state is None:
             return False
         # Load the runtime-state key only when checking an approval marker.
-        from modex_agent.runtime.enums import TurnCustomKey
+        from modex_agent.core.turn.enums import TurnCustomKey
 
         return anchor_matches_approval(
             call.tool_call.call_id or "",

@@ -5,18 +5,18 @@ import time
 from dataclasses import dataclass
 from typing import Final
 
-from modex_agent.memory.core.models import (
-    InjectionResult,
-    MemoryBudget,
-)
-from modex_agent.memory.core.system import MemorySystem
-from modex_agent.memory.hooks import (
+from modex_agent.core.memory_hooks import (
     ContextAssembledPayload,
     MemoryHookContext,
     MemoryHookPoint,
     MemoryHookRunner,
     SectionProvenance,
 )
+from modex_agent.memory.core.models import (
+    InjectionResult,
+    MemoryBudget,
+)
+from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.injection.policy import MemoryInjectionPolicy
 from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.tags import CoreMemoryTag

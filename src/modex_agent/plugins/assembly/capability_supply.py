@@ -6,13 +6,13 @@ import logging
 from collections.abc import Mapping
 from types import MappingProxyType
 
-from modex_agent.plugins.assembly.spec import AssemblySpec
-from modex_agent.plugins.capability import (
+from modex_agent.scope.assembly_spec import AssemblySpec
+from modex_agent.scope.capability import (
     CapabilitySupply,
     PoolSupplyAgentEntry,
     PoolSupplyView,
 )
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
 
 logger = logging.getLogger(__name__)
 

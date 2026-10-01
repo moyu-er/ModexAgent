@@ -4,7 +4,7 @@ from pathlib import Path
 
 import anyio
 
-from modex_agent.memory.hooks import (
+from modex_agent.core.memory_hooks import (
     ContextAssembledHook,
     ContextAssembledPayload,
     MemoryHookContext,

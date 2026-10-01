@@ -21,12 +21,12 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import StopReason
 from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import TokenUsage
+from modex_agent.core.memory_hooks import LlmUsage
 from modex_agent.core.message import MessageRole
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.stream_events import Finish, LLMStreamEvent, StreamFailure, UsageSnapshot
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.memory.hooks import LlmUsage
 from modex_agent.memory.tools import (
     ScopedEditFileTool,
     ScopedListTool,

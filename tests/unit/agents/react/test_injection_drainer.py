@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any
 
 from modex_agent.agents.react.injection_drainer import InjectionDrainer
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.runtime.enums import AgentKind, TurnPhase
-from modex_agent.runtime.models import TurnIdentity, TurnStateBase
+from modex_agent.core.turn.enums import AgentKind, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity, TurnStateBase
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
 if TYPE_CHECKING:
@@ -82,7 +82,7 @@ class TestDrainInjectionsMessagePreservation:
 
         # Call drain directly to isolate the test
         ctx = _FakeContext(history=history, injection_queue=injection_queue)
-        injected = await InjectionDrainer().drain(ctx)
+        await InjectionDrainer().drain(ctx)
 
         # Assert: message should be back in queue (put_back on failure)
         assert injection_queue.qsize() >= 1, (

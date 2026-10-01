@@ -110,9 +110,9 @@ async def test_outcome_hook_is_silent_on_suspend_leg(hook_name: str) -> None:
     built via ``object.__new__`` to bypass runtime deps — the template
     method must return before touching any instance state.
     """
-    from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
-    from modex_agent.hook.builtin.training_data import TrainingDataHook
+    from modex_agent.agents.react.hooks.training_data import TrainingDataHook
     from modex_agent.hook.notification import TurnOutcomeNotifyHook
+    from modex_agent.plugins.defaults.capabilities.subagents.auto_send import SubagentAutoSendHook
 
     hook_cls: type[OutcomeFinallyHook] = {
         "SubagentAutoSendHook": SubagentAutoSendHook,

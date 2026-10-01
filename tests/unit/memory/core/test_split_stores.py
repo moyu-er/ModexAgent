@@ -18,13 +18,13 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.memory.core.models import StorageRevision
-from modex_agent.memory.core.split_stores import (
+from modex_agent.core.stores import (
     ArchiveStore,
     CursorStore,
     KVStore,
     MemoryStoreBundle,
     MessageStore,
+    StorageRevision,
 )
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ import sys
 
 import pytest
 
-from modex_agent.tools.terminal.types import TerminalCommandStatus
+from modex_agent.core.terminal import TerminalCommandStatus
 
 pytestmark = [
     pytest.mark.skipif(sys.platform != "win32", reason="Windows-only"),

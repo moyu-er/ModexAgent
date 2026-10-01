@@ -12,9 +12,9 @@ from pathlib import Path
 import pytest
 
 from modex_agent.core.scope import RecordScope
+from modex_agent.core.turn.todo import TodoItem, TodoStatus, TodoStore
 from modex_agent.persistence import ConnectionManager, DatabaseKind
-from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
-from modex_agent.runtime.todo import JsonFileTodoStore, TodoItem, TodoStatus, TodoStore
+from modex_agent.persistence.adapters.todo_store import JsonFileTodoStore, SqliteTodoStore
 
 
 def _items(*contents: str) -> list[TodoItem]:

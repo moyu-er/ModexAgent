@@ -14,24 +14,24 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
-from modex_agent.approval.constants import ApprovalDecision
 from modex_agent.approval.views import view_from_request
 from modex_agent.core.agent import AgentContext
-from modex_agent.hook.abc import HookPayload, HookPoint
-from modex_agent.messaging.models import ApprovalAction
-from modex_agent.pipeline.snapshot import PoolDataSnapshot
-from modex_agent.pipeline.turn_outcome import TurnSuspension
-from modex_agent.runtime.approval_decision import (
+from modex_agent.core.turn.approval_decision import (
     ApprovalAuditDecision,
     ApprovalAuditEntry,
     DecisionActor,
 )
-from modex_agent.runtime.enums import SnapshotReason, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import (
+from modex_agent.core.turn.approval_types import ApprovalDecision
+from modex_agent.core.turn.enums import SnapshotReason, TurnCustomKey, TurnPhase
+from modex_agent.core.turn.models import (
     ApprovalRequestState,
     StateQueryScope,
     TurnSnapshot,
 )
+from modex_agent.hook.abc import HookPayload, HookPoint
+from modex_agent.messaging.models import ApprovalAction
+from modex_agent.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.pipeline.turn_outcome import TurnSuspension
 from modex_agent.sandbox.decision import approval_anchor
 from modex_agent.workspace.runtime import resolve_workspace_root
 
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from modex_agent.approval.ui import ApprovalUserInterface
     from modex_agent.core.agent import Agent
     from modex_agent.core.events import AgentEvent
-    from modex_agent.runtime.store import TurnStateStore
+    from modex_agent.core.turn.store import TurnStateStore
 
 logger = logging.getLogger(__name__)
 

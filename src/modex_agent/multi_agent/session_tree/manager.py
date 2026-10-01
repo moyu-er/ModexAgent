@@ -9,9 +9,9 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING
 
 from modex_agent.core.emitter import AgentResult
+from modex_agent.core.inbox import SessionWork
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.multi_agent.inbox.types import SessionWork
-from modex_agent.multi_agent.message_type import AgentMessageType
+from modex_agent.messaging.agent_messages import AgentMessageType
 from modex_agent.multi_agent.session_tree.models import (
     MessageTrack,
     MessageTrackStatus,
@@ -42,9 +42,9 @@ from modex_agent.multi_agent.session_tree.session_binding import SessionBinding
 from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:
+    from modex_agent.core.inbox import InboxMessage
+    from modex_agent.messaging.agent_messages import AgentMessageEnvelope
     from modex_agent.multi_agent.bus import LocalAgentMessageBus
-    from modex_agent.multi_agent.envelope import AgentMessageEnvelope
-    from modex_agent.multi_agent.inbox.types import InboxMessage
     from modex_agent.multi_agent.inbox_poller import InboxPoller
     from modex_agent.multi_agent.session_tree.session_binding import (
         SessionBindingStore,

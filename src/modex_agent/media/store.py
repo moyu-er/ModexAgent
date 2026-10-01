@@ -36,7 +36,7 @@ from modex_agent.core.media import (
     StoredFile,
     StoredMediaKind,
 )
-from modex_agent.workspace.paths import safe_segment
+from modex_agent.utils.paths import safe_segment
 
 # Chunk size for streamed copies. Small enough to keep memory flat for the
 # largest configured file (1 GB outbound), large enough to amortize per-call

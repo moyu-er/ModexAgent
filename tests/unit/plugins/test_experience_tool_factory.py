@@ -13,9 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.context import PoolContext, PoolRuntimeDeps
-from modex_agent.plugins.capability import PoolSupplyAgentEntry, PoolSupplyView
 from modex_agent.plugins.defaults.capabilities.experience import (
     EXPERIENCE_TOOL_NAME,
     ExperienceCapability,
@@ -28,7 +26,9 @@ from modex_agent.plugins.defaults.capabilities.experience.tool_factory import (
     ExperienceToolFactory,
 )
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.capability import PoolSupplyAgentEntry, PoolSupplyView
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot
 
 _EXPERIENCE_NAME = EXPERIENCE_TOOL_NAME
 

@@ -14,7 +14,6 @@ from typing import Any
 
 import pytest
 
-from modex_agent.agents.summarizer.abc import ArchiveGenerator
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.memory.archive_models import (
     ArchiveChannel,
@@ -28,6 +27,7 @@ from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry, MemoryStoreRegistry
 from modex_agent.memory.scope import MemoryContext
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
+from modex_agent.memory.summarizer import ArchiveGenerator
 from tests.unit.memory.conftest import FixedTokenEstimator
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -36,7 +36,7 @@ from tests.unit.memory.conftest import FixedTokenEstimator
 class _MockArchiveGenerator(ArchiveGenerator):
     """Mock ArchiveGenerator that writes canned content to archive_dir.
 
-    Matches the :class:`~framework.agents.summarizer.abc.ArchiveGenerator`
+    Matches the :class:`~modex_agent.memory.summarizer.ArchiveGenerator`
     contract so ``cleanup_session`` can use it as an ``archive_agent``.
     """
 

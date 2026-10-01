@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.memory.core.split_stores import (
+from modex_agent.core.stores import (
     ArchiveStore,
     CursorStore,
     KVStore,

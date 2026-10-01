@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.memory import hooks
+from modex_agent.core import memory_hooks as hooks
 
 
 class _ExpectedHookError(RuntimeError):

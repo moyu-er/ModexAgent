@@ -35,23 +35,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from modex_agent.agents.react.hooks.todo_continuation import TodoContinuationHook
 from modex_agent.core.tool_manager import ToolOrigin
 from modex_agent.hook import HookPoint, HookRunner
 from modex_agent.hook.abc import AfterTurnHook
-from modex_agent.hook.builtin.todo_continuation import TodoContinuationHook
-from modex_agent.plugins.abc import AgentType, ComponentSlot, HookRunnerKind, SimpleFactory
-from modex_agent.plugins.assembly.native_core import _dispatch_hooks
-from modex_agent.plugins.capability import (
-    CapabilityError,
-    PromptSectionSpec,
-    TreePositionView,
-)
+from modex_agent.plugins.assembly.native_core import dispatch_hooks
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.capabilities.todo import TodoCapability
 from modex_agent.plugins.defaults.hooks import RunLoggingHookFactory, TodoContinuationHookFactory
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.capability import (
+    CapabilityError,
+    PromptSectionSpec,
+    TreePositionView,
+)
 from modex_agent.scope.compiler import compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import AgentType, ComponentSlot, HookRunnerKind, SimpleFactory
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.context import WorkspaceContext
@@ -71,7 +71,7 @@ if TYPE_CHECKING:
 _DIR = Path(__file__).resolve().parent
 _GOLDEN_DIR = _DIR.parent / "scope" / "goldens" / "todo"
 _HOOK_SOURCE = (
-    Path(__file__).parents[3] / "src" / "modex_agent" / "hook" / "builtin" / "todo_continuation.py"
+    Path(__file__).parents[3] / "src" / "modex_agent" / "agents" / "react" / "hooks" / "todo_continuation.py"
 )
 
 # The shipped bot.yml agents that declared the todo package pre-migration
@@ -332,7 +332,7 @@ class TestPriorityDispatch:
         registry = _registry()
         runner = HookRunner()
 
-        await _dispatch_hooks(
+        await dispatch_hooks(
             _dispatch_spec(["todo_continuation"]), registry, _supply_ctx(), runner, None
         )
 
@@ -358,7 +358,7 @@ class TestPriorityDispatch:
 
         # The recorder is registered FIRST — the priority sort must still
         # put the -1000 continuation hook ahead of it.
-        await _dispatch_hooks(
+        await dispatch_hooks(
             _dispatch_spec(["priority_recorder", "todo_continuation"]),
             registry,
             _supply_ctx(),
@@ -400,11 +400,12 @@ class TestRuntimeGateDeath:
         from modex_agent.core.agent import AgentContext
         from modex_agent.core.emitter import AgentResult, StopReason
         from modex_agent.core.session_id import SessionInfo
+        from modex_agent.core.turn.enums import AgentKind, TurnCustomKey, TurnPhase
+        from modex_agent.core.turn.models import TurnIdentity
+        from modex_agent.core.turn.todo import TodoItem, TodoStatus
         from modex_agent.memory.history import ListMessageHistory
-        from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-        from modex_agent.runtime.models import TurnIdentity
+        from modex_agent.persistence.adapters.todo_store import JsonFileTodoStore
         from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-        from modex_agent.runtime.todo import JsonFileTodoStore, TodoItem, TodoStatus
 
         identity = TurnIdentity(
             agent_id="test", session=SessionInfo.from_str("session.agent"), turn_id="turn-1"

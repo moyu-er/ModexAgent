@@ -12,8 +12,7 @@ from __future__ import annotations
 
 import asyncio
 
-from .server import InboxMQ
-from .types import InboxMessage
+from modex_agent.core.inbox import InboxMessage, InboxMQ
 
 
 class InMemoryInboxServer(InboxMQ):

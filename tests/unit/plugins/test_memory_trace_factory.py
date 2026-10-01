@@ -16,7 +16,7 @@ def test_registration_without_roster_selection_keeps_memory_trace_module_lazy() 
 import sys
 from modex_agent.plugins.defaults.hooks import register_default_hooks
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
 
 registry = ComponentRegistry()
 with PluginRegistrationContext(registry) as ctx:

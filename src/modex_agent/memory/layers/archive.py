@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from modex_agent.core.stores import ArchiveStore, MemoryStoreBundle
 from modex_agent.memory.archive_models import (
     ArchiveBundleResult,
     ArchiveChannel,
@@ -18,7 +19,6 @@ from modex_agent.memory.archive_models import (
 from modex_agent.memory.core.layers import ArchiveMemoryManager
 from modex_agent.memory.core.lock import StorageLock
 from modex_agent.memory.core.models import ArchiveEntry, UnprocessedResult
-from modex_agent.memory.core.split_stores import ArchiveStore, MemoryStoreBundle
 from modex_agent.memory.core.store_metadata import StoreMetadata
 from modex_agent.memory.history_search import (
     HistorySearchStrategy,

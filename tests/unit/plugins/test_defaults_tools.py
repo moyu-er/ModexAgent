@@ -15,7 +15,9 @@ import inspect
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from modex_agent.plugins.abc import ComponentSlot, PrototypeFactory
+from modex_agent.core.tool_vocabulary import (
+    ToolPreset,
+)
 from modex_agent.plugins.defaults.capabilities.experience.tool_factory import (
     ExperienceToolConfig,
 )
@@ -25,9 +27,9 @@ from modex_agent.plugins.defaults.tools import (
     register_default_tools,
 )
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot, PrototypeFactory
 from modex_agent.tools.presets import (
-    ToolPreset,
     get_preset_tools,
 )
 

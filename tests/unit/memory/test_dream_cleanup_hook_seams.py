@@ -4,17 +4,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from modex_agent.agents.summarizer.abc import CoreMemoryConsolidatorBase
-from modex_agent.agents.summarizer.outcomes import (
-    CompactionOutcome,
-    ConsolidationOutcome,
-)
 from modex_agent.agents.summarizer.session_compactor import SessionCompactorAgent
-from modex_agent.memory.budget import ContextBudget
-from modex_agent.memory.cleanup import cleanup_session
-from modex_agent.memory.consolidation.dream_engine import DreamEngine
-from modex_agent.memory.core.models import ArchiveEntry, CoreMemoryContents, UnprocessedResult
-from modex_agent.memory.hooks import (
+from modex_agent.core.memory_hooks import (
     CleanupFinishedHook,
     ConsolidationFinishedHook,
     ConsolidationFinishedPayload,
@@ -22,9 +13,18 @@ from modex_agent.memory.hooks import (
     MemoryHookContext,
     MemoryHookRunner,
 )
+from modex_agent.memory.budget import ContextBudget
+from modex_agent.memory.cleanup import cleanup_session
+from modex_agent.memory.consolidation.dream_engine import DreamEngine
+from modex_agent.memory.core.models import ArchiveEntry, CoreMemoryContents, UnprocessedResult
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 from modex_agent.memory.scope import MemoryContext
+from modex_agent.memory.summarizer import (
+    CompactionOutcome,
+    ConsolidationOutcome,
+    CoreMemoryConsolidatorBase,
+)
 from modex_agent.memory.token_estimator import TokenEstimator
 
 

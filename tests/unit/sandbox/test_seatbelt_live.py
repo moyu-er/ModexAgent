@@ -19,6 +19,7 @@ import pytest
 
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
+from modex_agent.core.tool_vocabulary import ToolPreset
 from modex_agent.plugins.assembly.single_agent import (
     SingleAgentAssembled,
     SingleAgentInfra,
@@ -26,7 +27,6 @@ from modex_agent.plugins.assembly.single_agent import (
 )
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.sandbox.selection import resolve_selection, select_runtime
 from modex_agent.sandbox.settings import (
     ExclusiveConfig,
@@ -37,8 +37,8 @@ from modex_agent.sandbox.settings import (
 from modex_agent.sandbox.shell_plan import resolved_binding
 from modex_agent.sandbox.types import EnforcementLevel
 from modex_agent.scope.compiler import compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
-from modex_agent.tools.presets import ToolPreset
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 

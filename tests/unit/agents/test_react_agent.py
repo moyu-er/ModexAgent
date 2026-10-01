@@ -25,9 +25,9 @@ from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.turn.enums import AgentKind, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.enums import AgentKind, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
 E = TypeVar('E', bound=AgentEvent)
@@ -51,9 +51,8 @@ class _BufferingEmitter(ContentEmitter[E]):
 
     async def _on_event(self, event: E, data: Any = None) -> None:
         event_name = event.value if isinstance(event, Enum) else str(event)
-        if event_name == "model_reasoning":
-            if isinstance(data, str):
-                self._reasoning_buffer += data
+        if event_name == "model_reasoning" and isinstance(data, str):
+            self._reasoning_buffer += data
 
     async def emit_delta(self, delta: str) -> None:
         self._buffer += delta
@@ -714,7 +713,7 @@ class TestReActAgentCheckpoint:
         await agent.run(context, emitter)
 
         # Turn completed successfully — phase is COMPLETED
-        from modex_agent.runtime.enums import TurnPhase
+        from modex_agent.core.turn.enums import TurnPhase
         assert context.runtime.state.phase == TurnPhase.COMPLETED
 
         # message_delta records the assistant message

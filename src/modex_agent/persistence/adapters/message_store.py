@@ -1,4 +1,4 @@
-"""SQLite-backed :class:`~modex_agent.memory.core.split_stores.MessageStore`.
+"""SQLite-backed :class:`~modex_agent.core.stores.MessageStore`.
 
 Conversation message history with a per-row state machine:
 ``normal → pinned → soft_deleted → DELETE``, plus ``superseded`` — stale
@@ -30,8 +30,7 @@ from sqlite3 import Row
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.message import MessageRole
-from modex_agent.memory.core.models import StorageRevision
-from modex_agent.memory.core.split_stores import MessageStore, message_signature
+from modex_agent.core.stores import MessageStore, StorageRevision, message_signature
 from modex_agent.persistence.column_projection import (
     ColumnField,
     ColumnProjection,

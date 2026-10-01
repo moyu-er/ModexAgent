@@ -52,8 +52,8 @@ from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrategyKind
 from modex_agent.core.tool_manager import Tool
-from modex_agent.multi_agent.tools import SEND_TO_PEER_TOOL_NAME
-from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.core.tool_vocabulary import SEND_TO_PEER_TOOL_NAME
+from modex_agent.core.turn.enums import TurnCustomKey
 from modex_agent.tools.graph_tool_preset import GraphToolPreset
 from modex_graph.context import GraphContext
 
@@ -147,7 +147,7 @@ def wire_graph_turn_config(
     """Wire the graph turn-configuration trio onto a turn-context builder.
 
     Shared convergence point (architecture rule 15): the main pipeline
-    (``_wire_main_pipeline`` in bot business code) AND the subagent
+    (``wire_main_pipeline`` in bot business code) AND the subagent
     materialization path (``AgentTemplate.materialize``) call this one
     function, so every agent that owns a turn lifecycle — main or
     lazily-materialized subagent — gets the same graph-mode per-turn

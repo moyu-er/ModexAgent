@@ -12,6 +12,14 @@ from pathlib import Path
 
 import pytest
 
+from modex_agent.core.terminal import (
+    Platform as TerminalPlatform,
+)
+from modex_agent.core.terminal import (
+    ShellFamily,
+    ShellInfo,
+)
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.sandbox.decision import (
     GuardCategory,
     SecurityDecisionService,
@@ -23,14 +31,6 @@ from modex_agent.sandbox.settings import (
     SandboxSettings,
     WriteSurface,
 )
-from modex_agent.tools.terminal.types import (
-    Platform as TerminalPlatform,
-)
-from modex_agent.tools.terminal.types import (
-    ShellFamily,
-    ShellInfo,
-)
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 WS = Path("/ws/project")
 

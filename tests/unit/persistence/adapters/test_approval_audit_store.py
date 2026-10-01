@@ -9,12 +9,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.approval.constants import (
+from modex_agent.core.scope import RecordScope
+from modex_agent.core.turn.approval_types import (
     ApprovalAuditDecision,
     ApprovalAuditSource,
     DecisionActor,
 )
-from modex_agent.core.scope import RecordScope
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.approval_audit_store import (
     ApprovalAuditEntry,

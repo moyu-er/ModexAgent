@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, assert_never
 
 from modex_agent.core.emitter import AgentResult
+from modex_agent.core.memory_hooks import MemoryHookRunner
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.memory.context import (
@@ -17,7 +18,6 @@ from modex_agent.memory.context import (
 )
 from modex_agent.memory.context_governance import ContextGovernance
 from modex_agent.memory.default_system import DefaultMemorySystem
-from modex_agent.memory.hooks import MemoryHookRunner
 from modex_agent.memory.injection.archive import ArchiveInjectionConfig
 from modex_agent.memory.injection.policy import MemoryInjectionPolicy
 from modex_agent.memory.layers.config import MemoryLayerConfigSet
@@ -29,11 +29,11 @@ from modex_agent.memory.scope import MemoryAgentRole, MemoryContext
 from modex_agent.memory.token_estimator import TokenEstimator
 
 if TYPE_CHECKING:
-    from modex_agent.agents.summarizer.abc import ArchiveGenerator, CoreMemoryConsolidatorBase
     from modex_agent.core.provider import LLMProvider
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
     from modex_agent.memory.stores.dir_archive import DirArchiveStorage
+    from modex_agent.memory.summarizer import ArchiveGenerator, CoreMemoryConsolidatorBase
 
 logger = logging.getLogger(__name__)
 

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from modex_agent.core.memory_hooks import MemoryHookRunner
 from modex_agent.core.provider import LLMProvider
+from modex_agent.core.stores import MemoryStoreBundle
 from modex_agent.memory.core.layers import MemoryLayerSet
-from modex_agent.memory.core.split_stores import MemoryStoreBundle
-from modex_agent.memory.hooks import MemoryHookRunner
 from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
 from modex_agent.memory.layers.config import (
     ArchiveMemoryConfig,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from modex_agent.ioc.configs.memory import LongTermConfig
+from modex_agent.memory.config import LongTermConfig
 from modex_agent.memory.layers.config import CoreMemoryConfig
 from modex_agent.memory.layers.core import ScopedCoreMemoryManager
 from modex_agent.memory.scope import MemoryContext

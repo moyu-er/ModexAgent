@@ -13,7 +13,7 @@ Assembly negative paths (unknown names, missing memory system) live in
 
 from __future__ import annotations
 
-from modex_agent.ioc.configs.memory import (
+from modex_agent.memory.config import (
     ArchiveConfig,
     CoreMemoryConfig,
     MemoryConfig,
@@ -21,7 +21,7 @@ from modex_agent.ioc.configs.memory import (
 )
 from modex_agent.memory.presets import subagent_memory
 from modex_agent.plugins.assembly.native_core import _merge_memory
-from modex_agent.plugins.assembly.spec import MemoryOverrides
+from modex_agent.scope.assembly_spec import MemoryOverrides
 
 
 class TestMergeMemoryFallback:

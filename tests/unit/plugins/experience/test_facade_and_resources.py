@@ -78,14 +78,14 @@ class TestOneCatalogImplementation:
         from unittest.mock import MagicMock
 
         from modex_agent.plugins.assembly.context import AgentContext, PoolRuntimeDeps
-        from modex_agent.plugins.capability import (
+        from modex_agent.plugins.defaults.capabilities.experience import (
+            ExperienceCapability,
+        )
+        from modex_agent.scope.capability import (
             CapabilityBinding,
             PoolSupplyAgentEntry,
             PoolSupplyView,
             PromptSectionSpec,
-        )
-        from modex_agent.plugins.defaults.capabilities.experience import (
-            ExperienceCapability,
         )
 
         section = PromptSectionSpec(section_id="experience.injection", order=50)

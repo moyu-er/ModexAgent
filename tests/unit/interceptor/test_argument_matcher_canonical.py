@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
+from modex_agent.approval.argument_matcher import ArgumentMatcher
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 
 IS_WINDOWS = sys.platform == "win32"
 

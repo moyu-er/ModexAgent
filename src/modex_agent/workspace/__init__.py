@@ -14,12 +14,16 @@ import-lint in ``tests/unit/workspace/test_isolation.py``.
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.control import WorkspaceController
 from modex_agent.workspace.factory import ResourceFactory
+from modex_agent.workspace.handle import (
+    StaticRootProvider,
+    WorkspaceHandle,
+    WorkspaceHandleRootProvider,
+)
 from modex_agent.workspace.models import CdError, CdResult
 from modex_agent.workspace.paths import (
     RESERVED_GLOBAL_DIR,
     WorkspacePaths,
     is_reserved_segment,
-    safe_segment,
 )
 from modex_agent.workspace.port import WorkspaceControlPort
 from modex_agent.workspace.record import WorkspaceRecord
@@ -47,10 +51,12 @@ __all__ = [
     "WorkspaceResolver",
     "WorkspaceControlPort",
     "WorkspaceManager",
+    "WorkspaceHandle",
+    "WorkspaceHandleRootProvider",
+    "StaticRootProvider",
     "ScopePath",
     "resolve_scope_path",
     "CdError",
     "CdResult",
     "is_reserved_segment",
-    "safe_segment",
 ]

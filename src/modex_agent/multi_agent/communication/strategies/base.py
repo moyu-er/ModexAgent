@@ -9,11 +9,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core import AgentCommKind
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.core.turn.enums import TurnCustomKey
+from modex_agent.messaging.agent_messages import AgentAddress, AgentMessageEnvelope
 from modex_agent.multi_agent.communication.result import AgentSendResult
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.session_tree.request_scope import REQUEST_SCOPE_ID_KEY
-from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.workspace.scope_path import resolve_scope_path
 
 if TYPE_CHECKING:

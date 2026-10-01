@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from modex_agent.core import MessageHistory
 from modex_agent.core.capabilities import ModelInfo
+from modex_agent.core.memory_hooks import MemoryHook, MemoryHookRunner
 from modex_agent.core.message import ChatMessage
 from modex_agent.memory.archive_models import ArchiveChannel
 from modex_agent.memory.budget import ContextBudget
@@ -21,13 +22,12 @@ from modex_agent.memory.core.system import (
     MemorySystem,
 )
 from modex_agent.memory.history import ScopedMessageHistory as _ScopedMessageHistory
-from modex_agent.memory.hooks import MemoryHook, MemoryHookRunner
 from modex_agent.memory.scope import MemoryContext, MemoryLayerName
 from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 
 if TYPE_CHECKING:
-    from modex_agent.agents.summarizer.abc import ArchiveGenerator, CoreMemoryConsolidatorBase
     from modex_agent.memory.stores.dir_archive import DirArchiveStorage
+    from modex_agent.memory.summarizer import ArchiveGenerator, CoreMemoryConsolidatorBase
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.recorder import MemoryAppendRecorder
 from modex_agent.memory.registry.base import MemoryStoreRegistry

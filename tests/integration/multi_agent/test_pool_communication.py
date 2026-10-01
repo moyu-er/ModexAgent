@@ -16,10 +16,10 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import AgentDescriptor, SessionRetentionPolicy
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer

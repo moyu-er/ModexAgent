@@ -25,13 +25,13 @@ from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage
-from modex_agent.runtime.dispatch import renew_dispatch_deadline
-from modex_agent.runtime.enums import (
+from modex_agent.core.turn.dispatch import renew_dispatch_deadline
+from modex_agent.core.turn.enums import (
     MessageDeltaSource,
     OperationKind,
     TurnPhase,
 )
-from modex_agent.runtime.models import MessageDelta
+from modex_agent.core.turn.models import MessageDelta
 from modex_graph import GraphPersistenceCoordinator
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput

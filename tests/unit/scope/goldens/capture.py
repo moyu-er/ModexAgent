@@ -43,8 +43,8 @@ import typer
 
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
-from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import CompiledAgent, compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.workspace.context import WorkspaceContext

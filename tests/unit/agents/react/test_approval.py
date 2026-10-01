@@ -1,8 +1,8 @@
 """Tests for ApprovalRuntime, ApprovalClassifier, TieredToolApprovalClassifier."""
 from pathlib import Path
 
+from modex_agent.approval.argument_matcher import ArgumentMatcher
 from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
-from modex_agent.approval.constants import ApprovalTier
 from modex_agent.approval.runtime import (
     ApprovalRuntime,
     TieredToolApprovalClassifier,
@@ -10,7 +10,7 @@ from modex_agent.approval.runtime import (
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
+from modex_agent.core.turn.approval_types import ApprovalTier
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.tools.manager import InMemoryToolManager
 
@@ -87,5 +87,5 @@ class TestApprovalRuntime:
         classifier = TieredToolApprovalClassifier(config=config)
         ar = ApprovalRuntime(classifier=classifier)
         assert ar.classifier is classifier
-        from modex_agent.runtime.enums import ApprovalDenyPolicy
+        from modex_agent.core.turn.enums import ApprovalDenyPolicy
         assert ar.default_deny_policy is ApprovalDenyPolicy.TOOL_RESULT_ONLY

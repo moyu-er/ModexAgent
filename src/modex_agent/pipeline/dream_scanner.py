@@ -12,7 +12,7 @@ import logging
 
 from modex_agent.memory import MemoryContext
 from modex_agent.memory.consolidation import DreamEngine
-from modex_agent.runtime.dream_locks import _dream_locks
+from modex_agent.memory.consolidation.dream_locks import _dream_locks
 
 logger = logging.getLogger(__name__)
 

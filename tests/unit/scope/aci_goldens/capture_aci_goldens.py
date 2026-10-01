@@ -124,7 +124,7 @@ def _workspace_ctx() -> WorkspaceContext:
 def _registry():
     from modex_agent.plugins.defaults import DefaultPlugin
     from modex_agent.plugins.loader import PluginRegistrationContext
-    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.scope.component_registry import ComponentRegistry
 
     registry = ComponentRegistry()
     ctx = PluginRegistrationContext(registry)

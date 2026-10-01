@@ -7,11 +7,9 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 
+from modex_agent.core.inbox import SESSION_WORK_METADATA_KEY, InboxMessage, InboxMQ, SessionWork
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.persistence.session_registry import InMemorySessionRegistry, SessionRegistry
-
-from .server import InboxMQ
-from .types import SESSION_WORK_METADATA_KEY, InboxMessage, SessionWork
 
 
 class BaseInboxConsumer(ABC):

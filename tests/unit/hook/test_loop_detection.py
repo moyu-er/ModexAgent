@@ -2,9 +2,7 @@
 
 import pytest
 
-from modex_agent.control.exceptions import LoopDetectedError
-from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
-from modex_agent.hook.builtin.loop_detection import (
+from modex_agent.agents.react.hooks.loop_detection import (
     LoopDetectionHook,
     _identity_preview,
     _round_identity,
@@ -12,7 +10,9 @@ from modex_agent.hook.builtin.loop_detection import (
     _tool_calls_fingerprint,
     _trailing_repeat_run,
 )
-from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.core.control import LoopDetectedError
+from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
+from modex_agent.core.turn.enums import TurnCustomKey
 from modex_agent.tools.manager import InMemoryToolManager
 
 
@@ -250,9 +250,9 @@ def _make_ctx(messages=None):
     from modex_agent.agents.react.state import ReActTurnState
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.enums import AgentKind, TurnPhase
+    from modex_agent.core.turn.models import TurnIdentity
     from modex_agent.memory.history import ListMessageHistory
-    from modex_agent.runtime.enums import AgentKind, TurnPhase
-    from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
     state = ReActTurnState(

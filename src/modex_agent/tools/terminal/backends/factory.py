@@ -28,8 +28,8 @@ import logging
 import shutil
 import sys
 
+from modex_agent.core.terminal import TerminalVisibility
 from modex_agent.tools.terminal.backends.base import TerminalBackend
-from modex_agent.tools.terminal.types import TerminalVisibility
 
 logger = logging.getLogger(__name__)
 

@@ -11,10 +11,11 @@ from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ParallelTool, ToolConfig
+from modex_agent.core.tool_vocabulary import SEND_TO_PEER_TOOL_NAME
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
-    from modex_agent.multi_agent.address import AgentAddress
+    from modex_agent.messaging.agent_messages import AgentAddress
     from modex_agent.multi_agent.communication import AgentCommunicationService
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 
@@ -73,7 +74,9 @@ class CommunicationTarget:
     description: str = ""
     pool_name: str = ""
     tree_ref: SessionTreeManager | None = None
-    execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT
+    execution_strategy: str = ExecutionStrategyKind.REACT
+    """The target's execution-strategy NAME (W5 — a registry key, compared
+    against :class:`ExecutionStrategyKind` members via StrEnum equality)."""
 
 
 # -- parameter schemas --------------------------------------------------------
@@ -558,7 +561,6 @@ _TASK_PARAMS: dict[str, Any] = {
 }
 
 
-SEND_TO_PEER_TOOL_NAME = "send_to_peer"
 
 SEND_TO_AGENT_TOOL_NAME = "send_to_agent"
 """The subagent→parent consultation tool's registration name — the derived

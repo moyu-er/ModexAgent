@@ -9,8 +9,8 @@ from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult, StopReason
+from modex_agent.core.turn.enums import TurnPhase
 from modex_agent.hook import EndNodeTurnHook, HookRunner, HookSpec
-from modex_agent.runtime.enums import TurnPhase
 from modex_graph.constants import GraphNode
 
 

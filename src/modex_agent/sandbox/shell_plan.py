@@ -11,10 +11,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modex_agent.runtime.env_context import _current_session_id
+from modex_agent.core.terminal import ShellLaunchOwner
+from modex_agent.core.turn.env_context import _current_session_id
 from modex_agent.sandbox.runtime import HostRuntime, ResolvedSandbox
 from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
-from modex_agent.tools.terminal.subprocess_tool import ShellLaunchOwner
 
 if TYPE_CHECKING:
     from modex_agent.interceptor.chain import InterceptorChain

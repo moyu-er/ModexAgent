@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.control.exceptions import PolicyViolationError
+from modex_agent.core.control import PolicyViolationError
 from modex_agent.hook import HookErrorPolicy, HookPoint, HookRunner, HookSpec
 from modex_agent.hook.abc import BeforeGraphHook, BeforeIterationHook
 

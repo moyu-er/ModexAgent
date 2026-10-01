@@ -20,6 +20,11 @@ verifying the v5 silent-failure fix end to end:
 from __future__ import annotations
 
 from modex_agent.agents.react.constants import ReActNode
+from modex_agent.agents.react.hooks.length_guard import (
+    MAX_NUDGES,
+    NUDGE_NO_OUTPUT,
+    LengthGuardHook,
+)
 from modex_agent.agents.react.injection_drainer import InjectionDrainer
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.nodes.after_turn import AfterTurnNode
@@ -30,11 +35,6 @@ from modex_agent.core.emitter import StopReason
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import MessageRole
 from modex_agent.hook import HookRunner, HookSpec
-from modex_agent.hook.builtin.length_guard import (
-    MAX_NUDGES,
-    NUDGE_NO_OUTPUT,
-    LengthGuardHook,
-)
 
 
 class _MockEmitter:

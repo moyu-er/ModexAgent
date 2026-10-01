@@ -231,14 +231,14 @@ class TestStopOrdering:
 
 class TestAppConfigPersistence:
     def test_app_config_has_persistence_field(self) -> None:
-        from modex_agent.ioc.configs.app import AppConfig
+        from modex_agent.app.config import AppConfig
 
         cfg = AppConfig()
         assert cfg.persistence is not None
         assert cfg.persistence.backend is PersistenceBackend.SQLITE
 
     def test_app_config_persistence_from_yaml_data(self) -> None:
-        from modex_agent.ioc.configs.app import AppConfig
+        from modex_agent.app.config import AppConfig
 
         cfg = AppConfig.model_validate(
             {"persistence": {"backend": "file"}}
@@ -246,7 +246,7 @@ class TestAppConfigPersistence:
         assert cfg.persistence.backend is PersistenceBackend.FILE
 
     def test_app_config_persistence_defaults_to_sqlite(self) -> None:
-        from modex_agent.ioc.configs.app import AppConfig
+        from modex_agent.app.config import AppConfig
 
         cfg = AppConfig.model_validate({})
         assert cfg.persistence.backend is PersistenceBackend.SQLITE

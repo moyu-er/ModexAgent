@@ -1,9 +1,7 @@
 """Tests for interceptor context types with typed turn_state."""
 from __future__ import annotations
 
-from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
-from modex_agent.core.session_id import SessionInfo
-from modex_agent.interceptor.abc import (
+from modex_agent.core.interceptor import (
     IterationContext,
     LLMCallContext,
     LLMRequest,
@@ -11,8 +9,10 @@ from modex_agent.interceptor.abc import (
     ToolCallContext,
     TurnContext,
 )
-from modex_agent.runtime.enums import AgentKind, TurnPhase
-from modex_agent.runtime.models import TurnIdentity, TurnStateBase
+from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.enums import AgentKind, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity, TurnStateBase
 
 
 def _state() -> TurnStateBase:

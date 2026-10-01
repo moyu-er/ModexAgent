@@ -26,9 +26,9 @@ from typing import Final
 
 import pytest
 
+from modex_agent.core.tool_vocabulary import ToolPreset
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope import (
     AgentSpec,
     MemoryDeclaration,
@@ -42,7 +42,7 @@ from modex_agent.scope import (
     load_scope_declaration,
     spec_hash,
 )
-from modex_agent.tools.presets import ToolPreset
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -140,7 +140,7 @@ from pathlib import Path
 import modex_agent
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope import compile_scope, load_scope_declaration, spec_hash
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths

@@ -15,11 +15,11 @@ import sqlite3
 from typing import Any
 
 from modex_agent.core.scope import RecordScope
+from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
+from modex_agent.core.turn.enums import AgentKind, TurnPhase
+from modex_agent.core.turn.models import StateQueryScope, TurnIdentity, TurnSnapshot
+from modex_agent.core.turn.store import ActiveTurnConflictError, TurnStateStore
 from modex_agent.persistence.connection import ConnectionManager, SqlParameter
-from modex_agent.runtime.codec import RuntimeStateCodecRegistry
-from modex_agent.runtime.enums import AgentKind, TurnPhase
-from modex_agent.runtime.models import StateQueryScope, TurnIdentity, TurnSnapshot
-from modex_agent.runtime.store import ActiveTurnConflictError, TurnStateStore
 from modex_agent.utils.time import now_ms
 
 _ACTIVE_PHASES = frozenset({TurnPhase.RUNNING, TurnPhase.SUSPENDED})

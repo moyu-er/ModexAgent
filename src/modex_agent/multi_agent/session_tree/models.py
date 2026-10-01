@@ -16,7 +16,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.multi_agent.message_type import AgentMessageType
+from modex_agent.messaging.agent_messages import AgentMessageType
 
 
 class SessionTreeStatus(StrEnum):

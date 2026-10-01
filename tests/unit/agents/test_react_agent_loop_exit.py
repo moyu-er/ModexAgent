@@ -12,10 +12,10 @@ def _make_ctx():
     from modex_agent.agents.react.state import ReActTurnState
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.turn.enums import AgentKind, TurnPhase
+    from modex_agent.core.turn.models import TurnIdentity
     from modex_agent.hook import HookRunner
     from modex_agent.memory.history import ListMessageHistory
-    from modex_agent.runtime.enums import AgentKind, TurnPhase
-    from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
     from modex_agent.tools.manager import InMemoryToolManager
 
@@ -76,8 +76,8 @@ class _ScriptedProvider(CallbackStreamProvider):
 @pytest.mark.asyncio
 async def test_loop_detected_renders_loop_result(monkeypatch):
     # Wire LoopDetectionHook into the context's hook runner so the real path fires.
+    from modex_agent.agents.react.hooks.loop_detection import LoopDetectionHook
     from modex_agent.hook import HookErrorPolicy, HookSpec
-    from modex_agent.hook.builtin.loop_detection import LoopDetectionHook
 
     provider = _ScriptedProvider(LLMResponse(
         content="I am stuck doing the same thing.", finish_reason=FinishReason.STOP.value,

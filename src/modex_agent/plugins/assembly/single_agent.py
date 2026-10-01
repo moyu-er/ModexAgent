@@ -12,15 +12,14 @@ from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.tool_manager import Tool, ToolManager
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.hook import Hook
-from modex_agent.ioc.factories.governance import create_governance
-from modex_agent.ioc.factories.memory import create_memory
+from modex_agent.memory.assembly import create_governance
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.scope import MemoryAgentRole
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
 from modex_agent.multi_agent.factory import DefaultAgentFactory
-from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.capability_supply import (
     assemble_capability_supplies,
     stop_capability_supplies,
@@ -32,24 +31,25 @@ from modex_agent.plugins.assembly.context import (
     resolution_context,
 )
 from modex_agent.plugins.assembly.interceptors import assemble_interceptor_chain
+from modex_agent.plugins.assembly.memory_factory import create_memory
 from modex_agent.plugins.assembly.native_core import (
     LlmDefaults,
     NativeAssemblyInputs,
-    _resolve_single,
     assemble_native_agent,
+    resolve_single,
 )
 from modex_agent.plugins.assembly.resources import AssemblyResourceOwner
-from modex_agent.plugins.capability import CapabilitySupply, PoolSupplyView
 from modex_agent.plugins.defaults.capabilities.skills import (
     SKILLS_CAPABILITY_NAME,
     require_skills_supply,
 )
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.capability import CapabilitySupply, PoolSupplyView
 from modex_agent.scope.compiler import CompiledAgent
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot
 from modex_agent.scope.defaults import memory_config_for_position
-from modex_agent.scope.derivation import _DEFAULT_LLM_PROVIDER
+from modex_agent.scope.derivation import DEFAULT_LLM_PROVIDER
 from modex_agent.tools.manager import InMemoryToolManager
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -144,10 +144,10 @@ async def _resolve_provider(
     component_ctx: AssemblyContext,
 ) -> LLMProvider:
     spec = compiled.spec
-    if infra.llm_provider is not None and spec.llm_provider == _DEFAULT_LLM_PROVIDER:
+    if infra.llm_provider is not None and spec.llm_provider == DEFAULT_LLM_PROVIDER:
         return infra.llm_provider
     chain = agent_context_chain(component_ctx, spec=spec)
-    return await _resolve_single(
+    return await resolve_single(
         component_registry,
         ComponentSlot.LLM_PROVIDER,
         spec.llm_provider,
@@ -169,7 +169,7 @@ async def _resolve_prompt(
         if not prompt_path.is_absolute():
             config["path"] = str(project_dir / prompt_path)
     chain = agent_context_chain(component_ctx, spec=spec)
-    provider: SystemPromptProvider = await _resolve_single(
+    provider: SystemPromptProvider = await resolve_single(
         component_registry,
         ComponentSlot.SYSTEM_PROMPT_PROVIDER,
         spec.system_prompt_provider,

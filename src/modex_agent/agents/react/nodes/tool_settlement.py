@@ -27,11 +27,11 @@ from modex_agent.agents.react.tool_dedup import (
     StreakAction,
     StreakDecision,
 )
-from modex_agent.approval.constants import ApprovalDecision
-from modex_agent.control.exceptions import AgentCancelledError
+from modex_agent.core.control import AgentCancelledError
 from modex_agent.core.message import TextPart, ToolCall
 from modex_agent.core.tool_manager import ExecutionMode, ToolResult
-from modex_agent.runtime.enums import (
+from modex_agent.core.turn.approval_types import ApprovalDecision
+from modex_agent.core.turn.enums import (
     ApprovalDenyPolicy,
     MessageDeltaSource,
     OperationStatus,
@@ -40,7 +40,7 @@ from modex_agent.runtime.enums import (
     TurnCustomKey,
     TurnPhase,
 )
-from modex_agent.runtime.models import MessageDelta, ToolBatchState
+from modex_agent.core.turn.models import MessageDelta, ToolBatchState
 from modex_graph.context import GraphContext
 
 if TYPE_CHECKING:

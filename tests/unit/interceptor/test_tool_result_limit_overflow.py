@@ -6,15 +6,15 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.interceptor import ToolCallContext
 from modex_agent.core.message import TextPart, ToolCall
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.interceptor.abc import ToolCallContext
-from modex_agent.interceptor.builtin.result_limit import ToolResultLimitInterceptor
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.tools.overflow.cleaner import OverflowCleaner
 from modex_agent.tools.overflow.handler import ToolResultOverflowHandler
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
+from modex_agent.tools.overflow.result_limit import ToolResultLimitInterceptor
 
 
 def _make_ctx() -> AgentContext:

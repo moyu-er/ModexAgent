@@ -17,7 +17,7 @@ import sqlite3
 from pathlib import Path
 from sqlite3 import Row
 
-from modex_agent.multi_agent.pool_router import PoolRoutingStore
+from modex_agent.core.stores import PoolRoutingStore
 
 
 class PoolRoutingCorruptionError(RuntimeError):

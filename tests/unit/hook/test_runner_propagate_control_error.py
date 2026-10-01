@@ -1,7 +1,7 @@
 """HookRunner must propagate AgentControlError instead of swallowing it."""
 import pytest
 
-from modex_agent.control.exceptions import AgentCancelledError, LoopDetectedError
+from modex_agent.core.control import AgentCancelledError, LoopDetectedError
 from modex_agent.hook.abc import AfterLLMResponseHook, HookPoint, HookSpec
 from modex_agent.hook.runner import HookRunner
 

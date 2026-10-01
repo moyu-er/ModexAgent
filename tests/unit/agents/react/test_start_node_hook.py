@@ -8,8 +8,8 @@ from modex_agent.agents.react.nodes.start import StartNode
 from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.turn.enums import TurnPhase
 from modex_agent.hook import HookRunner, HookSpec, StartNodeTurnHook
-from modex_agent.runtime.enums import TurnPhase
 
 
 class _TrackingStartNodeTurnHook(StartNodeTurnHook):

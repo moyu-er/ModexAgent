@@ -27,7 +27,7 @@ from modex_agent.core.agent import AgentCommKind, ExecutionStrategyKind
 from modex_agent.core.agent import AgentContext as RuntimeAgentContext
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.multi_agent.communication.service import _TracePropagatingPeerNormal
 from modex_agent.multi_agent.communication.strategies.base import SendStrategyKind
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
@@ -37,13 +37,6 @@ from modex_agent.multi_agent.tools import (
     SendToAgentTool,
 )
 from modex_agent.plugins.assembly.context import PoolRuntimeDeps, SupplyInfra
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
-from modex_agent.plugins.capability import (
-    AgentDeclarationView,
-    AgentDeclaredFields,
-    CapabilityBinding,
-    PromptSectionSpec,
-)
 from modex_agent.plugins.defaults.capabilities.subagents import (
     SubagentsCapability,
     SubagentsSupply,
@@ -52,6 +45,13 @@ from modex_agent.plugins.defaults.capabilities.subagents import (
 from modex_agent.plugins.defaults.communication import (
     SendToAgentToolFactory,
     TaskToolFactory,
+)
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides
+from modex_agent.scope.capability import (
+    AgentDeclarationView,
+    AgentDeclaredFields,
+    CapabilityBinding,
+    PromptSectionSpec,
 )
 from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.tools.manager import InMemoryToolManager
@@ -63,7 +63,7 @@ _CAPABILITY = SubagentsCapability()
 
 def _view(**overrides: Any) -> Any:
     """A PoolSupplyView shaped like the aggregation's (skeleton handles)."""
-    from modex_agent.plugins.capability import PoolSupplyView
+    from modex_agent.scope.capability import PoolSupplyView
 
     fields: dict[str, Any] = {
         "pool_name": "default",

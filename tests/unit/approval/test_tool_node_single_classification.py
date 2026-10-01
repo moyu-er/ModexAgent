@@ -25,8 +25,6 @@ from modex_agent.agents.react.state import (
     ReActTurnState,
 )
 from modex_agent.agents.react.tool_executor import ToolExecutor
-from modex_agent.approval.classification import ToolClassification
-from modex_agent.approval.constants import ApprovalAuditSource, ApprovalDecision
 from modex_agent.approval.runtime import ApprovalClassifier, ApprovalRuntime
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult, ContentEmitter
@@ -34,6 +32,21 @@ from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ExecutionMode, Tool
+from modex_agent.core.turn.approval_decision import (
+    ApprovalAuditDecision,
+    ApprovalAuditEntry,
+    ApprovalAuditStore,
+    DecisionActor,
+)
+from modex_agent.core.turn.approval_types import (
+    ApprovalAuditSource,
+    ApprovalDecision,
+    ToolClassification,
+)
+from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
+from modex_agent.core.turn.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.messaging.models import ApprovalAction
@@ -43,21 +56,11 @@ from modex_agent.persistence.adapters.turn_state_store import SqliteTurnStateSto
 from modex_agent.persistence.coordinator import SqliteDecisionCoordinator
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
-from modex_agent.runtime.approval_decision import (
-    ApprovalAuditDecision,
-    ApprovalAuditEntry,
-    ApprovalAuditStore,
-    DecisionActor,
-)
-from modex_agent.runtime.codec import RuntimeStateCodecRegistry
-from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.sandbox.delegation import DelegationSnapshot
 from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
 from modex_agent.tools.manager import InMemoryToolManager
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_graph import (
     GraphPersistenceCoordinator,
     NullDeliverStoreFactory,
@@ -133,8 +136,8 @@ class _RecordingAuditStore(ApprovalAuditStore):
 def _guard_classifier(*, escalate: bool) -> ApprovalClassifier:
     from modex_agent.approval.config import AgentApprovalConfig
     from modex_agent.approval.runtime import TieredToolApprovalClassifier
+    from modex_agent.approval.security import SecurityClassifier
     from modex_agent.sandbox.decision import SecurityDecisionService
-    from modex_agent.sandbox.security_classifier import SecurityClassifier
     from modex_agent.sandbox.settings import (
         GuardSettings,
         SandboxBackend,
@@ -251,8 +254,8 @@ def _clean_call() -> ToolCall:
 class TestSingleClassification:
     @pytest.mark.parametrize("configured", [False, True])
     async def test_approval_off_factory_denies_without_pending(self, configured: bool) -> None:
-        from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
-        from modex_agent.ioc.factories.approval import build_approval_runtime
+        from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
+        from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
         from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
 
         class Root(WorkspaceRootProvider):

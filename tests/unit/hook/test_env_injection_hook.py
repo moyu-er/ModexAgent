@@ -16,11 +16,11 @@ from pathlib import Path
 import pytest
 
 from modex_agent.agents.external.types import ExternalEnvSpec
+from modex_agent.agents.react.hooks.env_injection import NativeEnvInjectionHook
 from modex_agent.core.agent import AgentCommKind, AgentContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.hook.builtin.env_injection import NativeEnvInjectionHook
+from modex_agent.core.turn.env_context import _current_session_id, _modex_env
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.env_context import _current_session_id, _modex_env
 from modex_agent.tools.manager import InMemoryToolManager
 
 
@@ -172,7 +172,7 @@ class TestNativeEnvInjectionHook:
         assert env["MODEX_COMM_KIND"] == "normal"
 
     async def test_main_agent_template_has_complete_pool_map(self) -> None:
-        # Mirrors the inline construction in pool_builder._wire_main_pipeline:
+        # Mirrors the inline construction in pool_builder.wire_main_pipeline:
         # a main-agent hook template built from a pool_spec with subagents +
         # peers carries every routable agent in pool_map and all targets
         # through before_graph, so native bash tools can call

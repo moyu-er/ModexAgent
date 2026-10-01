@@ -1,4 +1,4 @@
-"""Tests for ``modex_agent.ioc.configs.mcp``.
+"""Tests for ``modex_agent.tools.mcp_config``.
 
 ``MCPServerEntry`` is the single authority on the MCP server wire shape —
 reused by the bot-layer registry CRUD API, so it must:
@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.ioc.configs.mcp import MCPConfig, MCPServerEntry
+from modex_agent.tools.mcp_config import MCPConfig, MCPServerEntry
 
 
 class TestTransportNormalization:

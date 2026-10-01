@@ -4,17 +4,17 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.plugins.capability import (
-    CapabilitySupply,
-    PoolSupplyAgentEntry,
-    PoolSupplyView,
-    SectionPlacement,
-)
 from modex_agent.plugins.defaults.capabilities.skills.capability import (
     SkillsCapability,
     require_skills_supply,
 )
 from modex_agent.plugins.defaults.capabilities.skills.supply import SkillsSupply
+from modex_agent.scope.capability import (
+    CapabilitySupply,
+    PoolSupplyAgentEntry,
+    PoolSupplyView,
+    SectionPlacement,
+)
 
 
 def _write_skill(root: Path, name: str, body: str) -> None:

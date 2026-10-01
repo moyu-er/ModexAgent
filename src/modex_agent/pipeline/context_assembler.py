@@ -19,15 +19,15 @@ from modex_agent.core.message import (
 )
 from modex_agent.memory.context import ContextManager, ContextState, RuntimeInfoKey
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.messaging.agent_messages import AgentMessageType
+from modex_agent.messaging.message_format import build_agent_reminder_record
 from modex_agent.messaging.models import InputMessage, ReminderKind
-from modex_agent.multi_agent.message_format import build_agent_reminder_record
-from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
     from modex_agent.core.capabilities import ModelInfo
     from modex_agent.core.tool_manager import ToolManager
+    from modex_agent.messaging.agent_messages import RouteResult
     from modex_agent.multi_agent import AgentDescriptor
-    from modex_agent.multi_agent.router import RouteResult
     from modex_agent.utils.context_builder import MultiAgentContextBuilder
 
 
@@ -141,9 +141,8 @@ async def assemble_context(
 
     # MultiAgentContextBuilder
     if context_builder is not None and agent_descriptor is not None:
+        from modex_agent.messaging.agent_messages import AgentAddress, AgentMessageEnvelope
         from modex_agent.messaging.broker import AddressKind
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 
         envelope = AgentMessageEnvelope(
             payload={"content": multimodal_content},

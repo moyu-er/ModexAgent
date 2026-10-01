@@ -52,6 +52,12 @@ import subprocess
 import time
 from typing import Any
 
+from modex_agent.core.terminal import (
+    Platform,
+    ShellFamily,
+    TerminalVisibility,
+    _family_from_path,
+)
 from modex_agent.tools.terminal.backends.base import (
     TerminalBackend,
     extract_current_segment_from_buffer,
@@ -59,12 +65,6 @@ from modex_agent.tools.terminal.backends.base import (
 from modex_agent.tools.terminal.prompt import is_prompt_ready
 from modex_agent.tools.terminal.pty_keys import CTRL_C
 from modex_agent.tools.terminal.results import TerminalRead, TerminalSegment
-from modex_agent.tools.terminal.types import (
-    Platform,
-    ShellFamily,
-    TerminalVisibility,
-    _family_from_path,
-)
 
 logger = logging.getLogger(__name__)
 

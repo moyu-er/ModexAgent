@@ -5,11 +5,10 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
-from .server import InboxMQ
-from .types import InboxMessage
+from modex_agent.core.inbox import InboxMessage, InboxMQ
 
 if TYPE_CHECKING:
-    from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+    from modex_agent.messaging.agent_messages import AgentMessageEnvelope
 
 logger = logging.getLogger(__name__)
 

@@ -30,7 +30,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from modex_agent.approval.constants import ApprovalAuditSource
+from modex_agent.core.turn.approval_types import ApprovalAuditSource
 from modex_agent.sandbox.settings import (
     SandboxBackend,
     SandboxSettings,
@@ -146,7 +146,7 @@ class DelegationSnapshot(BaseModel):
         materialization — the frozen snapshot's copy faces.
         """
         root = self.workspace_root
-        roots = PathEnvelope(self.settings.exclusive.writable_roots, base=root).roots
+        roots = PathEnvelope(tuple(self.settings.exclusive.writable_roots), base=root).roots
         if self.settings.exclusive.write_surface is WriteSurface.WORKSPACE:
             return (root, *roots)
         return roots

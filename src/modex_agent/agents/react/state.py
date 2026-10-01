@@ -30,8 +30,8 @@ from modex_agent.core.message import (  # noqa: F401 - needed for model_rebuild(
     MessageRole,
 )
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.runtime.codec import RuntimeStateCodec, RuntimeStateCodecConfig
-from modex_agent.runtime.enums import (
+from modex_agent.core.turn.codec import RuntimeStateCodec, RuntimeStateCodecConfig
+from modex_agent.core.turn.enums import (
     AgentKind,
     MessageDeltaSource,
     OperationKind,
@@ -40,7 +40,7 @@ from modex_agent.runtime.enums import (
     ToolCallStatus,
     TurnPhase,
 )
-from modex_agent.runtime.models import (
+from modex_agent.core.turn.models import (
     ApprovalTransaction,
     CancellationState,
     JsonValue,

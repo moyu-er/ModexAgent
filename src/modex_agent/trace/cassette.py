@@ -43,9 +43,9 @@ from modex_agent.core.tool_manager import (
     ToolOverrideRecord,
     ToolResult,
 )
+from modex_agent.core.turn.enums import TurnCustomKey
 from modex_agent.hook.abc import FinallyGraphHook
-from modex_agent.ioc.configs.observability import CassetteScope
-from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.trace.observability import CassetteScope
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext

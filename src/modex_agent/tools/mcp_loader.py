@@ -47,9 +47,9 @@ async def load_per_agent_mcp(
     """
     import json
 
-    from modex_agent.ioc.configs.app import _resolve_env_in
     from modex_agent.tools.mcp import MCPClientManager
     from modex_agent.tools.mcp_adapter import acquire_mcp_tools
+    from modex_agent.utils.env import resolve_env_in
 
     if not selection:
         return None
@@ -111,7 +111,7 @@ async def load_per_agent_mcp(
         "Agent %s: loading MCP from %s — %d server(s): %s",
         agent_name, registry_path.name, len(servers), list(servers.keys()),
     )
-    servers = _resolve_env_in(servers)
+    servers = resolve_env_in(servers)
     manager = MCPClientManager(config=servers)
 
     # Wrap with a hard timeout so unreachable servers never block

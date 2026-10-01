@@ -29,7 +29,6 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
-from modex_agent.plugins.abc import ComponentFactory, ComponentSlot
 from modex_agent.plugins.assembly.context import (
     AgentContext,
     AssemblyContext,
@@ -39,9 +38,10 @@ from modex_agent.plugins.assembly.context import (
     agent_context_chain,
     resolution_context,
 )
-from modex_agent.plugins.assembly.native_core import _resolve_single
-from modex_agent.plugins.assembly.spec import AssemblySpec
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.plugins.assembly.native_core import resolve_single
+from modex_agent.scope.assembly_spec import AssemblySpec
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentFactory, ComponentSlot
 from modex_agent.workspace.paths import WorkspacePaths
 
 # ---------------------------------------------------------------------------
@@ -361,7 +361,7 @@ class TestResolverPassesFullChain:
         registry.register(ComponentSlot.TOOL, "probe", probe)
         chain = _full_chain()
 
-        await _resolve_single(registry, ComponentSlot.TOOL, "probe", {}, chain)
+        await resolve_single(registry, ComponentSlot.TOOL, "probe", {}, chain)
 
         assert probe.received is chain
         assert isinstance(probe.received, AgentContext)
@@ -370,8 +370,8 @@ class TestResolverPassesFullChain:
         """SPEC §3.3 todo factory example: ``create(config, ctx:
         PoolContext) -> TodoWriteTool(require_todo_supply(pool_runtime)
         .store)`` — the pool's capability supply is the read surface."""
+        from modex_agent.core.turn.todo import TodoItem, TodoStore
         from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
-        from modex_agent.runtime.todo import TodoItem, TodoStore
         from modex_agent.tools.standard.todo_tool import TodoWriteTool
 
         class _Store(TodoStore):
@@ -453,7 +453,7 @@ class TestWorkspaceSpecConsumption:
             agent_name="probe-agent",
         )
 
-        await _resolve_single(registry, ComponentSlot.TOOL, "ws_probe", {}, chain)
+        await resolve_single(registry, ComponentSlot.TOOL, "ws_probe", {}, chain)
 
         assert received == [declared]
 

@@ -14,15 +14,15 @@ from __future__ import annotations
 
 from collections import deque
 
-from modex_agent.tools.terminal.backends.base import TerminalBackend
-from modex_agent.tools.terminal.results import SlidingOutputBuffer
-from modex_agent.tools.terminal.session import TerminalSession
-from modex_agent.tools.terminal.types import (
+from modex_agent.core.terminal import (
     Platform,
     ShellFamily,
     ShellInfo,
     TerminalVisibility,
 )
+from modex_agent.tools.terminal.backends.base import TerminalBackend
+from modex_agent.tools.terminal.results import SlidingOutputBuffer
+from modex_agent.tools.terminal.session import TerminalSession
 
 _PROMPT = "user@host:~$ "
 

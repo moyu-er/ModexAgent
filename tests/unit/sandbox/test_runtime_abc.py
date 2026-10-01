@@ -22,7 +22,7 @@ import pytest
 from pydantic import ValidationError
 
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.core.turn.enums import TurnCustomKey
 from modex_agent.sandbox.runtime import (
     HostRuntime,
     ResolvedSandbox,

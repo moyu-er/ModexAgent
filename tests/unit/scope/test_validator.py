@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modex_agent.ioc.configs.approval import ApprovalConfig
+from modex_agent.approval.config import ApprovalConfig
 from modex_agent.scope import (
     AgentSpec,
     EffectiveAgentConfig,
@@ -532,7 +532,7 @@ def _shipped_graph_agent_refs() -> list[GraphAgentReference]:
     Mirrors BotAgentNodeConfig (agent required, pool defaults to
     "default") — the extraction shape boot (ticket 07/08) feeds to V10.
     """
-    from modex_agent.graph.spec_loader import GraphSpecLoader
+    from modex_agent.orchestration.spec_loader import GraphSpecLoader
     from modex_graph import InMemoryGraphSpecStore
 
     specs = GraphSpecLoader(InMemoryGraphSpecStore()).load_from_dir(GRAPHS_DIR)

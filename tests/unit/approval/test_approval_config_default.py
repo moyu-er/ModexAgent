@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modex_agent.ioc.configs.approval import ApprovalConfig
+from modex_agent.approval.config import ApprovalConfig
 
 
 def test_enabled_defaults_to_false():

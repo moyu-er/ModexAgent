@@ -27,34 +27,35 @@ from modex_agent.agents.react.state import (
     ReActSnapshotPolicy,
     ReActTurnState,
 )
-from modex_agent.approval.constants import (
+from modex_agent.approval.views import ApprovalRequestView
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.approval_types import (
     ApprovalDecision,
     ApprovalStatus,
     ApprovalTier,
 )
-from modex_agent.approval.views import ApprovalRequestView
-from modex_agent.core.agent import AgentContext
-from modex_agent.core.session_id import SessionInfo
-from modex_agent.memory.history import ListMessageHistory
-from modex_agent.messaging.models import ApprovalAction
-from modex_agent.persistence.adapters.approval_audit_store import ApprovalAuditEntry
-from modex_agent.pipeline.approval_resumer import ApprovalResumer
-from modex_agent.runtime.enums import (
+from modex_agent.core.turn.enums import (
     AgentKind,
     ApprovalSubjectType,
     SnapshotReason,
     TurnCustomKey,
     TurnPhase,
 )
-from modex_agent.runtime.models import (
+from modex_agent.core.turn.models import (
     ApprovalRequestState,
     ApprovalTransaction,
     ToolArguments,
     TurnIdentity,
     TurnSnapshot,
 )
+from modex_agent.core.turn.store import TurnStateStore
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.messaging.models import ApprovalAction
+from modex_agent.persistence.adapters.approval_audit_store import ApprovalAuditEntry
+from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-from modex_agent.runtime.store import InMemoryTurnStateStore, TurnStateStore
+from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager
 
 # ---------------------------------------------------------------------------

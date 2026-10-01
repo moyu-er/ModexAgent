@@ -21,12 +21,11 @@ from modex_agent.agents.react.nodes.tool_settlement import (
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.agents.react.tool_dedup import ToolCallDeduplicator
 from modex_agent.agents.react.tool_executor import ToolExecutor
-from modex_agent.approval.classification import ToolClassification
-from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.runtime.enums import (
+from modex_agent.core.turn.approval_types import ApprovalDecision, ApprovalTier, ToolClassification
+from modex_agent.core.turn.enums import (
     ApprovalSubjectType,
     SnapshotReason,
     ToolBatchStatus,
@@ -34,7 +33,7 @@ from modex_agent.runtime.enums import (
     TurnCustomKey,
     TurnPhase,
 )
-from modex_agent.runtime.models import (
+from modex_agent.core.turn.models import (
     ApprovalRequestState,
     ApprovalTransaction,
     ToolArguments,

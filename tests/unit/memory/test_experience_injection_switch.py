@@ -21,15 +21,15 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from modex_agent.memory.hooks import MemoryHookRunner
+from modex_agent.core.memory_hooks import MemoryHookRunner
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.plugins.assembly.context import AgentContext, PoolRuntimeDeps
-from modex_agent.plugins.capability import CapabilityBinding, PromptSectionSpec
 from modex_agent.plugins.defaults.capabilities.experience import (
     ExperienceCapability,
     ExperienceSupply,
 )
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.capability import CapabilityBinding, PromptSectionSpec
+from modex_agent.scope.component_registry import ComponentRegistry
 
 _EXP_MD_TEMPLATE = (
     "---\nname: {name}\ndescription: {desc}\nscenario: test\n---\n# {name}\n\nBody for {name}.\n"
@@ -67,7 +67,7 @@ def _make_mock_memory_system() -> MagicMock:
 
 def _supply_for(data_dir: Path) -> ExperienceSupply:
     """The REAL production construction: capability.supply(view)."""
-    from modex_agent.plugins.capability import PoolSupplyAgentEntry, PoolSupplyView
+    from modex_agent.scope.capability import PoolSupplyAgentEntry, PoolSupplyView
 
     capability = ExperienceCapability()
     supply = capability.supply(

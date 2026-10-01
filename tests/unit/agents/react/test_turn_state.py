@@ -4,7 +4,7 @@ from __future__ import annotations
 from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.runtime.enums import (
+from modex_agent.core.turn.enums import (
     AgentKind,
     OperationKind,
     OperationStatus,
@@ -12,7 +12,7 @@ from modex_agent.runtime.enums import (
     ToolBatchStatus,
     TurnPhase,
 )
-from modex_agent.runtime.models import ToolArguments, ToolCallState, TurnIdentity
+from modex_agent.core.turn.models import ToolArguments, ToolCallState, TurnIdentity
 
 
 def test_react_turn_state_creates_operation_for_tool_batch() -> None:
@@ -84,7 +84,7 @@ def test_react_turn_state_initializes_default_react_fields() -> None:
 
 
 def test_react_turn_state_extends_turn_state_base() -> None:
-    from modex_agent.runtime.models import TurnStateBase
+    from modex_agent.core.turn.models import TurnStateBase
 
     state = ReActTurnState(
         identity=TurnIdentity(agent_id="bot", session=SessionInfo.from_str("s1"), turn_id="t1"),

@@ -44,14 +44,14 @@ if sys.platform == "win32":
 else:
     _CREATE_NEW_CONSOLE = 0
 
-from modex_agent.tools.terminal.pty_keys import CTRL_C
-from modex_agent.tools.terminal.results import SlidingOutputBuffer, TerminalRead
-from modex_agent.tools.terminal.types import (
+from modex_agent.core.terminal import (
     Platform,
     ShellFamily,
     TerminalVisibility,
     _family_from_path,
 )
+from modex_agent.tools.terminal.pty_keys import CTRL_C
+from modex_agent.tools.terminal.results import SlidingOutputBuffer, TerminalRead
 
 from .winpty_transport import WinptyBackend
 

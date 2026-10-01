@@ -3,17 +3,18 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+from modex_agent.agents.react.hooks.todo_continuation import TodoContinuationHook
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.message import MessageRole
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.hook.builtin.todo_continuation import TodoContinuationHook
+from modex_agent.core.turn.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
+from modex_agent.core.turn.todo import TodoItem, TodoStatus
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
+from modex_agent.persistence.adapters.todo_store import JsonFileTodoStore
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-from modex_agent.runtime.todo import JsonFileTodoStore, TodoItem, TodoStatus
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.standard.todo_tool import TodoWriteTool
 

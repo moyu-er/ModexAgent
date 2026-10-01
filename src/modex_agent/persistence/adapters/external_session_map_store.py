@@ -1,4 +1,4 @@
-"""SQLite-backed :class:`~modex_agent.agents.external.session_store.ExternalSessionMapStore`.
+"""SQLite-backed :class:`~modex_agent.core.external_session.ExternalSessionMapStore`.
 
 Stores the Modex→provider session mapping in the ``external_session_map``
 table. ``resolve`` is sync per the ABC contract — it opens a short-lived
@@ -22,8 +22,8 @@ from __future__ import annotations
 import sqlite3
 from typing import TYPE_CHECKING
 
-from modex_agent.agents.external.session_store import ExternalSessionMapStore
 from modex_agent.core.agent import ProviderKind
+from modex_agent.core.external_session import ExternalSessionMapStore
 from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:

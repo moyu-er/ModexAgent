@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.memory.hooks import (
+from modex_agent.core.memory_hooks import (
     ConsolidationFinishedPayload,
     ContextAssembledPayload,
     CoreMemoryUpdatedPayload,

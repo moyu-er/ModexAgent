@@ -7,9 +7,9 @@ import contextlib
 import logging
 import time
 
+from modex_agent.core.terminal import ProcessStatus
 from modex_agent.tools.terminal.managers import TerminalManagerBase
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
-from modex_agent.tools.terminal.types import ProcessStatus
 
 logger = logging.getLogger(__name__)
 

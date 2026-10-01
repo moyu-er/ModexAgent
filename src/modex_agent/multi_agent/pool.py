@@ -20,7 +20,13 @@ if TYPE_CHECKING:
 
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo, session_id_prefix_of
+from modex_agent.core.turn.dispatch import DispatchDeadline, current_dispatch_deadline
 from modex_agent.messaging import AddressKind, BrokerInputPayload, InputMessage, MessageBroker
+from modex_agent.messaging.agent_messages import (
+    AgentAddress,
+    AgentMessageEnvelope,
+    AgentMessageType,
+)
 from modex_agent.multi_agent.session_tree.request_scope import (
     REQUEST_SCOPE_ID_KEY,
     RequestReservation,
@@ -32,16 +38,12 @@ from modex_agent.multi_agent.session_tree.request_scope import (
 from modex_agent.persistence.session_registry import SessionRegistry
 from modex_agent.persistence.session_store import SessionStore
 from modex_agent.pipeline.turn_outcome import TurnOutcomeKind
-from modex_agent.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
 from modex_graph.exceptions import GraphInterrupt
 
-from .address import AgentAddress
 from .bus import AgentMessageBus
 from .descriptor import AgentDescriptor, AgentInstance
-from .envelope import AgentMessageEnvelope
 from .factory import AgentFactory
 from .inbox.consumer import InboxConsumer
-from .message_type import AgentMessageType
 from .registry import AgentProfile, AgentRegistry
 from .state import AgentState
 

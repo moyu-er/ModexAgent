@@ -185,10 +185,10 @@ class TestValidatorUnaffected:
     def test_phase2_v9_still_refuses_non_root_approval(self, tmp_path: Path) -> None:
         # sandbox on a non-root agent must NOT trip V9 (it is not an
         # approval declaration), and V9 itself still fires for approval.
-        from modex_agent.ioc.configs.approval import ApprovalConfig
+        from modex_agent.approval.config import ApprovalConfig
         from modex_agent.plugins.defaults import DefaultPlugin
         from modex_agent.plugins.loader import PluginRegistrationContext
-        from modex_agent.plugins.registry import ComponentRegistry
+        from modex_agent.scope.component_registry import ComponentRegistry
 
         registry = ComponentRegistry()
         ctx = PluginRegistrationContext(registry)

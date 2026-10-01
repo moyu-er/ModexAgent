@@ -18,6 +18,7 @@ from modex_agent.core.emitter import AgentResult
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool
+from modex_agent.core.turn.models import TurnSnapshot
 from modex_agent.memory.context import ContextState, InMemoryContextManager
 from modex_agent.messaging.models import ApprovalAction, InputMessage
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
@@ -25,7 +26,6 @@ from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.runtime.models import TurnSnapshot
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_graph.context import GraphContext
@@ -70,8 +70,8 @@ class _InterruptingAgent:
         # GraphInterrupt.value is a list of ApprovalRequestState — the runner
         # serializes them into wire views, so the payload must be the real
         # typed request, not a mock.
-        from modex_agent.approval.constants import ApprovalTier
-        from modex_agent.runtime.models import ApprovalRequestState, ToolArguments
+        from modex_agent.core.turn.approval_types import ApprovalTier
+        from modex_agent.core.turn.models import ApprovalRequestState, ToolArguments
 
         req = ApprovalRequestState(
             request_id="r1",
@@ -280,20 +280,20 @@ async def test_handle_snapshot_approval_reports_pending_batch_when_resume_not_ap
     settle a live request-scope)."""
     from modex_agent.agents.react.constants import ReActNode
     from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
-    from modex_agent.approval.constants import ApprovalTier
-    from modex_agent.pipeline.turn_outcome import TurnSuspension
-    from modex_agent.runtime.enums import (
+    from modex_agent.core.turn.approval_types import ApprovalTier
+    from modex_agent.core.turn.enums import (
         AgentKind,
         ApprovalSubjectType,
         SnapshotReason,
         TurnPhase,
     )
-    from modex_agent.runtime.models import (
+    from modex_agent.core.turn.models import (
         ApprovalRequestState,
         ApprovalTransaction,
         ToolArguments,
         TurnIdentity,
     )
+    from modex_agent.pipeline.turn_outcome import TurnSuspension
 
     resumer = ApprovalResumer(agent=MagicMock(), turn_store=None, user_interface=None)
     resumer.apply_resume = AsyncMock(return_value=None)
