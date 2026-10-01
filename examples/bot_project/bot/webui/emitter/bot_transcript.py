@@ -11,13 +11,24 @@ share one ``turn_id`` and the materializer pairs them into one tool block
 tool node re-emits just the tool result).
 
 The input face is the core ``TurnEvent`` union (the framework's single
-event stream): this base feeds the framework
-``DefaultTurnEventProjector`` and derives its recording + projection
-behavior from the resulting ``PresentationEvent``s. Segment accumulation
-for the bot's transcript format remains bot-side (the store's
-materialization detail). Projections receive full-fidelity facts (full
-tool args, full result, ``seq``, ``part_id``) — display truncation is
-each projection's own concern.
+event stream): this base delegates projection + fan-out to the framework
+:class:`~modex_agent.presentation.SessionEventHub` it owns — the hub runs
+the ``DefaultTurnEventProjector`` and fans the resulting
+``PresentationEvent``s out to two registered consumers, in registration
+order:
+
+1. this emitter itself — the transcript tap (segment accumulation,
+   transcript/partial persistence, error render);
+2. the projection bridge — one ``PresentationSink`` adapter calling the
+   concrete sink's ``_project_*`` hooks (WebUI wire frames, ACP
+   full-fidelity forwarding).
+
+The bot keeps only bot-specific work: the ServerEvent wire projection,
+the transcript record codec, and the terminal channel composition (error
+render / attachments via the output adapter) stay on this class.
+Projections receive full-fidelity facts (full tool args, full result,
+``seq``, ``part_id``) — display truncation is each projection's own
+concern.
 """
 
 from __future__ import annotations
@@ -30,7 +41,7 @@ from typing import Any
 
 from modex_agent.adapters.emitter import BufferingSink
 from modex_agent.adapters.output import OutputAdapter
-from modex_agent.core.emitter import KindGate
+from modex_agent.core.emitter import KindGate, TurnBinding
 from modex_agent.core.session_id import agent_of
 from modex_agent.core.turn_events import (
     IterationFinishedEvent,
@@ -40,8 +51,9 @@ from modex_agent.core.turn_events import (
 )
 from modex_agent.messaging.models import OutputMessage
 from modex_agent.presentation import (
-    DefaultTurnEventProjector,
     PresentationEvent,
+    PresentationSink,
+    SessionEventHub,
     TextDelta,
     ThinkingDelta,
     ToolArgsDelta,
@@ -75,13 +87,14 @@ def _empty_session_meta() -> SessionMeta:
     return SessionMeta()
 
 
-class BotTranscriptEmitter(BufferingSink, ABC):
+class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
     """Shared turn-record lifecycle with two concrete projections.
 
-    This base owns recording (transcript writes, segment buffering); the
-    framework projector owns turn identity and tool-card pairing; the
-    ``_project_*`` hooks remain the subclass sink contract, receiving the
-    full-fidelity fact (never a display-truncated copy).
+    This base is the hub's transcript tap (``handle`` records every
+    projected presentation event); the framework hub owns turn identity
+    and tool-card pairing; the ``_project_*`` hooks remain the subclass
+    sink contract, driven by the hub's projection-bridge consumer and
+    receiving the full-fidelity fact (never a display-truncated copy).
     """
 
     def __init__(
@@ -118,12 +131,20 @@ class BotTranscriptEmitter(BufferingSink, ABC):
         # the per-workspace resolver cell (same source memory uses) — this
         # survives the broker-queue task boundary where the bind_workspace_root
         # ContextVar is lost. None = fall back to the ctxvar (legacy/tests).
-        self._sessions_dir_provider: Callable[[], Path | None] | None = (
-            sessions_dir_provider
+        self._sessions_dir_provider: Callable[[], Path | None] | None = sessions_dir_provider
+        # Framework per-turn station: core TurnEvents in, presentation events
+        # fanned out to (this recording tap, the projection bridge) —
+        # registration order fixes record-before-project delivery. The bot
+        # synthesizes the binding from its constructor identity (turn ids stay
+        # projector-lazy, matching the pre-hub wire behavior).
+        self._event_hub = SessionEventHub(
+            TurnBinding(
+                session_id=session_id,
+                agent_name=self._agent_name,
+                pool=pool,
+            ),
+            (self, _ProjectionBridge(self)),
         )
-        # Framework projection state: lazy turn identity, tool-argument
-        # pairing, turn latency (ADR-0053).
-        self._projector = DefaultTurnEventProjector(session_id, pool=pool)
 
         # Incremental turn state — multiple segments tracked by part_id.
         # Each part_id accumulates independently so token-level interleaving
@@ -142,17 +163,13 @@ class BotTranscriptEmitter(BufferingSink, ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    async def _project_text_delta(
-        self, text: str, part_id: str | None
-    ) -> None:
+    async def _project_text_delta(self, text: str, part_id: str | None) -> None:
         """Project one content delta (full text fragment, ``part_id`` if the
         source stream identifies output parts)."""
         ...
 
     @abstractmethod
-    async def _project_reasoning_delta(
-        self, text: str, part_id: str | None
-    ) -> None:
+    async def _project_reasoning_delta(self, text: str, part_id: str | None) -> None:
         """Project one reasoning delta."""
         ...
 
@@ -177,7 +194,9 @@ class BotTranscriptEmitter(BufferingSink, ABC):
         """Project a tool call end with the FULL result text and ``seq``."""
         ...
 
-    async def _project_tool_args_delta(self, tool_name: str, call_id: str, args_fragment: str) -> None:
+    async def _project_tool_args_delta(
+        self, tool_name: str, call_id: str, args_fragment: str
+    ) -> None:
         """Project one streamed argument fragment (pre-``tool_call``).
 
         默认 no-op: 预热态是纯显示投影, 记录生命周期(段缓冲/持久化)不参与;
@@ -191,19 +210,17 @@ class BotTranscriptEmitter(BufferingSink, ABC):
         ...
 
     # ------------------------------------------------------------------
-    # Turn state (framework projector + bot segment accumulation)
+    # Turn state (hub projector + bot segment accumulation)
     # ------------------------------------------------------------------
 
     @property
     def _current_turn_id(self) -> str:
-        return self._projector.current_turn_id
+        return self._event_hub.projector.current_turn_id
 
     async def _persist(self, event: ServerEvent) -> None:
         if self._transcript_store is None:
             return
-        sessions_dir = (
-            self._sessions_dir_provider() if self._sessions_dir_provider else None
-        )
+        sessions_dir = self._sessions_dir_provider() if self._sessions_dir_provider else None
         pool = self._pool or ""
         # Workspace routing is a store-shape extension boundary: only a
         # workspace-routed store multiplexes backends and accepts the dir; a
@@ -227,9 +244,7 @@ class BotTranscriptEmitter(BufferingSink, ABC):
             return
         if not isinstance(self._transcript_store, WorkspaceRoutedTranscriptStore):
             return
-        sessions_dir = (
-            self._sessions_dir_provider() if self._sessions_dir_provider else None
-        )
+        sessions_dir = self._sessions_dir_provider() if self._sessions_dir_provider else None
         try:
             await self._transcript_store.append_partial(
                 self._session_id, event, sessions_dir=sessions_dir
@@ -247,22 +262,16 @@ class BotTranscriptEmitter(BufferingSink, ABC):
             return
         if not isinstance(self._transcript_store, WorkspaceRoutedTranscriptStore):
             return
-        sessions_dir = (
-            self._sessions_dir_provider() if self._sessions_dir_provider else None
-        )
+        sessions_dir = self._sessions_dir_provider() if self._sessions_dir_provider else None
         try:
-            await self._transcript_store.clear_partial(
-                self._session_id, sessions_dir=sessions_dir
-            )
+            await self._transcript_store.clear_partial(self._session_id, sessions_dir=sessions_dir)
         except Exception as exc:
-            logger.warning(
-                "partial clear failed for session %s: %s", self._session_id, exc
-            )
+            logger.warning("partial clear failed for session %s: %s", self._session_id, exc)
 
     def _accumulate_segment(self, text: str, kind: str, part_id: str | None) -> None:
         if not text:
             return
-        self._projector.ensure_turn_started()
+        self._event_hub.projector.ensure_turn_started()
         key = part_id if part_id else f"_{kind}"
         if key not in self._segments:
             self._segments[key] = ""
@@ -304,14 +313,10 @@ class BotTranscriptEmitter(BufferingSink, ABC):
         await self._clear_partial()
 
     # ------------------------------------------------------------------
-    # Presentation dispatch (framework events -> record + projection)
+    # Transcript tap (PresentationSink face: record every projected event)
     # ------------------------------------------------------------------
 
-    async def _feed(self, event: TurnEvent) -> None:
-        for presentation in self._projector.feed(event):
-            await self._handle_presentation(presentation)
-
-    async def _handle_presentation(self, event: PresentationEvent) -> None:
+    async def handle(self, event: PresentationEvent) -> None:
         match event:
             case TextDelta(text=text, segment_id=segment_id):
                 self._accumulate_segment(text, "text", segment_id)
@@ -319,18 +324,19 @@ class BotTranscriptEmitter(BufferingSink, ABC):
             case ThinkingDelta(text=text, segment_id=segment_id):
                 self._accumulate_segment(text, "reasoning", segment_id)
                 await self._record_reasoning_delta(text, segment_id)
-            case ToolArgsDelta(
-                tool_name=tool_name, call_id=call_id, args_fragment=fragment
-            ):
-                # Transient warm-up signal: do not flush the text segment (the
-                # body may still be semantically unfinished), do not persist to
-                # the transcript, do not enter the partial buffer — refresh
-                # recovery relies on the subsequent tool_call full
-                # arguments, so losing the warm-up state is harmless.
-                await self._project_tool_args_delta(tool_name, call_id, fragment)
-            case ToolCallStarted(tool_name=tool_name, call_id=call_id, arguments=args):
+            case ToolArgsDelta():
+                # Transient warm-up signal: no record here — do not flush the
+                # text segment (the body may still be semantically finished),
+                # do not persist to the transcript, do not enter the partial
+                # buffer (refresh recovery relies on the subsequent
+                # tool_call full arguments, so losing the warm-up state is
+                # harmless). The throttled wire projection rides the bridge
+                # consumer.
+                pass
+            case ToolCallStarted():
+                # Segment boundary before the tool card opens; the wire
+                # projection rides the bridge consumer (registration order).
                 await self._flush_active_segment()
-                await self._project_tool_start(tool_name, call_id, dict(args))
             case ToolResult(
                 tool_name=tool_name,
                 call_id=call_id,
@@ -371,18 +377,15 @@ class BotTranscriptEmitter(BufferingSink, ABC):
                             seq=seq,
                         )
                     )
-                await self._project_tool_end(tool_name, call_id, output, seq)
             case TurnErrored(message=message):
                 self._error_delivered = True
                 await self._safe_adapter_send(
                     OutputMessage(content=f"Error: {message}"), log_label="emit_error"
                 )
-            case TurnFinished():
-                # Handled inside the terminal branch of ``_dispatch``; never
-                # dispatched here.
-                pass
             case _:
-                # TurnStarted / usage / approval cards: no bot sink today.
+                # TurnStarted / TurnFinished / usage / approval cards: no
+                # bot record (the terminal record lifecycle runs in the
+                # terminal branch before the hub projects TurnFinished).
                 pass
 
     # ------------------------------------------------------------------
@@ -391,17 +394,16 @@ class BotTranscriptEmitter(BufferingSink, ABC):
 
     async def _dispatch(self, event: TurnEvent) -> None:
         match event:
-            case TurnFinishedEvent(
-                stop_reason=stop_reason, error=error, attachments=attachments
-            ):
+            case TurnFinishedEvent(stop_reason=stop_reason, error=error, attachments=attachments):
                 await self._handle_turn_finished(stop_reason, error, attachments)
             case IterationFinishedEvent():
                 # Segment boundary: the retired emit_stream_end flush now
                 # rides the iteration-finished signal (same boundary — after
-                # each LLM output's iteration closes).
+                # each LLM output's iteration closes). The projector
+                # declares this kind ignored — nothing to project.
                 await self._flush_active_segment()
             case _:
-                await self._feed(event)
+                await self._event_hub.emit(event)
 
     async def _handle_turn_finished(
         self,
@@ -414,28 +416,22 @@ class BotTranscriptEmitter(BufferingSink, ABC):
         Ordering preserved from the retired emitter channels: the error
         message (when the mid-flight path did not already deliver one),
         then the segment flush (while the turn identity is still active),
-        then attachments, then the terminal projection.
+        then attachments, then the terminal projection — delegating the
+        terminal event to the hub projects it and fans the TurnFinished
+        card out to the consumers (the projection bridge renders the
+        terminal frame last).
         """
         try:
-            if (
-                stop_reason is StopReason.ERROR
-                and error
-                and not self._error_delivered
-            ):
+            if stop_reason is StopReason.ERROR and error and not self._error_delivered:
                 self._error_delivered = True
                 await self._safe_adapter_send(
                     OutputMessage(content=f"Error: {error}"), log_label="emit_error"
                 )
             await self._flush_active_segment()
-            finished = self._projector.feed(
+            await self._deliver_attachments(attachments)
+            await self._event_hub.emit(
                 TurnFinishedEvent(stop_reason=stop_reason, error=error, attachments=attachments)
             )
-            await self._deliver_attachments(attachments)
-            for presentation in finished:
-                if isinstance(presentation, TurnFinished):
-                    await self._project_turn_end(
-                        presentation.latency_ms, presentation.turn_id
-                    )
         finally:
             await self._clear_partial()
             self._segments = {}
@@ -448,16 +444,15 @@ class BotTranscriptEmitter(BufferingSink, ABC):
     # ------------------------------------------------------------------
 
     async def _record_text_delta(self, text: str, part_id: str | None) -> None:
-        """Partial-buffer record + projection for one content delta."""
+        """Partial-buffer record for one content delta (the wire projection
+        rides the hub's bridge consumer)."""
         evt = self._content_delta_event(text, part_id)
         await self._persist_partial(evt)
-        await self._project_text_delta(text, part_id)
 
     async def _record_reasoning_delta(self, text: str, part_id: str | None) -> None:
-        """Partial-buffer record + projection for one reasoning delta."""
+        """Partial-buffer record for one reasoning delta."""
         evt = self._reasoning_delta_event(text, part_id)
         await self._persist_partial(evt)
-        await self._project_reasoning_delta(text, part_id)
 
     def _content_delta_event(self, text: str, part_id: str | None) -> ServerEvent:
         """WebUI-shaped content delta for the partial buffer (one schema).
@@ -484,9 +479,7 @@ class BotTranscriptEmitter(BufferingSink, ABC):
             segment_id=part_id if part_id else "_reasoning",
         )
 
-    def set_sessions_dir_provider(
-        self, provider: Callable[[], Path | None] | None
-    ) -> None:
+    def set_sessions_dir_provider(self, provider: Callable[[], Path | None] | None) -> None:
         """Inject the per-workspace sessions_dir resolver (resolver cell).
 
         Called at emitter creation by pool_builder's per-pool emitter-factory
@@ -498,3 +491,39 @@ class BotTranscriptEmitter(BufferingSink, ABC):
     def _metadata(self) -> dict[str, object]:
         """Cross-cutting context attached to every emitted envelope."""
         return {"turn_id": self._current_turn_id}
+
+
+class _ProjectionBridge(PresentationSink):
+    """The hub's projection consumer: presentation events -> sink hooks.
+
+    One ``PresentationSink`` adapter bridging the concrete emitter's
+    ``_project_*`` hooks (the bot sink contract: WebUI wire frames, ACP
+    full-fidelity forwarding) onto the hub's consumer face. Registered
+    after the transcript tap, so every fact is recorded before it is
+    projected — the delivery order both sink formats relied on before
+    the hub extraction.
+    """
+
+    def __init__(self, emitter: BotTranscriptEmitter) -> None:
+        self._emitter = emitter
+
+    async def handle(self, event: PresentationEvent) -> None:
+        emitter = self._emitter
+        match event:
+            case TextDelta(text=text, segment_id=segment_id):
+                await emitter._project_text_delta(text, segment_id)
+            case ThinkingDelta(text=text, segment_id=segment_id):
+                await emitter._project_reasoning_delta(text, segment_id)
+            case ToolArgsDelta(tool_name=tool_name, call_id=call_id, args_fragment=fragment):
+                await emitter._project_tool_args_delta(tool_name, call_id, fragment)
+            case ToolCallStarted(tool_name=tool_name, call_id=call_id, arguments=args):
+                await emitter._project_tool_start(tool_name, call_id, dict(args))
+            case ToolResult(tool_name=tool_name, call_id=call_id, output=output, seq=seq):
+                await emitter._project_tool_end(tool_name, call_id, output, seq)
+            case TurnFinished(latency_ms=latency_ms, turn_id=turn_id):
+                await emitter._project_turn_end(latency_ms, turn_id)
+            case _:
+                # TurnStarted / TurnErrored / usage / approval cards have no
+                # sink projection hook (the error render lives on the
+                # transcript tap; TurnStarted has no bot wire frame).
+                pass

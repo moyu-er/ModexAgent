@@ -1,12 +1,16 @@
-"""Presentation layer — neutral event projection + transcript contract.
+"""Presentation layer — neutral event projection + per-turn hub +
+transcript contract.
 
 Projects the provider-neutral runtime event seam (the core ``TurnEvent``
 union consumed by both execution planes) onto a closed
-presentation-event vocabulary, and owns the transcript persistence
-contract with a JSONL implementation. See ADR-0053 and ADR-0054.
+presentation-event vocabulary, owns the per-turn station that fans the
+projected events out to ``PresentationSink`` consumers, and owns the
+transcript persistence contract with a JSONL implementation. See
+ADR-0053 and ADR-0054.
 
 Curated facade — import real names from here:
-``DefaultTurnEventProjector``, ``PresentationEvent``, ``materialize_turns``.
+``SessionEventHub``, ``PresentationSink``, ``DefaultTurnEventProjector``,
+``PresentationEvent``, ``materialize_turns``.
 """
 
 from modex_agent.presentation.events import (
@@ -23,6 +27,7 @@ from modex_agent.presentation.events import (
     TurnStarted,
     UsageSummary,
 )
+from modex_agent.presentation.hub import PresentationSink, SessionEventHub
 from modex_agent.presentation.projector import (
     DefaultTurnEventProjector,
     TurnEventProjector,
@@ -46,8 +51,10 @@ __all__ = [
     "DefaultTurnEventProjector",
     "JsonlTranscriptStore",
     "PresentationEvent",
+    "PresentationSink",
     "PresentationTranscriptCodec",
     "PresentationTranscriptStore",
+    "SessionEventHub",
     "TextBlock",
     "TextDelta",
     "ThinkingBlock",

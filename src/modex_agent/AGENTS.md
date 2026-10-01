@@ -47,7 +47,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `trace/` | — | Tracing and observability — `TraceStore`, `TraceHooks`, `TraceType` |
 | `utils/` | — | Shared tokenizer, frontmatter, XML, file, process, and time helpers |
 | `adapters/` | — | Platform I/O contracts, output adapters, content filters, and the `BufferingSink` delivery-policy bridge onto `OutputAdapter` (STREAMING/SEGMENT/TURN) (see `adapters/AGENTS.md`) |
-| `presentation/` | — | Neutral presentation projection over the runtime event seam (ADR-0053, ADR-0054): the closed `PresentationEvent` vocabulary, `TurnEventProjector` ABC + `DefaultTurnEventProjector` (consuming the core `TurnEvent` union directly; eager/lazy turn identity, tool-card pairing, documented ignore-list), and the generic `TranscriptStore` contract with a JSONL implementation + presentation codec and turn-view materialization. Bot WebUI ServerEvents/transcripts are consumer implementations of this contract. |
+| `presentation/` | — | Neutral presentation projection over the runtime event seam (ADR-0053, ADR-0054): the closed `PresentationEvent` vocabulary, `TurnEventProjector` ABC + `DefaultTurnEventProjector` (consuming the core `TurnEvent` union directly; eager/lazy turn identity, tool-card pairing, documented ignore-list), the per-turn `SessionEventHub` (a `TurnEventSink` that runs the projector and fans `PresentationEvent`s out to registered `PresentationSink` consumers in order — binding identity, resume continuity without a second `TurnStarted`), and the generic `TranscriptStore` contract with a JSONL implementation + presentation codec and turn-view materialization. Bot WebUI ServerEvents/transcripts are consumer implementations of this contract. |
 | `acp/` | — | ACP (Agent Client Protocol) agent-server surface over editor-spawned stdio — SDK-free backend/handle/interaction seam, `ModexAcpAgent` wire mapping, once-only permission round-trip, scripted backend; NOT in the `@register` channel registry (ADR-0049, see `acp/AGENTS.md`) |
 | `media/` | — | Concrete media storage, MIME classification, and security gates; contracts live in `core/media.py` (see `media/AGENTS.md`) |
 
@@ -88,7 +88,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 
 ### Module Responsibilities
 - `core/` — Foundational contracts and values, including `MessageHistory` and system-prompt seams; no session persistence or concrete memory adapters.
-- `agents/` — General agent strategies (ReAct, external harness, summarizers). Capability-specific agents stay in their capability packages. External provider resources converge through `StreamingProviderBackend.close()`.
+- `agents/` — General agent strategies (ReAct, external harness, summarizers). Capability-specific agents stay in their capability packages. External provider resources converge through `ExternalTransport.close()`.
 - `memory/` — Context, memory scope/governance, concrete histories, and three-layer persistent memory. Split store ABCs + `MemoryStoreBundle` are the storage contract.
 - `persistence/` — Session persistence plus hybrid file/SQLite adapters (ADR-0023). `PersistenceBackend` (`FILE`/`SQLITE`) drives IOC selection.
 - `multi_agent/` — Star-topology subagent orchestration.
