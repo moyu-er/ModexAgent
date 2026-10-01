@@ -6,21 +6,22 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from bot.service.model_choice import ModelChoiceRegistry
-from bot.service.pool import create_pool
+from bot.config.webui_config import build_control_origin
 from bot.service.pool.declaration import boot_scope_declaration, declared_pool_build
 from bot.workspace.handle import WorkspaceHandle
 from bot.workspace.pool_data import PoolData, build_pool_data
-from plugins.bot_strategies import BotDefaultLLMConfig
 
 from examples.bot_project.tests.service._title_support import title_workspace
 from modex_agent.adapters.output import NullOutputAdapter
 from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.app.models.assembly import ModelRegistryAssembly
+from modex_agent.app.models.choice import ModelChoiceRegistry
 from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.llm_struct import FinishReason, LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.models import JsonValue
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.memory.presets import main_agent_memory
@@ -29,11 +30,12 @@ from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_instance import PoolInstance
-from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
+from modex_agent.plugins.assembly.pool_factory import create_pool
 from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER, MultiLLMProviderConfig
 from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
-from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.runtime.models import JsonValue
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot, SimpleFactory
 from modex_agent.trace.store import JsonlSpanQuery
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
@@ -116,19 +118,19 @@ class _FutureEmitter(ContentEmitter[ReActEvent]):
 
 
 async def _scripted_registry(provider: LLMProvider) -> ComponentRegistry:
-    """Production-shaped registry with the scripted provider behind ``bot_default``."""
+    """Production-shaped registry with the scripted provider behind ``multi``."""
     registry = ComponentRegistry()
     await ComponentRegistryLoader.load(
         registry,
         PluginDiscoveryConfig(
             bundled_factories=(DefaultPlugin(),),
-            project_plugin_paths=(_BOT_PROJECT / "plugins",),
+            project_plugin_paths=(_BOT_PROJECT / "bot_plugins",),
         ),
     )
     registry.register(
         ComponentSlot.LLM_PROVIDER,
-        "bot_default",
-        SimpleFactory(provider, BotDefaultLLMConfig),
+        MULTI_LLM_PROVIDER,
+        SimpleFactory(provider, MultiLLMProviderConfig),
         overwrite=True,
     )
     return registry
@@ -162,7 +164,7 @@ async def _create_scripted_pool(
         project_dir=_BOT_PROJECT,
         data_dir=data_dir,
         graphs_dirs=(),
-        default_llm_provider="bot_default",
+        default_llm_provider=MULTI_LLM_PROVIDER,
         registry=_compile_registry(),
     )
     declared = declared_pool_build(boot, "coder")
@@ -216,7 +218,9 @@ async def _create_scripted_pool(
         pool_data=pool_data,
         emitter_factory=emitter_factory,
         on_subagent_created=on_subagent_created,
-        bot_model_config=None,
+        model_assembly=ModelRegistryAssembly(None),
+        default_llm_provider_name=MULTI_LLM_PROVIDER,
+        control_origin=build_control_origin(data_dir.parent / "config"),
         model_choice_registry=ModelChoiceRegistry(),
         workspace_handle=WorkspaceHandle(
             target=_BOT_PROJECT, data_root=data_dir,

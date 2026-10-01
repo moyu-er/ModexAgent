@@ -4,11 +4,11 @@ from unittest.mock import MagicMock
 
 import pytest
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.approval import ApprovalStage
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 
-from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
+from modex_agent.pipeline.input.envelope import CommandStatus, UserInputEnvelope
+from modex_agent.pipeline.input.stages.approval import ApprovalStage
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 
 
 def _ctx() -> BotInputContext:

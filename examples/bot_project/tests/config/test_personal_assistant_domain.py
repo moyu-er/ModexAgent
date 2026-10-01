@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-from bot.config.domain import DomainFlavor, get_domain
 from bot.config.domains.personal_assistant import (
     PersonalAssistantConfig,
     PersonalAssistantPreferences,
@@ -19,6 +18,8 @@ from bot.config.domains.personal_assistant import (
 )
 from bot.service.config_controller import ConfigController, FieldValidationError
 from pydantic import ValidationError
+
+from modex_agent.app.config_domain import DomainFlavor, get_domain
 
 
 def _owner(tmp_path: Path) -> PersonalAssistantPreferences:

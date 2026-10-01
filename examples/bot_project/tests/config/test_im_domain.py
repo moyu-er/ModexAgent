@@ -4,9 +4,10 @@ from pathlib import Path
 
 import pytest
 import yaml
-from bot.config.domain import DomainFlavor, SecretMask, get_domain
 from bot.config.domains import im as im_module  # noqa: F401 - import registers the im domain
 from pydantic import ValidationError
+
+from modex_agent.app.config_domain import DomainFlavor, SecretMask, get_domain
 
 
 def test_im_domain_is_registry_with_qq_and_telegram() -> None:

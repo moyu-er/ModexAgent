@@ -5,10 +5,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from bot.service.model_choice import ModelChoiceRegistry
-from bot.service.pool import create_pool
+from bot.config.webui_config import build_control_origin
 
-from ...declaration_driver import build_declared
+from modex_agent.app.models.assembly import ModelRegistryAssembly
+from modex_agent.app.models.choice import ModelChoiceRegistry
+from modex_agent.plugins.assembly.pool_factory import create_pool
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
+
+from ...declaration_driver import build_declared, load_bot_test_registry
 
 _POOL_DECLARATION = """\
 pool:
@@ -55,7 +59,7 @@ async def test_create_pool_shares_audit_sink_with_native_materialization(tmp_pat
           write:
             allowed_paths: ["./*"]
 """
-        with patch("bot.service.pool.factory.build_approval_audit_store", return_value=audit) as build_audit:
+        with patch("modex_agent.plugins.assembly.pool_factory.build_approval_audit_store", return_value=audit) as build_audit:
             instance = await create_pool(
                 pool_name="audited",
                 declared=build_declared(
@@ -66,7 +70,11 @@ async def test_create_pool_shares_audit_sink_with_native_materialization(tmp_pat
                 broker=broker, output_adapter=MagicMock(spec=OutputAdapter),
                 safety=RuntimeSafetyPolicy(), retention=SessionRetentionPolicy(), im_ui=MagicMock(),
                 shared_hooks=[], shared_hook_runner=HookRunner(), shared_interceptor_chain=InterceptorChain(),
-                bot_model_config=None, model_choice_registry=ModelChoiceRegistry(),
+                model_choice_registry=ModelChoiceRegistry(),
+                model_assembly=ModelRegistryAssembly(None),
+                default_llm_provider_name=MULTI_LLM_PROVIDER,
+                control_origin=build_control_origin(tmp_path / "config"),
+                component_registry=await load_bot_test_registry(),
             )
         build_audit.assert_called_once()
         deps = instance.pool.materialize_deps
@@ -130,8 +138,11 @@ async def test_create_pool_binds_pool_at_single_assembly_point(tmp_path: Path) -
                 workspace_resolver=WorkspaceResolverCell(),
                 emitter_factory=emitter_factory,
                 on_subagent_created=on_subagent_created,
-                bot_model_config=None,
                 model_choice_registry=ModelChoiceRegistry(),
+                model_assembly=ModelRegistryAssembly(None),
+                default_llm_provider_name=MULTI_LLM_PROVIDER,
+                control_origin=build_control_origin(tmp_path / "config"),
+                component_registry=await load_bot_test_registry(),
             )
 
         materialize_deps = pool_instance.pool.materialize_deps
@@ -194,8 +205,11 @@ async def test_create_pool_tree_uses_runtime_workspace_not_resource_root(
                     target=workspace_root, data_root=data_root,
                 ),
                 workspace_resolver=WorkspaceResolverCell(),
-                bot_model_config=None,
                 model_choice_registry=ModelChoiceRegistry(),
+                model_assembly=ModelRegistryAssembly(None),
+                default_llm_provider_name=MULTI_LLM_PROVIDER,
+                control_origin=build_control_origin(resource_root / "config"),
+                component_registry=await load_bot_test_registry(),
             )
 
         await pool_instance.pool.stop_poller()
@@ -264,8 +278,11 @@ async def test_create_pool_raises_when_stage3_strategy_result_missing(
                 shared_hook_runner=HookRunner(),
                 shared_interceptor_chain=InterceptorChain(),
                 workspace_resolver=WorkspaceResolverCell(),
-                bot_model_config=None,
                 model_choice_registry=ModelChoiceRegistry(),
+                model_assembly=ModelRegistryAssembly(None),
+                default_llm_provider_name=MULTI_LLM_PROVIDER,
+                control_origin=build_control_origin(tmp_path / "config"),
+                component_registry=await load_bot_test_registry(),
             )
     finally:
         await broker.stop()

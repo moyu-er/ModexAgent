@@ -4,9 +4,10 @@ from pathlib import Path
 
 import pytest
 import yaml
-from bot.config.domain import DomainFlavor, SecretMask
 from bot.config.domains import im as im_module
 from bot.service.config_controller import ConfigController, FieldValidationError
+
+from modex_agent.app.config_domain import DomainFlavor, SecretMask
 
 
 def _write_im(path: Path, qq_secret: str = "s") -> None:

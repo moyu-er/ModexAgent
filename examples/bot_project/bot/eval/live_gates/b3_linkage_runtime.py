@@ -24,8 +24,8 @@ from bot.eval.evalenv import (
     SECRET_KEY_ENV,
     LangfuseCredentials,
 )
-from modex_agent.ioc.configs.observability import TraceBackend
 from modex_agent.trace.experiment_attrs import stable_experiment_id
+from modex_agent.trace.observability import TraceBackend
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.store import SpanModel
 

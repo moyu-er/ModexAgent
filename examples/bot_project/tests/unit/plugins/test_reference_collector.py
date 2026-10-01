@@ -16,21 +16,21 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from plugins.reference_collector import (  # noqa: E402
+from bot_plugins.reference_collector import (  # noqa: E402
     ReferenceCollectorHook,
     ReferenceCollectorPlugin,
 )
 
 from modex_agent.hook import HookSpec  # noqa: E402
 from modex_agent.hook.runner import HookRunner  # noqa: E402
-from modex_agent.plugins.abc import ComponentSlot  # noqa: E402
 from modex_agent.plugins.assembly.context import AssemblyContext  # noqa: E402
 from modex_agent.plugins.loader import (  # noqa: E402
     ComponentRegistryLoader,
     PluginDiscoveryConfig,
     PluginRegistrationContext,
 )
-from modex_agent.plugins.registry import ComponentRegistry  # noqa: E402
+from modex_agent.scope.component_registry import ComponentRegistry  # noqa: E402
+from modex_agent.scope.components import ComponentSlot  # noqa: E402
 
 
 def _load_via_directory_discovery(plugin_dir: Path) -> ComponentRegistry:
@@ -52,7 +52,7 @@ def _load_via_directory_discovery(plugin_dir: Path) -> ComponentRegistry:
 
 @pytest.fixture()
 def bot_plugins_dir() -> Path:
-    return Path(__file__).resolve().parents[3] / "plugins"
+    return Path(__file__).resolve().parents[3] / "bot_plugins"
 
 
 class TestPluginRegistration:

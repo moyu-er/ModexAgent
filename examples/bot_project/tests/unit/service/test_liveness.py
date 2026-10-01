@@ -22,10 +22,11 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 from bot.service.liveness import DefaultLivenessProvider, LivenessProvider
 
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.enums import AgentKind, SnapshotReason, TurnPhase
+from modex_agent.core.turn.models import ResumePoint, TurnIdentity, TurnSnapshot
+from modex_agent.core.turn.store import TurnStateStore
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.runtime.enums import AgentKind, SnapshotReason, TurnPhase
-from modex_agent.runtime.models import ResumePoint, TurnIdentity, TurnSnapshot
-from modex_agent.runtime.store import InMemoryTurnStateStore, TurnStateStore
+from modex_agent.runtime.store import InMemoryTurnStateStore
 
 _SESSION_ID = "abc123.default"
 _AGENT_ID = "default"

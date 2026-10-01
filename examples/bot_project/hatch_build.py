@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -16,13 +15,9 @@ class CustomBuildHook(BuildHookInterface):
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         if version == "editable":
-            # force_include in the PEP 660 wheel embeds a REAL copy of bot/
-            # into site-packages that shadows the checkout: `import bot`
-            # resolves to the snapshot copy, so path-anchored plugin
-            # discovery (factory.py: <bot pkg parent>/plugins) finds
-            # <site-packages>/plugins — pools boot with an empty strategy
-            # registry. Editable runs off the source tree; only standard
-            # wheels need the data-file copy below.
+            # Editable runs off the source tree; the data-file copies below
+            # are only needed in standard wheels (a PEP 660 force_include
+            # copy would shadow the checkout with a stale snapshot).
             return
 
         root = Path(self.root)

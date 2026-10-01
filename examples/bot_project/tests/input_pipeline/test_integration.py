@@ -7,21 +7,21 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from bot.input_pipeline.assembly import build_im_pipeline, build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.input_pipeline.stages.skill_parse import (
     PoolSkillResolverRegistry,
     SkillParseStage,
 )
-from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 
+from modex_agent.app.models.registry import ModelCfg, ModelRegistry, ProviderCfg
 from modex_agent.commands.models import CommandContext
 from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.commands.skill import ResolvedSkillCommand, SkillResolver
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo, encode_snowflake
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
 from modex_agent.messaging.models import InputMessage
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
 from modex_agent.plugins.defaults.capabilities.skills.models import Skill
 from modex_agent.plugins.defaults.capabilities.skills.source import InlineSkillSource
@@ -42,8 +42,8 @@ class _NoSkill(PoolSkillResolverRegistry):
         super().__init__(lambda _workspace, _pool: None)
 
 
-def _bot_model_config() -> BotModelConfig:
-    return BotModelConfig(
+def _bot_model_config() -> ModelRegistry:
+    return ModelRegistry(
         default_provider="A",
         default_model="M1",
         providers=[

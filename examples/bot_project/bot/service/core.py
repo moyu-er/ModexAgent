@@ -26,12 +26,9 @@ if TYPE_CHECKING:
     from bot.service.media_store import WorkspaceScopedMediaStore
     from bot.workspace.handle import PoolWorkspaceResources
     from modex_agent.commands.processor import SlashCommandProcessor
-    from modex_agent.persistence.managers import (
-        RegistryPersistenceManager,
-        WorkspacePersistenceManager,
-    )
+    from modex_agent.core.stores import PoolRoutingStore
+    from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
     from modex_agent.plugins.assembly.context import AssemblyContext
-    from modex_agent.runtime.codec import RuntimeStateCodecRegistry
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
 from bot.config.domains.personal_assistant import PersonalAssistantPreferences
@@ -41,16 +38,12 @@ from bot.service.default_pool_selection import (
     resolve_default_pool,
 )
 from bot.service.errors import BotServiceShutdownIncompleteError
-from bot.service.model_choice import ModelChoiceRegistry
-from bot.service.model_config import BotModelConfig
-from bot.service.model_provider import BotModelProvider
 from bot.service.pool.declaration import (
     apply_workspace_resource_selection,
     load_scope_declaration_opt,
     validate_agent_mcp_sets,
     workspace_layer_present,
 )
-from bot.service.roots import BotAssemblyRoots
 from bot.utils.config_loader import ConfigLoader
 from bot.workspace.wiring import build_workspace_stack
 from modex_agent import (
@@ -60,6 +53,12 @@ from modex_agent.adapters.output import OutputAdapter
 from modex_agent.agents.external.providers.opencode.server_manager import (
     OpenCodeServerManager,
 )
+from modex_agent.app.config import AppConfig
+from modex_agent.app.models.choice import ModelChoiceRegistry
+from modex_agent.app.models.provider import ModelSelectionProvider
+from modex_agent.app.models.registry import ModelRegistry
+from modex_agent.app.roots import AppAssemblyRoots
+from modex_agent.app.service import AppService
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import (
@@ -68,14 +67,10 @@ from modex_agent.core.llm_struct import (
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,
 )
-from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.multi_agent.pool_instance import PoolInstance
-from modex_agent.multi_agent.pool_router import PoolRoutingStore
-from modex_agent.persistence.config import PersistenceBackend
+from modex_agent.multi_agent.execution_strategy import strategy_registry_from_components
 from modex_agent.persistence.session_registry import SessionRegistry
 from modex_agent.persistence.session_store import SessionStore
 from modex_agent.pipeline.adapters import InputAdapter
-from modex_agent.workspace.paths import WORKSPACE_STATE_DB
 
 from .builders import (
     AgentBuilderMixin,
@@ -86,7 +81,7 @@ from .builders import (
 logger = logging.getLogger(__name__)
 
 
-class BotService(AgentBuilderMixin):
+class BotService(AgentBuilderMixin, AppService):
     """Generic bot service supporting arbitrary InputAdapter/OutputAdapter pairs.
 
     Can be used for QQ, Discord, Feishu, DingTalk, Telegram, CLI, etc.
@@ -94,6 +89,12 @@ class BotService(AgentBuilderMixin):
 
     Runtime: AgentPool with MessageBroker routing.
     Accepts an IOC AppConfig object as the single source of truth.
+
+    Extends the framework :class:`~modex_agent.app.service.AppService`
+    skeleton: roots resolution, the component-registry load, the shared
+    persistence open/close pair, and the pool routing store come from the
+    base; the bot-specific assembly steps (model universe, MCP wiring,
+    workspace stack, personal preferences) are orchestrated here.
     """
 
     # Whether this service runs the WebUI. Set True by WebUIService; controls
@@ -111,9 +112,9 @@ class BotService(AgentBuilderMixin):
         # ── Assembly roots (DESIGN §3.2): explicit config/resource/runtime ──
         # None → resident identity (workspace home == resource root, every
         # derived path identical to the historical literals). A single-
-        # project entry passes BotAssemblyRoots(config_dir, resource_root,
+        # project entry passes AppAssemblyRoots(config_dir, resource_root,
         # workspace_home) with workspace_home = the bound project root.
-        roots: BotAssemblyRoots | None = None,
+        roots: AppAssemblyRoots | None = None,
         # False → single-project assembly: the /cd switch entry is disabled
         # and dynamic workspaces are not re-registered at boot. A business
         # assembly input — no provider/channel special-casing anywhere.
@@ -125,24 +126,24 @@ class BotService(AgentBuilderMixin):
         session_store: SessionStore | None = None,
         media_store: WorkspaceScopedMediaStore | None = None,
     ) -> None:
-        if roots is not None and roots.config_dir != config_dir.resolve():
-            raise ValueError(
-                f"roots.config_dir ({roots.config_dir}) does not match the "
-                f"config_dir argument ({config_dir.resolve()})"
-            )
-        self.roots = roots or BotAssemblyRoots.resident(
-            config_dir=config_dir, resource_root=self._project_dir
+        # AppService owns: roots resolution (incl. the config_dir mismatch
+        # guard), config_dir, input/output adapters, emitter factory, the
+        # shared component-registry/persistence/routing-store fields, and
+        # the cooperative shutdown event.
+        super().__init__(
+            config_dir,
+            input_adapter,
+            output_adapter,
+            emitter_factory,
+            roots=roots,
+            resource_root=self._project_dir,
         )
         self._enable_dynamic_workspaces = enable_dynamic_workspaces
-        self.config_dir = self.roots.config_dir
         self.config_loader = ConfigLoader(self.config_dir)
-        self.input_adapter = input_adapter
-        self.output_adapter = output_adapter
-        self.emitter_factory = emitter_factory
         self._app_config = app_config
         # Multi-model config (config/model.yml 的 models: 块) + per-turn choice
         # registry。_load_app_config 解析并缓存；_build_*_provider / wiring 读取。
-        self._bot_model_config: BotModelConfig | None = None
+        self._bot_model_config: ModelRegistry | None = None
         self._model_choice_registry: ModelChoiceRegistry | None = None
         if app_config is not None:
             # 子类（WebUIService/QQBotService）预加载了 AppConfig 传入——立即做
@@ -160,31 +161,14 @@ class BotService(AgentBuilderMixin):
         self._session_store: SessionStore | None = session_store
         self._media_store = media_store
 
-        # Multi-live workspace stack (built in initialize). Owns the registry,
-        # conversation map, resolver, controller, dispatcher, factory. The
-        # controller is the per-conversation WorkspaceControlPort passed to
-        # the cd/exit/pwd handlers; ``workspace_context`` is a compat alias.
-        self.workspace_stack: Any = None
-        self.workspace_context: Any = None
+        # Multi-live workspace stack (built in initialize; the base class
+        # declares the field, the bot's build_workspace_stack fills it).
         # The loaded scope declaration (ticket 14): ``None`` when
         # config/scopes/bot.yml is absent. Its workspace layer selects the
         # multi-live stack shape (N15 — the ``workspace.enabled`` flag is
         # dead; declaration absence IS the single-workspace form) and its
         # resource-selection overrides resolve onto ``_app_config`` at boot.
         self._scope_spec: Any = None
-        # Eagerly materialized home resources (the default workspace). Holds
-        # the home pools + router; BotService.start/stop operate on these for
-        # v1 (home-only materialization).
-        self._home_resources: Any = None
-
-        # Multi-pool view of the HOME workspace (compat for _print_pool_info
-        # and any direct readers). Per-workspace pools live on each R.
-        self._pools: dict[str, PoolInstance] = {}
-        self.pool_router: Any = None
-        # Service-level session→pool mapping store. Shared across workspaces so
-        # a mapping written by the WebUI (or ResolvePoolStage) is visible to the
-        # pool_router of whatever workspace ultimately dispatches the message.
-        self._pool_session_store: PoolRoutingStore | None = None
 
         # Personal-assistant preferences owner (PA-06/PA-07). Built from
         # roots.config_dir in __init__ — the SAME object backs the REST
@@ -207,22 +191,8 @@ class BotService(AgentBuilderMixin):
         # external added in ticket 4). Threaded through wiring.py into
         # create_pool so react pools are assembled via
         # ReactExecutionStrategy.assemble() instead of inline _build_* calls.
-        self._strategy_registry: Any = None
-
-        # Component registry (loaded in initialize() before pool creation).
-        # The registry holds all plugin-registered component factories
-        # (DefaultPlugin bundled + project plugins from
-        # examples/bot_project/plugins/); pool/agent config lives in the
-        # scope declaration (config/scopes/bot.yml).
-        self._component_registry: Any = None
+        # (The base class declares the field.)
         self._service_assembly_ctx: AssemblyContext | None = None
-
-        # T26: Registry-level SQLite persistence manager. Opened at initialize()
-        # (before workspace materialize), closed at stop() AFTER evict_all (the
-        # registry DB is the last-to-close persistence layer). None when
-        # backend is FILE or initialize() hasn't run yet.
-        self._registry_persistence: RegistryPersistenceManager | None = None
-        self._home_persistence: WorkspacePersistenceManager | None = None
 
         # Maintenance
         self._maintenance_task: asyncio.Task | None = None
@@ -240,10 +210,6 @@ class BotService(AgentBuilderMixin):
 
         # Router task (the workspace dispatcher loop)
         self._router_task: asyncio.Task | None = None
-
-        # Runtime control
-        self._shutdown_event = asyncio.Event()
-        self._tasks: list[asyncio.Task] = []
 
     @property
     def _default_pool_name(self) -> str | None:
@@ -352,7 +318,7 @@ class BotService(AgentBuilderMixin):
     def _build_default_provider(self) -> LLMProvider | None:
         """Build the default pool's LLM provider (memory/summarizer layer).
 
-        统一用 BotModelProvider：未设置 ContextVar 时（memory summarizer、后台任务）
+        Uniformly ModelSelectionProvider: when the ContextVar is unset (memory summarizer, background tasks)
         自动落到默认模型。
 
         Returns ``None`` when ``model.yml`` is absent or unconfigured — the bot
@@ -364,9 +330,9 @@ class BotService(AgentBuilderMixin):
         """
         if self._bot_model_config is None:
             return None
-        return BotModelProvider(self._bot_model_config)
+        return ModelSelectionProvider(self._bot_model_config)
 
-    def _load_bot_model_config_for_listing(self) -> BotModelConfig | None:
+    def _load_bot_model_config_for_listing(self) -> ModelRegistry | None:
         """Re-read config/model.yml fresh for GET /api/models (live refresh).
 
         The selector must reflect CLI edits (``modexbot model``) without a server
@@ -379,7 +345,7 @@ class BotService(AgentBuilderMixin):
         if not model_yml.exists():
             return None
         try:
-            return BotModelConfig.from_yaml(model_yml)
+            return ModelRegistry.from_yaml(model_yml)
         except (ValidationError, yaml.YAMLError, OSError):
             logger.exception("model.yml parse failed for /api/models listing")
             return None
@@ -487,7 +453,7 @@ class BotService(AgentBuilderMixin):
         # Set ``sharedRegistry: false`` in config/mcp/registry.json to disable
         # and fall back to today's per-pool MCPClientManager path.
         from bot.config.mcp_registry import read_registry, read_shared_registry_flag
-        from modex_agent.ioc.configs.app import _resolve_env_in
+        from modex_agent.app.config import resolve_env_in
         from modex_agent.tools.mcp.injector import JsonFileMCPTransportInjector
         from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
@@ -503,7 +469,7 @@ class BotService(AgentBuilderMixin):
                 # ${ENV} interpolation MUST happen before the registry hashes
                 # and connects, else tokens like ${MY_TOKEN} reach the
                 # subprocess literally.
-                servers = _resolve_env_in(raw_servers)
+                servers = resolve_env_in(raw_servers)
                 self._mcp_registry = McpConnectionRegistry(
                     servers=servers,
                     injector=JsonFileMCPTransportInjector(),
@@ -555,60 +521,23 @@ class BotService(AgentBuilderMixin):
             self.control_channel = _build_control_channel(self.control_channel)
             self.command_processor = _build_main_command_processor()
 
-            # Component registry: load DefaultPlugin (bundled FW defaults) +
-            # project plugins from examples/bot_project/plugins/ (BotStrategies,
-            # BotHooks, IMInputStages, and any user-added plugins). Loaded once
-            # at service level so all pools share the same factory set.
-            from modex_agent.plugins.defaults import DefaultPlugin
-            from modex_agent.plugins.loader import (
-                ComponentRegistryLoader,
-                PluginDiscoveryConfig,
-            )
-            from modex_agent.plugins.registry import (
-                ComponentRegistry,
-                strategy_registry_from_components,
-            )
-
-            self._component_registry = ComponentRegistry()
-            await ComponentRegistryLoader.load(
-                self._component_registry,
-                PluginDiscoveryConfig(
-                    bundled_factories=(DefaultPlugin(),),
-                    project_plugin_paths=(self.roots.plugins_dir,),
-                ),
-            )
+            # Component registry: DefaultPlugin (bundled FW defaults) + the
+            # project plugins under roots.plugins_dir (BotHooks,
+            # IMInputStages, and any user-added plugins) — the framework
+            # block; loaded once at service level so all pools share the
+            # same factory set.
+            self._component_registry = await self._load_component_registry()
             self._strategy_registry = strategy_registry_from_components(
                 self._component_registry
             )
-            logger.info("Component registry: %s", self.roots.plugins_dir)
 
             # T26: open the registry DB BEFORE workspace materialization so the
             # registry store is ready when workspaces start using it. The
             # registry DB closes LAST at stop() (after all workspaces evicted).
-            if self._app_config.persistence.backend is PersistenceBackend.SQLITE:
-                from modex_agent.persistence.managers import (
-                    RegistryPersistenceManager,
-                    WorkspacePersistenceManager,
-                )
+            await self._open_shared_persistence(self._app_config)
 
-                registry_db_path = self.roots.registry_db_path(
-                    self._app_config.paths.data_dir_name
-                )
-                self._registry_persistence = RegistryPersistenceManager(registry_db_path)
-                await self._registry_persistence.open()
-
-                home_db_path = self.roots.home_db_path(self._app_config.paths.data_dir_name)
-                self._home_persistence = WorkspacePersistenceManager(home_db_path)
-                await self._home_persistence.open()
-
-            from bot.service.builders import build_pool_routing_store
-
-            home_data_dir = self.roots.home_data_dir(self._app_config.paths.data_dir_name)
-            self._pool_session_store = build_pool_routing_store(
-                self._app_config,
-                self._home_persistence,
-                data_dir=home_data_dir,
-                db_path=home_data_dir / WORKSPACE_STATE_DB,
+            self._pool_session_store = await self._build_pool_session_store(
+                self._app_config
             )
 
             self.workspace_stack = build_workspace_stack(
@@ -668,18 +597,8 @@ class BotService(AgentBuilderMixin):
             if self._mcp_registry is not None:
                 with contextlib.suppress(BaseException):
                     await self._mcp_registry.shutdown()
-            if resources_evicted and self._pool_session_store is not None:
-                with contextlib.suppress(BaseException):
-                    self._pool_session_store.close()
-                self._pool_session_store = None
-            if resources_evicted and self._home_persistence is not None:
-                with contextlib.suppress(BaseException):
-                    await self._home_persistence.close()
-                self._home_persistence = None
-            if resources_evicted and self._registry_persistence is not None:
-                with contextlib.suppress(BaseException):
-                    await self._registry_persistence.close()
-                self._registry_persistence = None
+            if resources_evicted:
+                await self._close_shared_persistence()
             raise
 
     def _print_pool_info(self) -> None:
@@ -840,7 +759,7 @@ class BotService(AgentBuilderMixin):
         # background tasks stop inside evict_all and may still need them.
         # getattr guard: partial-init instances (tests build via __new__) skip.
         provider = getattr(self, "_default_provider", None)
-        if isinstance(provider, BotModelProvider):
+        if isinstance(provider, ModelSelectionProvider):
             with contextlib.suppress(BaseException):
                 await provider.aclose()
         # Shut down the shared MCP registry AFTER evicting workspaces: evict_all
@@ -853,19 +772,8 @@ class BotService(AgentBuilderMixin):
                 await self._mcp_registry.shutdown()
         with contextlib.suppress(BaseException):
             await self.input_adapter.stop()
-        if self._pool_session_store is not None:
-            with contextlib.suppress(BaseException):
-                self._pool_session_store.close()
-            self._pool_session_store = None
-        if self._home_persistence is not None:
-            with contextlib.suppress(BaseException):
-                await self._home_persistence.close()
-            self._home_persistence = None
-        # T26: registry DB closes LAST — after all workspaces are evicted (their
-        # workspace DBs close inside _stop_resources) and after the MCP registry
-        # and input adapter stop. The registry DB is the global, last-to-close
-        # persistence layer.
-        if self._registry_persistence is not None:
-            with contextlib.suppress(BaseException):
-                await self._registry_persistence.close()
-            self._registry_persistence = None
+        # T26: the shared persistence tail (pool routing store → home DB →
+        # registry DB, the global last-to-close layer) comes from the
+        # framework skeleton — after all workspaces are evicted and the MCP
+        # registry and input adapter stop.
+        await self._close_shared_persistence()

@@ -12,7 +12,7 @@ from bot.eval.judge_pass import ExperimentWindow, JudgePassConfig, JudgePassEnvi
 from typer.testing import CliRunner
 
 from modex_agent.core.provider import LLMProvider
-from modex_agent.runtime.models import JsonValue
+from modex_agent.core.turn.models import JsonValue
 
 
 def test_judge_requires_independent_model_env(

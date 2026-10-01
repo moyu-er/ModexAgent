@@ -31,7 +31,7 @@ from modex_agent.core.message import MessageRole
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.stream_events import Finish, LLMStreamEvent, TextDelta, ToolCallComplete
 from modex_agent.memory.context import InMemoryContextManager
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.multi_agent.session_tree.models import NodeVersionStatus

@@ -88,14 +88,14 @@ def test_pool_source_archive_contains_runtime_surface_without_excluded_trees(
         "examples/bot_project/bot/eval/probes/budget.py",
         "examples/bot_project/bot/input_pipeline/__init__.py",
         "examples/bot_project/bot/scope.py",
-        "examples/bot_project/bot/service/pool/factory.py",
+        "src/modex_agent/plugins/assembly/pool_factory.py",
         "examples/bot_project/bot/utils/__init__.py",
         "examples/bot_project/bot/webui/transcript_store.py",
         "examples/bot_project/bot/workspace/__init__.py",
         "examples/bot_project/config/bot_config.yml",
         "examples/bot_project/config/scopes/bot.yml",
-        "examples/bot_project/plugins/bot_hooks.py",
-        "examples/bot_project/plugins/bot_strategies.py",
+        "examples/bot_project/bot_plugins/bot_hooks.py",
+        "examples/bot_project/bot_plugins/bot_channels.py",
         "examples/bot_project/bot/service/pool/declaration.py",
         "examples/bot_project/pyproject.toml",
         ENTRY_SOURCE_PATH,
@@ -187,12 +187,15 @@ def test_pool_source_archive_carries_default_skills_tree(tmp_path: Path) -> None
     }
     # Presence-derived golden: pin the skills tree that exists on disk.
     # The skills/coder tree is deleted; only the default pool's skills ship.
+    # The disk scan applies the archive's own source-content filter
+    # (``_is_source_content``): __pycache__/.pyc artifacts appear on disk
+    # whenever the skill scripts are executed, but never ship in the archive.
     skills_default_root = _BOT_PROJECT_DIR / "skills" / "default"
     expected_members = {
         "examples/bot_project/skills/default/"
         + path.relative_to(skills_default_root).as_posix()
         for path in skills_default_root.rglob("*")
-        if path.is_file()
+        if path.is_file() and source_package._is_source_content(path, _REPO_ROOT)  # noqa: SLF001
     }
     assert expected_members
     assert expected_members <= skills_members

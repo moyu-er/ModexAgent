@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.plugins.capability import AgentDeclarationView
+from modex_agent.core.tool_vocabulary import ToolPreset
 from modex_agent.plugins.defaults.capabilities.shell import (
     SHELL_CAPABILITY_NAME,
     ShellCapability,
 )
 from modex_agent.plugins.loader import Plugin, PluginRegistrationContext
-from modex_agent.tools.presets import ToolPreset
+from modex_agent.scope.capability import AgentDeclarationView
 
 _AUTO_SHELL_TOOLSETS = frozenset(
     {

@@ -26,11 +26,11 @@ from bot.adapters.qq._ws_state import (
     _read_channel_ws,
     _write_channel_ws,
 )
-from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
 from modex_agent.pipeline.adapters import (
     InputAdapter,
     InputMessage,
 )
+from modex_agent.pipeline.input.envelope import AttachmentRef, UserInputEnvelope
 
 
 class QQInputAdapter(InputAdapter):

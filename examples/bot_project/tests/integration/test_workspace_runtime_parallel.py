@@ -2,7 +2,7 @@
 
 One real-service harness (``BotService`` boots from a workspace-layer scope
 declaration; ONLY the LLM is scripted, patched onto
-``BotModelProvider.stream``) drives three scenarios:
+``ModelSelectionProvider.stream``) drives three scenarios:
 
 1. **Runtime creation (the WebUI road)** — ``create_workspace`` writes the
    per-workspace declaration under ``config/scopes/workspaces/``, then
@@ -46,7 +46,6 @@ import pytest
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.core import BotService
 from bot.service.media_store import WorkspaceScopedMediaStore
-from bot.service.roots import BotAssemblyRoots
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
 from bot.workspace.dynamic_workspaces import (
@@ -58,11 +57,12 @@ from bot.workspace.dynamic_workspaces import (
 from modex_agent.adapters.emitter import StreamingAwareEmitter
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
+from modex_agent.app.config import AppConfig
+from modex_agent.app.roots import AppAssemblyRoots
 from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.messaging.models import InputMessage, OutputMessage
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.workspace.runtime import resolve_workspace_root
@@ -103,7 +103,7 @@ def _tool_names(tools: list[dict[str, Any]] | None) -> set[str]:
 
 @dataclass
 class _ScriptedLLM:
-    """Drives ``BotModelProvider.stream`` for every pool/agent/turn.
+    """Drives ``ModelSelectionProvider.stream`` for every pool/agent/turn.
 
     Echo mode (creation/routing tests): reply ``echo:<last user content>``.
 
@@ -308,8 +308,8 @@ def _write_minimal_config(project_dir: Path) -> None:
     # <project>/plugins by BotService — a bootable project carries the real
     # plugin set, so the synthetic one must too.
     shutil.copytree(
-        Path(__file__).resolve().parents[2] / "plugins",
-        project_dir / "plugins",
+        Path(__file__).resolve().parents[2] / "bot_plugins",
+        project_dir / "bot_plugins",
         dirs_exist_ok=True,
     )
 
@@ -399,7 +399,7 @@ async def _boot(
         output_adapter=output_adapter,
         emitter_factory=emitter_factory,
         app_config=app_config,
-        roots=BotAssemblyRoots.resident(config_dir=tmp_path / "config", resource_root=tmp_path),
+        roots=AppAssemblyRoots.resident(config_dir=tmp_path / "config", resource_root=tmp_path),
     )
     assert service.roots.workspace_home == tmp_path.resolve()
     assert service.roots.scope_declaration_path == tmp_path / "config" / "scopes" / "bot.yml"
@@ -410,7 +410,8 @@ async def _boot(
     script = _ScriptedLLM(probe_mode=probe_mode)
 
     import bot.service.core as core_mod
-    from bot.service.model_provider import BotModelProvider
+
+    from modex_agent.app.models.provider import ModelSelectionProvider
 
     monkeypatch.setattr(
         core_mod.BotService, "_build_default_provider", lambda self: _EchoDefaultProvider()
@@ -421,7 +422,7 @@ async def _boot(
 
     class _ScriptedBridge(CallbackStreamProvider):
         """Bridge the callback-scripted LLM onto the native event surface
-        ReactLlmClient consumes (BotModelProvider.stream)."""
+        ReactLlmClient consumes (ModelSelectionProvider.stream)."""
 
         def get_default_model(self) -> str:
             return "scripted"
@@ -443,7 +444,7 @@ async def _boot(
             )
 
     monkeypatch.setattr(
-        BotModelProvider,
+        ModelSelectionProvider,
         "stream",
         lambda self, request: _ScriptedBridge().stream(request),
     )

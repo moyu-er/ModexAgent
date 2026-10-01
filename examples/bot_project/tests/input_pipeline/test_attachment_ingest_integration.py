@@ -18,11 +18,11 @@ from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
 from bot.service.media_store import WorkspaceScopedMediaStore
-from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 
+from modex_agent.app.models.registry import ModelCfg, ModelRegistry, ProviderCfg
 from modex_agent.core.media import AttachmentLocator, Kind
-from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
+from modex_agent.pipeline.input.envelope import AttachmentRef, UserInputEnvelope
 from modex_agent.workspace.runtime import bind_workspace_root
 from tests.input_pipeline.assembly_support import (
     TEST_ASSEMBLY_CTX,
@@ -32,8 +32,8 @@ from tests.input_pipeline.assembly_support import (
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
-def _bot_model_config() -> BotModelConfig:
-    return BotModelConfig(
+def _bot_model_config() -> ModelRegistry:
+    return ModelRegistry(
         default_provider="A",
         default_model="M1",
         providers=[

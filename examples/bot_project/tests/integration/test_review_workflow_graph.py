@@ -396,6 +396,7 @@ class TestE2EStepFun:
     ) -> None:
         from bot.graph.agent_node import BotAgentNode, SessionStrategy
 
+        from modex_agent.agents.react.hooks.deliver_retry import DeliverRetryHook
         from modex_agent.core import AgentCommKind
         from modex_agent.core.agent import ExecutionStrategyKind
         from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
@@ -404,16 +405,15 @@ class TestE2EStepFun:
             RuntimeSafetyPolicy,
             TurnTimeoutPolicy,
         )
-        from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
-        from modex_agent.ioc.configs.llm import LLMConfig
-        from modex_agent.ioc.factories.descriptors import build_session_only_memory
-        from modex_agent.ioc.factories.llm import create_llm_provider
+        from modex_agent.memory.assembly import build_session_only_memory
         from modex_agent.memory.scope import MemoryAgentRole
-        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.messaging.agent_messages import AgentAddress
         from modex_agent.multi_agent.descriptor import (
             AgentDescriptor,
             AgentLLMConfig,
         )
+        from modex_agent.providers.factory import create_llm_provider
+        from modex_agent.providers.llm_config import LLMConfig
 
         mc = e2e_model_config
         provider = create_llm_provider(
@@ -674,15 +674,15 @@ class TestE2EReviewLoopWithMemory:
             RuntimeSafetyPolicy,
             TurnTimeoutPolicy,
         )
-        from modex_agent.ioc.configs.llm import LLMConfig
-        from modex_agent.ioc.factories.descriptors import build_session_only_memory
-        from modex_agent.ioc.factories.llm import create_llm_provider
+        from modex_agent.memory.assembly import build_session_only_memory
         from modex_agent.memory.scope import MemoryAgentRole
-        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.messaging.agent_messages import AgentAddress
         from modex_agent.multi_agent.descriptor import (
             AgentDescriptor,
             AgentLLMConfig,
         )
+        from modex_agent.providers.factory import create_llm_provider
+        from modex_agent.providers.llm_config import LLMConfig
 
         mc = e2e_model_config
         provider = create_llm_provider(

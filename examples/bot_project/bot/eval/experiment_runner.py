@@ -66,10 +66,10 @@ from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolManager
+from modex_agent.core.turn.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.plugins.assembly.single_agent import SingleAgentAssembled
-from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.trace.cassette import CassetteRecorder, CassetteReplayEngine
 from modex_agent.trace.scoring import TrajectoryMetrics

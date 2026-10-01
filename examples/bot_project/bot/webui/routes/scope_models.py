@@ -16,7 +16,6 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from modex_agent.core.tool_manager import ToolOrigin
-from modex_agent.plugins.abc import PluginSource
 from modex_agent.scope import (
     CapabilityContributionKind,
     CapabilityGateResult,
@@ -25,6 +24,7 @@ from modex_agent.scope import (
     ProvenanceLayer,
     ScopeKind,
 )
+from modex_agent.scope.component_registry import PluginSource
 
 # Effective-value union for one bill field: scalar (toolset / registration /
 # max_steps), list (tools / capabilities), or the memory override face

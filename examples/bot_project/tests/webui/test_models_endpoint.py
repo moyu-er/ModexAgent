@@ -11,10 +11,11 @@ from aiohttp.test_utils import TestClient, TestServer
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.webui import server as srv
 
-_CFG = BotModelConfig(
+from modex_agent.app.models.registry import ModelCfg, ModelRegistry, ProviderCfg
+
+_CFG = ModelRegistry(
     default_provider="A",
     default_model="M1",
     providers=[
@@ -90,7 +91,7 @@ async def test_models_endpoint_live_refreshes_and_leaks_no_secret(tmp_path: Path
     inst = srv.WebUIServer.__new__(srv.WebUIServer)
     # Production wires a loader that re-reads model.yml per request so CLI edits
     # to the model list appear without a server restart.
-    inst.set_model_config_loader(lambda: BotModelConfig.from_yaml(model_yml))
+    inst.set_model_config_loader(lambda: ModelRegistry.from_yaml(model_yml))
     app.router.add_get("/api/models", inst._handle_models)
     client = TestClient(TestServer(app))
     await client.start_server()

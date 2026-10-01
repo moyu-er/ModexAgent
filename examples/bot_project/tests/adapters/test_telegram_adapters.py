@@ -51,8 +51,8 @@ async def test_receive_yields_input_message_after_put() -> None:
 
 @pytest.mark.asyncio
 async def test_handle_text_message_seeds_pipeline_and_surfaces_terminate() -> None:
-    from modex_agent.input_pipeline.envelope import UserInputEnvelope
-    from modex_agent.input_pipeline.stage import Terminate
+    from modex_agent.pipeline.input.envelope import UserInputEnvelope
+    from modex_agent.pipeline.input.stage import Terminate
 
     inp = TelegramInputAdapter(token="t", allow_from=["*"], proxy=None)
 

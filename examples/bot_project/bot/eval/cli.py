@@ -57,8 +57,8 @@ from bot.eval.judge_cli import judge as judge_command
 from bot.eval.task_spec import EvalItemSpec, EvalToolset
 from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.provider import LLMProvider
-from modex_agent.ioc.configs.llm import LLMConfig
-from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.providers.factory import create_llm_provider
+from modex_agent.providers.llm_config import LLMConfig
 from modex_agent.trace.cassette import CassetteRecorder, CassetteReplayEngine
 from modex_agent.trace.langfuse_query import (
     _MAX_PAGES,

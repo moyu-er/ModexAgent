@@ -26,7 +26,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from modex_agent.ioc.configs.mcp import MCPServerEntry
+from modex_agent.tools.mcp_config import MCPServerEntry
 
 REGISTRY_PATH = Path("config/mcp/registry.json")
 

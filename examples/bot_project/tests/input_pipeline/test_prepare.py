@@ -27,17 +27,17 @@ from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.prepare import Handled, Prepared
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
-from plugins.im_input_stages import IMInputStagesPlugin
+from bot_plugins.im_input_stages import IMInputStagesPlugin
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.input_pipeline.context import InputContext
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
-from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
 from modex_agent.messaging.models import InputMessage
-from modex_agent.plugins.abc import SimpleFactory
+from modex_agent.pipeline.input.context import InputContext
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.stage import Continue, InputStage, StageResult
 from modex_agent.plugins.assembly.context import AssemblyContext
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import SimpleFactory
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.runtime import bind_workspace_root
 from tests.input_pipeline.assembly_support import (
@@ -161,7 +161,7 @@ async def test_im_handle_prepares_then_enqueues_once_via_sync_callback() -> None
                 skill_registry=_NoSkill(),
                 known_pools={"main"},
             )
-            from modex_agent.input_pipeline.envelope import UserInputEnvelope
+            from modex_agent.pipeline.input.envelope import UserInputEnvelope
 
             envelope = UserInputEnvelope(external_id="u1", content="hello", channel="qq")
             result = await pipe.handle(envelope, ctx)
@@ -191,7 +191,7 @@ async def test_im_handle_continue_enqueued_once_not_persisted() -> None:
                 skill_registry=_NoSkill(),
                 known_pools={"main"},
             )
-            from modex_agent.input_pipeline.envelope import UserInputEnvelope
+            from modex_agent.pipeline.input.envelope import UserInputEnvelope
 
             result = await pipe.handle(
                 UserInputEnvelope(external_id="u1", content="/continue", channel="qq"),
@@ -220,7 +220,7 @@ async def test_webui_handle_terminate_exact_adapter_shape() -> None:
                 skill_registry=_NoSkill(),
                 bot_model_config=_bot_model_config(),
             )
-            from modex_agent.input_pipeline.envelope import UserInputEnvelope
+            from modex_agent.pipeline.input.envelope import UserInputEnvelope
 
             result = await pipe.handle(
                 UserInputEnvelope(
@@ -279,7 +279,7 @@ async def test_handle_preserves_per_stage_terminate_shapes(
                 known_pools={"main", "coding"},
             )
             ctx.command_adapter._try_intercept_control.return_value = content == "/stop"
-            from modex_agent.input_pipeline.envelope import UserInputEnvelope
+            from modex_agent.pipeline.input.envelope import UserInputEnvelope
 
             result = await pipe.handle(
                 UserInputEnvelope(external_id="u1", content=content, channel="qq"),
@@ -312,7 +312,7 @@ async def test_handle_handled_without_delivery_keeps_continue_shape() -> None:
                 skill_registry=_NoSkill(),
                 known_pools={"main"},
             )
-            from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
+            from modex_agent.pipeline.input.envelope import CommandStatus, UserInputEnvelope
 
             envelope = UserInputEnvelope(external_id="u1", content="hi", channel="qq")
             envelope.command_status = CommandStatus.HANDLED

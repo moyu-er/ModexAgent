@@ -184,10 +184,10 @@ async def test_pool_survives_multiple_attach_cycles() -> None:
 @pytest.mark.asyncio
 async def test_im_conversation_stored_in_current_workspace() -> None:
     """IM messages written while on the default workspace are visible there."""
-    from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
     from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
@@ -242,10 +242,10 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
     In the new model each workspace has its own data dir (``.modex/sessions/``),
     so sessions are physically separate.
     """
-    from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
     from modex_agent.utils.time import now_ms
 
     data_dir_a = Path(tempfile.mkdtemp())
@@ -442,9 +442,8 @@ def test_relation_store_follows_workspace_switch() -> None:
     """WorkspacePoolSessionStore writes sessions to the CURRENT workspace."""
     import asyncio
 
-    from bot.service.session_store import WorkspacePoolSessionStore
-
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
 
     data_dir = Path(tempfile.mkdtemp())
     _ws: list[str] = ["home"]

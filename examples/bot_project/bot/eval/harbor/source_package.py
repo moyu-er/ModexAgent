@@ -22,7 +22,7 @@ _POOL_SOURCE_ROOTS: Final = (
     "examples/bot_project/bot/tools",
     "examples/bot_project/bot/utils",
     "examples/bot_project/bot/workspace",
-    "examples/bot_project/plugins",
+    "examples/bot_project/bot_plugins",
     # Runtime data, not code: the SkillsSupply catalogs read each agent's
     # skills/<pool>/<agent>/ assignment tree directly from disk.
     # The skills/coder tree is deleted — the coder pool ships no skills.
@@ -61,7 +61,7 @@ _POOL_DATA_FILES: Final = (
     "examples/bot_project/bot/memory/vendor/cl100k_base.tiktoken",
 )
 _BOT_SOURCE_ROOT: Final = "examples/bot_project/bot"
-_PROJECT_MODULES: Final = frozenset({"bot", "modex_agent", "modex_graph", "plugins"})
+_PROJECT_MODULES: Final = frozenset({"bot", "modex_agent", "modex_graph"})
 _IGNORED_PARTS: Final = frozenset({"__pycache__", ".mypy_cache"})
 _IGNORED_SUFFIXES: Final = frozenset({".pyc", ".pyo"})
 _FIXED_MTIME: Final = 0

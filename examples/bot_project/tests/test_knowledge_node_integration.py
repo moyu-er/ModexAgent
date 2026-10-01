@@ -10,6 +10,7 @@ from bot.graph.agent_node_factory import BotAgentNodeConfig, BotAgentNodeFactory
 from modex_agent.agents.agent_node import AgentNode
 from modex_agent.core.agent import AgentCommKind, ExecutionStrategyKind
 from modex_agent.core.tool_manager import Tool
+from modex_agent.core.turn.enums import TurnCustomKey
 from modex_agent.persistence.session_registry import InMemorySessionRegistry
 from modex_agent.pipeline.turn_context_config import (
     GraphKnowledgeConfigurator,
@@ -17,7 +18,6 @@ from modex_agent.pipeline.turn_context_config import (
     GraphTurnArtifacts,
     TurnContextDescriptor,
 )
-from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.tools.graph_knowledge_tool import GraphKnowledgeBaseTool
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.paths import WorkspacePaths

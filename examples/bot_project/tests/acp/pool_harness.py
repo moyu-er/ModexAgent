@@ -9,28 +9,29 @@ from bot.input_pipeline.context import BotInputContext
 from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
 from modex_agent.approval.ui import IMUserInterface
 from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool
-from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
-from modex_agent.ioc.factories.approval import build_approval_runtime
 from modex_agent.memory.context import InMemoryContextManager
+from modex_agent.messaging.agent_messages import (
+    AgentAddress,
+    AgentMessageEnvelope,
+    AgentMessageType,
+)
 from modex_agent.messaging.broker import AddressKind
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.messaging.models import BrokerInputPayload, InputMessage
 from modex_agent.multi_agent import AgentDescriptor, AgentFactory, AgentPool
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.descriptor import AgentInstance
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.inbox_poller import InboxPoller
-from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.session_tree.request_scope import REQUEST_SCOPE_ID_KEY
 from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStore
@@ -43,6 +44,7 @@ from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager
@@ -121,11 +123,11 @@ async def build_runtime(root: Path, provider: LLMProvider, *, approval: bool,
                         child_provider: LLMProvider | None = None, child_approval: bool = False) -> tuple[AcpRuntime, list[str]]:
     from bot.input_pipeline.assembly import build_acp_pipeline
     from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
-    from plugins.im_input_stages import IMInputStagesPlugin
+    from bot_plugins.im_input_stages import IMInputStagesPlugin
 
     from modex_agent.multi_agent.pool_router import PoolSessionStore
     from modex_agent.plugins.assembly.context import AssemblyContext
-    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.scope.component_registry import ComponentRegistry
 
     runtime = _Runtime(root, AcpEntryConfig())
     runtime.hub = AcpEmitterHub(resolver=runtime._root_session_for)

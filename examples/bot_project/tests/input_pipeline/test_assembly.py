@@ -6,28 +6,28 @@ from unittest.mock import MagicMock
 
 import pytest
 from bot.input_pipeline.assembly import build_im_pipeline, build_webui_pipeline
-from bot.input_pipeline.stages.approval import ApprovalStage
-from bot.input_pipeline.stages.attachment_ingest import AttachmentIngestStage
-from bot.input_pipeline.stages.command import CommandDispatchStage
 from bot.input_pipeline.stages.model_choice import ModelChoiceStage
 from bot.input_pipeline.stages.resolve_workspace import ResolveWorkspaceStage
 from bot.input_pipeline.stages.skill_parse import (
     PoolSkillResolverRegistry,
     SkillParseStage,
 )
-from bot.input_pipeline.stages.unsupported_command import UnsupportedCommandStage
-from bot.service.model_config import BotModelConfig
-from plugins.im_input_stages import IMInputStagesPlugin
+from bot_plugins.im_input_stages import IMInputStagesPlugin
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.input_pipeline.context import InputContext
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
-from modex_agent.input_pipeline.pipeline import UserInputPipeline
-from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
-from modex_agent.plugins.abc import ComponentFactory
+from modex_agent.app.models.registry import ModelRegistry
+from modex_agent.pipeline.input.context import InputContext
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.pipeline import UserInputPipeline
+from modex_agent.pipeline.input.stage import Continue, InputStage, StageResult
+from modex_agent.pipeline.input.stages.approval import ApprovalStage
+from modex_agent.pipeline.input.stages.attachment_ingest import AttachmentIngestStage
+from modex_agent.pipeline.input.stages.command import CommandDispatchStage
+from modex_agent.pipeline.input.stages.unsupported_command import UnsupportedCommandStage
 from modex_agent.plugins.assembly.context import AssemblyContext
 from modex_agent.plugins.loader import Plugin, PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentFactory
 from modex_agent.workspace.context import WorkspaceContext
 from tests.input_pipeline.assembly_support import (
     TEST_ASSEMBLY_CTX,
@@ -67,14 +67,14 @@ def _registry_with_custom_input_stage() -> ComponentRegistry:
     return registry
 
 
-def _write_cfg(tmp_path: Path) -> BotModelConfig:
+def _write_cfg(tmp_path: Path) -> ModelRegistry:
     p = tmp_path / "model.yml"
     p.write_text(
         'models:\n  default_provider: "A"\n  default_model: "M1"\n  providers:\n'
         '    - {key: a, name: "A", url: u, api_key: k, models: [{name: M1, model: m1}]}\n',
         encoding="utf-8",
     )
-    return BotModelConfig.from_yaml(p)
+    return ModelRegistry.from_yaml(p)
 
 
 async def test_im_pipeline_consumes_custom_input_stage_plugin(tmp_path: Path) -> None:
@@ -164,7 +164,7 @@ async def test_empty_input_stage_registry_raises_loudly(tmp_path: Path) -> None:
     """A registry with NO INPUT_STAGE factories must fail loudly at the
     first skeleton resolve (ComponentNotFoundError) — never silently build
     an empty/near-empty pipeline."""
-    from modex_agent.plugins.registry import ComponentNotFoundError
+    from modex_agent.scope.component_registry import ComponentNotFoundError
 
     empty_registry = ComponentRegistry()
     assembly_ctx = AssemblyContext(
@@ -191,7 +191,7 @@ async def test_pipelines_build_with_directory_discovered_registry(tmp_path: Path
     The REAL service registry is built via directory discovery
     (``ComponentRegistryLoader`` over ``plugins/``), which imports each
     plugin file under a synthetic module name — while ordinary imports
-    resolve the same file as the ``plugins.im_input_stages`` package. The
+    resolve the same file as the ``bot_plugins.im_input_stages`` package. The
     pipeline builder must construct stage configs from the
     registry-resolved factory's OWN ``config_model``; constructing them
     from a direct plugin-module import makes the two module identities
@@ -210,7 +210,7 @@ async def test_pipelines_build_with_directory_discovered_registry(tmp_path: Path
         registry,
         PluginDiscoveryConfig(
             bundled_factories=(DefaultPlugin(),),
-            project_plugin_paths=(Path(__file__).resolve().parents[2] / "plugins",),
+            project_plugin_paths=(Path(__file__).resolve().parents[2] / "bot_plugins",),
         ),
     )
     assembly_ctx = AssemblyContext(

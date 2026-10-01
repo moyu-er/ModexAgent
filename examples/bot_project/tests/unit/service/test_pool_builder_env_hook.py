@@ -7,7 +7,7 @@ main agent and whose ``targets`` carries every subagent + every peer main,
 so native main agents can use ``modexctl send --to <any agent>`` and
 ``modexctl agents`` as a send_to_agent alternative.
 
-The retired inline construction in ``_wire_main_pipeline`` died with the W6
+The retired inline construction in ``wire_main_pipeline`` died with the W6
 glue eradication (ADR-0047): the hook is a compiler position-default roster
 entry and the factory derives the template from the pool assembly context
 on the assembly chain (ADR-0022 D6 unchanged — the pool_map/targets must be
@@ -26,17 +26,17 @@ import pytest
 # Bot tests resolve ``bot.*`` via the repo root inserted into sys.path.
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from modex_agent.hook.builtin import NativeEnvInjectionHook
+from modex_agent.agents.react.hooks.env_injection import NativeEnvInjectionHook
 from modex_agent.multi_agent.communication.peer_resolution import PeerLink
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
-from modex_agent.plugins.abc import AgentType
 from modex_agent.plugins.assembly.context import (
     PoolRuntimeDeps,
     agent_context_chain,
     resolution_context,
 )
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
 from modex_agent.plugins.defaults.hooks import NativeEnvInjectionHookFactory
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides
+from modex_agent.scope.components import AgentType
 from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths

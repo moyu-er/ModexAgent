@@ -11,8 +11,9 @@ from bot.service.pool.declaration import boot_scope_spec
 from modex_agent.core.emitter import StopReason
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
+from modex_agent.core.turn.enums import TurnCustomKey
 from modex_agent.hook import HookSpec, OutcomeFinallyHook
-from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.memory.config import MemoryConfig
 from modex_agent.memory.consolidation.dream_engine import DreamEngine
 from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.scope import MemoryAgentRole, MemoryLayerName
@@ -24,9 +25,8 @@ from modex_agent.plugins.assembly.single_agent import (
 )
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.runtime.services import AgentRuntimeServices
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.trace.langfuse_query import Provenance
 from modex_agent.trace.memory_trace_hook import MemoryTraceHook

@@ -1,9 +1,9 @@
 # tests/unit/service/test_model_provider_new_system.py
-"""model.yml → BotModelConfig → BotModelProvider → create_llm_provider chain (T25).
+"""model.yml → ModelRegistry → ModelSelectionProvider → create_llm_provider chain (T25).
 
 Locks the bot-side wiring of the new provider system (ADR-0046): model.yml
 providers with headers/top_p/endpoint_url and all three interface formats
-resolve through ``BotModelProvider._real_provider`` to
+resolve through ``ModelSelectionProvider._real_provider`` to
 ``HTTPStreamProvider`` instances carrying the right engine, headers, top_p,
 and endpoint_url — plus the per-(provider, model) cache hit guarantee.
 
@@ -23,10 +23,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service.model_choice import current_model_choice
-from bot.service.model_config import BotModelConfig
-from bot.service.model_provider import BotModelProvider
-
+from modex_agent.app.models.choice import current_model_choice
+from modex_agent.app.models.provider import ModelSelectionProvider
+from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import FinishReason
 from modex_agent.core.message import ChatMessage, MessageRole
@@ -80,10 +79,10 @@ models:
 """
 
 
-def _cfg(tmp_path: Path) -> BotModelConfig:
+def _cfg(tmp_path: Path) -> ModelRegistry:
     p = tmp_path / "model.yml"
     p.write_text(_YML, encoding="utf-8")
-    return BotModelConfig.from_yaml(p)
+    return ModelRegistry.from_yaml(p)
 
 
 @pytest.mark.parametrize(
@@ -99,7 +98,7 @@ def test_three_formats_route_to_matching_engines(
 ) -> None:
     async def go() -> None:
         cfg = _cfg(tmp_path)
-        prov = BotModelProvider(cfg)
+        prov = ModelSelectionProvider(cfg)
         try:
             resolved = cfg.resolve(provider_name, model_name)
             assert resolved is not None
@@ -115,7 +114,7 @@ def test_three_formats_route_to_matching_engines(
 def test_headers_and_endpoint_url_flow_into_provider(tmp_path: Path) -> None:
     async def go() -> None:
         cfg = _cfg(tmp_path)
-        prov = BotModelProvider(cfg)
+        prov = ModelSelectionProvider(cfg)
         try:
             resolved = cfg.resolve("Compat", "M1")
             assert resolved is not None
@@ -148,7 +147,7 @@ def test_model_level_top_p_reaches_provider(
 ) -> None:
     async def go() -> None:
         cfg = _cfg(tmp_path)
-        prov = BotModelProvider(cfg)
+        prov = ModelSelectionProvider(cfg)
         try:
             resolved = cfg.resolve(provider_name, model_name)
             assert resolved is not None
@@ -164,7 +163,7 @@ def test_model_level_top_p_reaches_provider(
 def test_same_model_resolution_reuses_cached_provider(tmp_path: Path) -> None:
     async def go() -> None:
         cfg = _cfg(tmp_path)
-        prov = BotModelProvider(cfg)
+        prov = ModelSelectionProvider(cfg)
         try:
             resolved = cfg.resolve("Compat", "M1")
             assert resolved is not None
@@ -188,7 +187,7 @@ def test_same_model_resolution_reuses_cached_provider(tmp_path: Path) -> None:
 def test_default_model_temperature_baked_into_provider(tmp_path: Path) -> None:
     async def go() -> None:
         cfg = _cfg(tmp_path)
-        prov = BotModelProvider(cfg)
+        prov = ModelSelectionProvider(cfg)
         try:
             resolved = cfg.resolve("Compat", "M1")
             assert resolved is not None
@@ -247,7 +246,7 @@ def test_native_stream_passes_events_through_verbatim(tmp_path: Path) -> None:
             Finish(finish_reason=FinishReason.TOOL_CALLS),
         ]
         fake = _RecordingNative(events)
-        prov = BotModelProvider(cfg)
+        prov = ModelSelectionProvider(cfg)
         prov._cache[("compat", "m1")] = fake  # type: ignore[attr-defined]
         try:
             request = LLMRequest(
@@ -275,7 +274,7 @@ def test_native_stream_rewrites_model_and_clears_placeholders(tmp_path: Path) ->
         assert resolved is not None
         current_model_choice.set(resolved)
         fake = _RecordingNative([Finish(finish_reason=FinishReason.STOP)])
-        prov = BotModelProvider(cfg)
+        prov = ModelSelectionProvider(cfg)
         prov._cache[("compat", "m2")] = fake  # type: ignore[attr-defined]
         try:
             request = LLMRequest(
@@ -304,9 +303,9 @@ def test_native_stream_placeholder_config_fails_fast() -> None:
     the assembler into an ERROR LLMResponse — the legacy fail-fast contract)."""
 
     async def go() -> None:
-        from bot.service.model_config import _placeholder_model_config
+        from modex_agent.app.models.registry import placeholder_model_registry
 
-        prov = BotModelProvider(_placeholder_model_config())
+        prov = ModelSelectionProvider(placeholder_model_registry())
         try:
             request = LLMRequest(
                 model=prov.get_default_model(),

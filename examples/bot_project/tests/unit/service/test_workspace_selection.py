@@ -20,11 +20,11 @@ from bot.service.pool.declaration import (
     workspace_layer_present,
 )
 
-from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.app.config import AppConfig
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.spec import ScopeKind
 
@@ -237,7 +237,7 @@ class TestDeclaredPoolRoot:
             project_dir=tmp_path,
             data_dir=tmp_path / ".modex",
             graphs_dirs=(),
-            default_llm_provider="bot_default",
+            default_llm_provider="multi",
             registry=_component_registry(),
         )
 
@@ -267,7 +267,7 @@ class TestDeclaredPoolRoot:
             project_dir=tmp_path,
             data_dir=tmp_path / ".modex",
             graphs_dirs=(),
-            default_llm_provider="bot_default",
+            default_llm_provider="multi",
             registry=_component_registry(),
         )
 

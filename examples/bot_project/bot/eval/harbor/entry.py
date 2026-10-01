@@ -13,7 +13,7 @@ import anyio
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from bot.service.pool.declaration import boot_scope_spec
-from bot.workspace.handle import WorkspaceHandle, WorkspaceHandleRootProvider
+from bot.workspace.handle import WorkspaceHandle
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.emitter import AgentResult, ContentEmitter
@@ -23,14 +23,9 @@ from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.stream_events import LLMStreamEvent
-from modex_agent.ioc.configs.llm import LLMConfig
-from modex_agent.ioc.configs.observability import (
-    ObservabilityConfig,
-    PromptCaptureMode,
-    TraceBackend,
-    TraceSpanMode,
-)
-from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.core.tool_vocabulary import ToolPreset
+from modex_agent.core.turn.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.core.turn.models import JsonValue, TurnIdentity
 from modex_agent.memory.context import ContextState
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.plugins.assembly.single_agent import (
@@ -40,17 +35,23 @@ from modex_agent.plugins.assembly.single_agent import (
 )
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
-from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import JsonValue, TurnIdentity
+from modex_agent.providers.factory import create_llm_provider
+from modex_agent.providers.llm_config import LLMConfig
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.overlay import AgentOverlay, PoolOverlay, ScopeOverlay, apply_scope_overlay
-from modex_agent.tools.presets import ToolPreset
 from modex_agent.trace.experiment_attrs import ExperimentLinkage, attach_experiment_attrs
+from modex_agent.trace.observability import (
+    ObservabilityConfig,
+    PromptCaptureMode,
+    TraceBackend,
+    TraceSpanMode,
+)
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.semconv import GenAiAttr, SpanName
 from modex_agent.trace.store import SpanModel
+from modex_agent.workspace.handle import WorkspaceHandleRootProvider
 
 logger = logging.getLogger(__name__)
 DEFAULT_INPUT: Final = Path("/root")
@@ -330,7 +331,7 @@ async def execute_entry(config: EntryConfig, dependencies: EntryDependencies) ->
             component_registry,
             PluginDiscoveryConfig(
                 bundled_factories=(DefaultPlugin(),),
-                project_plugin_paths=(_BOT_PROJECT / "plugins",),
+                project_plugin_paths=(_BOT_PROJECT / "bot_plugins",),
             ),
         )
         declaration = load_scope_declaration(_REACT_HARNESS_DECLARATION)

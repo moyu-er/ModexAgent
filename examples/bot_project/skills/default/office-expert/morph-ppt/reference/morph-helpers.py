@@ -13,15 +13,15 @@ Usage (import):
   from morph_helpers import morph_clone_slide, morph_ghost_content, morph_verify_slide, morph_final_check
 """
 
-import sys
-import json
-import subprocess
 import argparse
+import json
 import re
+import subprocess
+import sys
 
 # Cross-platform color support (colorama optional)
 try:
-    from colorama import init, Fore, Style
+    from colorama import Fore, Style, init
     init(autoreset=True)
     GREEN  = Fore.GREEN
     RED    = Fore.RED

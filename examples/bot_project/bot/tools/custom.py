@@ -12,14 +12,13 @@ from pathlib import Path
 
 from bot.webui.transcript_store import TranscriptStore
 from modex_agent.adapters.output import OutputAdapter
-from modex_agent.core.media import Attachment, AttachmentLocator
+from modex_agent.core.media import Attachment, AttachmentLocator, MediaConfig
 from modex_agent.core.session_id import agent_of
 from modex_agent.core.tool_manager import (
     ExclusiveTool,
     ToolConfig,
 )
 from modex_agent.media.mime import classify_kind, sniff_mime
-from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.workspace.runtime import resolve_workspace_root
 
 logger = logging.getLogger(__name__)

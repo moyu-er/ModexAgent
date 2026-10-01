@@ -5,33 +5,33 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from bot.service.model_config import BotModelConfig
-from bot.service.model_provider import BotModelProvider
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.emitter import WebBotEmitter
 from bot.webui.events import SessionMeta, WebUIEventType
 from bot.webui.transcript_store import JSONLTranscriptStore
 
+from modex_agent.adapters.platform import StreamingMode
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.constants import ToolArgsDeltaPayload, ToolCallEndPayload
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.app.models.provider import ModelSelectionProvider
+from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.core.events import EmitterConfig
 from modex_agent.core.llm_request import LLMRequest
+from modex_agent.core.llm_struct import FinishReason
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.llm_struct import FinishReason
 from modex_agent.core.stream_events import (
     Finish,
     LLMStreamEvent,
     ToolCallComplete,
     ToolCallDelta,
 )
-from modex_agent.adapters.platform import StreamingMode
 from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.turn.enums import AgentKind, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.enums import AgentKind, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.runtime import bind_workspace_root
@@ -248,7 +248,7 @@ class _NativeStreamFake:
 async def test_tool_args_delta_composition_provider_client_emitter_ws(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """全链回归锁: BotModelProvider → ReactLlmClient → WebBotEmitter → WS。
+    """Full-chain regression lock: ModelSelectionProvider → ReactLlmClient → WebBotEmitter → WS.
 
     原缺陷正藏在这条组合链里——包装层还是回调折叠时, ToolCallDelta 死在
     chat_stream 内部, 而引擎侧与 emitter 侧单测(各绕过包装层)全绿。种子缓存
@@ -258,9 +258,8 @@ async def test_tool_args_delta_composition_provider_client_emitter_ws(
 
     yml = tmp_path / "model.yml"
     yml.write_text(_YML, encoding="utf-8")
-    cfg = BotModelConfig.from_yaml(yml)
-    resolved = cfg.default_resolved()
-    provider = BotModelProvider(cfg)
+    cfg = ModelRegistry.from_yaml(yml)
+    provider = ModelSelectionProvider(cfg)
     provider._cache[("a", "m1")] = _NativeStreamFake(  # type: ignore[attr-defined]
         [
             ToolCallDelta(

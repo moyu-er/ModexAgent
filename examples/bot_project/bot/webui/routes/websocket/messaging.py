@@ -55,9 +55,9 @@ async def handle_send_message(
     # in-function imports from server.py. ``_materialize_deferred_session``
     # lives in the sibling attach module (no cycle: attach imports streaming,
     # not messaging).
-    from bot.input_pipeline.stages.resolve_pool import RoutingMeta
     from bot.webui.routes.websocket.attach import _materialize_deferred_session
-    from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
+    from modex_agent.pipeline.input.envelope import AttachmentRef, UserInputEnvelope
+    from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 
     session_id = str(data.get("session_id", ""))
     content = str(data.get("content", ""))

@@ -21,8 +21,8 @@ from bot.service.default_pool_selection import (
 )
 from pydantic import ValidationError
 
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
 from modex_agent.multi_agent.pool_router import LocalFilePoolRoutingStore
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
 
 # ── Pure selection rule ─────────────────────────────────────────────────────
 
@@ -186,7 +186,8 @@ async def test_im_first_message_pins_preference_through_s5(tmp_path: Path) -> No
     from unittest.mock import MagicMock
 
     from bot.input_pipeline.context import BotInputContext
-    from bot.input_pipeline.stages.resolve_pool import ResolvePoolStage, RoutingMeta
+
+    from modex_agent.pipeline.input.stages.resolve_pool import ResolvePoolStage, RoutingMeta
 
     store = LocalFilePoolRoutingStore(tmp_path / "routing")
     prefs = PersonalAssistantPreferences(tmp_path / "personal_assistant.yml")

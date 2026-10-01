@@ -6,7 +6,7 @@ from bot.eval import cli as eval_cli
 from bot.eval.task_spec import EvalToolset
 from typer.testing import CliRunner
 
-from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.providers.llm_config import LLMConfig
 
 
 def _invoke_run(

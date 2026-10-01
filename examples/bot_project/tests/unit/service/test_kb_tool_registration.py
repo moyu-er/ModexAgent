@@ -16,12 +16,12 @@ import pytest
 from bot.kb.provider import KbProvider
 from bot.tools.kb import KbTool
 from bot.workspace.handle import PoolWorkspaceResources
-from plugins.bot_hooks import BotHooksPlugin, KbToolFactory
+from bot_plugins.bot_hooks import BotHooksPlugin, KbToolFactory
 
-from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.assembly.context import WorkspaceContext
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot
 
 
 def _registered() -> ComponentRegistry:
@@ -103,7 +103,7 @@ async def test_kb_tool_identity_prefers_per_turn_contextvar(
     """The identity closures read the per-turn ContextVar channel FIRST —
     the native runtime's real identity source (os.environ is unset for
     native agents and wrong under concurrent turns)."""
-    from modex_agent.runtime.env_context import _current_session_id, _modex_env
+    from modex_agent.core.turn.env_context import _current_session_id, _modex_env
 
     factory = _registered().resolve(ComponentSlot.TOOL, "kb")
     monkeypatch.setenv("MODEX_TASK_ID", "stale-env-task")  # must NOT win

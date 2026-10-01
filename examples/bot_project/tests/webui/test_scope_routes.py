@@ -19,7 +19,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
-from bot.service.roots import BotAssemblyRoots
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.server import WebUIServer
 from bot.workspace.dynamic_workspaces import (
@@ -31,11 +30,13 @@ from bot.workspace.handle import PoolWorkspaceResources
 from bot.workspace.wiring.resources import _stop_resources
 from pydantic import BaseModel, JsonValue
 
-from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.multi_agent.pool_router import PoolRoutingStore
-from modex_agent.plugins.abc import PluginSource
+from modex_agent.app.config import AppConfig
+from modex_agent.app.roots import AppAssemblyRoots
+from modex_agent.core.stores import PoolRoutingStore
 from modex_agent.plugins.assembly.context import AgentContext as AssemblyAgentContext
-from modex_agent.plugins.capability import (
+from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.scope.capability import (
     AgentDeclarationView,
     Capability,
     CapabilityBinding,
@@ -44,9 +45,7 @@ from modex_agent.plugins.capability import (
     PromptSectionSpec,
     TreePositionView,
 )
-from modex_agent.plugins.defaults import DefaultPlugin
-from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry, PluginSource
 from modex_agent.workspace.context import WorkspaceContext
 
 _BOT_PROJECT = Path(__file__).resolve().parents[2]
@@ -1637,10 +1636,10 @@ def _write_bot_project(project_dir: Path, declaration: str) -> None:
 
 
 def _boot_service_stub(project_dir: Path, tmp_home: Path) -> MagicMock:
-    """A service stub carrying REAL ``BotAssemblyRoots`` — the same shape
+    """A service stub carrying REAL ``AppAssemblyRoots`` — the same shape
     ``test_workspace_resource_declaration._service`` uses."""
     service = MagicMock()
-    service.roots = BotAssemblyRoots.resident(
+    service.roots = AppAssemblyRoots.resident(
         config_dir=project_dir / "config", resource_root=project_dir
     )
     service._enable_dynamic_workspaces = True
@@ -1683,7 +1682,7 @@ async def _boot_resources(service: MagicMock, target: Path) -> PoolWorkspaceReso
         return instance
 
     with (
-        patch("bot.service.pool.create_pool", side_effect=_create_pool),
+        patch("modex_agent.plugins.assembly.pool_factory.create_pool", side_effect=_create_pool),
         patch("bot.workspace.wiring.resources.BackgroundTaskRunner") as background_type,
     ):
         background_type.return_value.start = AsyncMock()
@@ -1711,7 +1710,7 @@ async def test_scope_routes_use_boot_selected_declaration_external_config_root(
     workspace_root.mkdir()
 
     service = _boot_service_stub(project_dir, tmp_path)
-    service.roots = BotAssemblyRoots(
+    service.roots = AppAssemblyRoots(
         config_dir=config_dir,
         resource_root=project_dir,
         workspace_home=workspace_root,

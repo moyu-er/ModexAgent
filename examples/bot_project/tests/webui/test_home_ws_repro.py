@@ -13,12 +13,12 @@ from pathlib import Path
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
-from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import _unwrap_envelope
 from bot.webui.server import WebUIServer
 
 from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
 from modex_agent.workspace.paths import WorkspacePaths
 
 

@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.message import ChatMessage
-from modex_agent.memory.core.split_stores import MessageStore
+from modex_agent.core.stores import MessageStore
 from modex_agent.memory.scope import MemoryContext, MemoryLayerName, SessionScope
 
 if TYPE_CHECKING:

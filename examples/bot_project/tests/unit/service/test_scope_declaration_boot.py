@@ -27,13 +27,13 @@ from bot.service.pool.declaration import (
     boot_scope_declaration,
     declared_pool_build,
 )
-from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
 
-from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
-from modex_agent.plugins.capability import CapabilityError
 from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.capability import CapabilityError
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.trace.observability import ObservabilityConfig, TraceBackend
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
@@ -124,7 +124,7 @@ def _boot(
         project_dir=BOT_BASE,
         data_dir=tmp_path / ".modex",
         graphs_dirs=graphs_dirs or (BOT_BASE / "config" / "graphs",),
-        default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        default_llm_provider=MULTI_LLM_PROVIDER,
         registry=_component_registry(),
     )
 
@@ -393,7 +393,7 @@ def _boot_nested(tmp_path: Path):
         project_dir=tmp_path,
         data_dir=tmp_path / ".modex",
         graphs_dirs=(_E2E_FIXTURE / "graphs",),
-        default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        default_llm_provider=MULTI_LLM_PROVIDER,
         # The tree derivation (task/send_to_agent/send_to_peer) is
         # capability-contributed since the subagents migration — the boot
         # registry resolves it at compile.
@@ -462,7 +462,7 @@ pool:
             project_dir=tmp_path,
             data_dir=tmp_path / ".modex",
             graphs_dirs=(tmp_path / "no-graphs",),
-            default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+            default_llm_provider=MULTI_LLM_PROVIDER,
             # The tracing fallback is observability-driven; OFF keeps this
             # registry-less boot free of injected capabilities.
             observability=ObservabilityConfig(trace_backend=TraceBackend.OFF),

@@ -31,12 +31,13 @@ modexbot = "modexbot.cli:app"
 modexctl = "bot.cli.modexctl:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["bot", "modexbot"]
+packages = ["bot", "bot_plugins", "modexbot"]
 
 [tool.hatch.build]
 include = [
     "bot/**/*.py",
     "bot/**/*.sql",
+    "bot_plugins/**/*.py",
     "modexbot/**/*.py",
     "bot/web/dist/**/*",
 ]

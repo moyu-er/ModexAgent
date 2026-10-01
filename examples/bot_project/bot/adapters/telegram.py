@@ -32,9 +32,9 @@ from enum import StrEnum
 from typing import Any
 
 from modex_agent.adapters.output import OutputAdapter
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
 from modex_agent.messaging.models import InputMessage, OutputMessage
 from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
 
 # --- module constants -------------------------------------------------------
 

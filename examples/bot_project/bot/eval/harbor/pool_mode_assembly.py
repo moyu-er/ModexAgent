@@ -26,8 +26,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from plugins.bot_strategies import BotDefaultLLMConfig
-
 from bot.eval.agent_harness import static_system_prompt
 from bot.eval.harbor.eval_overlay import EvalArmName, load_eval_arm
 from bot.eval.harbor.pool_mode_types import (
@@ -35,12 +33,7 @@ from bot.eval.harbor.pool_mode_types import (
     PoolModeConfig,
     build_model_config,
 )
-from bot.service.builders import (
-    _build_hook_runner,
-    build_session_store,
-    resolve_declared_root_prompt,
-)
-from bot.service.model_config import BotModelConfig
+from bot.service.builders import _build_hook_runner
 from bot.service.pool.declaration import (
     DeclaredPoolBuild,
     ScopeBoot,
@@ -52,13 +45,13 @@ from bot.workspace.pool_data import PoolData, build_pool_data
 from bot.workspace.wiring import build_tool_overflow_interceptor_chain
 from bot.workspace.wiring.stack import declared_assembly_deps
 from modex_agent.adapters.output import NullOutputAdapter, OutputAdapter
+from modex_agent.agents.react.hooks.knowledge_hook import KnowledgeHook
+from modex_agent.app.config import AppConfig
+from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.core.provider import LLMProvider
 from modex_agent.hook import Hook, HookRunner
 from modex_agent.hook.builtin import CurrentTimeInjectionHook
-from modex_agent.hook.builtin.knowledge_hook import KnowledgeHook
 from modex_agent.interceptor.chain import InterceptorChain
-from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.ioc.configs.observability import TraceBackend
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
@@ -66,19 +59,22 @@ from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import WorkspacePersistenceManager
 from modex_agent.persistence.session_registry import InMemorySessionRegistry
 from modex_agent.persistence.session_store import SessionStore
-from modex_agent.plugins.abc import ComponentSlot
+from modex_agent.plugins.assembly.backend_factory import build_session_store
 from modex_agent.plugins.assembly.context import AssemblyContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.plugins.assembly.pool_factory import resolve_declared_root_prompt
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER, MultiLLMProviderConfig
 from modex_agent.scope import AgentOverlay, PoolOverlay, apply_scope_overlay
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
+from modex_agent.trace.observability import TraceBackend
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
 logger = logging.getLogger(__name__)
 
-_BOT_DEFAULT_LLM_PROVIDER = "bot_default"
 # Benchmark roster switch. The env name is mirrored in agent.py's
 # POOL_MODE_ENV_VARS so host_runtime/installed_agent forward it to trials.
 MODEX_EVAL_ROSTER: Final = "MODEX_EVAL_ROSTER"
@@ -99,7 +95,7 @@ class EvalPoolAssembly:
     resources: PoolWorkspaceResources
     resolver_cell: WorkspaceResolverCell
     app_config: AppConfig
-    bot_model_config: BotModelConfig | None
+    bot_model_config: ModelRegistry | None
     output_adapter: OutputAdapter
     shared_hooks: list[Hook]
     shared_hook_runner: HookRunner
@@ -192,7 +188,7 @@ async def build_eval_pool_assembly(
         project_dir=config.project_dir,
         data_dir=config.data_dir,
         graphs_dirs=(),
-        default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        default_llm_provider=MULTI_LLM_PROVIDER,
         registry=component_registry,
         observability=app_config.observability,
     )
@@ -216,9 +212,9 @@ async def build_eval_pool_assembly(
     )
     default_provider: LLMProvider = await component_registry.resolve(
         ComponentSlot.LLM_PROVIDER,
-        _BOT_DEFAULT_LLM_PROVIDER,
+        MULTI_LLM_PROVIDER,
     ).create(
-        BotDefaultLLMConfig(),
+        MultiLLMProviderConfig(),
         AssemblyContext(registry=component_registry, workspace_ctx=workspace),
     )
     # Production wiring mirror (resources.py): SQLITE backend → hybrid scheme
@@ -267,8 +263,8 @@ async def build_eval_pool_assembly(
         # from ctx.runtime.services — stateless instances shared per pool).
         shared_hooks = [CurrentTimeInjectionHook(), KnowledgeHook()]
         if app_config.observability is not None:
-            from modex_agent.hook.builtin.checkpoint import CheckpointHook
-            from modex_agent.hook.builtin.training_data import TrainingDataHook
+            from modex_agent.agents.react.hooks.checkpoint import CheckpointHook
+            from modex_agent.agents.react.hooks.training_data import TrainingDataHook
 
             if app_config.observability.checkpoint_per_iteration:
                 shared_hooks.append(CheckpointHook())

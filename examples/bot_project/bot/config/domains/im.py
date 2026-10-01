@@ -15,7 +15,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from bot.config.domain import ConfigDomain, DomainFlavor, Secret, register_domain
+from modex_agent.app.config_domain import ConfigDomain, DomainFlavor, Secret, register_domain
 
 
 class BaseImSection(BaseModel):

@@ -41,7 +41,7 @@ from bot.webui.transcript_store import TranscriptStore
 from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.message import MessageRole
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.memory.core.split_stores import MessageStore
+from modex_agent.core.stores import MessageStore
 from modex_agent.memory.stores.scoped_in_memory import InMemoryScopedStorage
 from modex_agent.persistence.session_store import SessionStore
 from modex_agent.scope.spec import AgentSpec, PoolSpec

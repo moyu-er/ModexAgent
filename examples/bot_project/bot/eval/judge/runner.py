@@ -22,8 +22,8 @@ from bot.eval.judge._verdicts import failure_result, result_from_output
 from modex_agent.core.llm_struct import FinishReason
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.provider import LLMProvider
-from modex_agent.ioc.configs.llm import LLMConfig
-from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.providers.factory import create_llm_provider
+from modex_agent.providers.llm_config import LLMConfig
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.semconv import GenAiAttr, SpanKind, SpanStatusCode
 from modex_agent.trace.store import SpanModel, SpanStatus

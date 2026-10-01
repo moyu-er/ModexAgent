@@ -24,7 +24,9 @@ class TestHookConfiguration:
         """SubagentAutoSendHook receives parent_name and optional runtime_dir."""
         from pathlib import Path
 
-        from modex_agent.hook.builtin import SubagentAutoSendHook
+        from modex_agent.plugins.defaults.capabilities.subagents.auto_send import (
+            SubagentAutoSendHook,
+        )
 
         hook = SubagentAutoSendHook(
             self_name="reviewer",
@@ -66,10 +68,10 @@ class TestSubagentMemoryLayers:
 
     def test_build_session_only_memory_creates_context_manager(self, tmp_path: Path) -> None:
         """_build_session_only_memory returns a MemorySystemContextManager."""
-        from modex_agent.ioc.configs.memory import MemoryConfig, ShortTermConfig
-        from modex_agent.ioc.factories.descriptors import (
+        from modex_agent.memory.assembly import (
             build_session_only_memory as _build_session_only_memory,
         )
+        from modex_agent.memory.config import MemoryConfig, ShortTermConfig
         from modex_agent.memory.scope import MemoryAgentRole
 
         cfg = MemoryConfig(short_term=ShortTermConfig(max_context_tokens=80000))
@@ -84,10 +86,10 @@ class TestSubagentMemoryLayers:
 
     def test_archive_config_created_with_session_scope(self, tmp_path: Path) -> None:
         """_build_session_only_memory creates ArchiveMemoryConfig(scope=SessionScope())."""
-        from modex_agent.ioc.configs.memory import MemoryConfig
-        from modex_agent.ioc.factories.descriptors import (
+        from modex_agent.memory.assembly import (
             build_session_only_memory as _build_session_only_memory,
         )
+        from modex_agent.memory.config import MemoryConfig
         from modex_agent.memory.scope import MemoryAgentRole
 
         cfg = MemoryConfig()
@@ -104,10 +106,10 @@ class TestSubagentMemoryLayers:
 
     def test_max_context_tokens_respects_config(self, tmp_path: Path) -> None:
         """Session layer max_context_tokens comes from the MemoryConfig."""
-        from modex_agent.ioc.configs.memory import MemoryConfig, ShortTermConfig
-        from modex_agent.ioc.factories.descriptors import (
+        from modex_agent.memory.assembly import (
             build_session_only_memory as _build_session_only_memory,
         )
+        from modex_agent.memory.config import MemoryConfig, ShortTermConfig
         from modex_agent.memory.scope import MemoryAgentRole
 
         cfg = MemoryConfig(short_term=ShortTermConfig(max_context_tokens=120000))
@@ -120,7 +122,7 @@ class TestSubagentMemoryLayers:
 
     def test_default_max_context_tokens_without_config(self, tmp_path: Path) -> None:
         """Without MemoryConfig, subagent gets default token-based memory."""
-        from modex_agent.ioc.factories.descriptors import (
+        from modex_agent.memory.assembly import (
             build_session_only_memory as _build_session_only_memory,
         )
         from modex_agent.memory.scope import MemoryAgentRole
@@ -145,8 +147,8 @@ class TestHookWiringPerAgent:
           _add_hook(main_pipeline, InboxFlushHook(...))
           _add_hook(main_pipeline, TurnOutcomeNotifyHook(...))
         """
-        from modex_agent.hook.builtin import InboxFlushHook
         from modex_agent.hook.notification import TurnOutcomeNotifyHook
+        from modex_agent.multi_agent.inbox.flush_hook import InboxFlushHook
 
         assert InboxFlushHook is not None
         assert TurnOutcomeNotifyHook is not None
@@ -158,7 +160,10 @@ class TestHookWiringPerAgent:
           _add_hook(sub_pipeline, InboxFlushHook(...))
           _add_hook(sub_pipeline, SubagentAutoSendHook(...))
         """
-        from modex_agent.hook.builtin import InboxFlushHook, SubagentAutoSendHook
+        from modex_agent.multi_agent.inbox.flush_hook import InboxFlushHook
+        from modex_agent.plugins.defaults.capabilities.subagents.auto_send import (
+            SubagentAutoSendHook,
+        )
 
         assert InboxFlushHook is not None
         assert SubagentAutoSendHook is not None
@@ -167,7 +172,9 @@ class TestHookWiringPerAgent:
         """SubagentAutoSendHook receives runtime_dir for deterministic path derivation."""
         from pathlib import Path
 
-        from modex_agent.hook.builtin import SubagentAutoSendHook
+        from modex_agent.plugins.defaults.capabilities.subagents.auto_send import (
+            SubagentAutoSendHook,
+        )
 
         hook = SubagentAutoSendHook(
             self_name="test_sub",

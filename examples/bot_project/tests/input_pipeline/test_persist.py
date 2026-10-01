@@ -6,13 +6,16 @@ from unittest.mock import MagicMock
 
 import pytest
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.persist_user_message import PersistUserMessageStage
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
+from bot.input_pipeline.stages.persist_user_message import (
+    write_user_message_to_transcript,
+)
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
 
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
 from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.stages.persist_user_message import PersistUserMessageStage
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 from modex_agent.workspace.runtime import bind_workspace_root
 
 
@@ -41,7 +44,7 @@ async def test_persist_writes_user_message_with_full_session_id() -> None:
         env.metadata["full_session_id"] = "u1.coding"
         env.metadata[RoutingMeta.WORKSPACE] = str(root)
         with bind_workspace_root(root):
-            await PersistUserMessageStage().process(env, _ctx(store))
+            await PersistUserMessageStage(write_user_message_to_transcript).process(env, _ctx(store))
             events = await store.load("u1.coding")
         assert len(events) == 1
         assert isinstance(events[0], UserMessageEvent)
@@ -59,7 +62,7 @@ async def test_persist_skips_known_control_commands() -> None:
                 env.metadata["resolved_agent"] = "main"
                 env.metadata["full_session_id"] = "u.main"
                 env.metadata[RoutingMeta.WORKSPACE] = str(root)
-                await PersistUserMessageStage().process(env, _ctx(store))
+                await PersistUserMessageStage(write_user_message_to_transcript).process(env, _ctx(store))
             events = await store.load("u.main")
         assert events == [], "control commands must not be persisted"
 
@@ -90,6 +93,6 @@ async def test_persist_skips_approval_decision() -> None:
             },
         )
         with bind_workspace_root(root):
-            await PersistUserMessageStage().process(envelope, _ctx(store))
+            await PersistUserMessageStage(write_user_message_to_transcript).process(envelope, _ctx(store))
             events = await store.load("ext.main")
         assert events == [], "approval decisions must not be persisted"

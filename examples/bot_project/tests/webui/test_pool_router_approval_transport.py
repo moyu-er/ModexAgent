@@ -24,22 +24,21 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.prepare import BotInputPreparation
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 
 from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
+from modex_agent.messaging.agent_messages import AgentAddress, AgentMessageEnvelope
 from modex_agent.messaging.broker import AddressKind, BrokerMessage
-from modex_agent.messaging.broker_bridge import BrokerInputPayload
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput, InputMessage
-from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.pool import AgentPool, input_message_from_dispatch_envelope
 from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+from modex_agent.pipeline.broker_bridge import BrokerInputPayload
+from modex_agent.pipeline.input.envelope import CommandStatus, UserInputEnvelope
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 
 
 class _MockPool:

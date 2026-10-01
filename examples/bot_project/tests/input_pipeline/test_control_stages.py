@@ -6,12 +6,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.input_pipeline.stages.session_control import SessionControlStage
 
 from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
 from modex_agent.messaging.models import InputMessage
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 from modex_agent.workspace.control import WorkspaceController
 from modex_agent.workspace.models import CdResult
 
@@ -144,10 +144,10 @@ async def test_stop_command_handled_by_session_stage() -> None:
 async def test_continue_command_enqueues_continue_signal() -> None:
     """A prepared /continue is delivered once by the shared handle."""
     from bot.input_pipeline.prepare import BotInputPreparation
-    from bot.input_pipeline.stages.command import CommandDispatchStage
     from bot.input_pipeline.stages.commands import SHARED_COMMANDS
 
-    from modex_agent.input_pipeline.envelope import CommandStatus
+    from modex_agent.pipeline.input.envelope import CommandStatus
+    from modex_agent.pipeline.input.stages.command import CommandDispatchStage
 
     enqueued: list[InputMessage] = []
     ctx = _ctx(store_get="main")

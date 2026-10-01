@@ -16,7 +16,7 @@ from bot.eval.task_spec import EvalToolset
 from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.runtime.models import JsonValue
+from modex_agent.core.turn.models import JsonValue
 
 STANDALONE_TOOLSETS: Final = (
     (EvalToolset.NONE, ()),

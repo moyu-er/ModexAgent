@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
-from bot.service.session_pool_index import SessionPoolIndex
 from bot.webui.emitter import WebBotEmitter
 from bot.webui.events import _unwrap_envelope
 
@@ -17,6 +16,7 @@ from modex_agent.multi_agent.session_tree.models import (
     SessionTreeStatus,
     TreeNodeRecord,
 )
+from modex_agent.multi_agent.session_tree.pool_index import SessionPoolIndex
 from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStore
 from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
 from tests.webui._pipeline_fixture import attach_default_pipeline

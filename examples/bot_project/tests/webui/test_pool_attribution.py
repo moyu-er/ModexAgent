@@ -9,9 +9,6 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.register_websocket import get_ws_input
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
-from bot.service.session_pool_index import SessionPoolIndex
-from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.web_ui_service import WebUIService
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.emitter import WebBotEmitter
@@ -28,8 +25,11 @@ from modex_agent.multi_agent.session_tree.models import (
     SessionTreeStatus,
     TreeNodeRecord,
 )
+from modex_agent.multi_agent.session_tree.pool_index import SessionPoolIndex
 from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStore
 from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
+from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 from modex_agent.workspace.paths import WorkspacePaths
 from tests.webui._pipeline_fixture import attach_default_pipeline
 

@@ -13,13 +13,16 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
+from bot.config.webui_config import build_control_origin
 from bot.workspace.handle import (
     PoolWorkspaceResources,
     WorkspaceHandle,
 )
+
+from modex_agent.app.models.assembly import ModelRegistryAssembly
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 
 _POOL_DECLARATION = """\
 pool:
@@ -29,10 +32,11 @@ pool:
       description: ownership test root
 """
 
+from modex_agent.core.tool_vocabulary import ToolPreset
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
-from modex_agent.tools.presets import ToolPreset, get_preset_tools
+from modex_agent.tools.presets import get_preset_tools
 from modex_agent.tools.standard import ReadFileTool, SearchFilesTool
 from modex_agent.tools.workspace_scoped import (
     WorkspaceRootProvider,
@@ -162,35 +166,11 @@ async def test_subagent_tool_manager_uses_workspace_root_provider(tmp_path: Path
     Workspace scoping of the roster tools is asserted by the wrap tests
     above (``wrap_standard_tools`` + the materialize-path tests in the
     framework suite)."""
-    from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
-    from modex_agent.multi_agent.template import AgentTemplate
-    from modex_agent.scope.spec import AgentSpec
+    from modex_agent.plugins.assembly.subagent_materializer import SubagentMaterializer
 
-    provider = _StaticRootProvider(tmp_path)
-    deps = AgentMaterializeDeps(
-        agent_factory=None,  # not used by _build_tool_manager
-        pool=object(),  # type: ignore[arg-type]  # not used by _build_tool_manager
-        session_factory=None,  # not used by _build_tool_manager
-        broker=InMemoryMessageBroker(),
-        tree=MagicMock(),
-        root_provider=provider,
-    )
-    template = AgentTemplate(
-        spec=AgentSpec(
-            name="scout",
-            toolset=ToolPreset.READ_ONLY,
-            description="Test scout",
-        ),
-        toolset_profile=ToolPreset.READ_ONLY,
-    )
-
-    tm = await template._build_tool_manager(
-        deps,
-        "scout",
-        runtime_dir=None,
-        assembly_spec=MagicMock(mcp_servers=()),
-        component_ctx=MagicMock(),
-    )
+    # W5: the builder moved onto the assembly materializer (same
+    # production code, new home behind the AgentMaterializer seam).
+    tm = await SubagentMaterializer()._build_tool_manager()
     assert tm.list_tools() == []
 
 
@@ -199,17 +179,16 @@ async def test_subagent_tool_manager_uses_workspace_root_provider(tmp_path: Path
 
 async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> None:
     """Verify that create_pool's tool_manager contains workspace-scoped tools when handle is given."""
-    from bot.service.model_choice import ModelChoiceRegistry
-    from bot.service.model_config import BotModelConfig
-    from bot.service.pool import create_pool
-
+    from modex_agent.app.models.choice import ModelChoiceRegistry
+    from modex_agent.app.models.registry import ModelRegistry
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.hook import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
-    from modex_agent.ioc.configs.memory import MemoryConfig
+    from modex_agent.memory.config import MemoryConfig
     from modex_agent.multi_agent import SessionRetentionPolicy
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
+    from modex_agent.plugins.assembly.pool_factory import create_pool
 
     target = tmp_path / "ws"
     target.mkdir()
@@ -229,9 +208,9 @@ models:
     - {key: a, name: "A", url: u, api_key: k, models: [{name: M1, model: openai/m1}]}
 """
     (target / "model.yml").write_text(_yml, encoding="utf-8")
-    bot_model_config = BotModelConfig.from_yaml(target / "model.yml")
+    bot_model_config = ModelRegistry.from_yaml(target / "model.yml")
 
-    from ...declaration_driver import build_declared
+    from ...declaration_driver import build_declared, load_bot_test_registry
 
     pool_instance = await create_pool(
         pool_name="test_pool",
@@ -256,8 +235,11 @@ models:
         shared_interceptor_chain=InterceptorChain(),
         control_channel=InMemoryControlChannel(),
         workspace_handle=workspace_handle,
-        bot_model_config=bot_model_config,
         model_choice_registry=ModelChoiceRegistry(),
+        model_assembly=ModelRegistryAssembly(bot_model_config),
+        default_llm_provider_name=MULTI_LLM_PROVIDER,
+        control_origin=build_control_origin(tmp_path / "config"),
+        component_registry=await load_bot_test_registry(),
     )
 
     tm = pool_instance.tool_manager
@@ -284,10 +266,10 @@ async def test_pool_resources_experience_dir_from_capability_supply(tmp_path: Pa
     pool_data carries no experience resource anymore."""
     from bot.workspace.pool_data import build_pool_data
 
-    from modex_agent.ioc.configs.memory import MemoryConfig
+    from modex_agent.memory.config import MemoryConfig
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-    from modex_agent.plugins.capability import PoolSupplyAgentEntry, PoolSupplyView
     from modex_agent.plugins.defaults.capabilities.experience import ExperienceCapability
+    from modex_agent.scope.capability import PoolSupplyAgentEntry, PoolSupplyView
     from modex_agent.scope.spec import AgentSpec
 
     target = tmp_path / "ws"
@@ -318,8 +300,8 @@ async def test_build_pool_data_uses_workspace_sqlite_for_session_memory(
 ) -> None:
     from bot.workspace.pool_data import build_pool_data
 
-    from modex_agent.ioc.configs.app import AppConfig
-    from modex_agent.ioc.configs.memory import MemoryConfig
+    from modex_agent.app.config import AppConfig
+    from modex_agent.memory.config import MemoryConfig
     from modex_agent.memory.scope import MemoryContext
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
     from modex_agent.persistence.managers import WorkspacePersistenceManager
@@ -378,8 +360,8 @@ async def test_build_pool_data_file_backend_has_no_decision_coordinator(
 ) -> None:
     from bot.workspace.pool_data import build_pool_data
 
-    from modex_agent.ioc.configs.app import AppConfig
-    from modex_agent.ioc.configs.memory import MemoryConfig
+    from modex_agent.app.config import AppConfig
+    from modex_agent.memory.config import MemoryConfig
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
     from modex_agent.persistence.config import PersistenceBackend, PersistenceConfig
     from modex_agent.scope.spec import AgentSpec

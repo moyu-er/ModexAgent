@@ -6,7 +6,7 @@ running ``tests/acp_stdio_agent.py`` — the production ``AcpRuntime`` +
 input pipeline, approval runtime, pool request admission) over the framework
 entry (``run_acp_entry`` → ``modex_agent.acp.entry.main``). The only test seam lives inside the
 subprocess: the module-level
-``bot.service.model_provider.create_llm_provider`` binding is monkeypatched
+``modex_agent.app.models.provider.create_llm_provider`` binding is monkeypatched
 to return a scripted provider — the single factory seam every real provider
 construction already routes through. The temp config carries a REAL
 ``model.yml`` (without it BotService boots the ``_unconfigured`` placeholder
@@ -237,10 +237,10 @@ def _write_project_config(
     """Settings dir + editor project + a REAL model.yml.
 
     Without model.yml BotService boots the ``_unconfigured`` placeholder and
-    ``BotModelProvider.stream`` fails fast BEFORE constructing any
+    ``ModelSelectionProvider.stream`` fails fast BEFORE constructing any
     provider — the factory seam under test would never run. The provider
     entry below is never dialed (the factory is monkeypatched in the
-    subprocess); it only has to pass ``BotModelConfig`` validation.
+    subprocess); it only has to pass ``ModelRegistry`` validation.
     """
     (settings / "scopes").mkdir(parents=True)
     (settings / "bot_config.yml").write_text(

@@ -1,11 +1,11 @@
 """Model registry config domain.
 
-A SINGLETON domain reusing :class:`bot.service.model_config.BotModelConfig`
+A SINGLETON domain reusing :class:`~modex_agent.app.models.registry.ModelRegistry`
 as the root schema. ``config/model.yml`` wraps the actual config under a
 top-level ``models:`` key (so the file can later carry sibling sections like
 ``routing:``), whereas the domain contract operates on the inner block alone.
 Custom loader/dumper handle that framing; the runtime parsing inside
-``BotModelConfig`` (including its duplicate-name/default ``model_validator``)
+``ModelRegistry`` (including its duplicate-name/default ``model_validator``)
 is left untouched.
 """
 
@@ -17,8 +17,8 @@ from typing import Any
 import yaml
 from pydantic import model_validator
 
-from bot.config.domain import ConfigDomain, DomainFlavor, atomic_write, register_domain
-from bot.service.model_config import DEFAULT_OUTPUT_RESERVE_TOKENS, BotModelConfig
+from modex_agent.app.config_domain import ConfigDomain, DomainFlavor, atomic_write, register_domain
+from modex_agent.app.models.registry import DEFAULT_OUTPUT_RESERVE_TOKENS, ModelRegistry
 
 
 def _load_model(path: Path) -> dict[str, Any]:
@@ -46,7 +46,7 @@ def _dump_model(path: Path, data: dict[str, Any]) -> None:
     )
 
 
-class WriteModelConfig(BotModelConfig):
+class WriteModelConfig(ModelRegistry):
     """The STRICT validation face for ``PUT /api/config/model`` (PRD §4.7 D6).
 
     Runtime parsing (``from_yaml``, assembly) deliberately stays tolerant of

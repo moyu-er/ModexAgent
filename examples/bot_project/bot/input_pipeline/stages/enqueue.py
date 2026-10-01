@@ -19,9 +19,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
-from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 from modex_agent.messaging.models import InputMessage
+from modex_agent.pipeline.input.envelope import CommandStatus, UserInputEnvelope
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 
 
 def build_input_message(

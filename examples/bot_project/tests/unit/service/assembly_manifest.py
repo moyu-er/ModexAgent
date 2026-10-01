@@ -25,7 +25,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.plugins.abc import ComponentSlot
+from modex_agent.scope.components import ComponentSlot
 
 # ── Models ──────────────────────────────────────────────────────────────
 
@@ -251,7 +251,7 @@ def roster_source_map(
     PrototypeFactory) are probed for the tool's instance name so the
     rename stays attributed to the roster.
     """
-    from modex_agent.plugins.abc import PrototypeFactory, SimpleFactory
+    from modex_agent.scope.components import PrototypeFactory, SimpleFactory
 
     source_of: dict[str, str] = {}
     for name in spec_tools:
@@ -343,7 +343,7 @@ def dump_assembly_manifest(
 
     return AssemblyManifest(
         pool_name=pool_instance.name,
-        execution_strategy=pool_instance.main_execution_strategy.value,
+        execution_strategy=pool_instance.main_execution_strategy,
         shell_variant=(
             group.variant
             if (group := pool_instance.tool_manager.get_tool_group("bash")) is not None

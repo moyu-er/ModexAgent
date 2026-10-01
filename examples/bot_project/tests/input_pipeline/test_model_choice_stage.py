@@ -10,10 +10,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from bot.input_pipeline.stages.model_choice import ModelChoiceStage
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
-from bot.service.model_config import BotModelConfig
 
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.app.models.registry import ModelRegistry
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 
 _YML = """
 models:
@@ -24,10 +24,10 @@ models:
 """
 
 
-def _cfg(tmp_path: Path) -> BotModelConfig:
+def _cfg(tmp_path: Path) -> ModelRegistry:
     p = tmp_path / "model.yml"
     p.write_text(_YML, encoding="utf-8")
-    return BotModelConfig.from_yaml(p)
+    return ModelRegistry.from_yaml(p)
 
 
 def _ctx() -> MagicMock:

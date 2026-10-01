@@ -17,7 +17,7 @@ from bot.eval.memory_metric_models import (
     UtilizationClass,
     UtilizationDelta,
 )
-from modex_agent.memory.hooks import SectionProvenance
+from modex_agent.core.memory_hooks import SectionProvenance
 from modex_agent.trace.pricing import (
     PerModelUsage,
     PriceBook,

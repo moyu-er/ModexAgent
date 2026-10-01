@@ -21,17 +21,20 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from bot.config.webui_config import build_control_origin
 
 from modex_agent.agents.external.agent import ExternalAgent
+from modex_agent.app.models.assembly import ModelRegistryAssembly
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
-from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.memory.config import MemoryConfig
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_instance import PoolInstance
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 
 _BOT_PROJECT = Path(__file__).parent.parent.parent / "examples" / "bot_project"
 if str(_BOT_PROJECT) not in sys.path:
@@ -70,10 +73,13 @@ async def _build_external_pool(
     tmp_path: Path, *, provider_kind: str = "opencode", which_result: str | None
 ) -> PoolInstance:
     """Call ``create_pool`` for a declared external pool with ``shutil.which`` mocked."""
-    from bot.service.model_choice import ModelChoiceRegistry
-    from bot.service.model_config import BotModelConfig
-    from bot.service.pool import create_pool
     from bot.workspace.handle import WorkspaceHandle
+
+    from modex_agent.app.models.assembly import ModelRegistryAssembly
+    from modex_agent.app.models.choice import ModelChoiceRegistry
+    from modex_agent.app.models.registry import ModelRegistry
+    from modex_agent.plugins.assembly.pool_factory import create_pool
+    from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 
     target = tmp_path / "ws"
     target.mkdir()
@@ -92,7 +98,7 @@ models:
           model: "test-model"
 """
     (tmp_path / "model.yml").write_text(yml, encoding="utf-8")
-    bot_model_config = BotModelConfig.from_yaml(tmp_path / "model.yml")
+    bot_model_config = ModelRegistry.from_yaml(tmp_path / "model.yml")
 
     declared = _declared_external_pool(tmp_path, provider_kind=provider_kind)
     assembly_deps = PoolAssemblyDeps(memory=MemoryConfig())
@@ -100,7 +106,7 @@ models:
     await broker.start()
     workspace_handle = WorkspaceHandle(target=target, data_root=target / ".modex")
 
-    with patch("bot.service.external_strategy.shutil.which", return_value=which_result):
+    with patch("modex_agent.plugins.assembly.strategies.external.shutil.which", return_value=which_result):
         pool_instance = await create_pool(
             pool_name="ext_pool",
             declared=declared,
@@ -119,7 +125,9 @@ models:
             shared_interceptor_chain=InterceptorChain(),
             control_channel=InMemoryControlChannel(),
             workspace_handle=workspace_handle,
-            bot_model_config=bot_model_config,
+            model_assembly=ModelRegistryAssembly(bot_model_config),
+            default_llm_provider_name=MULTI_LLM_PROVIDER,
+            control_origin=build_control_origin(tmp_path / "config"),
             model_choice_registry=ModelChoiceRegistry(),
         )
 
@@ -133,12 +141,13 @@ async def _build_external_pool_no_model(
     """Call ``create_pool`` for an external pool with ``bot_model_config=None``.
 
     Verifies the external path boots without ``model.yml`` configured
-    — no ``BotModelProvider`` is built because ``ExternalAgentBuilder``
+    — no ``ModelSelectionProvider`` is built because ``ExternalAgentBuilder``
     ignores the provider parameter.
     """
-    from bot.service.model_choice import ModelChoiceRegistry
-    from bot.service.pool import create_pool
     from bot.workspace.handle import WorkspaceHandle
+
+    from modex_agent.app.models.choice import ModelChoiceRegistry
+    from modex_agent.plugins.assembly.pool_factory import create_pool
 
     target = tmp_path / "ws"
     target.mkdir()
@@ -149,7 +158,7 @@ async def _build_external_pool_no_model(
     await broker.start()
     workspace_handle = WorkspaceHandle(target=target, data_root=target / ".modex")
 
-    with patch("bot.service.external_strategy.shutil.which", return_value=which_result):
+    with patch("modex_agent.plugins.assembly.strategies.external.shutil.which", return_value=which_result):
         pool_instance = await create_pool(
             pool_name="ext_pool",
             declared=declared,
@@ -168,7 +177,9 @@ async def _build_external_pool_no_model(
             shared_interceptor_chain=InterceptorChain(),
             control_channel=InMemoryControlChannel(),
             workspace_handle=workspace_handle,
-            bot_model_config=None,
+            model_assembly=ModelRegistryAssembly(None),
+            default_llm_provider_name=MULTI_LLM_PROVIDER,
+            control_origin=build_control_origin(tmp_path / "config"),
             model_choice_registry=ModelChoiceRegistry(),
         )
 
@@ -214,7 +225,7 @@ async def test_external_pool_boots_without_model_yml(
     """external pool boots with ``bot_model_config=None`` (no model.yml).
 
     The external CLI owns its own model configuration, so the pool builder
-    must not require a ``BotModelProvider``. This verifies the
+    must not require a ``ModelSelectionProvider``. This verifies the
     ``ExternalAwareFactory.create_agent`` override builds the agent
     without ever touching the model config.
     """

@@ -30,17 +30,17 @@ from typing import Any
 import pytest
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.core import BotService
-from bot.service.roots import BotAssemblyRoots
 
 from modex_agent.adapters.emitter import StreamingAwareEmitter
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
+from modex_agent.app.config import AppConfig
+from modex_agent.app.roots import AppAssemblyRoots
 from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.stream_events import Finish, LLMStreamEvent, TextDelta
-from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.messaging.models import InputMessage, OutputMessage
 
 pytestmark = pytest.mark.integration
@@ -148,8 +148,8 @@ def _write_minimal_config(project_dir: Path) -> Path:
     # discovered from <project>/plugins by BotService — a bootable project
     # carries the real plugin set, so the synthetic one must too.
     shutil.copytree(
-        Path(__file__).resolve().parents[2] / "plugins",
-        project_dir / "plugins",
+        Path(__file__).resolve().parents[2] / "bot_plugins",
+        project_dir / "bot_plugins",
     )
 
     (project_dir / "agents" / "main.md").write_text(
@@ -253,7 +253,7 @@ async def test_every_materialized_workspace_delivers_output(
         output_adapter=output_adapter,
         emitter_factory=emitter_factory,
         app_config=app_config,
-        roots=BotAssemblyRoots.resident(config_dir=config_dir, resource_root=tmp_path),
+        roots=AppAssemblyRoots.resident(config_dir=config_dir, resource_root=tmp_path),
     )
     assert service.roots.workspace_home == tmp_path.resolve()
     assert service.roots.scope_declaration_path == config_dir / "scopes" / "bot.yml"
@@ -265,7 +265,7 @@ async def test_every_materialized_workspace_delivers_output(
 
     # Only the service default provider (memory summarizer / background) is
     # mocked: the pool-level LLM_PROVIDER slot resolves through the registry
-    # (bot_default → BotModelProvider over the dummy model.yml).
+    # (bot_default → ModelSelectionProvider over the dummy model.yml).
     import bot.service.core as core_mod
 
     original_default_provider = core_mod.BotService._build_default_provider
@@ -277,15 +277,15 @@ async def test_every_materialized_workspace_delivers_output(
     core_mod.BotService._project_dir = property(lambda self: tmp_path)  # type: ignore[assignment]
 
     # Pool turns resolve their LLM through the registry (bot_default →
-    # BotModelProvider over the dummy model.yml URL), which the service-level
+    # ModelSelectionProvider over the dummy model.yml URL), which the service-level
     # provider patch above never reaches — echo at the provider class instead,
     # on the native event surface ReactLlmClient actually consumes.
-    from bot.service.model_provider import BotModelProvider
+    from modex_agent.app.models.provider import ModelSelectionProvider
 
-    original_stream = BotModelProvider.stream
+    original_stream = ModelSelectionProvider.stream
 
     async def _echo_stream(
-        self: BotModelProvider,
+        self: ModelSelectionProvider,
         request: LLMRequest,
     ) -> AsyncIterator[LLMStreamEvent]:
         del self
@@ -294,7 +294,7 @@ async def test_every_materialized_workspace_delivers_output(
         yield TextDelta(text=f"echo:{content}" if content else "echo:ok")
         yield Finish(finish_reason=FinishReason.STOP)
 
-    BotModelProvider.stream = _echo_stream  # type: ignore[method-assign]
+    ModelSelectionProvider.stream = _echo_stream  # type: ignore[method-assign]
 
     try:
         await service.initialize()
@@ -390,4 +390,4 @@ async def test_every_materialized_workspace_delivers_output(
             await service.stop()
         core_mod.BotService._build_default_provider = original_default_provider  # type: ignore[assignment]
         core_mod.BotService._project_dir = original_project_dir  # type: ignore[assignment]
-        BotModelProvider.stream = original_stream  # type: ignore[method-assign]
+        ModelSelectionProvider.stream = original_stream  # type: ignore[method-assign]

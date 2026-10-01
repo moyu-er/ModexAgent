@@ -4,12 +4,12 @@ from dataclasses import fields
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from bot.service.roots import BotAssemblyRoots
 from bot.workspace.handle import PoolWorkspaceResources
 from bot.workspace.wiring.resources import _build_resources, _stop_resources
 
-from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.multi_agent.pool_router import PoolRoutingStore
+from modex_agent.app.config import AppConfig
+from modex_agent.app.roots import AppAssemblyRoots
+from modex_agent.core.stores import PoolRoutingStore
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.workspace.context import WorkspaceContext
 
@@ -20,7 +20,7 @@ def _service(home: Path, app_config: AppConfig) -> MagicMock:
     service.project_dir = home
     # Resource assembly reads the explicit assembly roots (DESIGN §3.2), not
     # _project_dir — give the mock the real resident identity for `home`.
-    service.roots = BotAssemblyRoots.resident(config_dir=home / "config", resource_root=home)
+    service.roots = AppAssemblyRoots.resident(config_dir=home / "config", resource_root=home)
     service._enable_dynamic_workspaces = True
     service._app_config = app_config
     service._home_persistence = None

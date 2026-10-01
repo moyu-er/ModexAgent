@@ -24,11 +24,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-from bot.service.pool.pool_construction import ensure_long_term_defaults
+from bot.service.builders import ensure_long_term_defaults
 
-from modex_agent.ioc.configs.memory import MemoryConfig
-from modex_agent.ioc.factories.memory import create_memory
+from modex_agent.memory.config import MemoryConfig
 from modex_agent.memory.scope import MemoryContext
+from modex_agent.plugins.assembly.memory_factory import create_memory
 
 
 def _write_templates(project_dir: Path) -> Path:

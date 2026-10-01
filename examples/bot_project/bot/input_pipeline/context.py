@@ -7,16 +7,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bot.service.media_store import WorkspaceScopedMediaStore
-from modex_agent.multi_agent.pool_router import PoolRoutingStore
+from modex_agent.core.media import MediaStore
+from modex_agent.core.stores import PoolRoutingStore
 
 if TYPE_CHECKING:
-    from bot.service.model_choice import ModelChoiceRegistry
+    from modex_agent.app.models.choice import ModelChoiceRegistry
 from bot.webui.transcript_store import TranscriptStore
+from modex_agent.core.media import MediaConfig
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.input_pipeline.context import InputContext
 from modex_agent.messaging.models import InputMessage
-from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.pipeline.input.context import InputContext
 
 
 class BotInputContext(InputContext):
@@ -119,6 +120,14 @@ class BotInputContext(InputContext):
     @property
     def media_store(self) -> WorkspaceScopedMediaStore | None:
         return self._media_store
+
+    def media_store_for(self, pool: str) -> MediaStore | None:
+        """The framework ``MediaStore`` face over the workspace+pool-routed
+        media backend (``None`` when the deployment wires no media store —
+        the attachment ingest stage then no-ops)."""
+        if self._media_store is None:
+            return None
+        return self._media_store.store_for(pool)
 
     @property
     def media_config(self) -> MediaConfig:

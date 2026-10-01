@@ -3,11 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
-from plugins.im_input_stages import IMInputStagesPlugin
+from bot_plugins.im_input_stages import IMInputStagesPlugin
 
 from modex_agent.plugins.assembly.context import AssemblyContext
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.workspace.context import WorkspaceContext
 
 TEST_COMPONENT_REGISTRY: Final = ComponentRegistry()

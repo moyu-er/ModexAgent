@@ -36,7 +36,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from bot.config.domain import (
+from modex_agent.app.config_domain import (
     ConfigDomain,
     DomainFlavor,
     RestartMarker,
@@ -130,7 +130,7 @@ class PersonalAssistantPreferences:
     Wraps one :class:`ConfigDomain` (name ``personal_assistant``) whose YAML
     path is the assembly's ``config_dir / "personal_assistant.yml"`` — one
     instance per assembly, constructed by the service from
-    ``BotAssemblyRoots.config_dir`` and injected everywhere (REST config
+    ``AppAssemblyRoots.config_dir`` and injected everywhere (REST config
     surface + runtime default resolution). There is deliberately NO
     module-level singleton: the domain registry entry this instance registers
     is what ``GET/PUT /api/config/personal_assistant`` serves through the

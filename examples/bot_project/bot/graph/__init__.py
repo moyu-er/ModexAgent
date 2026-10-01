@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from bot.graph.agent_node import BotAgentNode
 from bot.graph.agent_node_factory import BotAgentNodeConfig, BotAgentNodeFactory
-from modex_agent.graph import GraphSpecLoader
+from modex_agent.orchestration.spec_loader import GraphSpecLoader
 
 __all__ = [
     "BotAgentNode",

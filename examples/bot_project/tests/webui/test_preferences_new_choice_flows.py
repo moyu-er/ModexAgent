@@ -17,13 +17,13 @@ from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.config.domains.personal_assistant import PersonalAssistantPreferences
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.resolve_pool import ResolvePoolStage, RoutingMeta
 from bot.service.config_controller import ConfigController
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.server import WebUIServer
 
 from modex_agent.core.session_id import encode_snowflake
 from modex_agent.multi_agent.pool_router import LocalFilePoolRoutingStore
+from modex_agent.pipeline.input.stages.resolve_pool import ResolvePoolStage, RoutingMeta
 
 
 def _make_server(
@@ -114,7 +114,7 @@ async def test_config_put_updates_rest_create_and_ws_attach_and_im_default(
         enqueue_message=MagicMock(),
         command_adapter=MagicMock(),
     )
-    from modex_agent.input_pipeline.envelope import UserInputEnvelope
+    from modex_agent.pipeline.input.envelope import UserInputEnvelope
 
     env = UserInputEnvelope(
         external_id="im-user", content="hi", channel="qq", explicit_pool=None

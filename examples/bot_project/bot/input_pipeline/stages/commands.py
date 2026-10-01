@@ -21,10 +21,10 @@ from collections.abc import Mapping
 from enum import StrEnum
 from pathlib import Path
 
-from bot.input_pipeline.stages.command import CommandContext, CommandHandler
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.messaging.models import InputMessage
+from modex_agent.pipeline.input.stages.command import CommandContext, CommandHandler
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 
 
 class BuiltinCommand(StrEnum):

@@ -126,7 +126,7 @@ async def test_control_commands_isolated_across_im_channels(tmp_path: Path) -> N
     from bot.input_pipeline.context import BotInputContext
     from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
 
-    from modex_agent.input_pipeline.envelope import UserInputEnvelope
+    from modex_agent.pipeline.input.envelope import UserInputEnvelope
     from modex_agent.workspace.control import WorkspaceController
     from modex_agent.workspace.models import CdResult
 
@@ -225,7 +225,7 @@ async def test_webui_control_command_does_not_leak_to_im(tmp_path: Path) -> None
     from bot.input_pipeline.context import BotInputContext
     from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
 
-    from modex_agent.input_pipeline.envelope import UserInputEnvelope
+    from modex_agent.pipeline.input.envelope import UserInputEnvelope
     from modex_agent.workspace.control import WorkspaceController
     from modex_agent.workspace.models import CdResult
 

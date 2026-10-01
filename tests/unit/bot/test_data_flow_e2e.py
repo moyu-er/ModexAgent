@@ -28,12 +28,12 @@ if str(_BOT_PROJECT) not in sys.path:
 
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.messaging.broker import BrokerMessage
-from modex_agent.messaging.broker_bridge import BrokerBridgeService, OutputRoute
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.messaging.models import InputMessage, OutputMessage
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.pipeline.broker_bridge import BrokerBridgeService, OutputRoute
 
 # ── Stubs ──
 
@@ -327,8 +327,8 @@ class TestApprovalCrossPool:
     def test_each_pool_has_own_turn_store(self, tmp_path):
         """Each pool gets its own TurnStateStore with isolated directories."""
         from modex_agent.agents.react.state import ReActRuntimeStateCodec
-        from modex_agent.runtime.codec import RuntimeStateCodecRegistry
-        from modex_agent.runtime.enums import AgentKind
+        from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
+        from modex_agent.core.turn.enums import AgentKind
         from modex_agent.runtime.store import JsonFileTurnStateStore
 
         codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
@@ -349,8 +349,8 @@ class TestApprovalCrossPool:
           data/runtime_state/{pool_name}/turns/
         """
         from modex_agent.agents.react.state import ReActRuntimeStateCodec
-        from modex_agent.runtime.codec import RuntimeStateCodecRegistry
-        from modex_agent.runtime.enums import AgentKind
+        from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
+        from modex_agent.core.turn.enums import AgentKind
         from modex_agent.runtime.store import JsonFileTurnStateStore
 
         codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})

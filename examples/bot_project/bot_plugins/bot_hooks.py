@@ -7,12 +7,12 @@ registered here because its construction depends on bot-side pool resources
 Hooks registered:
 
 - ``model_choice_bind`` (React) — :class:`ModelChoiceBindHook` from
-  ``bot/service/model_choice.py``. Binds the per-turn model choice from the
+  ``modex_agent/app/models/choice.py``. Binds the per-turn model choice from the
   registry into the ``current_model_choice`` ContextVar at ``before_graph``
   (every ``actual_turn()`` entry, including approval resume — resume re-enters
   on a fresh task where the ContextVar would otherwise be lost and the model
   would silently revert to the pool default).
-  The hook's construction deps (``BotModelConfig`` + ``ModelChoiceRegistry``)
+  The hook's construction deps (``ModelRegistry`` + ``ModelChoiceRegistry``)
   are service-scoped runtime objects derived from the pool assembly context
   on the chain at ``create()`` time (``create_pool`` threads both); an
   explicit config entry (``arbitrary_types_allowed=True``) overrides.
@@ -37,23 +37,23 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar, Final
 
 from bot.kb.provider import KbProvider
-from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
-from bot.service.model_config import BotModelConfig
-from bot.service.pool.agent_factory import _cell_sessions_dir
 from bot.service.pool.communication import UserNoticeCleanupHook
 from bot.service.session_title_hook import SessionTitleHook
 from bot.tools.custom import SendFileToUserTool
 from bot.workspace.handle import PoolWorkspaceResources
 from pydantic import BaseModel, ConfigDict
 
+from modex_agent.app.models.choice import ModelChoiceBindHook, ModelChoiceRegistry
+from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.core.tool_manager import Tool
-from modex_agent.plugins.abc import (
+from modex_agent.plugins.assembly.pool_factory import _cell_sessions_dir
+from modex_agent.plugins.loader import Plugin, PluginRegistrationContext
+from modex_agent.scope.components import (
     AgentType,
     ComponentFactory,
     MemoryHookFactory,
     ReactHookFactory,
 )
-from modex_agent.plugins.loader import Plugin, PluginRegistrationContext
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -100,7 +100,7 @@ class ModelChoiceBindHookConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
 
-    bot_model_config: BotModelConfig | None = None
+    bot_model_config: ModelRegistry | None = None
     model_choice_registry: ModelChoiceRegistry | None = None
 
 
@@ -229,7 +229,7 @@ class KbToolFactory(ComponentFactory):
             # subprocess contexts that legitimately carry it.
             import os
 
-            from modex_agent.runtime.env_context import _modex_env
+            from modex_agent.core.turn.env_context import _modex_env
 
             modex_vars = _modex_env.get()
             if modex_vars is not None:
@@ -241,7 +241,7 @@ class KbToolFactory(ComponentFactory):
         def _session_id_provider() -> str | None:
             import os
 
-            from modex_agent.runtime.env_context import _current_session_id, _modex_env
+            from modex_agent.core.turn.env_context import _current_session_id, _modex_env
 
             session = _current_session_id.get()
             if session is not None:
@@ -291,7 +291,7 @@ class ModelChoiceBindHookFactory(ReactHookFactory):
         registry = config.model_choice_registry
         if registry is None:
             registry = pool_assembly.model_choice_registry if pool_assembly is not None else None
-        if not isinstance(model_config, BotModelConfig) or not isinstance(
+        if not isinstance(model_config, ModelRegistry) or not isinstance(
             registry, ModelChoiceRegistry
         ):
             raise ValueError(
@@ -336,7 +336,7 @@ class SessionTitleHookFactory(ReactHookFactory):
     """Factory for :class:`SessionTitleHook` — background session naming.
 
     React hook (``hook_runner=react``): dispatched via the declared-roster
-    ``_dispatch_hooks`` onto the agent's ``HookRunner`` — the SAME
+    ``dispatch_hooks`` onto the agent's ``HookRunner`` — the SAME
     mechanism native and external main agents both use (PA-04 wires the
     external side through the same dispatch helper).
 

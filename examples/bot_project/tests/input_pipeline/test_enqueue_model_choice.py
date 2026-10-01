@@ -10,12 +10,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from bot.input_pipeline.prepare import BotInputPreparation
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
-from bot.service.model_choice import ModelChoiceRegistry
-from bot.service.model_config import BotModelConfig
 
+from modex_agent.app.models.choice import ModelChoiceRegistry
+from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 
 _YML = """
 models:
@@ -44,7 +44,7 @@ def _ctx(registry: ModelChoiceRegistry, captured: list) -> MagicMock:
 async def test_enqueue_registers_resolved_model(tmp_path: Path) -> None:
     cfg_path = tmp_path / "model.yml"
     cfg_path.write_text(_YML, encoding="utf-8")
-    cfg = BotModelConfig.from_yaml(cfg_path)
+    cfg = ModelRegistry.from_yaml(cfg_path)
     resolved = cfg.default_resolved()
     reg = ModelChoiceRegistry()
     captured: list = []

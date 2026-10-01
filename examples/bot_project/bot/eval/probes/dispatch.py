@@ -43,8 +43,8 @@ from bot.eval.probes.evidence import (
 from bot.eval.probes.generate import load_frozen_library
 from bot.eval.probes.harness import run_probe_harness
 from bot.eval.probes.schema import WorldSpec
-from modex_agent.ioc.configs.llm import LLMConfig
-from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.providers.factory import create_llm_provider
+from modex_agent.providers.llm_config import LLMConfig
 from modex_agent.trace.pricing import TOKENS_PER_MILLION, PriceBook, load_pricebook
 from modex_agent.trace.score_injector import L2ScoreInjector
 

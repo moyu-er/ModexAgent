@@ -16,16 +16,16 @@ from bot.eval.harbor.pool_mode import (
     execute_pool_entry,
 )
 from bot.eval.harbor.pool_mode_types import PoolUsageArtifact
-from plugins.bot_strategies import BotDefaultLLMConfig
 from pydantic import BaseModel
 
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.plugins.abc import ComponentFactory
+from modex_agent.core.turn.models import JsonValue
 from modex_agent.plugins.assembly.context import AssemblyContext
-from modex_agent.runtime.models import JsonValue
+from modex_agent.plugins.defaults.llm import MultiLLMProviderConfig
+from modex_agent.scope.components import ComponentFactory
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.spec import PoolSpec
 from modex_agent.trace.pricing import PriceBook, PriceEntry
@@ -100,7 +100,7 @@ class _DelegatingProvider(CallbackStreamProvider):
 
 
 class _ProviderFactory(ComponentFactory):
-    config_model = BotDefaultLLMConfig
+    config_model = MultiLLMProviderConfig
 
     def __init__(self, provider: LLMProvider) -> None:
         self._provider = provider

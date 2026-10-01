@@ -35,8 +35,8 @@ from bot.eval.sentinel.orchestrator import (
     SentinelRunResult,
 )
 from bot.eval.sentinel.report import SentinelDifferenceReport
-from modex_agent.ioc.configs.llm import LLMConfig
-from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.providers.factory import create_llm_provider
+from modex_agent.providers.llm_config import LLMConfig
 from modex_agent.trace.experiment_attrs import ExperimentLinkage, stable_experiment_id
 from modex_agent.trace.langfuse_query import LangfuseClient, parse_provenance
 from modex_agent.trace.pricing import load_pricebook

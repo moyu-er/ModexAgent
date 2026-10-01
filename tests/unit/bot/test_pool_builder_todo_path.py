@@ -18,13 +18,13 @@ import pytest
 
 pytest.importorskip("aiohttp")  # transitive: ReactExecutionStrategy → web_ui_service → aiohttp
 
-from modex_agent.plugins.capability import PoolSupplyAgentEntry, PoolSupplyView
+from modex_agent.persistence.adapters.todo_store import JsonFileTodoStore
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.capabilities.todo import TodoCapability, TodoSupply
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.runtime.todo import JsonFileTodoStore
+from modex_agent.scope.capability import PoolSupplyAgentEntry, PoolSupplyView
 from modex_agent.scope.compiler import compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths

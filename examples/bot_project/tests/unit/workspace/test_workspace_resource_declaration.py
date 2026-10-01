@@ -23,16 +23,16 @@ from bot.service.pool.declaration import (
     apply_workspace_resource_selection,
     load_scope_declaration_opt,
 )
-from bot.service.roots import BotAssemblyRoots
 from bot.workspace.wiring.resources import _build_resources, _stop_resources
 
-from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.multi_agent.pool_router import PoolRoutingStore
+from modex_agent.app.config import AppConfig
+from modex_agent.app.roots import AppAssemblyRoots
+from modex_agent.core.stores import PoolRoutingStore
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import WorkspacePersistenceManager
-from modex_agent.plugins.abc import ComponentSlot
 from modex_agent.plugins.defaults.prompt import FilePromptProviderFactory
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot
 from modex_agent.workspace.context import WorkspaceContext
 
 _MINIMAL_DECL = """\
@@ -72,7 +72,7 @@ def _service(home: Path, app_config: AppConfig) -> MagicMock:
     service.project_dir = home
     # Resource assembly reads the explicit assembly roots (DESIGN §3.2), not
     # _project_dir — give the mock the real resident identity for `home`.
-    service.roots = BotAssemblyRoots.resident(config_dir=home / "config", resource_root=home)
+    service.roots = AppAssemblyRoots.resident(config_dir=home / "config", resource_root=home)
     service._enable_dynamic_workspaces = True
     service._app_config = app_config
     service._home_persistence = None
@@ -122,7 +122,7 @@ async def _build_home_resources(
         return _pool_instance()
 
     with (
-        patch("bot.service.pool.create_pool", side_effect=_create_pool),
+        patch("modex_agent.plugins.assembly.pool_factory.create_pool", side_effect=_create_pool),
         patch("bot.workspace.wiring.resources.BackgroundTaskRunner") as background_type,
     ):
         background_type.return_value.start = AsyncMock()
@@ -152,7 +152,7 @@ async def test_workspace_assembly_passes_control_origin_from_actual_config_root(
             "paths": {"data_dir_name": ".modex"},
         }),
     )
-    service.roots = BotAssemblyRoots(
+    service.roots = AppAssemblyRoots(
         config_dir=config_dir,
         resource_root=resource_root,
         workspace_home=workspace_root,

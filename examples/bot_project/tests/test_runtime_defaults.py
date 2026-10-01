@@ -10,11 +10,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.interceptor.builtin import (
-    ToolResultLimitInterceptor,
-)
 from modex_agent.messaging.models import InputMessage
 from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.tools.overflow.result_limit import ToolResultLimitInterceptor
 
 
 class _InputAdapter(InputAdapter):

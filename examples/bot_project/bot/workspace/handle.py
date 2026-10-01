@@ -9,9 +9,9 @@ from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.persistence.session_store import SessionStore
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_agent.workspace import WorkspaceManager
 from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.workspace.handle import WorkspaceHandle as FrameworkWorkspaceHandle
 from modex_agent.workspace.resources import WorkspaceResources
 
 if TYPE_CHECKING:
@@ -19,54 +19,24 @@ if TYPE_CHECKING:
     import sqlite3
 
     from bot.kb.provider import KbProvider
-
-    # These live in bot.service, whose package __init__ imports BotService,
-    # which imports the bundle via wiring; deferring them to TYPE_CHECKING
-    # keeps the import graph acyclic (handle is the low-level bundle module).
-    from bot.service.session_pool_index import SessionPoolIndex
     from bot.service.session_title import SessionTitleOps
     from bot.service.session_title_task import SessionTitleNamingTask
     from bot.service.workspace_store import WorkspaceScopedTranscriptStore
     from bot.webui.transcript_store import TranscriptStore
     from bot.workspace.background import BackgroundTaskRunner
+    from modex_agent.core.stores import PoolRoutingStore
     from modex_agent.multi_agent.pool_instance import PoolInstance
-    from modex_agent.multi_agent.pool_router import PoolRouter, PoolRoutingStore
+    from modex_agent.multi_agent.pool_router import PoolRouter
+
+    # These live in bot.service, whose package __init__ imports BotService,
+    # which imports the bundle via wiring; deferring them to TYPE_CHECKING
+    # keeps the import graph acyclic (handle is the low-level bundle module).
+    from modex_agent.multi_agent.session_tree.pool_index import SessionPoolIndex
     from modex_agent.orchestration import GraphOrchestrator
     from modex_agent.persistence.managers import WorkspacePersistenceManager
     from modex_agent.persistence.session_registry import SessionRegistry
-    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.scope.component_registry import ComponentRegistry
     from modex_graph import GraphOutput, GraphOutputAdapter
-
-
-class WorkspaceHandleRootProvider(WorkspaceRootProvider):
-    """WorkspaceRootProvider reading a WorkspaceHandle.current (fixed per workspace).
-
-    One workspace's tools share one handle (and thus one root); a workspace
-    switch is a different workspace with its own handle + provider, so the
-    provider reads live state without any per-switch wiring.
-    """
-
-    def __init__(self, handle: WorkspaceHandle) -> None:
-        self._handle: WorkspaceHandle = handle
-
-    def current(self) -> Path:
-        return self._handle.current
-
-
-class StaticRootProvider(WorkspaceRootProvider):
-    """WorkspaceRootProvider anchored to one fixed path — the workspace-less
-    pool fallback.
-
-    ``create_pool`` is callable without a workspace (hermetic harnesses,
-    non-workspace wiring); the sandbox guard factory requires a root on
-    every pool boot, so workspace-less pools anchor to the project dir.
-    """
-
-    def __init__(self, root: Path) -> None:
-        self._root: Path = Path(root).resolve()
-
-    def current(self) -> Path:
-        return self._root
 
 
 class WorkspaceResolverCell(WorkspaceManager):
@@ -100,12 +70,13 @@ class WorkspaceResolverCell(WorkspaceManager):
         return value
 
 
-class WorkspaceHandle:
+class WorkspaceHandle(FrameworkWorkspaceHandle):
     """Drop-in ``workspace_context`` for create_pool: a FIXED per-workspace target.
 
-    Exposes ``.current`` (the workspace working dir, = target) and ``.data_dir``
-    (the data root = target/.modex). create_pool reads these to build the
-    WorkspaceRootProvider (working dir) and the experience-path fallback (data root).
+    Implements the framework workspace-handle contract (``.current``) and
+    additionally exposes ``.data_dir`` (the data root = target/.modex).
+    create_pool reads ``.current`` to build the WorkspaceRootProvider; the
+    business half keeps ``.data_dir`` for its own path derivations.
     """
 
     __slots__ = ("_target", "_data_root")

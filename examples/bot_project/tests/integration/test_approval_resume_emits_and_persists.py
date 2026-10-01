@@ -40,6 +40,7 @@ from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.react.state import ReActSnapshotPolicy
+from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
 from modex_agent.approval.ui import IMUserInterface
 from modex_agent.core.events import EmitterConfig
 from modex_agent.core.llm_struct import LLMResponse
@@ -47,8 +48,8 @@ from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool
-from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
-from modex_agent.ioc.factories.approval import build_approval_runtime
+from modex_agent.core.turn.enums import SnapshotReason, TurnPhase
+from modex_agent.core.turn.models import StateQueryScope
 from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.messaging.models import (
     ApprovalAction,
@@ -57,8 +58,7 @@ from modex_agent.messaging.models import (
     OutputMessage,
 )
 from modex_agent.pipeline.pipeline import AgentPipeline
-from modex_agent.runtime.enums import SnapshotReason, TurnPhase
-from modex_agent.runtime.models import StateQueryScope
+from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager
@@ -430,8 +430,8 @@ async def test_resumed_turn_persists_after_jsonfile_snapshot_roundtrip(
     serialization round-trip defect.
     """
     from modex_agent.agents.react.state import ReActRuntimeStateCodec
-    from modex_agent.runtime.codec import RuntimeStateCodecRegistry
-    from modex_agent.runtime.enums import AgentKind
+    from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
+    from modex_agent.core.turn.enums import AgentKind
     from modex_agent.runtime.store import JsonFileTurnStateStore
 
     codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})

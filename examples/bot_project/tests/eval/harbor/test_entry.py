@@ -22,7 +22,7 @@ from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.runtime.models import JsonValue
+from modex_agent.core.turn.models import JsonValue
 from modex_agent.tools.terminal.persistent_bash import persistent_bash_supported
 from modex_agent.trace.experiment_attrs import ExperimentAttribute
 from modex_agent.trace.semconv import GenAiAttr, SpanName

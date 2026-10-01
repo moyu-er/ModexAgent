@@ -1,16 +1,10 @@
 """PA-04 tests — external main agents consume the declared Hook roster.
 
-The external strategy's ``assemble_main`` returns ``external_deps``; the
-``ExternalAwareFactory.create_agent`` builds the pipeline with
-``hook_runner=None`` today ("main agents don't fire FINALLY_GRAPH" — the
-comment this ticket deletes). The SAME ``session_title`` hook must work
-for external pools: the bot adapter consumes the existing declared-roster
-dispatch (``_dispatch_hooks``) with the real plugin factory and the real
-``ExternalTurnRunner`` FINALLY_GRAPH dispatch.
-
-The external-process seam (backend) is scripted — the wiring under test
-(AssemblySpec → registry → AgentContext → factory → pipeline hook runner)
-is the real production path.
+The external strategy's ``assemble_main`` builds its main runtime
+directly (W5) and dispatches the declared HOOK roster through the SAME
+``dispatch_hooks`` the native path uses — the wiring under test
+(AssemblySpec → registry → AgentContext → hook runner → pipeline) is the
+real production path; only the external process seam stays unexercised.
 """
 
 from __future__ import annotations
@@ -26,13 +20,13 @@ from modex_agent.core.session_id import SessionInfo
 from modex_agent.hook.abc import HookPayload, HookPoint
 from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
 from modex_agent.persistence.session_registry import InMemorySessionRegistry
-from modex_agent.plugins.abc import AgentType
-from modex_agent.plugins.assembly.spec import AssemblySpec
 from modex_agent.plugins.loader import (
     ComponentRegistry,
     ComponentRegistryLoader,
     PluginDiscoveryConfig,
 )
+from modex_agent.scope.assembly_spec import AssemblySpec
+from modex_agent.scope.components import AgentType
 from modex_agent.workspace.context import WorkspaceContext as WSIdentity
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -49,14 +43,14 @@ async def _load_component_registry() -> ComponentRegistry:
         registry,
         PluginDiscoveryConfig(
             bundled_factories=(DefaultPlugin(),),
-            project_plugin_paths=(_BOT_PROJECT_DIR / "plugins",),
+            project_plugin_paths=(_BOT_PROJECT_DIR / "bot_plugins",),
         ),
     )
     return registry
 
 
 def _spec(agent_name: str = "opencode", hooks: tuple[str, ...] = ("session_title",)) -> AssemblySpec:
-    from modex_agent.plugins.assembly.spec import MemoryOverrides
+    from modex_agent.scope.assembly_spec import MemoryOverrides
 
     return AssemblySpec(
         agent_type=AgentType.external_main,
@@ -102,42 +96,42 @@ async def _title_wiring(tmp_path: Path) -> tuple[SessionTitleOps, Any]:
 
 
 @pytest.mark.asyncio
-async def test_external_factory_wires_declared_hooks_via_dispatch(tmp_path: Path) -> None:
-    """ExternalAwareFactory must build its pipeline hook runner through
-    ``_dispatch_hooks`` — the same roster mechanism native uses."""
-    from bot.service.external_strategy import ExternalAwareFactory
+async def test_external_strategy_wires_declared_hooks_via_dispatch(tmp_path: Path) -> None:
+    """The external strategy must build its pipeline hook runner through
+    ``dispatch_hooks`` — the same roster mechanism native uses (W5: the
+    dispatch moved from the deleted ExternalAwareFactory into the
+    strategy)."""
+    from modex_agent.core.agent import ProviderKind
+    from modex_agent.plugins.assembly.strategies.external import (
+        ExternalExecutionStrategy,
+    )
+    from modex_agent.scope.spec import AgentSpec, PoolSpec
 
     registry = await _load_component_registry()
     ops, naming = await _title_wiring(tmp_path)
-    spec = _spec()
-    resources = title_resources(tmp_path, ops, naming)
-
-    factory = ExternalAwareFactory(
-        session_registry=ops.registry,
-        external_deps={
-            "backend": _ScriptedBackend(),
-            "session_store": _ScriptedSessionMapStore(),
-            "parser": _ScriptedParser(),
-            "provider_kind": _FakeProviderKind.OPENCODE,
-            "spec": None,
-            "component_registry": registry,
-            "assembly_spec": spec,
-            "workspace_resources": resources,
-        },
+    root = AgentSpec(
+        name="opencode",
+        execution_strategy="external",
+        provider_kind=ProviderKind.OPENCODE,
+        hooks=["session_title"],
     )
-    # The factory's roster dispatch (the production path create_agent now
+    pool_spec = PoolSpec(name="opencode", agents=[root])
+    strategy = ExternalExecutionStrategy()
+    ctx = _make_pool_ctx(tmp_path, pool_spec, ops, naming, registry=registry, assembly_spec=_spec())
+
+    # The strategy's roster dispatch (the production path assemble_main
     # takes) builds the hook runner.
-    hook_runner = await factory._assemble_roster_hooks()
+    hook_runner = await strategy._assemble_roster_hooks(ctx)
     assert hook_runner is not None
     assert any("title" in s.hook.name.lower() for s in hook_runner.hook_specs)
     # the dispatched hook actually submits on COMPLETED external turns
     from modex_agent.core.agent import AgentContext
+    from modex_agent.core.turn.models import TurnIdentity
     from modex_agent.memory.history import ListMessageHistory
-    from modex_agent.runtime.models import TurnIdentity
     from modex_agent.tools.manager import InMemoryToolManager
 
     session = SessionInfo(session_id="ext789.opencode", agent_name="opencode")
-    ctx = AgentContext(
+    ctx_agent = AgentContext(
         system_prompt="",
         history=ListMessageHistory(),
         tool_manager=InMemoryToolManager(),
@@ -145,7 +139,7 @@ async def test_external_factory_wires_declared_hooks_via_dispatch(tmp_path: Path
         identity=TurnIdentity(agent_id="opencode", session=session, turn_id="t1"),
     )
     await hook_runner.dispatch(
-        HookPoint.FINALLY_GRAPH, ctx, HookPayload(data={"result": AgentResult(stop_reason=StopReason.COMPLETED)})
+        HookPoint.FINALLY_GRAPH, ctx_agent, HookPayload(data={"result": AgentResult(stop_reason=StopReason.COMPLETED)})
     )
     await settle_titles(naming)
     assert naming.submitted == [("opencode", "ext789.opencode")]
@@ -153,19 +147,18 @@ async def test_external_factory_wires_declared_hooks_via_dispatch(tmp_path: Path
 
 @pytest.mark.asyncio
 async def test_external_assembly_end_to_end_fires_finally_graph(tmp_path: Path) -> None:
-    """The REAL strategy + REAL ExternalAwareFactory pipeline dispatch
-    FINALLY_GRAPH with the roster hook after an external turn."""
+    """The REAL strategy assembly dispatches FINALLY_GRAPH with the roster
+    hook after an external turn (W5: the strategy builds the main runtime
+    directly — no ExternalAwareFactory)."""
     import shutil
     from unittest.mock import patch
 
-    from bot.service.external_strategy import (
-        ExternalAwareFactory,
+    from modex_agent.core.agent import AgentContext
+    from modex_agent.core.turn.models import TurnIdentity
+    from modex_agent.memory.history import ListMessageHistory
+    from modex_agent.plugins.assembly.strategies.external import (
         ExternalExecutionStrategy,
     )
-
-    from modex_agent.core.agent import AgentContext
-    from modex_agent.memory.history import ListMessageHistory
-    from modex_agent.runtime.models import TurnIdentity
     from modex_agent.tools.manager import InMemoryToolManager
 
     registry = await _load_component_registry()
@@ -186,38 +179,25 @@ async def test_external_assembly_end_to_end_fires_finally_graph(tmp_path: Path) 
         pool_spec = PoolSpec(name="opencode", agents=[root])
         strategy.validate_pool_spec(pool_spec)
 
-        # Assemble through the strategy with a scripted backend seam; the
-        # CLI gate would fail without opencode on PATH — patch it.
+        # Assemble through the strategy with the roster-dispatch inputs on
+        # the pool assembly context; the CLI gate would fail without
+        # opencode on PATH — patch it.
         with patch.object(shutil, "which", lambda name: f"/fake/bin/{name}"):
-            assembly = await strategy.assemble_main(_make_pool_ctx(tmp_path, pool_spec, ops, naming))
-        deps = assembly.external_deps
-        assert deps is not None
-        # the strategy threads the roster-dispatch inputs (component
-        # registry + compiled assembly spec + workspace resources)
-        deps["component_registry"] = registry
-        deps["assembly_spec"] = _spec()
-        deps["workspace_resources"] = title_resources(tmp_path, ops, naming)
-
-        factory = ExternalAwareFactory(session_registry=ops.registry, external_deps=deps)
-        from modex_agent.core import AgentCommKind
-        from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.descriptor import AgentDescriptor
-
-        descriptor = AgentDescriptor(
-            address=AgentAddress(name="opencode"),
-            execution_strategy=ExecutionStrategyKind.EXTERNAL,
-            provider_kind=ProviderKind.OPENCODE,
-            comm_kind=AgentCommKind.NORMAL,
-            system_prompt_template="",
-        )
-        instance = await factory.create_agent(descriptor)
+            assembly = await strategy.assemble_main(
+                _make_pool_ctx(
+                    tmp_path, pool_spec, ops, naming,
+                    registry=registry, assembly_spec=_spec(),
+                )
+            )
+        main = assembly.main
+        assert main is not None
+        instance = main.instance
         assert instance.pipeline is not None
         runner = instance.pipeline.hook_runner
         assert runner is not None, "external main must carry a hook runner"
 
         session = SessionInfo(session_id="extabc.opencode", agent_name="opencode")
-        ctx = AgentContext(
+        ctx_agent = AgentContext(
             system_prompt="",
             history=ListMessageHistory(),
             tool_manager=InMemoryToolManager(),
@@ -228,13 +208,13 @@ async def test_external_assembly_end_to_end_fires_finally_graph(tmp_path: Path) 
 
         await runner.dispatch(
             HookPoint.FINALLY_GRAPH,
-            ctx,
+            ctx_agent,
             HookPayload(data={"result": None}),  # suspend leg skipped
         )
         assert naming.submitted == []
         await runner.dispatch(
             HookPoint.FINALLY_GRAPH,
-            ctx,
+            ctx_agent,
             HookPayload(data={"result": AgentResult(stop_reason=StopReason.COMPLETED)}),
         )
         await settle_titles(naming)
@@ -244,7 +224,15 @@ async def test_external_assembly_end_to_end_fires_finally_graph(tmp_path: Path) 
     assert submitted == [("opencode", "extabc.opencode")]
 
 
-def _make_pool_ctx(root: Path, pool_spec: Any, ops: SessionTitleOps, naming: Any) -> Any:
+def _make_pool_ctx(
+    root: Path,
+    pool_spec: Any,
+    ops: SessionTitleOps,
+    naming: Any,
+    *,
+    registry: Any = None,
+    assembly_spec: Any = None,
+) -> Any:
     from modex_agent.adapters.output import OutputAdapter
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.messaging.broker_memory import InMemoryMessageBroker
@@ -275,6 +263,10 @@ def _make_pool_ctx(root: Path, pool_spec: Any, ops: SessionTitleOps, naming: Any
         retention=SessionRetentionPolicy(),
         registry=None,  # type: ignore[arg-type]
         workspace_resolver=_ResolverCellOver(title_resources(root, ops, naming)),
+        session_registry=ops.registry,
+        component_registry=registry,
+        assembly_spec=assembly_spec,
+        workspace_resources=title_resources(root, ops, naming),
     )
 
 
@@ -286,27 +278,6 @@ class _ResolverCellOver:
 
     def resolve_workspace(self) -> Any:
         return self._resources
-
-
-# ── scripted external seams (the real boundary under which the wiring
-#    is verified — replacing only the external process/protocol) ────────────
-
-
-class _FakeProviderKind:
-    OPENCODE = "opencode"
-
-
-class _ScriptedBackend:  # StreamingProviderBackend stand-in
-    async def close(self) -> None:
-        return None
-
-
-class _ScriptedSessionMapStore:  # ExternalSessionMapStore stand-in
-    pass
-
-
-class _ScriptedParser:  # ProviderEventParser stand-in
-    pass
 
 
 __all__: list[str] = []

@@ -45,7 +45,7 @@ from bot.workspace.handle import PoolWorkspaceResources
 from bot.workspace.request_resolver import resolve_ws_request
 from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.memory.core.split_stores import MessageStore
+from modex_agent.core.stores import MessageStore
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.pool_instance import PoolInstance
@@ -202,7 +202,7 @@ class BotControlFacade:
             session_id=caller.session_id,
             agent_name=caller.agent_name,
             pool=caller.pool,
-            execution_strategy=execution_strategy.value,
+            execution_strategy=execution_strategy,
             items=items,
             effective_limit=request.limit,
         )
@@ -211,7 +211,7 @@ class BotControlFacade:
         self,
         request: HistoryRequest,
         resources: PoolWorkspaceResources,
-        execution_strategy: ExecutionStrategyKind,
+        execution_strategy: str,
     ) -> HistoryResult:
         """External-coding transcript path (T05).
 
@@ -231,7 +231,7 @@ class BotControlFacade:
             session_id=caller.session_id,
             agent_name=caller.agent_name,
             pool=caller.pool,
-            execution_strategy=execution_strategy.value,
+            execution_strategy=execution_strategy,
             items=items,
             effective_limit=request.limit,
         )

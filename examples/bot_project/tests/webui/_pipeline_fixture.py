@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
-from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 
+from modex_agent.app.models.registry import ModelCfg, ModelRegistry, ProviderCfg
 from tests.input_pipeline.assembly_support import (
     TEST_ASSEMBLY_CTX,
     TEST_COMPONENT_REGISTRY,
@@ -19,8 +19,8 @@ def _no_skill_resolvers() -> PoolSkillResolverRegistry:
     return PoolSkillResolverRegistry(lambda _workspace, _pool: None)
 
 
-def _bot_model_config() -> BotModelConfig:
-    return BotModelConfig(
+def _bot_model_config() -> ModelRegistry:
+    return ModelRegistry(
         default_provider="A",
         default_model="M1",
         providers=[

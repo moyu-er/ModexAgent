@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import _unwrap_envelope
 from bot.webui.server import WebUIServer
 
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 from modex_agent.workspace.paths import WorkspacePaths
 
 

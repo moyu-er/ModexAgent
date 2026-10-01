@@ -11,9 +11,9 @@ from evals.sentinel.tasks import MEMORY_CHAIN_V1_CHAIN, SentinelArm
 from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
-from modex_agent.ioc.configs.observability import TraceBackend
-from modex_agent.runtime.models import JsonValue
+from modex_agent.core.turn.models import JsonValue
 from modex_agent.trace.experiment_attrs import ExperimentAttribute, ExperimentLinkage
+from modex_agent.trace.observability import TraceBackend
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.score_injector import L2ScoreInjector
 

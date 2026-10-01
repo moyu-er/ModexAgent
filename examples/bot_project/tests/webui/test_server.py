@@ -107,7 +107,7 @@ async def test_ws_send_message_passes_attachments_into_envelope() -> None:
     orphaned (the ingest stage no-ops on an empty list). Mirrors the QQ
     adapter (bot/adapters/qq.py). Regression for the G8 WS wire fix.
     """
-    from modex_agent.input_pipeline.envelope import AttachmentRef
+    from modex_agent.pipeline.input.envelope import AttachmentRef
 
     with tempfile.TemporaryDirectory() as tmp:
         workspace_root = Path(tmp)
@@ -347,7 +347,7 @@ async def test_ws_pause_cancels_active_turn_and_sends_cancel_command() -> None:
     from modex_agent.commands.handlers import build_default_builtin_handlers
     from modex_agent.commands.processor import SlashCommandProcessor
     from modex_agent.control.channel import InMemoryControlChannel
-    from modex_agent.control.types import ControlCommandType, ControlScope
+    from modex_agent.core.control import ControlCommandType, ControlScope
 
     with tempfile.TemporaryDirectory() as tmp:
         workspace_root = Path(tmp)
@@ -497,9 +497,8 @@ async def test_no_static_fallback() -> None:
 @pytest.mark.asyncio
 async def test_sessions_list_includes_pool() -> None:
     """GET /api/sessions returns one entry per session with session_id and pool."""
-    from bot.service.session_store import WorkspacePoolSessionStore
-
     from modex_agent.core.session_id import SessionIdFactory
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -815,9 +814,8 @@ async def test_ws_attach_restores_pool_routing() -> None:
 @pytest.mark.asyncio
 async def test_pool_mapping_persistence_across_restart() -> None:
     """Pool mapping survives server restart via physical transcript layout."""
-    from bot.service.session_store import WorkspacePoolSessionStore
-
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
     from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
@@ -920,10 +918,10 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
     switching back to main the list is empty; switching back to coding is
     also empty. This test pins the backend contract.
     """
-    from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
     from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
@@ -1115,10 +1113,10 @@ async def test_ws_attach_switches_all_sessions() -> None:
 @pytest.mark.asyncio
 async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
     """GET /api/sessions includes subagent sessions that have parent relationships."""
-    from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1183,10 +1181,10 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
 @pytest.mark.asyncio
 async def test_api_messages_loads_subagent_transcript() -> None:
     """GET /api/sessions/{subagent_id}/messages loads subagent transcript events."""
-    from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
     from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
@@ -1520,10 +1518,10 @@ async def test_api_sessions_falls_back_to_transcripts_when_index_empty() -> None
     Regression: legacy workspaces only have ``.modex/sessions/<pool>/*.jsonl``
     files and no ``.modex/session_index/``, so the session list was empty.
     """
-    from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
     from modex_agent.core.session_id import SessionIdFactory
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1580,10 +1578,10 @@ async def test_api_sessions_falls_back_preserves_index_entries() -> None:
     """When a session exists in BOTH the SessionInfo index and transcripts,
     the index entry wins (richer metadata), and the transcript is not duplicated.
     """
-    from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
     from modex_agent.core.session_id import SessionIdFactory, SessionInfo
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
     from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
@@ -1653,9 +1651,8 @@ async def test_workspace_cd_switches_current_workspace() -> None:
     ``bind_workspace_root`` ctxvar, not by global rebase.  This test verifies
     the binding correctly isolates writes.
     """
-    from bot.service.session_store import WorkspacePoolSessionStore
-
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
     from modex_agent.utils.time import now_ms
 
     home = Path(tempfile.mkdtemp())
@@ -1746,10 +1743,10 @@ async def test_api_sessions_includes_subagent_sessions() -> None:
     Regression: the endpoint filtered to ``_pool_agent_names`` (main agents
     only), so subagent sessions never appeared and the tree was flat.
     """
-    from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
     from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
@@ -1823,9 +1820,8 @@ async def test_api_sessions_includes_dynamic_subagent_instance() -> None:
     """Dynamic subagent instances like ``reviewer-abc123`` inherit the pool
     of their template type and must appear in the session list.
     """
-    from bot.service.session_store import WorkspacePoolSessionStore
-
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
     from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())

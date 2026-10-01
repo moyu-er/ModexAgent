@@ -136,7 +136,7 @@ async def handle_media_config(request: web.Request) -> web.Response:
     wired (minimal tests), the frozen ``MediaConfig()`` defaults are
     returned so the endpoint always answers with the authoritative numbers.
     """
-    from modex_agent.multi_agent.pool_config.media import MediaConfig
+    from modex_agent.core.media import MediaConfig
 
     server: WebUIServer = request.app["server"]
     config: MediaConfig = (
@@ -168,7 +168,7 @@ async def handle_upload_attachment(request: web.Request) -> web.Response:
     per-kind cap is the pipeline's. ``?ws=`` resolves the workspace the same
     way every other handler does.
     """
-    from modex_agent.multi_agent.pool_config.media import MediaConfig
+    from modex_agent.core.media import MediaConfig
 
 
     server: WebUIServer = request.app["server"]

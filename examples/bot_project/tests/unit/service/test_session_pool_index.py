@@ -13,14 +13,14 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import bot.service.session_pool_index as session_pool_index_module
 import pytest
-from bot.service.model_choice import ModelChoiceRegistry
-from bot.service.pool import create_pool
-from bot.service.session_pool_index import SessionPoolIndex
+from bot.config.webui_config import build_control_origin
 from bot.workspace.handle import WorkspaceResolverCell
 
+import modex_agent.multi_agent.session_tree.pool_index as session_pool_index_module
 from modex_agent.adapters.output import OutputAdapter
+from modex_agent.app.models.assembly import ModelRegistryAssembly
+from modex_agent.app.models.choice import ModelChoiceRegistry
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.scope import RecordScope
 from modex_agent.hook import HookRunner
@@ -34,6 +34,7 @@ from modex_agent.multi_agent.session_tree.models import (
     SessionTreeStatus,
     TreeNodeRecord,
 )
+from modex_agent.multi_agent.session_tree.pool_index import SessionPoolIndex
 from modex_agent.multi_agent.session_tree.store_node import (
     InMemoryTreeNodeStore,
     LocalFileTreeNodeStore,
@@ -47,8 +48,10 @@ from modex_agent.multi_agent.session_tree.store_tree import (
     SqliteSessionTreeStore,
 )
 from modex_agent.persistence import ConnectionManager, DatabaseKind
+from modex_agent.plugins.assembly.pool_factory import create_pool
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 
-from ...declaration_driver import build_declared
+from ...declaration_driver import build_declared, load_bot_test_registry
 
 _POOL_DECLARATION = """\
 pool:
@@ -244,9 +247,12 @@ async def test_create_pool_registers_tree_stores_in_index(tmp_path: Path) -> Non
                 shared_hook_runner=HookRunner(),
                 shared_interceptor_chain=InterceptorChain(),
                 workspace_resolver=WorkspaceResolverCell(),
-                bot_model_config=None,
                 model_choice_registry=ModelChoiceRegistry(),
                 session_pool_index=index,
+                model_assembly=ModelRegistryAssembly(None),
+                default_llm_provider_name=MULTI_LLM_PROVIDER,
+                control_origin=build_control_origin(tmp_path / "config"),
+                component_registry=await load_bot_test_registry(),
             )
 
         assert [entry[0] for entry in index.registrations] == [pool_name]

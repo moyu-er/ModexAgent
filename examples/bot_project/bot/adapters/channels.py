@@ -1,10 +1,9 @@
-"""Adapter registry — multi-channel IM support.
+"""Multi-channel spine — channel tracking + the channel-router output adapter.
 
-Each IM adapter declares itself here with a hardcoded ``enabled`` flag.
-To add a new IM (Slack, Discord, Telegram, etc.), add a
-``register_<name>.py`` module under ``bot/adapters/`` and use the
-``@register`` decorator.  ``WebUIService`` auto-discovers all
-``register_*.py`` modules at startup, so no other code changes are needed.
+Channel registration goes through the bot's ``BotChannelsPlugin``
+(``bot_plugins/bot_channels.py``) via the framework
+``PluginRegistrationContext.register_channel_adapter`` face; the
+``@register`` import-side-effect registry is gone.
 
 Channel tracking: ``set_conv_channel / get_conv_channel`` records which
 channel originated each conversation.  Emitters use this to avoid
@@ -17,20 +16,18 @@ from any channel.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.messaging.models import OutputMessage
-from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.plugins.loader import ChannelBuildContext
 
-EmitterFactory = Callable[[str, str], ContentEmitter[Any]]
-AdapterBuildResult = tuple[InputAdapter, OutputAdapter, EmitterFactory] | None
+if TYPE_CHECKING:
+    from bot.webui.transcript_store import TranscriptStore
 
 
 # ── Channel tracking (session_id → channel_name) ────────────────────
@@ -51,66 +48,16 @@ def set_conv_channel(conv_id: str, channel: str) -> None:
 # ── Build context passed to each adapter's build() ──────────────────────
 
 
-@dataclass
-class AdapterBuildContext:
-    """Context available to each adapter's ``build()`` factory."""
-
-    config_dir: Path
-    """Path to the config/ directory."""
+@dataclass(frozen=True)
+class AdapterBuildContext(ChannelBuildContext):
+    """The bot's channel-build context: the framework face plus the
+    deployment's project root and transcript store."""
 
     project_dir: Path
     """Project root (examples/bot_project/)."""
 
-    raw_config: dict
-    """Raw bot_config.yml as a dict (for QQ app_id/secret etc.)."""
-
-    transcript_store: object
-    """JSONLTranscriptStore for persisting turns."""
-
-
-# ── Adapter spec ────────────────────────────────────────────────────────
-
-
-@dataclass
-class AdapterSpec:
-    """Describes one IM adapter.
-
-    Attributes:
-        name: Unique channel name (e.g. ``"qq"``, ``"websocket"``).
-        enabled: Hardcoded toggle — set to ``False`` to skip this adapter.
-        build: Factory returning adapters and their emitter factory.
-    """
-
-    name: str
-    enabled: bool
-    build: Callable[[AdapterBuildContext], AdapterBuildResult]
-
-
-# ── Registry ────────────────────────────────────────────────────────────
-
-
-ADAPTERS: list[AdapterSpec] = []
-"""All registered adapters.  Append to this list to add a new IM."""
-
-
-def register(name: str, *, enabled: bool = True):
-    """Decorator that registers an adapter build function.
-
-    Usage::
-
-        @register("qq", enabled=True)
-        def build_qq(ctx: AdapterBuildContext):
-            ...
-            return input_adapter, output_adapter, emitter
-    """
-
-    def _decorator(
-        fn: Callable[[AdapterBuildContext], AdapterBuildResult],
-    ):
-        ADAPTERS.append(AdapterSpec(name=name, enabled=enabled, build=fn))
-        return fn
-
-    return _decorator
+    transcript_store: TranscriptStore
+    """The workspace-scoped transcript store for persisting turns."""
 
 
 # ── Channel-aware output router ─────────────────────────────────────────

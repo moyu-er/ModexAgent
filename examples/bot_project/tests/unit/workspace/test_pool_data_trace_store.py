@@ -10,7 +10,7 @@ from pathlib import Path
 
 from bot.workspace.pool_data import build_pool_data
 
-from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.memory.config import MemoryConfig
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.scope.spec import AgentSpec
 from modex_agent.trace import OtelSpanTraceStore

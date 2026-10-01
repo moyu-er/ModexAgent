@@ -29,7 +29,6 @@ from bot.control.routes import (
 )
 from bot.service.config_controller import ConfigController
 from bot.service.default_pool_selection import DefaultPoolDecision
-from bot.service.model_config import BotModelConfig
 from bot.service.pool_config_controller import PoolConfigController
 from bot.webui.model_fetch import (
     fetch_provider_models,  # noqa: F401 — re-export; tests monkeypatch bot.webui.server.fetch_provider_models
@@ -43,6 +42,7 @@ from bot.webui.routes.sessions import register_sessions_routes
 from bot.webui.routes.websocket import register_websocket_routes
 from bot.webui.routes.workspace import register_workspace_routes
 from bot.workspace.request_resolver import WorkspaceResolution, resolve_ws_request
+from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.core.session_id import (
     SessionIdFactory,
     SessionInfo,
@@ -56,10 +56,10 @@ if TYPE_CHECKING:
     from aiohttp import ClientSession
 
     from bot.service.session_gc import SessionGarbageCollector
-    from bot.service.session_pool_index import SessionPoolIndex
     from bot.service.workspace_store import WorkspaceScopedTranscriptStore
     from bot.workspace.dynamic_workspaces import WorkspaceCreationResult
     from bot.workspace.handle import PoolWorkspaceResources
+    from modex_agent.multi_agent.session_tree.pool_index import SessionPoolIndex
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +161,7 @@ class WebUIServer:
         # Loader that re-reads config/model.yml on each GET /api/models so the
         # selector reflects CLI edits (e.g. `modexbot model`) without a restart.
         # Runtime routing still requires restart (CLI prints "restart to apply").
-        self._model_config_loader: Callable[[], BotModelConfig | None] | None = None
+        self._model_config_loader: Callable[[], ModelRegistry | None] | None = None
         # ConfigController -- injected by WebUIService; serves /api/config/{domain}
         # and /api/system/restart. None degrades the endpoints to 503.
         self._config_controller: ConfigController | None = None
@@ -568,8 +568,8 @@ class WebUIServer:
         """Inject the shared input-pipeline context."""
         self._input_ctx = ctx
 
-    def set_model_config_loader(self, loader: Callable[[], BotModelConfig | None]) -> None:
-        """Inject a callable that returns the current BotModelConfig for GET /api/models.
+    def set_model_config_loader(self, loader: Callable[[], ModelRegistry | None]) -> None:
+        """Inject a callable that returns the current ModelRegistry for GET /api/models.
 
         The loader re-reads config/model.yml so the selector reflects CLI model
         edits without a server restart. Only provider/model names are exposed —

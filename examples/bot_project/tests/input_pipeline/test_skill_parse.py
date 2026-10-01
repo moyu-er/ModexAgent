@@ -5,7 +5,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.input_pipeline.stages.skill_parse import (
     PoolSkillResolverRegistry,
     SkillParseStage,
@@ -13,8 +12,9 @@ from bot.input_pipeline.stages.skill_parse import (
 
 from modex_agent.commands.skill import ResolvedSkillCommand, SkillResolver
 from modex_agent.core.message import ContentFormat
-from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
+from modex_agent.pipeline.input.envelope import CommandStatus, UserInputEnvelope
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 from modex_agent.plugins.defaults.capabilities.skills.supply import build_skill_catalog
 
 

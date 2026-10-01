@@ -19,10 +19,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from modex_agent.commands.skill import SkillResolver
-from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
-from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
+from modex_agent.pipeline.input.envelope import CommandStatus, UserInputEnvelope
+from modex_agent.pipeline.input.stage import Continue, InputStage, StageResult
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 
 
 class PoolSkillResolverRegistry:

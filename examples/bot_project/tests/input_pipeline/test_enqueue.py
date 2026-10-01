@@ -5,10 +5,10 @@ from unittest.mock import MagicMock
 import pytest
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.prepare import BotInputPreparation
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
 from modex_agent.messaging.models import InputMessage
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 
 
 def _ctx(enqueued: list[InputMessage]) -> BotInputContext:
@@ -50,7 +50,7 @@ async def test_enqueue_uses_skill_xml_when_present() -> None:
 
 @pytest.mark.asyncio
 async def test_enqueue_carries_attachments() -> None:
-    from modex_agent.input_pipeline.envelope import AttachmentRef
+    from modex_agent.pipeline.input.envelope import AttachmentRef
 
     enqueued: list[InputMessage] = []
     env = UserInputEnvelope(external_id="u1", content="hi", channel="qq")

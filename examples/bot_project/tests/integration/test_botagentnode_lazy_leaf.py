@@ -26,7 +26,7 @@ template registry, and materialization deps are the real framework objects,
 mirroring the production wiring (``create_pool``). The factory wrap wires
 the graph turn configuration (binding store + configurators + context
 resolver) onto every created instance — the same setters
-``_wire_main_pipeline`` applies to the main pipeline in production.
+``wire_main_pipeline`` applies to the main pipeline in production.
 """
 
 from __future__ import annotations
@@ -49,11 +49,12 @@ from modex_agent.core.llm_struct import FinishReason, LLMResponse, RuntimeSafety
 from modex_agent.core.message import ChatMessage, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.core.tool_vocabulary import ToolPreset
 from modex_agent.memory.context import InMemoryContextManager
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import SessionRetentionPolicy
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
 from modex_agent.multi_agent.descriptor import (
@@ -89,10 +90,10 @@ from modex_agent.pipeline.turn_context_config import (
     GraphTopologyConfigurator,
     TurnContextConfigPipeline,
 )
-from modex_agent.plugins.assembly.spec import AssemblySpec
+from modex_agent.plugins.assembly.subagent_materializer import SubagentMaterializer
+from modex_agent.scope.assembly_spec import AssemblySpec
 from modex_agent.scope.spec import AgentSpec
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
-from modex_agent.tools.presets import ToolPreset
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.factory import ResourceFactory
 from modex_agent.workspace.registry import ScopeRegistry
@@ -258,8 +259,8 @@ class _PoolBuild:
         return build
 
     def _leaf_compiled_spec(self, target: Path) -> AssemblySpec:
-        from modex_agent.plugins.abc import AgentType
-        from modex_agent.plugins.assembly.spec import MemoryOverrides
+        from modex_agent.scope.assembly_spec import MemoryOverrides
+        from modex_agent.scope.components import AgentType
         from modex_agent.workspace.context import WorkspaceContext
         from modex_agent.workspace.paths import WorkspacePaths
 
@@ -292,7 +293,7 @@ class _PoolBuild:
         async def _create_with_graph_wiring(*args: Any, **kwargs: Any) -> Any:
             instance = await original_create(*args, **kwargs)
             if instance.pipeline is not None:
-                # The same setters production's _wire_main_pipeline applies
+                # The same setters production's wire_main_pipeline applies
                 # to the main pipeline (and _create_with_emitter's pool
                 # context wrap applies to every created agent) — mirrored
                 # here for both the eager reviewer and the lazily
@@ -326,7 +327,7 @@ class _PoolBuild:
             ComponentRegistryLoader,
             PluginDiscoveryConfig,
         )
-        from modex_agent.plugins.registry import ComponentRegistry
+        from modex_agent.scope.component_registry import ComponentRegistry
 
         registry = ComponentRegistry()
         await ComponentRegistryLoader.load(
@@ -348,6 +349,7 @@ class _PoolBuild:
             memory_dir=memory_dir,
         )
         return AgentMaterializeDeps(
+            materializer=SubagentMaterializer(),
             agent_factory=self.factory,
             pool=self.pool,
             session_factory=SessionIdFactory(),

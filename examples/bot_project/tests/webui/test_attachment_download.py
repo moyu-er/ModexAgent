@@ -23,14 +23,14 @@ from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
 from bot.service.media_store import WorkspaceScopedMediaStore
-from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import AssistantTurnEvent, UserMessageEvent
 from bot.webui.server import WebUIServer
 
+from modex_agent.app.models.registry import ModelCfg, ModelRegistry, ProviderCfg
 from modex_agent.core.media import Attachment, AttachmentLocator, Kind
-from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
 from modex_agent.messaging.models import InputMessage
+from modex_agent.pipeline.input.envelope import AttachmentRef, UserInputEnvelope
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.workspace.paths import WorkspacePaths
@@ -50,8 +50,8 @@ _DATA_DIR = ".modex"
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
-def _bot_model_config() -> BotModelConfig:
-    return BotModelConfig(
+def _bot_model_config() -> ModelRegistry:
+    return ModelRegistry(
         default_provider="A",
         default_model="M1",
         providers=[

@@ -27,8 +27,6 @@ import pytest
 # Bot tests resolve ``bot.*`` via the repo root inserted into sys.path.
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service.pool.agent_factory import _build_agent_factory
-
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.memory.compaction_governance import MemoryCompactionGovernance
@@ -44,10 +42,11 @@ from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.presets import subagent_memory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 from modex_agent.memory.system import MemorySystemContextManager
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import AgentDescriptor, AgentLLMConfig
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.factory import AgentCommKind
+from modex_agent.plugins.assembly.pool_factory import _build_agent_factory
 from modex_agent.tools.manager import InMemoryToolManager
 
 _SESSION = "task-77.researcher"

@@ -16,13 +16,12 @@ if TYPE_CHECKING:
     from modex_agent.persistence.managers import WorkspacePersistenceManager
 
 from bot.config.webui_config import build_control_origin
+from bot.scope import BotRecordScope
 from bot.service.builders import (
     _build_hook_runner,
     _build_main_command_processor,
-    resolve_declared_root_prompt,
+    ensure_long_term_defaults,
 )
-from bot.service.model_choice import ModelChoiceRegistry
-from bot.service.model_provider import PinnedModelProvider
 from bot.service.pool.declaration import (
     DeclaredPoolBuild,
     ScopeBoot,
@@ -30,7 +29,6 @@ from bot.service.pool.declaration import (
     boot_scope_declaration,
     declared_pool_build,
 )
-from bot.service.session_pool_index import SessionPoolIndex
 from bot.workspace.background import BackgroundTaskRunner
 from bot.workspace.dynamic_workspaces import dynamic_workspace_declaration_path
 from bot.workspace.handle import (
@@ -40,6 +38,10 @@ from bot.workspace.handle import (
 )
 from bot.workspace.pool_data import build_pool_data
 from bot.workspace.wiring.stack import declared_assembly_deps
+from modex_agent.agents.react.hooks.knowledge_hook import KnowledgeHook
+from modex_agent.app.models.assembly import ModelRegistryAssembly
+from modex_agent.app.models.choice import ModelChoiceRegistry
+from modex_agent.app.models.provider import PinnedModelProvider
 from modex_agent.approval.ui import IMUserInterface
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
@@ -48,8 +50,6 @@ from modex_agent.hook.builtin.control_drain import (
     ControlDrainInterceptor,
     LlmCancelInterceptor,
 )
-from modex_agent.hook.builtin.knowledge_hook import KnowledgeHook
-from modex_agent.interceptor.builtin import ToolResultLimitInterceptor
 from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
@@ -59,10 +59,16 @@ from modex_agent.multi_agent.communication.peer_resolution import (
 )
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_router import PoolRouter, agent_pool_ownership
+from modex_agent.multi_agent.session_tree.pool_index import SessionPoolIndex
 from modex_agent.persistence.config import PersistenceBackend
+from modex_agent.plugins.assembly.pool_factory import (
+    resolve_declared_root_prompt,
+)
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 from modex_agent.tools.overflow.cleaner import OverflowCleaner
 from modex_agent.tools.overflow.handler import ToolResultOverflowHandler
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
+from modex_agent.tools.overflow.result_limit import ToolResultLimitInterceptor
 from modex_agent.tools.overflow.store import ToolOverflowStore
 from modex_agent.workspace.context import WorkspaceContext
 
@@ -155,9 +161,16 @@ async def _assemble_resources(
     workspace's declaration below — idempotent for the primary declaration,
     effective for a dynamic workspace's backend override.
     """
-    from bot.service.builders import build_pool_routing_store, build_session_store
-    from bot.service.pool import create_pool
-    from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
+
+    # Framework entry points import LAZILY: tests patch the framework module
+    # attributes (``...pool_factory.create_pool``, ``...backend_factory.
+    # build_pool_routing_store``) and a top-level from-import would bind the
+    # original reference before the patch applies.
+    from modex_agent.plugins.assembly.backend_factory import (
+        build_pool_routing_store,
+        build_session_store,
+    )
+    from modex_agent.plugins.assembly.pool_factory import create_pool
 
     app_config = service._app_config
     if app_config is None:
@@ -197,7 +210,7 @@ async def _assemble_resources(
         project_dir=roots.resource_root,
         data_dir=ctx.paths.root,
         graphs_dirs=(workspace_graphs_dir, global_graphs_dir),
-        default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        default_llm_provider=MULTI_LLM_PROVIDER,
         registry=service._component_registry,
         observability=app_config.observability,
     )
@@ -416,8 +429,8 @@ async def _assemble_resources(
     # agent. The eval-side env-driven flags stay global-config owned.
     observability = app_config.observability
     if observability is not None:
-        from modex_agent.hook.builtin.checkpoint import CheckpointHook
-        from modex_agent.hook.builtin.training_data import TrainingDataHook
+        from modex_agent.agents.react.hooks.checkpoint import CheckpointHook
+        from modex_agent.agents.react.hooks.training_data import TrainingDataHook
 
         if observability.checkpoint_per_iteration:
             shared_hooks.append(CheckpointHook())
@@ -466,6 +479,12 @@ async def _assemble_resources(
     resolver_cell = WorkspaceResolverCell()
     control_origin = build_control_origin(roots.config_dir)
     for name in pool_names:
+        if pool_data[name].context_manager.memory_system is not None:
+            await ensure_long_term_defaults(
+                roots.resource_root,
+                assembly_deps[name].memory,
+                pool_data[name].context_manager.memory_system,
+            )
         pools[name] = await create_pool(
             pool_name=name,
             declared=declared_builds[name],
@@ -496,11 +515,12 @@ async def _assemble_resources(
             on_subagent_created=service._on_subagent_created,
             session_registry=session_registry,
             session_store=session_index_store,
-            transcript_store=service._transcript_store,
-            bot_model_config=service._bot_model_config,
             model_choice_registry=service._model_choice_registry
             if service._model_choice_registry is not None
             else ModelChoiceRegistry(),
+            model_assembly=ModelRegistryAssembly(service._bot_model_config),
+            default_llm_provider_name=MULTI_LLM_PROVIDER,
+            record_scope=BotRecordScope(pool=name),
             mcp_registry=service._mcp_registry,
             persistence=persistence,
             app_config=app_config,

@@ -5,9 +5,9 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from bot.service.pool import agent_factory as agent_factory_module
 
 from modex_agent.media.store import LocalFileMediaStore
+from modex_agent.plugins.assembly import pool_factory as agent_factory_module
 
 
 @pytest.mark.asyncio

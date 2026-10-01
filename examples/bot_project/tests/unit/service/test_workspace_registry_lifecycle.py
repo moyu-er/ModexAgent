@@ -6,15 +6,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from bot.service import BotServiceShutdownIncompleteError
 from bot.service.core import BotService
-from bot.service.roots import BotAssemblyRoots
 from bot.workspace.wiring import WorkspaceStack
 
-from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.multi_agent.pool_router import PoolRoutingStore
+from modex_agent.app.config import AppConfig
+from modex_agent.app.roots import AppAssemblyRoots
+from modex_agent.core.stores import PoolRoutingStore
 from modex_agent.persistence.managers import (
     RegistryPersistenceManager,
     WorkspacePersistenceManager,
 )
+from modex_agent.plugins.loader import ChannelAdapterRegistry
 from modex_agent.workspace.paths import RESERVED_GLOBAL_DIR, WORKSPACE_STATE_DB
 
 
@@ -40,8 +41,11 @@ async def test_initialize_closes_canonical_registry_after_materialization_failur
     service.control_channel = None
     service.command_processor = None
     service._pool_session_store = None
+    # AppService.__init__ normally creates this; the partial-init instance
+    # enumerates every field initialize() reads (the registry load threads it).
+    service._channel_adapter_registry = ChannelAdapterRegistry()
     # Partial-init instance: initialize() reads the assembly roots directly.
-    service.roots = BotAssemblyRoots.resident(
+    service.roots = AppAssemblyRoots.resident(
         config_dir=tmp_path / "config", resource_root=tmp_path
     )
     service._enable_dynamic_workspaces = True
@@ -67,7 +71,7 @@ async def test_initialize_closes_canonical_registry_after_materialization_failur
         patch("bot.service.core._build_control_channel", return_value=MagicMock()),
         patch("bot.service.core._build_main_command_processor", return_value=MagicMock()),
         patch(
-            "bot.service.builders.build_pool_routing_store",
+            "modex_agent.plugins.assembly.backend_factory.build_pool_routing_store",
             return_value=routing_store,
             create=True,
         ) as build_routing,
@@ -209,8 +213,11 @@ async def test_initialize_preserves_shared_dependencies_when_eviction_is_incompl
     service.control_channel = None
     service.command_processor = None
     service._pool_session_store = None
+    # AppService.__init__ normally creates this; the partial-init instance
+    # enumerates every field initialize() reads (the registry load threads it).
+    service._channel_adapter_registry = ChannelAdapterRegistry()
     # Partial-init instance: initialize() reads the assembly roots directly.
-    service.roots = BotAssemblyRoots.resident(
+    service.roots = AppAssemblyRoots.resident(
         config_dir=tmp_path / "config", resource_root=tmp_path
     )
     service._enable_dynamic_workspaces = True
@@ -238,7 +245,7 @@ async def test_initialize_preserves_shared_dependencies_when_eviction_is_incompl
         patch("bot.service.core._build_control_channel", return_value=MagicMock()),
         patch("bot.service.core._build_main_command_processor", return_value=MagicMock()),
         patch(
-            "bot.service.builders.build_pool_routing_store",
+            "modex_agent.plugins.assembly.backend_factory.build_pool_routing_store",
             return_value=routing_store,
             create=True,
         ),

@@ -1,32 +1,33 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from bot.adapters import channels
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
+from bot.config.webui_config import build_control_origin
 from bot.graph.agent_node import BotAgentNode
 from bot.graph.agent_node_factory import BotAgentNodeFactory
 from bot.service.core import BotService
-from bot.service.model_choice import ModelChoiceRegistry
-from bot.service.pool import create_pool
 from bot.service.web_ui_service import WebUIService
 from bot.webui.emitter import WebBotEmitter
 from bot.workspace.handle import PoolWorkspaceResources, WorkspaceResolverCell
 
 from modex_agent.adapters.emitter import StreamingAwareEmitter
 from modex_agent.adapters.output import OutputAdapter
+from modex_agent.app.models.assembly import ModelRegistryAssembly
+from modex_agent.app.models.choice import ModelChoiceRegistry
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
+from modex_agent.plugins.assembly.pool_factory import create_pool
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 from modex_graph.spec import NodeSpec
 
-from ..declaration_driver import build_declared
+from ..declaration_driver import build_declared, load_bot_test_registry
 
 _POOL_DECLARATION = """\
 pool:
@@ -87,8 +88,11 @@ async def test_graph_node_resolves_pool_assembled_emitter_with_node_pool(
                 shared_interceptor_chain=InterceptorChain(),
                 workspace_resolver=resolver,
                 emitter_factory=emitter_factory,
-                bot_model_config=None,
                 model_choice_registry=ModelChoiceRegistry(),
+                model_assembly=ModelRegistryAssembly(None),
+                default_llm_provider_name=MULTI_LLM_PROVIDER,
+                control_origin=build_control_origin(tmp_path / "config"),
+                component_registry=await load_bot_test_registry(),
             )
 
         resources = MagicMock(spec=PoolWorkspaceResources)
@@ -164,21 +168,13 @@ def test_unified_factory_forwards_same_pool_to_qq_and_telegram_leaves(
     from bot.adapters import register_websocket
 
     monkeypatch.setattr(register_websocket, "get_ws_output", lambda: fallback_output)
-    monkeypatch.setattr(
-        WebUIService,
-        "_import_adapter_registration_modules",
-        lambda _service, _channels: None,
-    )
-    monkeypatch.setattr(
-        channels,
-        "ADAPTERS",
-        [
-            SimpleNamespace(name="qq", enabled=True, build=build_qq_leaf),
-            SimpleNamespace(
-                name="telegram", enabled=True, build=build_telegram_leaf
-            ),
-        ],
-    )
+    from bot_plugins.bot_channels import BotChannelsPlugin
+
+    def _register_fake_channels(self, ctx) -> None:
+        ctx.register_channel_adapter("qq", build_qq_leaf)
+        ctx.register_channel_adapter("telegram", build_telegram_leaf)
+
+    monkeypatch.setattr(BotChannelsPlugin, "register", _register_fake_channels)
     monkeypatch.setattr(BotService, "__init__", capture_unified_factory)
 
     with pytest.raises(_UnifiedFactoryCapturedError):

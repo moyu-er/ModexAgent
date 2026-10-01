@@ -34,10 +34,9 @@ from modex_agent.core.tool_manager import (
     ToolOrigin,
     ToolResult,
 )
-from modex_agent.ioc.configs.observability import TraceBackend
+from modex_agent.core.turn.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.core.turn.models import JsonValue, TurnIdentity
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import JsonValue, TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager
@@ -48,6 +47,7 @@ from modex_agent.trace.cassette import (
     CassetteReplayEngine,
 )
 from modex_agent.trace.chat_span_hook import ChatSpanHook
+from modex_agent.trace.observability import TraceBackend
 from modex_agent.trace.semconv import GenAiAttr
 
 

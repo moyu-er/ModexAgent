@@ -18,7 +18,6 @@ from bot.eval.probes.budget import (
     BudgetedProvider,
     CostCapExceededError,
 )
-from plugins.bot_strategies import BotDefaultLLMConfig
 from pydantic import BaseModel
 
 from modex_agent.core.llm_request import LLMRequest
@@ -26,9 +25,10 @@ from modex_agent.core.llm_struct import FinishReason, LLMResponse, TokenUsage
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.stream_events import Finish, LLMStreamEvent, TextDelta, UsageSnapshot
-from modex_agent.plugins.abc import ComponentFactory, ComponentSlot
 from modex_agent.plugins.assembly.context import AssemblyContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER, MultiLLMProviderConfig
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentFactory, ComponentSlot
 from modex_agent.trace.pricing import PriceBook, PriceEntry
 
 
@@ -59,7 +59,7 @@ class _CostedProvider(CallbackStreamProvider):
 
 
 class _RecordingBotDefaultFactory(ComponentFactory):
-    config_model = BotDefaultLLMConfig
+    config_model = MultiLLMProviderConfig
 
     def __init__(self, providers: list[LLMProvider]) -> None:
         self._providers = deque(providers)
@@ -95,13 +95,13 @@ def _budget_config(max_cost_usd: float = 1.0) -> BudgetConfig:
 async def test_overridden_factory_products_share_one_cost_ledger() -> None:
     original = _RecordingBotDefaultFactory([_CostedProvider(0.6), _CostedProvider(0.5)])
     registry = ComponentRegistry()
-    registry.register(ComponentSlot.LLM_PROVIDER, "bot_default", original)
+    registry.register(ComponentSlot.LLM_PROVIDER, MULTI_LLM_PROVIDER, original)
     ledger = register_pool_budget(registry, _pricebook(), _budget_config())
-    factory = registry.resolve(ComponentSlot.LLM_PROVIDER, "bot_default")
+    factory = registry.resolve(ComponentSlot.LLM_PROVIDER, MULTI_LLM_PROVIDER)
     context = MagicMock(spec=AssemblyContext)
 
-    provider_a = await factory.create(BotDefaultLLMConfig(), context)
-    provider_b = await factory.create(BotDefaultLLMConfig(), context)
+    provider_a = await factory.create(MultiLLMProviderConfig(), context)
+    provider_b = await factory.create(MultiLLMProviderConfig(), context)
     await provider_a.chat([])
 
     with pytest.raises(CostCapExceededError) as raised:
@@ -224,11 +224,11 @@ async def test_overridden_factory_delegates_before_wrapping_provider() -> None:
     delegate = _CostedProvider(0.1)
     original = _RecordingBotDefaultFactory([delegate])
     registry = ComponentRegistry()
-    registry.register(ComponentSlot.LLM_PROVIDER, "bot_default", original)
+    registry.register(ComponentSlot.LLM_PROVIDER, MULTI_LLM_PROVIDER, original)
     register_pool_budget(registry, _pricebook(), _budget_config())
 
-    provider = await registry.resolve(ComponentSlot.LLM_PROVIDER, "bot_default").create(
-        BotDefaultLLMConfig(), MagicMock(spec=AssemblyContext)
+    provider = await registry.resolve(ComponentSlot.LLM_PROVIDER, MULTI_LLM_PROVIDER).create(
+        MultiLLMProviderConfig(), MagicMock(spec=AssemblyContext)
     )
 
     assert original.calls == 1

@@ -19,9 +19,9 @@ from __future__ import annotations
 import re
 
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.resolve_pool import conversation_session_prefix
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
-from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult, Terminate
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.stage import Continue, InputStage, StageResult, Terminate
+from modex_agent.pipeline.input.stages.resolve_pool import conversation_session_prefix
 from modex_agent.workspace.control import WorkspaceController
 
 _POOL_RE = re.compile(r"^/([a-z][a-z0-9_-]*)$")

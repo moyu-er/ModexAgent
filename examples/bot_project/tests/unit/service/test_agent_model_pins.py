@@ -3,7 +3,7 @@
 - ``resolve_agent_llm_pins``:显式 pin 解析、子树默认(最近显式声明)、
   (provider.key, model) 共享实例、不可解析/根 pin/external pin fail-fast;
 - ``PinnedModelProvider``:忽略当轮 ContextVar,委托信封携带 pinned 模型;
-- 与 ``BotModelProvider`` 共享同一构造/委托底座(同一缓存 dict 时复用同一
+- shares the same construction/delegation base with ``ModelSelectionProvider`` (one cache dict reuses one
   真实 provider 实例)。
 """
 
@@ -18,21 +18,22 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service.model_choice import current_model_choice
-from bot.service.model_config import BotModelConfig
-from bot.service.model_provider import (
-    BotModelProvider,
+from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.app.models.assembly import ModelRegistryAssembly
+from modex_agent.app.models.choice import current_model_choice
+from modex_agent.app.models.provider import (
+    ModelSelectionProvider,
     PinnedModelProvider,
     resolve_agent_llm_pins,
 )
-
-from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.core.llm_request import LLMRequest, ReasoningEffort
 from modex_agent.core.llm_struct import FinishReason
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.stream_events import Finish, TextDelta
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 from modex_agent.scope.spec import AgentSpec, ModelRef, PoolSpec
 
 _YML = """
@@ -52,10 +53,10 @@ models:
 """
 
 
-def _cfg(tmp_path: Path) -> BotModelConfig:
+def _cfg(tmp_path: Path) -> ModelRegistry:
     p = tmp_path / "model.yml"
     p.write_text(_YML, encoding="utf-8")
-    return BotModelConfig.from_yaml(p)
+    return ModelRegistry.from_yaml(p)
 
 
 class _FakeReal(LLMProvider):
@@ -225,7 +226,7 @@ def test_external_agent_pin_rejected(tmp_path: Path) -> None:
 # ── PinnedModelProvider 行为 ────────────────────────────────────────────────
 
 
-def _pinned_m1(cfg: BotModelConfig) -> PinnedModelProvider:
+def _pinned_m1(cfg: ModelRegistry) -> PinnedModelProvider:
     resolved = cfg.resolve("A", "M1")
     assert resolved is not None
     return PinnedModelProvider(cfg, resolved)
@@ -263,12 +264,12 @@ def test_pinned_provider_get_default_model_is_pinned_model(tmp_path: Path) -> No
 
 
 def test_pinned_and_bot_providers_share_construction_base(tmp_path: Path) -> None:
-    """收敛点:同一缓存 dict 时,PinnedModelProvider 与 BotModelProvider 复用
+    """Convergence point: with the same cache dict, PinnedModelProvider and ModelSelectionProvider reuse
     同一真实 provider 实例(构造/缓存逻辑只有一份)。"""
     cfg = _cfg(tmp_path)
     resolved = cfg.resolve("A", "M1")
     assert resolved is not None
-    bot = BotModelProvider(cfg)
+    bot = ModelSelectionProvider(cfg)
     pinned = PinnedModelProvider(cfg, resolved, bot._cache)  # noqa: SLF001 — 同一缓存即同一底座
 
     real_from_bot = bot._real_provider(resolved)  # noqa: SLF001
@@ -322,37 +323,28 @@ pool:
 """
 
 
-async def _create_pool(tmp_path: Path, declaration: str, cfg: BotModelConfig, pool_data=None):  # type: ignore[no-untyped-def]
+async def _create_pool(tmp_path: Path, declaration: str, cfg: ModelRegistry, pool_data=None):  # type: ignore[no-untyped-def]
     from unittest.mock import MagicMock
 
-    from bot.service.model_choice import ModelChoiceRegistry
-    from bot.service.pool import create_pool
+    from bot.config.webui_config import build_control_origin
     from bot.service.pool.declaration import declared_pool_build
 
     from modex_agent.adapters.output import OutputAdapter
+    from modex_agent.app.models.choice import ModelChoiceRegistry
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.hook import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.messaging.broker_memory import InMemoryMessageBroker
     from modex_agent.multi_agent import SessionRetentionPolicy
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-    from modex_agent.plugins.defaults import DefaultPlugin
-    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.plugins.assembly.pool_factory import create_pool
 
-    from ...declaration_driver import boot_from_yaml
+    from ...declaration_driver import boot_from_yaml, load_bot_test_registry
 
-    # DefaultPlugin registry — the ``subagents`` capability contributes the
-    # derived ``task`` entries child-carrying agents need (V6).
-    registry = ComponentRegistry()
-    from modex_agent.plugins.loader import (
-        ComponentRegistryLoader,
-        PluginDiscoveryConfig,
-    )
-
-    await ComponentRegistryLoader.load(
-        registry,
-        PluginDiscoveryConfig(bundled_factories=(DefaultPlugin(),), project_plugin_paths=()),
-    )
+    # FW defaults + the bot's ``multi`` LLM factory (the registry the
+    # historical create_pool fallback built) — the ``subagents`` capability
+    # contributes the derived ``task`` entries child-carrying agents need (V6).
+    registry = await load_bot_test_registry()
 
     pool_name = "pinned-pool"
     broker = InMemoryMessageBroker()
@@ -381,8 +373,11 @@ async def _create_pool(tmp_path: Path, declaration: str, cfg: BotModelConfig, po
             shared_hooks=[],
             shared_hook_runner=HookRunner(),
             shared_interceptor_chain=InterceptorChain(),
-            bot_model_config=cfg,
+            model_assembly=ModelRegistryAssembly(cfg),
+            default_llm_provider_name=MULTI_LLM_PROVIDER,
+            control_origin=build_control_origin(tmp_path / "config"),
             model_choice_registry=ModelChoiceRegistry(),
+            component_registry=registry,
             pool_data=pool_data,
         )
         return instance
@@ -413,7 +408,7 @@ async def test_create_pool_threads_pins_into_materialize_deps(tmp_path: Path) ->
         assert deps.agent_llm_pins["leaf"].provider is pin.provider
         assert deps.agent_llm_pins["leaf"].defaults == pin.defaults
         # pin 子树外的 free(无声明)走缺省路径:默认模型 pin(非 ContextVar
-        # 跟随的 BotModelProvider)。
+        # following ModelSelectionProvider).
         assert "free" not in deps.agent_llm_pins
         assert deps.llm_model == "m1"  # default_resolved
         assert isinstance(deps.llm_provider, PinnedModelProvider)
@@ -496,13 +491,13 @@ pool:
 """
 
 
-async def _experience_pool(tmp_path: Path, cfg: BotModelConfig):  # type: ignore[no-untyped-def]
+async def _experience_pool(tmp_path: Path, cfg: ModelRegistry):  # type: ignore[no-untyped-def]
     """create_pool with the experience capability + a REAL pool_data (memory
     system) — the Stage 4 review-hook dispatch requires the memory system,
     so this is the real assembly face the pin must survive."""
     from bot.workspace.pool_data import build_pool_data
 
-    from modex_agent.ioc.configs.memory import MemoryConfig
+    from modex_agent.memory.config import MemoryConfig
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
     from modex_agent.scope.spec import AgentSpec
     from modex_agent.workspace.context import WorkspaceContext

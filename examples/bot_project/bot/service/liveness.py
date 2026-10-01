@@ -30,10 +30,10 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.enums import TurnPhase
+from modex_agent.core.turn.models import StateQueryScope
+from modex_agent.core.turn.store import TurnStateStore
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.runtime.enums import TurnPhase
-from modex_agent.runtime.models import StateQueryScope
-from modex_agent.runtime.store import TurnStateStore
 
 logger = logging.getLogger(__name__)
 

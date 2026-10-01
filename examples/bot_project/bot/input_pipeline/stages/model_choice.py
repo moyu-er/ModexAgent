@@ -12,10 +12,10 @@ from __future__ import annotations
 import logging
 
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
-from bot.service.model_config import BotModelConfig
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
-from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
+from modex_agent.app.models.registry import ModelRegistry
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.stage import Continue, InputStage, StageResult
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class ModelChoiceStage(InputStage):
     """Resolve the WebUI-selected provider/model into a ResolvedModel on the envelope."""
 
-    def __init__(self, model_config: BotModelConfig | None) -> None:
+    def __init__(self, model_config: ModelRegistry | None) -> None:
         self._model_config = model_config
 
     async def process(
@@ -38,8 +38,8 @@ class ModelChoiceStage(InputStage):
         #   external CLI (opencode) executes normally with its own model.
         # - react: EnqueueStage does not register into ModelChoiceRegistry; at turn
         #   start, ModelChoiceBindHook falls back to the placeholder default (built by
-        #   pool_builder._resolved_or_placeholder) whose empty api_key causes
-        #   BotModelProvider to emit LLMResponse(finish_reason=ERROR). The user sees an
+        #   pool_builder.resolved_or_placeholder) whose empty api_key causes
+        #   ModelSelectionProvider to emit LLMResponse(finish_reason=ERROR). The user sees an
         #   explicit "model not configured" turn error instead of a silent failure.
         if self._model_config is None:
             return Continue(value=envelope)

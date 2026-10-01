@@ -36,15 +36,15 @@ async def handle_get_approvals(request: web.Request) -> web.Response:
         ReActRuntimeStateCodec,
         ReActSnapshotPolicy,
     )
-    from modex_agent.approval.constants import ApprovalDecision
     from modex_agent.approval.views import view_from_request
-    from modex_agent.runtime.codec import RuntimeStateCodecRegistry
-    from modex_agent.runtime.enums import (
+    from modex_agent.core.turn.approval_types import ApprovalDecision
+    from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
+    from modex_agent.core.turn.enums import (
         AgentKind,
         SnapshotReason,
         TurnPhase,
     )
-    from modex_agent.runtime.models import StateQueryScope
+    from modex_agent.core.turn.models import StateQueryScope
     from modex_agent.runtime.store import JsonFileTurnStateStore
 
 
@@ -100,9 +100,9 @@ async def handle_post_approval(request: web.Request) -> web.Response:
     the webui input pipeline (reusing workspace/pool/session resolution),
     converging on the agent pipeline's approval branch.
     """
-    from bot.input_pipeline.stages.resolve_pool import RoutingMeta
-    from modex_agent.input_pipeline.envelope import UserInputEnvelope
     from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
+    from modex_agent.pipeline.input.envelope import UserInputEnvelope
+    from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 
     server: WebUIServer = request.app["server"]
     session_id: str = request.match_info["session_id"]

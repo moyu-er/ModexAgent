@@ -18,7 +18,7 @@ from bot.eval.sentinel import orchestrator as sentinel_orchestrator
 from bot.eval.sentinel.observation import evaluate_observation
 from bot.eval.sentinel.results import SentinelTaskObservation, SentinelTaskStatus
 from bot.service.pool.declaration import boot_scope_spec
-from bot.workspace.handle import WorkspaceHandle, WorkspaceHandleRootProvider
+from bot.workspace.handle import WorkspaceHandle
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
@@ -28,14 +28,15 @@ from modex_agent.messaging.models import InputMessage
 from modex_agent.plugins.assembly import single_agent
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.runtime.services import AgentRuntimeServices
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.trace.experiment_attrs import ExperimentLinkage, attach_experiment_attrs
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.score_injector import L2ScoreInjector, ScoreSpec
 from modex_agent.trace.semconv import GenAiAttr, SpanKind
 from modex_agent.trace.store import SpanModel
+from modex_agent.workspace.handle import WorkspaceHandleRootProvider
 
 type LinkageFactory = Callable[[sentinel_orchestrator.SentinelInstance], ExperimentLinkage]
 SENTINEL_VERDICT_SCORE: Final = "verdict_memory_chain_v1"

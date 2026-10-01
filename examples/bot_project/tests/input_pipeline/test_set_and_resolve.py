@@ -4,13 +4,14 @@ from unittest.mock import MagicMock
 
 import pytest
 from bot.adapters import channels
+from bot.adapters.channels import set_conv_channel
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.resolve_pool import ResolvePoolStage, RoutingMeta
-from bot.input_pipeline.stages.set_channel import SetChannelStage
 
 from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
-from modex_agent.input_pipeline.stage import Terminate
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.stage import Terminate
+from modex_agent.pipeline.input.stages.resolve_pool import ResolvePoolStage, RoutingMeta
+from modex_agent.pipeline.input.stages.set_channel import SetChannelStage
 
 
 def _ctx(
@@ -34,7 +35,7 @@ def _ctx(
 async def test_set_channel_uses_envelope_channel() -> None:
     channels._conversation_channels.clear()
     env = UserInputEnvelope(external_id="u1", content="hi", channel="qq")
-    await SetChannelStage().process(env, _ctx())
+    await SetChannelStage(set_conv_channel).process(env, _ctx())
     # S4 now keys by the encoded snowflake (same as S5 and every downstream
     # lookup) so control command responses route to the correct channel.
     assert channels.get_conv_channel(encode_snowflake("u1")) == "qq"

@@ -15,7 +15,7 @@ from bot.eval.judge.runner import (
     build_judge_provider_from_env,
 )
 
-from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.providers.llm_config import LLMConfig
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.semconv import GenAiAttr
 from modex_agent.trace.store import SpanModel

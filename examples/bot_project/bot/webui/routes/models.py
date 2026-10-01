@@ -26,9 +26,9 @@ from aiohttp import ClientSession, ClientTimeout, web
 from pydantic import ValidationError
 
 from bot.service.config_controller import FieldValidationError
-from bot.service.model_config import ProviderCfg
 from bot.webui.model_fetch import FetchModelsReq, ModelFetchError
-from modex_agent.ioc.configs.llm import InterfaceFormat
+from modex_agent.app.models.registry import ProviderCfg
+from modex_agent.providers.llm_config import InterfaceFormat
 
 if TYPE_CHECKING:
     from bot.webui.server import WebUIServer

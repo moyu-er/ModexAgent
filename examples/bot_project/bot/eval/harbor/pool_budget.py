@@ -7,20 +7,20 @@ import os
 from collections.abc import Mapping
 from typing import Final
 
-from plugins.bot_strategies import BotDefaultLLMConfig
 from pydantic import BaseModel
 
 from bot.eval.probes.budget import BudgetConfig, BudgetedProvider, BudgetLedger
 from modex_agent.core.provider import LLMProvider
-from modex_agent.plugins.abc import ComponentFactory, ComponentSlot
 from modex_agent.plugins.assembly.context import AssemblyContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER, MultiLLMProviderConfig
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentFactory, ComponentSlot
 from modex_agent.trace.pricing import PriceBook
 
 POOL_BUDGET_ENV: Final = "MODEX_BUDGET_USD"
 DEFAULT_POOL_BUDGET_USD: Final = 25.0
 DEFAULT_CALL_RESERVE_USD: Final = 0.001
-_BOT_DEFAULT_PROVIDER: Final = "bot_default"
+_BOT_DEFAULT_PROVIDER: Final = MULTI_LLM_PROVIDER
 
 
 class PoolBudgetEnvironmentError(ValueError):
@@ -30,7 +30,7 @@ class PoolBudgetEnvironmentError(ValueError):
 
 
 class _PoolBudgetFactory(ComponentFactory):
-    config_model = BotDefaultLLMConfig
+    config_model = MultiLLMProviderConfig
 
     def __init__(
         self,

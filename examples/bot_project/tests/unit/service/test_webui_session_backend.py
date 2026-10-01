@@ -5,12 +5,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from bot.persistence.transcript import build_transcript_store_resolver
-from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.web_ui_service import WebUIService
 from bot.webui.transcript_store import TranscriptStore
 
-from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.app.config import AppConfig
 from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
+from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
 from modex_agent.persistence.config import PersistenceBackend
 
 

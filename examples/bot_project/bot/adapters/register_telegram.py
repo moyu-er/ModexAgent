@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, Any
 from bot.adapters.channels import (
     AdapterBuildContext,
     get_conv_channel,
-    register,
     set_conv_channel,
 )
 from modex_agent.adapters.emitter import StreamingAwareEmitter
@@ -56,7 +55,6 @@ def _telegram_enabled(ctx: AdapterBuildContext) -> bool:
     return telegram_enabled(tg_cfg)
 
 
-@register("telegram", enabled=True)
 def build_telegram(
     ctx: AdapterBuildContext,
 ) -> (

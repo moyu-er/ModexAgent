@@ -1,7 +1,7 @@
 """PA-03 tests — the ``session_title`` hook + background naming task.
 
 Covers DESIGN §2.2–§2.5 contract through REAL plugin discovery, the REAL
-declared-roster dispatch (``_dispatch_hooks``), and the REAL hook runner:
+declared-roster dispatch (``dispatch_hooks``), and the REAL hook runner:
 
 - plugin discovery registers the HOOK-slot factory
 - roster dispatch wires the hook on a native main agent (applies_to)
@@ -37,18 +37,18 @@ from modex_agent.hook.abc import HookPayload, HookPoint
 from modex_agent.hook.runner import HookRunner
 from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
 from modex_agent.persistence.session_registry import InMemorySessionRegistry
-from modex_agent.plugins.abc import AgentType, ComponentSlot
 from modex_agent.plugins.assembly.context import (
     AssemblyContext,
     agent_context_chain,
 )
-from modex_agent.plugins.assembly.native_core import _dispatch_hooks
-from modex_agent.plugins.assembly.spec import AssemblySpec
+from modex_agent.plugins.assembly.native_core import dispatch_hooks
 from modex_agent.plugins.loader import (
     ComponentRegistry,
     ComponentRegistryLoader,
     PluginDiscoveryConfig,
 )
+from modex_agent.scope.assembly_spec import AssemblySpec
+from modex_agent.scope.components import AgentType, ComponentSlot
 from modex_agent.workspace.context import WorkspaceContext as WSIdentity
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -65,7 +65,7 @@ async def _load_component_registry() -> ComponentRegistry:
         registry,
         PluginDiscoveryConfig(
             bundled_factories=(DefaultPlugin(),),
-            project_plugin_paths=(_BOT_PROJECT_DIR / "plugins",),
+            project_plugin_paths=(_BOT_PROJECT_DIR / "bot_plugins",),
         ),
     )
     return registry
@@ -121,7 +121,7 @@ def _spec(agent_name: str, *, hooks: tuple[str, ...] = ()) -> AssemblySpec:
         system_prompt_provider="file_prompt",
         system_prompt_config={},
         memory_overrides=__import__(
-            "modex_agent.plugins.assembly.spec", fromlist=["MemoryOverrides"]
+            "modex_agent.scope.assembly_spec", fromlist=["MemoryOverrides"]
         ).MemoryOverrides(),
         execution_strategy="react",
         workspace_ctx=WSIdentity(
@@ -170,7 +170,7 @@ async def _make_hook(
         provider_source=source,
         transcript_reader=user_input or (lambda session_id: None),
     )
-    from plugins.bot_hooks import SessionTitleHookFactory
+    from bot_plugins.bot_hooks import SessionTitleHookFactory
 
     registry_components = await _load_component_registry()
     factory = SessionTitleHookFactory()
@@ -231,7 +231,7 @@ async def test_declared_roster_dispatch_wires_hook(tmp_path: Path) -> None:
     )
     chain = agent_context_chain(base, spec=spec)
     runner = HookRunner()
-    await _dispatch_hooks(spec, registry, chain, runner, None)
+    await dispatch_hooks(spec, registry, chain, runner, None)
     assert any("title" in s.hook.name.lower() for s in runner.hook_specs), (
         [s.hook.name for s in runner.hook_specs]
     )
@@ -266,8 +266,8 @@ async def test_completed_user_root_names_session_in_background(tmp_path: Path) -
 def _agent_context_for(session: SessionInfo) -> Any:
     """Minimal AgentContext for FINALLY_GRAPH dispatch (session + identity)."""
     from modex_agent.core.agent import AgentContext
+    from modex_agent.core.turn.models import TurnIdentity
     from modex_agent.memory.history import ListMessageHistory
-    from modex_agent.runtime.models import TurnIdentity
     from modex_agent.tools.manager import InMemoryToolManager
 
     return AgentContext(
@@ -404,16 +404,16 @@ async def test_session_title_model_is_default_pin_ignoring_turn_choice(tmp_path:
     """D-6:命名模型 = 默认模型 pin。生产 provider_source 构造的是
     PinnedModelProvider(default_resolved);触发轮选了非默认模型
     (current_model_choice),命名请求的 model 仍是默认模型。"""
-    from bot.service.model_choice import current_model_choice
-    from bot.service.model_config import BotModelConfig, ProviderCfg
-    from bot.service.model_provider import PinnedModelProvider
     from bot.service.session_title_task import SessionTitleNamingTask
 
+    from modex_agent.app.models.choice import current_model_choice
+    from modex_agent.app.models.provider import PinnedModelProvider
+    from modex_agent.app.models.registry import ModelRegistry, ProviderCfg
     from modex_agent.core.llm_request import LLMRequest
     from modex_agent.core.llm_struct import FinishReason
     from modex_agent.core.stream_events import Finish, TextDelta
 
-    cfg = BotModelConfig(
+    cfg = ModelRegistry(
         default_provider="A",
         default_model="M1",
         providers=[

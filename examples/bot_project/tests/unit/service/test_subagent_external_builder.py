@@ -29,8 +29,6 @@ _BOT_PROJECT = Path(__file__).parent.parent.parent.parent.parent / "examples" / 
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from bot.service.external_strategy import ExternalExecutionStrategy
-
 from modex_agent.agents.external.agent import ExternalAgent
 from modex_agent.agents.external.backend_provider import (
     PoolScopedBackendProvider,
@@ -46,18 +44,20 @@ from modex_agent.agents.external.types import ExternalEnvSpec
 from modex_agent.core import AgentCommKind
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
 from modex_agent.multi_agent.descriptor import AgentDescriptor
-from modex_agent.multi_agent.execution_strategy import strategy_name_of
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
-from modex_agent.plugins.abc import AgentType
 from modex_agent.plugins.assembly.context import (
     AgentContext,
     PoolRuntimeDeps,
 )
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.plugins.assembly.strategies.external import ExternalExecutionStrategy
+from modex_agent.plugins.assembly.subagent_materializer import SubagentMaterializer
+from modex_agent.plugins.defaults.capabilities.subagents.auto_send import SubagentAutoSendHook
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import AgentType
+from modex_agent.scope.execution_kind import strategy_name_of
 from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
@@ -129,6 +129,7 @@ def _make_deps(
         control_origin=control_origin,
     )
     return AgentMaterializeDeps(
+        materializer=SubagentMaterializer(),
         agent_factory=MagicMock(),
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
@@ -156,8 +157,8 @@ def _make_subagent_ctx(
     # The external strategy resolves the auto-send HOOK-slot factory off
     # the chain's registry (the converged construction path), so the
     # harness registry carries the FW registration.
-    from modex_agent.plugins.abc import ComponentSlot
     from modex_agent.plugins.defaults.hooks import SubagentAutoSendHookFactory
+    from modex_agent.scope.components import ComponentSlot
 
     registry = ComponentRegistry()
     registry.register(ComponentSlot.HOOK, "subagent_auto_send", SubagentAutoSendHookFactory())
@@ -254,7 +255,8 @@ async def test_assemble_sub_hook_runner_carries_subagent_auto_send_with_external
     ]
     assert len(auto_send_specs) == 1
     hook: SubagentAutoSendHook = auto_send_specs[0].hook
-    assert hook._execution_strategy is ExecutionStrategyKind.EXTERNAL
+    # W5: the field is the strategy NAME (str) — value equality
+    assert hook._execution_strategy == ExecutionStrategyKind.EXTERNAL
     assert hook._self_name == "coder"
     assert hook._parent_name == "main"
 
@@ -425,7 +427,9 @@ async def test_assemble_sub_descriptor_has_correct_fields(tmp_path: Path) -> Non
 
     descriptor: AgentDescriptor = sub.descriptor
     assert descriptor.address.name == "coder"
-    assert descriptor.execution_strategy is ExecutionStrategyKind.EXTERNAL
+    # W5: the field is the strategy NAME (str) — StrEnum value equality
+    assert descriptor.execution_strategy == ExecutionStrategyKind.EXTERNAL
+    assert descriptor.execution_strategy == "external"
     assert descriptor.comm_kind is AgentCommKind.SUBAGENT
     assert descriptor.role_description == "An external coding subagent"
 

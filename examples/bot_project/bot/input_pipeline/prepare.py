@@ -35,10 +35,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.enqueue import build_input_message
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
-from modex_agent.input_pipeline.pipeline import UserInputPipeline
-from modex_agent.input_pipeline.stage import StageResult, Terminate
 from modex_agent.messaging.models import InputMessage
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.pipeline import UserInputPipeline
+from modex_agent.pipeline.input.stage import StageResult, Terminate
 
 __all__ = [
     "BotInputPreparation",

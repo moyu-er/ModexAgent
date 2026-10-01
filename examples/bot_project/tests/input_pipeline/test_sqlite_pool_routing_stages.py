@@ -20,13 +20,13 @@ from unittest.mock import MagicMock
 import pytest
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
-from bot.input_pipeline.stages.resolve_pool import ResolvePoolStage
 
 from modex_agent.core.session_id import encode_snowflake
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
-from modex_agent.input_pipeline.stage import Continue, Terminate
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.pool_routing_store import SqlitePoolRoutingStore
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.stage import Continue, Terminate
+from modex_agent.pipeline.input.stages.resolve_pool import ResolvePoolStage
 
 
 @pytest.fixture()

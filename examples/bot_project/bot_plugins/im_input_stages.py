@@ -1,28 +1,45 @@
-"""Bot input pipeline stages as ``INPUT_STAGE`` component factories."""
+"""Bot input pipeline stages as ``INPUT_STAGE`` component factories.
+
+The framework-owned generic stages (resolve-pool, set-channel, approval,
+attachment ingest, command dispatch, unsupported-command, persist) are
+imported from :mod:`modex_agent.pipeline.input.stages`; the bot supplies
+the deployment callbacks (channel recorder, transcript writer) and keeps
+its channel/workspace-specific stages here and under
+``bot/input_pipeline/stages/``.
+"""
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar
 
-from bot.input_pipeline.stages.approval import ApprovalStage
-from bot.input_pipeline.stages.attachment_ingest import AttachmentIngestStage
-from bot.input_pipeline.stages.command import CommandDispatchStage
+from bot.adapters.channels import set_conv_channel
 from bot.input_pipeline.stages.commands import SHARED_COMMANDS
 from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
 from bot.input_pipeline.stages.model_choice import ModelChoiceStage
-from bot.input_pipeline.stages.persist_user_message import PersistUserMessageStage
-from bot.input_pipeline.stages.resolve_pool import ResolvePoolStage
+from bot.input_pipeline.stages.persist_user_message import (
+    write_user_message_to_transcript,
+)
 from bot.input_pipeline.stages.resolve_workspace import ResolveWorkspaceStage
 from bot.input_pipeline.stages.session_control import SessionControlStage
-from bot.input_pipeline.stages.set_channel import SetChannelStage
-from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry, SkillParseStage
-from bot.input_pipeline.stages.unsupported_command import UnsupportedCommandStage
-from bot.service.model_config import BotModelConfig
+from bot.input_pipeline.stages.skill_parse import (
+    PoolSkillResolverRegistry,
+    SkillParseStage,
+)
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.plugins.abc import ComponentFactory, SimpleFactory
+from modex_agent.app.models.registry import ModelRegistry
+from modex_agent.pipeline.input.skeleton import InputStageName
+from modex_agent.pipeline.input.stages.approval import ApprovalStage
+from modex_agent.pipeline.input.stages.attachment_ingest import AttachmentIngestStage
+from modex_agent.pipeline.input.stages.command import CommandDispatchStage
+from modex_agent.pipeline.input.stages.persist_user_message import (
+    PersistUserMessageStage,
+)
+from modex_agent.pipeline.input.stages.resolve_pool import ResolvePoolStage
+from modex_agent.pipeline.input.stages.set_channel import SetChannelStage
+from modex_agent.pipeline.input.stages.unsupported_command import UnsupportedCommandStage
 from modex_agent.plugins.loader import Plugin, PluginRegistrationContext
+from modex_agent.scope.components import ComponentFactory, SimpleFactory
 from modex_agent.workspace.control import WorkspaceController
 
 if TYPE_CHECKING:
@@ -36,21 +53,6 @@ __all__ = [
     "ModelChoiceStageConfig",
     "SkillParseStageConfig",
 ]
-
-
-class InputStageName(StrEnum):
-    SET_CHANNEL = "set_channel"
-    RESOLVE_WORKSPACE = "resolve_workspace"
-    ENVIRONMENT_CONTROL = "environment_control"
-    SESSION_CONTROL = "session_control"
-    RESOLVE_POOL = "resolve_pool"
-    MODEL_CHOICE = "model_choice"
-    COMMAND_DISPATCH = "command_dispatch"
-    ATTACHMENT_INGEST = "attachment_ingest"
-    APPROVAL = "approval"
-    SKILL_PARSE = "skill_parse"
-    UNSUPPORTED_COMMAND = "unsupported_command"
-    PERSIST_USER_MESSAGE = "persist_user_message"
 
 
 class EnvironmentControlStageConfig(BaseModel):
@@ -73,7 +75,7 @@ class SkillParseStageConfig(BaseModel):
 class ModelChoiceStageConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
 
-    bot_model_config: BotModelConfig | None = None
+    bot_model_config: ModelRegistry | None = None
 
 
 class EnvironmentControlStageFactory(ComponentFactory):
@@ -122,7 +124,7 @@ class IMInputStagesPlugin(Plugin):
     def register(self, ctx: PluginRegistrationContext) -> None:
         ctx.register_input_stage(
             InputStageName.SET_CHANNEL,
-            SimpleFactory(SetChannelStage(), _EmptyStageConfig),
+            SimpleFactory(SetChannelStage(set_conv_channel), _EmptyStageConfig),
         )
         ctx.register_input_stage(
             InputStageName.RESOLVE_WORKSPACE,
@@ -160,5 +162,8 @@ class IMInputStagesPlugin(Plugin):
         )
         ctx.register_input_stage(
             InputStageName.PERSIST_USER_MESSAGE,
-            SimpleFactory(PersistUserMessageStage(), _EmptyStageConfig),
+            SimpleFactory(
+                PersistUserMessageStage(write_user_message_to_transcript),
+                _EmptyStageConfig,
+            ),
         )

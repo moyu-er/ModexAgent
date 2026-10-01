@@ -6,15 +6,15 @@ AttributeError on None, crashing the pipeline before PersistUserMessageStage
 (session not saved) and EnqueueStage (message never reaches pool, no response).
 
 Fix: ModelChoiceStage skips model resolution when config is None; pipeline
-continues normally. build_webui_pipeline accepts BotModelConfig | None.
+continues normally. build_webui_pipeline accepts ModelRegistry | None.
 """
 from __future__ import annotations
 
 import pytest
 from bot.input_pipeline.stages.model_choice import ModelChoiceStage
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 
 
 @pytest.mark.asyncio

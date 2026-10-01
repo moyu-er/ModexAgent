@@ -5,7 +5,7 @@ The unit tests exercise each link in isolation:
 
 - EnqueueStage writes the registry (input_pipeline/test_enqueue_model_choice.py)
 - ModelChoiceBindHook.before_graph sets current_model_choice (unit/service/test_model_choice.py)
-- BotModelProvider.stream reads the ContextVar (unit/service/test_model_provider_new_system.py)
+- ModelSelectionProvider.stream reads the ContextVar (unit/service/test_model_provider_new_system.py)
 
 NO test joins the three REAL components in one async turn task. This file does —
 it proves the ContextVar propagates registry-write -> hook -> provider within a
@@ -26,14 +26,13 @@ import pytest
 # tests/integration/ -> parents[3] == repo root (where bot.* and modex_agent.* live)
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service.model_choice import (
+from modex_agent.app.models.choice import (
     ModelChoiceBindHook,
     ModelChoiceRegistry,
     current_model_choice,
 )
-from bot.service.model_config import BotModelConfig
-from bot.service.model_provider import BotModelProvider
-
+from modex_agent.app.models.provider import ModelSelectionProvider
+from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import FinishReason
 from modex_agent.core.message import ChatMessage, MessageRole
@@ -55,10 +54,10 @@ models:
 """
 
 
-def _cfg(tmp_path: Path) -> BotModelConfig:
+def _cfg(tmp_path: Path) -> ModelRegistry:
     p = tmp_path / "model.yml"
     p.write_text(_YML, encoding="utf-8")
-    return BotModelConfig.from_yaml(p)
+    return ModelRegistry.from_yaml(p)
 
 
 def _ctx(session_id: str) -> SimpleNamespace:
@@ -70,7 +69,7 @@ def _ctx(session_id: str) -> SimpleNamespace:
 
 class _FakeReal:
     """Fake native provider: echoes its tag as one TextDelta and records the
-    delegated request envelope (model identity rewritten by BotModelProvider)."""
+    delegated request envelope (model identity rewritten by ModelSelectionProvider)."""
 
     def __init__(self, tag: str) -> None:
         self.tag = tag
@@ -119,8 +118,8 @@ async def test_chain_registry_to_hook_to_provider_uses_m2(tmp_path: Path) -> Non
 
     # 3. Provider reads the ContextVar IN THE SAME TASK and routes to M2's real
     # provider. Seed the cache with distinguishable fakes keyed by the same
-    # (provider.key, model.model) tuple BotModelProvider._real_provider uses.
-    provider = BotModelProvider(cfg)
+    # (provider.key, model.model) tuple ModelSelectionProvider._real_provider uses.
+    provider = ModelSelectionProvider(cfg)
     fake_m1 = _FakeReal("m1")
     fake_m2 = _FakeReal("m2")
     provider._cache[("a", "m1")] = fake_m1  # type: ignore[attr-defined]
@@ -133,7 +132,7 @@ async def test_chain_registry_to_hook_to_provider_uses_m2(tmp_path: Path) -> Non
     assert not fake_m1.called, "M1 (default) was called instead of the registered M2"
     assert resp.content == "m2"
     # The delegated envelope carries the RESOLVED model identity, not the
-    # framework placeholder (BotModelProvider.get_default_model() → "m1").
+    # framework placeholder (ModelSelectionProvider.get_default_model() → "m1").
     assert fake_m2.last_request is not None
     assert fake_m2.last_request.model == "m2"
     # The ContextVar still holds M2 after the call (not reset to default).
@@ -161,7 +160,7 @@ async def test_chain_unregistered_session_falls_back_to_default_m1(
     default_resolved = cfg.default_resolved()
     assert current_model_choice.get() == default_resolved
 
-    provider = BotModelProvider(cfg)
+    provider = ModelSelectionProvider(cfg)
     fake_m1 = _FakeReal("m1")
     fake_m2 = _FakeReal("m2")
     provider._cache[("a", "m1")] = fake_m1  # type: ignore[attr-defined]

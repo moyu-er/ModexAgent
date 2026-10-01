@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from bot.config.domain import get_domain
 from bot.service import web_ui_service
 from bot.service.config_controller import ConfigController
+
+from modex_agent.app.config_domain import get_domain
 
 
 def test_im_and_model_domains_registered_on_import() -> None:

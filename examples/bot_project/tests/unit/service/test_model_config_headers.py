@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service.model_config import BotModelConfig
+from modex_agent.app.models.registry import ModelRegistry
 
 _HEADERS_YML = """
 models:
@@ -54,8 +54,8 @@ def _write(tmp_path: Path, text: str) -> Path:
     return p
 
 
-def _load(tmp_path: Path, text: str) -> BotModelConfig:
-    return BotModelConfig.from_yaml(_write(tmp_path, text))
+def _load(tmp_path: Path, text: str) -> ModelRegistry:
+    return ModelRegistry.from_yaml(_write(tmp_path, text))
 
 
 def test_new_keys_parse_and_roundtrip(tmp_path: Path) -> None:
@@ -68,7 +68,7 @@ def test_new_keys_parse_and_roundtrip(tmp_path: Path) -> None:
 
     p2 = tmp_path / "roundtrip.yml"
     p2.write_text(yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=False), encoding="utf-8")
-    assert BotModelConfig.from_yaml(p2) == cfg
+    assert ModelRegistry.from_yaml(p2) == cfg
 
 
 def test_old_yaml_without_new_keys_gets_defaults(tmp_path: Path) -> None:
@@ -108,8 +108,8 @@ def test_non_string_header_value_raises(tmp_path: Path) -> None:
 
 
 def test_merge_preserves_headers_when_payload_omits_them() -> None:
-    from bot.config.domain import merge
-    from bot.service.model_config import ProviderCfg
+    from modex_agent.app.config_domain import merge
+    from modex_agent.app.models.registry import ProviderCfg
 
     current = {"key": "p", "name": "P", "api_key": "k", "headers": {"X-Trace": "t"}}
     result = merge(ProviderCfg, current, {"base_url": "https://new.example.com"})

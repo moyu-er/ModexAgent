@@ -10,17 +10,17 @@ BOT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(BOT_ROOT))
 
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind  # noqa: E402
-from modex_agent.plugins.abc import ComponentSlot  # noqa: E402
+from modex_agent.core.tool_vocabulary import ToolPreset  # noqa: E402
 from modex_agent.plugins.defaults import DefaultPlugin  # noqa: E402
 from modex_agent.plugins.loader import (  # noqa: E402
     ComponentRegistryLoader,
     PluginDiscoveryConfig,
     PluginSource,
 )
-from modex_agent.plugins.registry import ComponentRegistry  # noqa: E402
 from modex_agent.scope.compiler import compile_scope  # noqa: E402
+from modex_agent.scope.component_registry import ComponentRegistry  # noqa: E402
+from modex_agent.scope.components import ComponentSlot  # noqa: E402
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec  # noqa: E402
-from modex_agent.tools.presets import ToolPreset  # noqa: E402
 from modex_agent.workspace.context import WorkspaceContext  # noqa: E402
 from modex_agent.workspace.paths import WorkspacePaths  # noqa: E402
 
@@ -31,7 +31,7 @@ async def _registry() -> ComponentRegistry:
         registry,
         PluginDiscoveryConfig(
             bundled_factories=(DefaultPlugin(),),
-            project_plugin_paths=(BOT_ROOT / "plugins",),
+            project_plugin_paths=(BOT_ROOT / "bot_plugins",),
         ),
     )
     return registry

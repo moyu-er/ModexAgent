@@ -4,15 +4,15 @@ Runs the PRODUCTION ACP stdio stack — ``bot.acp.runtime.run_acp_entry``
 -> framework ``modex_agent.acp.entry.main`` over the real ``AcpRuntime`` +
 ``BotService`` (pool assembly, input pipeline, approval, session tree) —
 against a temporary config directory. The single test seam is the model
-provider factory at its real assembly boundary: ``BotModelProvider``
+provider factory at its real assembly boundary: ``ModelSelectionProvider``
 constructs every real provider through the module-level
-``create_llm_provider`` binding in ``bot.service.model_provider`` (the one
+``create_llm_provider`` binding in ``modex_agent.app.models.provider`` (the one
 construction seam all pools route through), replaced here with a scripted
 ``CallbackStreamProvider``. No network; everything else is production.
 
 The temporary ``model.yml`` must configure a REAL provider entry — a missing
 model.yml makes BotService boot with the ``_unconfigured`` placeholder,
-which fails fast in ``BotModelProvider.stream`` BEFORE any provider is
+which fails fast in ``ModelSelectionProvider.stream`` BEFORE any provider is
 constructed (the factory seam would never run).
 
 Scripted reply contract (keyed on the newest non-reminder user turn):
@@ -129,7 +129,7 @@ def main() -> None:
     faulthandler.dump_traceback_later(10, file=sys.stderr)
     if len(sys.argv) != 2:
         raise SystemExit("usage: acp_stdio_agent.py <config-dir>")
-    import bot.service.model_provider as model_provider_module
+    import modex_agent.app.models.provider as model_provider_module
 
     model_provider_module.create_llm_provider = _scripted_factory
 

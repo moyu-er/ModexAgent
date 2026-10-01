@@ -12,7 +12,7 @@ from bot.graph.agent_node_factory import BotAgentNodeConfig, BotAgentNodeFactory
 from pydantic import ValidationError
 
 from modex_agent.agents.agent_node import AgentNode
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.scope.spec import AgentSpec

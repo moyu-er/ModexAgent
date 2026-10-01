@@ -14,7 +14,6 @@ from aiohttp.test_utils import TestClient, TestServer
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
 from bot.adapters.web_socket import WebSocketInputAdapter  # noqa: E402
-from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg  # noqa: E402
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore  # noqa: E402
 from bot.webui.model_fetch import (  # noqa: E402
     FetchedModel,
@@ -28,7 +27,8 @@ from bot.webui.model_fetch import (  # noqa: E402
 )
 from bot.webui.server import WebUIServer  # noqa: E402
 
-from modex_agent.ioc.configs.llm import InterfaceFormat  # noqa: E402
+from modex_agent.app.models.registry import ModelCfg, ModelRegistry, ProviderCfg  # noqa: E402
+from modex_agent.providers.llm_config import InterfaceFormat  # noqa: E402
 
 # ── URL candidate construction ──────────────────────────────────────────────
 
@@ -292,8 +292,8 @@ _FETCH_MODELS_PATH = "bot.webui.server.fetch_provider_models"
 _SERVER_LOGGER = "bot.webui.server"
 
 
-def _make_model_config() -> BotModelConfig:
-    return BotModelConfig(
+def _make_model_config() -> ModelRegistry:
+    return ModelRegistry(
         default_provider="DeepSeek",
         default_model="m1",
         providers=[

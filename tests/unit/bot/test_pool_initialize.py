@@ -13,8 +13,8 @@ if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
 from modex_agent.adapters.output import OutputAdapter
+from modex_agent.app.config import AppConfig
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.messaging.models import InputMessage, OutputMessage
 from modex_agent.pipeline.adapters import InputAdapter
 
@@ -71,7 +71,7 @@ paths:
 """
     (tmp / "bot_config.yml").write_text(bot_config, encoding="utf-8")
 
-    # model.yml — required by the bot layer (BotModelConfig parses the models:
+    # model.yml — required by the bot layer (ModelRegistry parses the models:
     # block). Minimal valid block matching the pool's test-model below.
     model_yml = """
 models:

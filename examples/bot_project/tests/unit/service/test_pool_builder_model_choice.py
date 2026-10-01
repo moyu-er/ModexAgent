@@ -10,19 +10,19 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
-from bot.service.model_config import BotModelConfig
-from bot.service.model_provider import BotModelProvider
-from bot.service.pool.factory import _resolve_llm_slot
-
+from modex_agent.app.models.assembly import ModelRegistryAssembly
+from modex_agent.app.models.choice import ModelChoiceBindHook, ModelChoiceRegistry
+from modex_agent.app.models.provider import ModelSelectionProvider
+from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.plugins.abc import AgentType
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
+from modex_agent.plugins.assembly.pool_factory import _resolve_llm_slot
 from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import AgentType
 from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
@@ -41,10 +41,10 @@ models:
 """
 
 
-def _cfg(tmp_path: Path) -> BotModelConfig:
+def _cfg(tmp_path: Path) -> ModelRegistry:
     p = tmp_path / "model.yml"
     p.write_text(_YML, encoding="utf-8")
-    return BotModelConfig.from_yaml(p)
+    return ModelRegistry.from_yaml(p)
 
 
 class _Agent:
@@ -57,16 +57,16 @@ class _Agent:
 @pytest.mark.asyncio
 async def test_default_config_resolves_bot_model_provider(tmp_path: Path) -> None:
     """W4.2 behavior preservation: with no roster override the pool's slot
-    name is ``bot_default`` and its resolved product is a BotModelProvider —
+    name is ``multi`` and its resolved product is a ModelSelectionProvider —
     the same class the main agent has always run on."""
-    from plugins.bot_strategies import BotStrategiesPlugin
+    from modex_agent.plugins.defaults import DefaultPlugin
 
     cfg = _cfg(tmp_path)
     registry = ComponentRegistry()
     await ComponentRegistryLoader.load(
         registry,
         PluginDiscoveryConfig(
-            bundled_factories=(BotStrategiesPlugin(),),
+            bundled_factories=(DefaultPlugin(),),
             project_plugin_paths=(),
         ),
     )
@@ -78,7 +78,7 @@ async def test_default_config_resolves_bot_model_provider(tmp_path: Path) -> Non
         pool_name="main",
         tools=[],
         hooks=[],
-        llm_provider="bot_default",
+        llm_provider="multi",
         system_prompt_provider="file_prompt",
         system_prompt_config={},
         memory_overrides=MemoryOverrides(),
@@ -99,30 +99,31 @@ async def test_default_config_resolves_bot_model_provider(tmp_path: Path) -> Non
         registry=TurnSessionRegistry(),
         bot_model_config=cfg,
         model_choice_registry=ModelChoiceRegistry(),
+        model_assembly=ModelRegistryAssembly(cfg),
         assembly_spec=assembly_spec,
     )
 
-    provider = await _resolve_llm_slot(registry, "bot_default", {}, pool_assembly_ctx, ws_ctx)
+    provider = await _resolve_llm_slot(registry, "multi", {}, pool_assembly_ctx, ws_ctx)
 
-    assert isinstance(provider, BotModelProvider)
+    assert isinstance(provider, ModelSelectionProvider)
 
 
 async def test_wire_main_pipeline_adds_model_choice_hook(tmp_path: Path) -> None:
     """The model-choice binding is a declared roster entry (``hooks:
     [+model_choice_bind]`` in bot.yml) dispatched at Stage 4 since the W6
-    glue eradication — ``_wire_main_pipeline`` no longer injects it. The
+    glue eradication — ``wire_main_pipeline`` no longer injects it. The
     factory path pins the bot-side contract: the hook derives
-    ``BotModelConfig`` + ``ModelChoiceRegistry`` from the pool assembly
+    ``ModelRegistry`` + ``ModelChoiceRegistry`` from the pool assembly
     context the create_pool road threads."""
-    from plugins.bot_hooks import ModelChoiceBindHookFactory
+    from bot_plugins.bot_hooks import ModelChoiceBindHookFactory
 
-    from modex_agent.plugins.abc import AgentType
     from modex_agent.plugins.assembly.context import (
         PoolRuntimeDeps,
         agent_context_chain,
         resolution_context,
     )
-    from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
+    from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides
+    from modex_agent.scope.components import AgentType
 
     cfg = _cfg(tmp_path)
     reg = ModelChoiceRegistry()
@@ -149,7 +150,7 @@ async def test_wire_main_pipeline_adds_model_choice_hook(tmp_path: Path) -> None
         pool_name="main",
         tools=[],
         hooks=["model_choice_bind"],
-        llm_provider="bot_default",
+        llm_provider="multi",
         system_prompt_provider="file_prompt",
         system_prompt_config={},
         memory_overrides=MemoryOverrides(),

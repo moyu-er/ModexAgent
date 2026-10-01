@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.resolve_pool import resolve_session_routing
-from modex_agent.input_pipeline.context import InputContext
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
-from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult, Terminate
+from modex_agent.pipeline.input.context import InputContext
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.stage import Continue, InputStage, StageResult, Terminate
+from modex_agent.pipeline.input.stages.resolve_pool import resolve_session_routing
 
 
 class SessionControlStage(InputStage):

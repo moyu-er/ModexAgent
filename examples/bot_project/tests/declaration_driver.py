@@ -18,9 +18,36 @@ from bot.service.pool.declaration import (
     declared_pool_build,
 )
 
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.loader import (
+    ComponentRegistryLoader,
+    PluginDiscoveryConfig,
+)
+from modex_agent.scope.component_registry import ComponentRegistry
 
-DEFAULT_LLM_PROVIDER = "bot_default"
+DEFAULT_LLM_PROVIDER = "multi"
+
+_BOT_PROJECT_DIR = Path(__file__).resolve().parents[1]
+
+
+async def load_bot_test_registry() -> ComponentRegistry:
+    """Load the registry the historical ``create_pool`` fallback loaded.
+
+    The promoted framework ``create_pool`` no longer anchors the bot's
+    plugin directory (the framework cannot know it); framework-style test
+    callers that previously relied on the fallback pass this registry
+    explicitly. Same discovery shape: bundled FW defaults + the bot's
+    project plugins (``multi`` LLM factory).
+    """
+    registry = ComponentRegistry()
+    await ComponentRegistryLoader.load(
+        registry,
+        PluginDiscoveryConfig(
+            bundled_factories=(DefaultPlugin(),),
+            project_plugin_paths=(_BOT_PROJECT_DIR / "bot_plugins",),
+        ),
+    )
+    return registry
 
 
 def boot_from_yaml(
@@ -75,7 +102,7 @@ def compiled_spec_of(
 
     ``agent_yaml_tree`` is the nested ``agents:`` mapping text of a single
     pool (pool-as-root form); returns the agent's compiled
-    :class:`modex_agent.plugins.assembly.spec.AssemblySpec` — the
+    :class:`modex_agent.scope.assembly_spec.AssemblySpec` — the
     ``compiled_spec`` an ``AgentTemplate`` needs for materialization.
     """
 

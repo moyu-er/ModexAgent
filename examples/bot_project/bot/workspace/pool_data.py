@@ -18,8 +18,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bot.scope import BotRecordScope
+from modex_agent.app.config import AppConfig
 from modex_agent.core.provider import LLMProvider
-from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.persistence.managers import WorkspacePersistenceManager
@@ -62,14 +62,17 @@ async def build_pool_data(
     # Local imports keep the module import graph thin: the codec / store
     # / memory-factory modules are only needed when a pool
     # is actually built, not when this module is imported.
-    from bot.service.builders import build_memory_registry, build_turn_state_store
     from modex_agent.agents.react.state import ReActRuntimeStateCodec
-    from modex_agent.ioc.factories.memory import create_memory
+    from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
+    from modex_agent.core.turn.enums import AgentKind
     from modex_agent.memory.injection import FullInjectionPolicy
     from modex_agent.memory.injection.archive import ArchiveInjectionConfig
     from modex_agent.persistence.config import PersistenceBackend
-    from modex_agent.runtime.codec import RuntimeStateCodecRegistry
-    from modex_agent.runtime.enums import AgentKind
+    from modex_agent.plugins.assembly.backend_factory import (
+        build_memory_registry,
+        build_turn_state_store,
+    )
+    from modex_agent.plugins.assembly.memory_factory import create_memory
 
     memory_cfg = assembly_deps.memory
     if memory_cfg is None:

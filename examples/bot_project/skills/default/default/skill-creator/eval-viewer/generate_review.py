@@ -24,7 +24,7 @@ import sys
 import time
 import webbrowser
 from functools import partial
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 # Files to exclude from output listings

@@ -10,10 +10,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service.model_choice import current_model_choice
-from bot.service.model_config import BotModelConfig
-from bot.service.model_provider import BotModelProvider
-
+from modex_agent.app.models.choice import current_model_choice
+from modex_agent.app.models.provider import ModelSelectionProvider
+from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.core.llm_request import LLMRequest
 from modex_agent.core.llm_struct import FinishReason
 from modex_agent.core.message import ChatMessage, MessageRole
@@ -35,10 +34,10 @@ models:
 """
 
 
-def _cfg(tmp_path: Path) -> BotModelConfig:
+def _cfg(tmp_path: Path) -> ModelRegistry:
     p = tmp_path / "model.yml"
     p.write_text(_YML, encoding="utf-8")
-    return BotModelConfig.from_yaml(p)
+    return ModelRegistry.from_yaml(p)
 
 
 class _FakeReal:
@@ -64,7 +63,7 @@ def _reset_ctxvar() -> Generator[None, None, None]:
 
 
 def test_default_model_used_when_ctxvar_unset(tmp_path: Path) -> None:
-    prov = BotModelProvider(_cfg(tmp_path))
+    prov = ModelSelectionProvider(_cfg(tmp_path))
     fake = _FakeReal()
     prov._cache[("a", "m1")] = fake  # type: ignore[attr-defined]
 
@@ -87,7 +86,7 @@ def test_default_model_used_when_ctxvar_unset(tmp_path: Path) -> None:
 
 def test_ctxvar_switches_model(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
-    prov = BotModelProvider(cfg)
+    prov = ModelSelectionProvider(cfg)
     fake1 = _FakeReal()
     fake2 = _FakeReal()
     prov._cache[("a", "m1")] = fake1  # type: ignore[attr-defined]
@@ -110,9 +109,9 @@ def test_ctxvar_switches_model(tmp_path: Path) -> None:
 
 def test_real_provider_baked_per_resolved_model(tmp_path: Path) -> None:
     """create_llm_provider(synthesize(resolved)) bakes the model name plus the
-    resolved model's temperature/max_output_tokens, so BotModelProvider doesn't
+    resolved model's temperature/max_output_tokens, so ModelSelectionProvider doesn't
     forward them."""
-    from modex_agent.ioc.factories.llm import create_llm_provider
+    from modex_agent.providers.factory import create_llm_provider
     from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
     from modex_agent.providers.http.provider import HTTPStreamProvider
 
@@ -128,7 +127,7 @@ def test_real_provider_baked_per_resolved_model(tmp_path: Path) -> None:
 
 
 def test_get_default_model(tmp_path: Path) -> None:
-    prov = BotModelProvider(_cfg(tmp_path))
+    prov = ModelSelectionProvider(_cfg(tmp_path))
     assert prov.get_default_model() == "m1"
     assert prov.model == "m1"
 
@@ -141,7 +140,7 @@ def test_aclose_closes_cached_http_providers_and_clears_cache(tmp_path: Path) ->
     assert resolved is not None
 
     async def go() -> None:
-        prov = BotModelProvider(cfg)
+        prov = ModelSelectionProvider(cfg)
         real = prov._real_provider(resolved)
         assert isinstance(real, HTTPStreamProvider)
         assert not real._client.is_closed
@@ -169,18 +168,18 @@ models:
 """
 
 
-def _prefix_cfg(tmp_path: Path) -> BotModelConfig:
+def _prefix_cfg(tmp_path: Path) -> ModelRegistry:
     p = tmp_path / "model.yml"
     p.write_text(_PREFIX_YML, encoding="utf-8")
-    return BotModelConfig.from_yaml(p)
+    return ModelRegistry.from_yaml(p)
 
 
 def test_provider_model_not_overridden_by_call_site_model_kwarg(tmp_path: Path) -> None:
     """create_llm_provider bakes the config's model name verbatim into the
-    real provider; BotModelProvider rewrites the delegated envelope's model to
+    real provider; ModelSelectionProvider rewrites the delegated envelope's model to
     the resolved identity, so the framework call-site's model argument can
     never override the resolved model."""
-    prov = BotModelProvider(_prefix_cfg(tmp_path))
+    prov = ModelSelectionProvider(_prefix_cfg(tmp_path))
     fake = _FakeReal()
     prov._cache[("step", "step-3.7-flash")] = fake  # type: ignore[attr-defined]
 

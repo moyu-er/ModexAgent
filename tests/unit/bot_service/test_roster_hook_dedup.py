@@ -19,16 +19,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from modex_agent.agents.react.hooks.deliver_retry import DeliverRetryHook
+from modex_agent.agents.react.hooks.env_injection import NativeEnvInjectionHook
+from modex_agent.agents.react.hooks.length_guard import LengthGuardHook
+from modex_agent.agents.react.hooks.todo_continuation import TodoContinuationHook
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.hook import HookRunner
-from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
-from modex_agent.hook.builtin.env_injection import NativeEnvInjectionHook
-from modex_agent.hook.builtin.length_guard import LengthGuardHook
-from modex_agent.hook.builtin.todo_continuation import TodoContinuationHook
 from modex_agent.hook.notification import TurnOutcomeNotifyHook
 from modex_agent.interceptor.chain import InterceptorChain
-from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.memory.cleanup_hooks import TodoReorientationHook
+from modex_agent.memory.config import MemoryConfig
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
@@ -39,12 +39,16 @@ _BOT_PROJECT = Path(__file__).parent.parent.parent / "examples" / "bot_project"
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
-from bot.service.model_config import BotModelConfig
+from bot.config.webui_config import build_control_origin
 from bot.service.pool.communication import UserNoticeCleanupHook
 
+from modex_agent.app.models.assembly import ModelRegistryAssembly
+from modex_agent.app.models.choice import ModelChoiceBindHook, ModelChoiceRegistry
+from modex_agent.app.models.registry import ModelRegistry
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 
-def _bot_model_config(tmp_path: Path) -> BotModelConfig:
+
+def _bot_model_config(tmp_path: Path) -> ModelRegistry:
     yml = """\
 models:
   default_provider: "Test"
@@ -60,7 +64,7 @@ models:
 """
     path = tmp_path / "model.yml"
     path.write_text(yml, encoding="utf-8")
-    return BotModelConfig.from_yaml(path)
+    return ModelRegistry.from_yaml(path)
 
 
 def _make_pipeline() -> tuple[MagicMock, HookRunner]:
@@ -80,14 +84,14 @@ def _make_pool(pipeline: MagicMock) -> MagicMock:
 
 def _run_wire_main_pipeline(
     pool: MagicMock,
-    bot_model_config: BotModelConfig,
+    bot_model_config: ModelRegistry,
     project_dir: Path,
 ) -> None:
-    from bot.service.pool.pipeline_wiring import _wire_main_pipeline
+    from modex_agent.plugins.assembly.pipeline_wiring import wire_main_pipeline
 
     main_spec = AgentSpec(name="main")
     pool_spec = PoolSpec(name="p", agents=[AgentSpec(name="main")])
-    _wire_main_pipeline(
+    wire_main_pipeline(
         pool,
         "main",
         MagicMock(),
@@ -101,12 +105,12 @@ def _run_wire_main_pipeline(
         "p",
         tool_manager=MagicMock(),
         pool_spec=pool_spec,
-        bot_model_config=bot_model_config,
+        model_info=bot_model_config.default_resolved().model_info,
     )
 
 
 def test_wire_main_pipeline_wires_only_outcome_hooks(tmp_path: Path) -> None:
-    """The W6 glue eradication: ``_wire_main_pipeline`` no longer injects
+    """The W6 glue eradication: ``wire_main_pipeline`` no longer injects
     model_choice_bind / native_env / deliver_retry / length_guard — those
     ride the compiled roster (position defaults + declared entries),
     dispatched by Stage 4. What remains code-wired: the deployment-level
@@ -158,11 +162,20 @@ def _boot_declared(tmp_path: Path, declaration: str, pool_name: str) -> object:
 
     from modex_agent.plugins.defaults import DefaultPlugin
     from modex_agent.plugins.loader import PluginRegistrationContext
-    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.scope.component_registry import ComponentRegistry
 
     registry = ComponentRegistry()
     with PluginRegistrationContext(registry) as registration:
         DefaultPlugin().register(registration)
+        # The deployment ``bot_default`` LLM factory + bot hooks (the
+        # registry the historical create_pool fallback loaded before the
+        # W4a promotion).
+        from bot_plugins.bot_hooks import BotHooksPlugin
+
+        from modex_agent.plugins.defaults import DefaultPlugin
+
+        DefaultPlugin().register(registration)
+        BotHooksPlugin().register(registration)
 
     declaration_path = tmp_path / "declaration.yml"
     declaration_path.write_text(declaration, encoding="utf-8")
@@ -171,10 +184,10 @@ def _boot_declared(tmp_path: Path, declaration: str, pool_name: str) -> object:
         project_dir=tmp_path,
         data_dir=tmp_path / ".modex",
         graphs_dirs=(),
-        default_llm_provider="bot_default",
+        default_llm_provider="multi",
         registry=registry,
     )
-    return declared_pool_build(boot, pool_name)
+    return declared_pool_build(boot, pool_name), registry
 
 
 async def test_create_pool_roster_hooks_dispatch_and_code_wiring_skips(
@@ -187,7 +200,7 @@ async def test_create_pool_roster_hooks_dispatch_and_code_wiring_skips(
     user_notice_cleanup; the capability's todo_reorientation rides the
     same roster channel (the unconditional create_pool injection died
     with the todo supply convergence)."""
-    from bot.service.pool import create_pool
+    from modex_agent.plugins.assembly.pool_factory import create_pool
 
     declaration = """\
 pool:
@@ -203,7 +216,7 @@ pool:
         - +deliver_retry
         - +user_notice_cleanup
 """
-    declared = _boot_declared(tmp_path, declaration, "dedup-pool")
+    declared, registry = _boot_declared(tmp_path, declaration, "dedup-pool")
     pool_data, memory_system = _make_pool_data(tmp_path)
     broker = InMemoryMessageBroker()
     await broker.start()
@@ -225,7 +238,10 @@ pool:
             shared_hooks=[],
             shared_hook_runner=HookRunner(),
             shared_interceptor_chain=InterceptorChain(),
-            bot_model_config=None,
+            model_assembly=ModelRegistryAssembly(None),
+            component_registry=registry,
+            default_llm_provider_name=MULTI_LLM_PROVIDER,
+            control_origin=build_control_origin(tmp_path / "config"),
             model_choice_registry=ModelChoiceRegistry(),
             pool_data=pool_data,
         )
@@ -253,22 +269,31 @@ async def test_create_pool_position_defaults_and_model_choice_bind_dispatch(
     (deliver_retry / length_guard / native_env) dispatch through Stage 4
     with NO declaration, and the declared ``+model_choice_bind`` entry
     dispatches exactly once with its construction deps derived from the
-    pool assembly context — the retired _wire_main_pipeline injections
+    pool assembly context — the retired wire_main_pipeline injections
     are gone (the outcome hooks remain code-wired)."""
-    from bot.service.pool import create_pool
     from bot.service.pool.declaration import (
         boot_scope_declaration,
         declared_pool_build,
     )
-    from plugins.bot_hooks import BotHooksPlugin
+    from bot_plugins.bot_hooks import BotHooksPlugin
 
+    from modex_agent.plugins.assembly.pool_factory import create_pool
     from modex_agent.plugins.defaults import DefaultPlugin
     from modex_agent.plugins.loader import PluginRegistrationContext
-    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.scope.component_registry import ComponentRegistry
 
     registry = ComponentRegistry()
     with PluginRegistrationContext(registry) as registration:
         DefaultPlugin().register(registration)
+        # The deployment ``bot_default`` LLM factory + bot hooks (the
+        # registry the historical create_pool fallback loaded before the
+        # W4a promotion).
+        from bot_plugins.bot_hooks import BotHooksPlugin
+
+        from modex_agent.plugins.defaults import DefaultPlugin
+
+        DefaultPlugin().register(registration)
+        BotHooksPlugin().register(registration)
         BotHooksPlugin().register(registration)
 
     declaration = """\
@@ -288,7 +313,7 @@ pool:
         project_dir=tmp_path,
         data_dir=tmp_path / ".modex",
         graphs_dirs=(),
-        default_llm_provider="bot_default",
+        default_llm_provider="multi",
         registry=registry,
     )
     declared = declared_pool_build(boot, "position-default-pool")
@@ -313,7 +338,10 @@ pool:
             shared_hooks=[],
             shared_hook_runner=HookRunner(),
             shared_interceptor_chain=InterceptorChain(),
-            bot_model_config=None,
+            model_assembly=ModelRegistryAssembly(None),
+            component_registry=registry,
+            default_llm_provider_name=MULTI_LLM_PROVIDER,
+            control_origin=build_control_origin(tmp_path / "config"),
             model_choice_registry=ModelChoiceRegistry(),
             pool_data=pool_data,
         )
@@ -344,7 +372,7 @@ async def test_create_pool_external_main_roster_hook_is_inert(
     ``todo`` entry and NO TodoReorientationHook lands either (the dark-
     supply death — behavior-neutral, the external memory system never
     fires cleanup)."""
-    from bot.service.pool import create_pool
+    from modex_agent.plugins.assembly.pool_factory import create_pool
 
     declaration = """\
 pool:
@@ -357,13 +385,13 @@ pool:
       hooks:
         - +user_notice_cleanup
 """
-    declared = _boot_declared(tmp_path, declaration, "ext-dedup-pool")
+    declared, _registry = _boot_declared(tmp_path, declaration, "ext-dedup-pool")
     pool_data, memory_system = _make_pool_data(tmp_path)
     broker = InMemoryMessageBroker()
     await broker.start()
     pool_instance = None
     try:
-        with patch("bot.service.external_strategy.shutil.which", return_value=None):
+        with patch("modex_agent.plugins.assembly.strategies.external.shutil.which", return_value=None):
             pool_instance = await create_pool(
                 pool_name="ext-dedup-pool",
                 declared=declared,
@@ -380,7 +408,9 @@ pool:
                 shared_hooks=[],
                 shared_hook_runner=HookRunner(),
                 shared_interceptor_chain=InterceptorChain(),
-                bot_model_config=None,
+                model_assembly=ModelRegistryAssembly(None),
+                default_llm_provider_name=MULTI_LLM_PROVIDER,
+                control_origin=build_control_origin(tmp_path / "config"),
                 model_choice_registry=ModelChoiceRegistry(),
                 pool_data=pool_data,
             )

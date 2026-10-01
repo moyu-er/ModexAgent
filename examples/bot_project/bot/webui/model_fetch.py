@@ -31,7 +31,7 @@ import logging
 import aiohttp
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.ioc.configs.llm import InterfaceFormat
+from modex_agent.providers.llm_config import InterfaceFormat
 
 logger = logging.getLogger(__name__)
 

@@ -3,16 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from bot.service import builders
 from bot.service.pool.declaration import (
     boot_scope_declaration,
     declared_pool_build,
 )
-from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
 
+from modex_agent.plugins.assembly import pool_factory as builders
 from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
 
 _BOT_PROJECT = Path(__file__).resolve().parents[3]
 
@@ -23,7 +23,7 @@ async def _registry() -> ComponentRegistry:
         registry,
         PluginDiscoveryConfig(
             bundled_factories=(DefaultPlugin(),),
-            project_plugin_paths=(_BOT_PROJECT / "plugins",),
+            project_plugin_paths=(_BOT_PROJECT / "bot_plugins",),
         ),
     )
     return registry
@@ -48,7 +48,7 @@ pool:
         project_dir=tmp_path,
         data_dir=tmp_path / ".modex",
         graphs_dirs=(tmp_path / "no-graphs",),
-        default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        default_llm_provider=MULTI_LLM_PROVIDER,
     )
     declared = declared_pool_build(boot, "default")
     registry = await _registry()

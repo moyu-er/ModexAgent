@@ -30,7 +30,6 @@ from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
 from bot.service.media_store import WorkspaceScopedMediaStore
-from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
 
@@ -46,25 +45,26 @@ from examples.bot_project.tests.input_pipeline.assembly_support import (
 # LLM call.
 from modex_agent.agents.react.media_injection import inject_multimodal
 from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.app.models.registry import ModelCfg, ModelRegistry, ProviderCfg
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 from modex_agent.core.message import ChatMessage, ImageUrlPart, TextPart
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
-from modex_agent.ioc.configs.llm import Modality, ModelCapabilities
+from modex_agent.core.turn.enums import AgentKind, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.memory.context import ContextManager, InMemoryContextManager
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.memory.system import MemorySystemContextManager, create_memory_system
+from modex_agent.messaging.agent_messages import AgentMessageEnvelope
 from modex_agent.messaging.broker import Address
-from modex_agent.messaging.broker_bridge import build_input_broker_message
 from modex_agent.messaging.models import InputMessage
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.pool import input_message_from_dispatch_envelope
+from modex_agent.pipeline.broker_bridge import build_input_broker_message
+from modex_agent.pipeline.input.envelope import AttachmentRef, UserInputEnvelope
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.runtime.enums import AgentKind, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
+from modex_agent.providers.llm_config import Modality, ModelCapabilities
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.workspace.runtime import bind_workspace_root
 
@@ -80,8 +80,8 @@ _JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00" 
 _TXT = b"hello world, this is a plain text attachment\n" * 3
 
 
-def _bot_model_config() -> BotModelConfig:
-    return BotModelConfig(
+def _bot_model_config() -> ModelRegistry:
+    return ModelRegistry(
         default_provider="A",
         default_model="M1",
         providers=[

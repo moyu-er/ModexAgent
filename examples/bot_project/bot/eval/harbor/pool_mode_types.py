@@ -8,10 +8,10 @@ from typing import Final
 from pydantic import BaseModel, ConfigDict, Field
 
 from bot.eval.harbor.entry import EntryConfig, TaskResultArtifact, UsageArtifact
-from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
+from modex_agent.app.models.registry import ModelCfg, ModelRegistry, ProviderCfg
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.ioc.configs.llm import InterfaceFormat
-from modex_agent.plugins.abc import ComponentFactory
+from modex_agent.providers.llm_config import InterfaceFormat
+from modex_agent.scope.components import ComponentFactory
 from modex_agent.trace.pricing import PriceBook, load_pricebook
 from modex_agent.trace.store import SpanModel
 
@@ -94,7 +94,7 @@ class PoolModeDependencies:
         self.span_exporter = span_exporter
 
 
-def build_model_config(config: EntryConfig) -> BotModelConfig:
+def build_model_config(config: EntryConfig) -> ModelRegistry:
     provider_key, separator, model_name = config.model.partition("/")
     if not separator:
         provider_key, model_name = "harbor", config.model
@@ -103,7 +103,7 @@ def build_model_config(config: EntryConfig) -> BotModelConfig:
         if provider_key == "anthropic"
         else InterfaceFormat.OPENAI_COMPATIBLE
     )
-    return BotModelConfig(
+    return ModelRegistry(
         default_provider=provider_key,
         default_model=model_name,
         max_context_tokens=config.max_context_tokens,

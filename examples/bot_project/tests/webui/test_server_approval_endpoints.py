@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.server import WebUIServer
 
@@ -26,27 +25,28 @@ from modex_agent.agents.react.state import (
     ReActSnapshotPolicy,
     ReActTurnState,
 )
-from modex_agent.approval.constants import (
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.approval_types import (
     ApprovalDecision,
     ApprovalStatus,
     ApprovalTier,
 )
-from modex_agent.core.session_id import SessionInfo
-from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
-from modex_agent.runtime.codec import RuntimeStateCodecRegistry
-from modex_agent.runtime.enums import (
+from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
+from modex_agent.core.turn.enums import (
     AgentKind,
     ApprovalSubjectType,
     SnapshotReason,
     TurnPhase,
 )
-from modex_agent.runtime.models import (
+from modex_agent.core.turn.models import (
     ApprovalRequestState,
     ApprovalTransaction,
     ToolArguments,
     TurnIdentity,
     TurnSnapshot,
 )
+from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 from modex_agent.runtime.store import JsonFileTurnStateStore
 from modex_agent.workspace.paths import WorkspacePaths
 

@@ -129,7 +129,7 @@ async def test_control_command_notice_routes_to_websocket(adapters, tmp_path: Pa
     from bot.input_pipeline.context import BotInputContext
     from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
 
-    from modex_agent.input_pipeline.envelope import UserInputEnvelope
+    from modex_agent.pipeline.input.envelope import UserInputEnvelope
     from modex_agent.workspace.control import WorkspaceController
     from modex_agent.workspace.models import CdResult
 
@@ -182,7 +182,7 @@ async def test_control_command_notice_routes_to_qq(adapters, tmp_path: Path) -> 
     from bot.input_pipeline.context import BotInputContext
     from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
 
-    from modex_agent.input_pipeline.envelope import UserInputEnvelope
+    from modex_agent.pipeline.input.envelope import UserInputEnvelope
     from modex_agent.workspace.control import WorkspaceController
     from modex_agent.workspace.models import CdResult
 

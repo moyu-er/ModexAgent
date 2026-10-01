@@ -10,10 +10,10 @@ from bot.service.pool.declaration import boot_scope_spec
 from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
+from modex_agent.core.tool_vocabulary import ToolPreset
 from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.scope import MemoryAgentRole
 from modex_agent.scope.loader import load_scope_declaration
-from modex_agent.tools.presets import ToolPreset
 
 _BOT_PROJECT = Path(__file__).resolve().parents[2]
 _DECLARATION_PATH = _BOT_PROJECT / "config" / "scopes" / "eval" / "agents" / "memory-harness.yml"

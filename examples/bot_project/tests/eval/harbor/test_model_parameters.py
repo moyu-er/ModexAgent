@@ -9,16 +9,16 @@ from bot.eval.harbor import entry as entry_module
 from bot.eval.harbor.agent import POOL_MODE_ENV_VARS
 from bot.eval.harbor.entry import EntryConfig
 from bot.eval.harbor.pool_mode_types import build_model_config
-from bot.service import model_provider as model_provider_module
-from bot.service.model_provider import BotModelProvider
 
+from modex_agent.app.models import provider as model_provider_module
+from modex_agent.app.models.provider import ModelSelectionProvider
 from modex_agent.core.llm_request import ReasoningEffort
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
-from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.providers import HTTPStreamProvider
 from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
+from modex_agent.providers.llm_config import LLMConfig
 
 
 def _environment(tmp_path: Path) -> dict[str, str]:
@@ -224,7 +224,7 @@ async def test_pool_provider_bakes_max_output_tokens_from_entry(
 
     # When
     with patch.object(model_provider_module, "create_llm_provider", capture_factory):
-        provider = BotModelProvider(model_config)
+        provider = ModelSelectionProvider(model_config)
         response = await provider.chat_stream(
             messages=[ChatMessage(role=MessageRole.USER, content="hi")]
         )

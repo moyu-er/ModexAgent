@@ -1,6 +1,6 @@
 """Multi-channel BotService — auto-detects and starts all configured IM adapters.
 
-Reads :mod:`bot.adapters.channels` registry, builds every enabled adapter,
+Resolves channel adapters from the ``ChannelAdapterRegistry``,`
 merges inputs via ``FanInInputAdapter``, and fans out agent output via
 ``CompositeEmitter``.  WebUI (websocket) is always enabled and serves as
 the universal observer — all conversations from any channel are visible.
@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 from aiohttp import web
+from bot_plugins.bot_channels import BotChannelsPlugin
 
 import bot.config.domains.im  # noqa: F401 - registers the 'im' ConfigDomain on import
 import bot.config.domains.model  # noqa: F401 - registers the 'model' ConfigDomain on import
@@ -25,7 +26,6 @@ from bot.service.core import BotService
 from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.recent_workspaces import RecentWorkspaces
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.adapter_discovery import import_adapter_registration_modules
 from bot.webui.emitter import CompositeEmitter
 from bot.webui.server import WebUIServer
 from bot.webui.workspace_providers import (
@@ -37,12 +37,17 @@ from bot.webui.workspace_providers import (
 )
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.app.config import AppConfig
 from modex_agent.core.emitter import ContentEmitter
-from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.multi_agent.pool_config.media import MediaConfig
+from modex_agent.core.media import MediaConfig
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.session_store import SessionStore
 from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.plugins.loader import (
+    ChannelAdapterRegistry,
+    PluginRegistrationContext,
+)
+from modex_agent.scope.component_registry import PluginSource
 
 if TYPE_CHECKING:
     from bot.input_pipeline.context import BotInputContext
@@ -51,7 +56,7 @@ if TYPE_CHECKING:
     from bot.webui.transcript_store import TranscriptStore
     from bot.workspace.handle import PoolWorkspaceResources
     from modex_agent.commands import SkillResolver
-    from modex_agent.memory.core.split_stores import MessageStore
+    from modex_agent.core.stores import MessageStore
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +113,8 @@ def _trigger_restart() -> None:
 class WebUIService(BotService):
     """Multi-channel bot service — auto-starts all enabled IM adapters.
 
-    Adapters are discovered from :data:`bot.adapters.channels.ADAPTERS`.
+    Adapters are resolved by name from the framework channel-adapter
+    registry (populated by ``plugins/bot_channels.py``).
     Each adapter provides input, output, and an emitter factory.  Inputs
     are merged; outputs fan out via ``CompositeEmitter`` with per-channel
     filtering so QQ only responds to QQ-originated conversations, etc.
@@ -122,16 +128,6 @@ class WebUIService(BotService):
     # the server index, and the input pipeline. The _sessions_dir_for_prefix callback
     # provides the current workspace's sessions_dir dynamically per session prefix.
     _emitter_transcript_store: WorkspaceScopedTranscriptStore | None = None
-
-    @staticmethod
-    def _import_adapter_registration_modules(channels_module: Any) -> None:
-        """Import every ``bot.adapters.register_*`` module to fire @register decorators.
-
-        Delegates to :func:`bot.webui.adapter_discovery.import_adapter_registration_modules`.
-        Kept as a thin staticmethod wrapper for backward compatibility with tests
-        that call ``WebUIService._import_adapter_registration_modules`` directly.
-        """
-        import_adapter_registration_modules(channels_module)
 
     def __init__(
         self,
@@ -148,9 +144,9 @@ class WebUIService(BotService):
         project_dir = config_dir.parent
         app_cfg = AppConfig.from_yaml(config_dir / "bot_config.yml")
 
-        from modex_agent.ioc.configs.app import _resolve_env_in
+        from modex_agent.app.config import resolve_env_in
 
-        raw_config: dict[str, Any] = _resolve_env_in(
+        raw_config: dict[str, Any] = resolve_env_in(
             yaml.safe_load((config_dir / "bot_config.yml").read_text(encoding="utf-8")) or {}
         )
 
@@ -194,7 +190,7 @@ class WebUIService(BotService):
         self._emitter_transcript_store: WorkspaceScopedTranscriptStore | None = transcript_store
 
         # ── 2.5 Session store + registry ───────────────────────────────
-        from bot.service.session_store import WorkspacePoolSessionStore
+        from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
         from modex_agent.persistence.session_registry import InMemorySessionRegistry
 
         session_store: WorkspacePoolSessionStore = WorkspacePoolSessionStore(
@@ -210,13 +206,18 @@ class WebUIService(BotService):
         self._session_store = session_store
         self._session_registry = InMemorySessionRegistry(store=session_store)
 
-        # ── 3. Build adapters from registry ────────────────────────────
-        # Auto-import all register_*.py modules so @register decorators fire.
-        # Adding a new IM adapter only requires dropping a register_<name>.py
-        # file into bot/adapters/; no changes to this service are needed.
+        # ── 3. Build adapters from the channel registry ────────────────
+        # The bot's BotChannelsPlugin registers every channel factory
+        # through the framework registration face; adding a new IM adapter
+        # only requires adding its build + one register_channel_adapter
+        # line in plugins/bot_channels.py.
         from bot.adapters import channels
 
-        self._import_adapter_registration_modules(channels)
+        self._channel_registry = ChannelAdapterRegistry()
+        with PluginRegistrationContext(
+            channel_adapters=self._channel_registry, source=PluginSource.PROJECT
+        ) as registration:
+            BotChannelsPlugin().register(registration)
 
         ctx = channels.AdapterBuildContext(
             config_dir=config_dir,
@@ -233,32 +234,28 @@ class WebUIService(BotService):
         ] = []
         """Per-channel factories with the ``(session_id, pool)`` contract."""
 
-        for spec in channels.ADAPTERS:
-            if not spec.enabled:
-                logger.info("Adapter '%s': disabled, skipping", spec.name)
-                continue
-
+        for name in self._channel_registry.names():
             try:
-                result = spec.build(ctx)
+                result = self._channel_registry.resolve(name)(ctx)
             except Exception as exc:
                 logger.warning(
                     "Adapter '%s': build failed (%s: %s), skipping",
-                    spec.name,
+                    name,
                     type(exc).__name__,
                     exc,
                 )
                 continue
 
             if result is None:
-                logger.info("Adapter '%s': build returned None, skipping", spec.name)
+                logger.info("Adapter '%s': build returned None, skipping", name)
                 continue
 
             inp, out, em_factory = result
             self._channel_inputs.append(inp)
             self._channel_outputs.append(out)
-            self._channel_outputs_by_name[spec.name] = out
+            self._channel_outputs_by_name[name] = out
             self._emitter_factories.append(em_factory)
-            logger.info("Adapter '%s': registered [OK]", spec.name)
+            logger.info("Adapter '%s': registered [OK]", name)
 
         if not self._channel_inputs:
             raise RuntimeError(
@@ -547,7 +544,7 @@ class WebUIService(BotService):
         from bot.service.session_cleaner_factory import SessionCleanerFactory
         from bot.service.session_gc import SessionGarbageCollector, load_session_gc_config
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.runtime.store import TurnStateStore
+        from modex_agent.core.turn.store import TurnStateStore
 
         def _resolve_ws_resources(ws_root: Path) -> PoolWorkspaceResources | None:
             resolved = Path(ws_root).resolve()
@@ -715,6 +712,7 @@ class WebUIService(BotService):
             ctx=self._service_assembly_ctx,
             skill_registry=skill_registry,
             bot_model_config=self._bot_model_config,
+            stage_order=self._app_config.input_stage_order.webui,
         )
         self._server.set_input_pipeline(webui_pipeline)
 
@@ -741,6 +739,7 @@ class WebUIService(BotService):
             workspace_controller=self.workspace_stack.controller
             if self.workspace_stack is not None
             else None,
+            stage_order=self._app_config.input_stage_order.im,
         )
         for inp in self._channel_inputs:
             if inp.name == "websocket":

@@ -85,8 +85,8 @@ def build_workspace_stack(
     ``enabled`` controls whether the WorkspaceController allows workspace
     switches (``/cd``); ``False`` gives a single-home (workspace disabled) stack.
     """
-    from bot.service.builders import build_workspace_registry_store
     from bot.workspace.wiring.resources import _build_resources, _stop_resources
+    from modex_agent.plugins.assembly.backend_factory import build_workspace_registry_store
 
     async def build_resources(ctx: WorkspaceContext) -> PoolWorkspaceResources:
         return await _build_resources(service, ctx)

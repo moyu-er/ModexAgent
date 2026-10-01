@@ -48,7 +48,7 @@ _BOT_PROJECT = Path(__file__).resolve().parents[3]
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from modex_agent.ioc.configs.memory import (  # noqa: E402
+from modex_agent.memory.config import (  # noqa: E402
     GovernanceConfig,
     MemoryConfig,
     PrunedCatalogConfig,
@@ -84,7 +84,7 @@ def _compile_registry():
     resolves against it at compile."""
     from modex_agent.plugins.defaults import DefaultPlugin
     from modex_agent.plugins.loader import PluginRegistrationContext
-    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.scope.component_registry import ComponentRegistry
 
     registry = ComponentRegistry()
     ctx = PluginRegistrationContext(registry)
@@ -405,7 +405,7 @@ class TestArchiveEmitterNotification:
         start notice via notification_service.send_notice."""
         from bot.service.pool.communication import UserNoticeCleanupHook
 
-        from modex_agent.memory.hooks import MemoryHookContext
+        from modex_agent.core.memory_hooks import MemoryHookContext
         from modex_agent.memory.scope import MemoryContext
 
         notification_service = MagicMock()
@@ -433,9 +433,9 @@ class TestArchiveEmitterNotification:
         done notice via notification_service.send_notice."""
         from bot.service.pool.communication import UserNoticeCleanupHook
 
+        from modex_agent.core.memory_hooks import MemoryHookContext
         from modex_agent.memory.cleanup import CleanupResult
         from modex_agent.memory.core.models import CompressionReason
-        from modex_agent.memory.hooks import MemoryHookContext
         from modex_agent.memory.scope import MemoryContext
 
         notification_service = MagicMock()
@@ -469,7 +469,7 @@ class TestArchiveEmitterNotification:
         (defensive — avoids crash on malformed context)."""
         from bot.service.pool.communication import UserNoticeCleanupHook
 
-        from modex_agent.memory.hooks import MemoryHookContext
+        from modex_agent.core.memory_hooks import MemoryHookContext
         from modex_agent.memory.scope import MemoryContext
 
         notification_service = MagicMock()
@@ -492,7 +492,7 @@ class TestArchiveEmitterNotification:
         (defensive — guards against incomplete hook context)."""
         from bot.service.pool.communication import UserNoticeCleanupHook
 
-        from modex_agent.memory.hooks import MemoryHookContext
+        from modex_agent.core.memory_hooks import MemoryHookContext
 
         notification_service = MagicMock()
         notification_service.send_notice = AsyncMock()
@@ -516,7 +516,7 @@ class TestArchiveEmitterNotification:
         """
         from bot.service.pool.communication import UserNoticeCleanupHook
 
-        from modex_agent.memory.hooks import CleanupFinishedHook, CleanupTriggeredHook
+        from modex_agent.core.memory_hooks import CleanupFinishedHook, CleanupTriggeredHook
 
         assert issubclass(UserNoticeCleanupHook, CleanupTriggeredHook | CleanupFinishedHook), (
             "UserNoticeCleanupHook must inherit from both CleanupTriggeredHook "
@@ -561,8 +561,8 @@ class TestMemorySystemCleanupHookFiring:
         asyncio.run(self._run_real_cleanup_fires_finished_hook(tmp_path))
 
     async def _run_real_cleanup_fires_finished_hook(self, tmp_path: Path) -> None:
+        from modex_agent.core.memory_hooks import CleanupFinishedHook, MemoryHookContext
         from modex_agent.memory.default_system import DefaultMemorySystem
-        from modex_agent.memory.hooks import CleanupFinishedHook, MemoryHookContext
         from modex_agent.memory.layers.factory import MemoryLayerFactory
         from modex_agent.memory.registry import DefaultMemoryStoreRegistry
         from modex_agent.memory.scope import MemoryContext
@@ -617,12 +617,12 @@ class TestMemorySystemCleanupHookFiring:
         asyncio.run(self._run_real_cleanup_fires_both(tmp_path))
 
     async def _run_real_cleanup_fires_both(self, tmp_path: Path) -> None:
-        from modex_agent.memory.default_system import DefaultMemorySystem
-        from modex_agent.memory.hooks import (
+        from modex_agent.core.memory_hooks import (
             CleanupFinishedHook,
             CleanupTriggeredHook,
             MemoryHookContext,
         )
+        from modex_agent.memory.default_system import DefaultMemorySystem
         from modex_agent.memory.layers.factory import MemoryLayerFactory
         from modex_agent.memory.registry import DefaultMemoryStoreRegistry
         from modex_agent.memory.scope import MemoryContext

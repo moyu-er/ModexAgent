@@ -17,8 +17,8 @@ from bot.eval.probes.renderer import ProbeRenderer, RendererConfig
 from bot.eval.probes.sampler import LibraryScale, SamplerConfig, config_for_scale, sample_world
 from bot.eval.probes.schema import ProbeType, WorldSpec
 from modex_agent.core.provider import LLMProvider
-from modex_agent.ioc.configs.llm import LLMConfig
-from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.providers.factory import create_llm_provider
+from modex_agent.providers.llm_config import LLMConfig
 from modex_agent.trace.pricing import PriceBook, load_pricebook
 
 

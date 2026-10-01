@@ -12,9 +12,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from bot.service.session_store import WorkspacePoolSessionStore
 from bot.webui.types import RuntimeStores
-from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.app.config import AppConfig
+from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.session_store import SessionStore
 from modex_agent.plugins.defaults.capabilities.todo import TodoSupply

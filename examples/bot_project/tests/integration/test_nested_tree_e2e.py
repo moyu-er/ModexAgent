@@ -32,20 +32,20 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from bot.config.webui_config import build_control_origin
 from bot.graph.agent_node import BotAgentNode
-from bot.service.model_choice import ModelChoiceRegistry
-from bot.service.pool import create_pool
 from bot.service.pool.declaration import (
     boot_scope_declaration,
     declared_pool_build,
 )
-from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
 from bot.workspace.handle import WorkspaceHandle
 from bot.workspace.pool_data import build_pool_data
 from bot.workspace.wiring.stack import declared_assembly_deps
 from pydantic import BaseModel
 
 from modex_agent.adapters.output import OutputAdapter
+from modex_agent.app.models.assembly import ModelRegistryAssembly
+from modex_agent.app.models.choice import ModelChoiceRegistry
 from modex_agent.core import AgentCommKind
 from modex_agent.core.llm_struct import FinishReason, LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage, ToolCall
@@ -59,13 +59,15 @@ from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.tools import CommunicationTarget
 from modex_agent.persistence.session_registry import InMemorySessionRegistry
-from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
+from modex_agent.plugins.assembly.pool_factory import create_pool
 from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 from modex_agent.plugins.loader import (
     ComponentRegistryLoader,
     PluginDiscoveryConfig,
 )
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot, SimpleFactory
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_graph import (
@@ -280,7 +282,7 @@ async def _build_env(
         project_dir=tmp_path,
         data_dir=tmp_path / ".modex",
         graphs_dirs=(_FIXTURES / "graphs",),
-        default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        default_llm_provider=MULTI_LLM_PROVIDER,
         registry=registry,
     )
 
@@ -314,7 +316,9 @@ async def _build_env(
             shared_hook_runner=HookRunner(),
             shared_interceptor_chain=InterceptorChain(),
             workspace_resolver=env.cell,  # type: ignore[arg-type]
-            bot_model_config=None,
+            model_assembly=ModelRegistryAssembly(None),
+            default_llm_provider_name=MULTI_LLM_PROVIDER,
+            control_origin=build_control_origin(tmp_path / "config"),
             model_choice_registry=ModelChoiceRegistry(),
             component_registry=registry,
             session_registry=InMemorySessionRegistry(),
@@ -385,7 +389,7 @@ async def _load_registry(provider: _NestedScriptedProvider) -> ComponentRegistry
     registry = ComponentRegistry()
     registry.register(
         ComponentSlot.LLM_PROVIDER,
-        _BOT_DEFAULT_LLM_PROVIDER,
+        MULTI_LLM_PROVIDER,
         SimpleFactory(provider, _ScriptedProviderConfig),
     )
     bot_base = Path(__file__).resolve().parents[2]
@@ -393,7 +397,7 @@ async def _load_registry(provider: _NestedScriptedProvider) -> ComponentRegistry
         registry,
         PluginDiscoveryConfig(
             bundled_factories=(DefaultPlugin(),),
-            project_plugin_paths=(bot_base / "plugins",),
+            project_plugin_paths=(bot_base / "bot_plugins",),
         ),
     )
     return registry

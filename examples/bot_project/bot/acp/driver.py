@@ -6,7 +6,6 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from modex_agent.acp.backend import AcpInteraction, AcpSessionHandle
 from modex_agent.acp.types import (
     AcpBackendError,
@@ -20,7 +19,6 @@ from modex_agent.core.emitter import AgentResult, StopReason
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn_events import TurnTextEvent
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
 from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
 from modex_agent.multi_agent.session_tree.request_scope import (
     RequestBusyError,
@@ -29,6 +27,8 @@ from modex_agent.multi_agent.session_tree.request_scope import (
     ReservationLostError,
     ScopeMismatchError,
 )
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 
 if TYPE_CHECKING:
     from .runtime import AcpRuntime

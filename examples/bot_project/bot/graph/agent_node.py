@@ -21,9 +21,11 @@ from bot.graph.knowledge_config import KnowledgeNodeConfig
 from modex_agent.agents import GraphDeliverTargetStore, GraphDeliverTool
 from modex_agent.agents.agent_node import AgentNode, SessionStrategy
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
-from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
-from modex_agent.multi_agent.message_type import AgentMessageType
+from modex_agent.messaging.agent_messages import (
+    AgentAddress,
+    AgentMessageEnvelope,
+    AgentMessageType,
+)
 from modex_agent.multi_agent.session_tree.session_binding import SessionBinding
 from modex_agent.pipeline.turn_context_config import GraphTurnArtifacts
 from modex_graph.constants import FrameworkPayloadSource, GraphNode

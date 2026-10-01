@@ -10,20 +10,21 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from bot.config.webui_config import build_control_origin
 from bot.scope import BotRecordScope
-from bot.service.builders import build_inbox
-from bot.service.external_strategy import (
-    ExternalExecutionStrategy,
-    build_external_env_spec,
-)
 from bot.workspace.handle import WorkspaceHandle
 
+from modex_agent.app.config import AppConfig
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
-from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxMQ
 from modex_agent.persistence.adapters.inbox_mq import SqliteInboxMQ
 from modex_agent.persistence.config import PersistenceBackend, PersistenceConfig
 from modex_agent.persistence.managers.workspace import WorkspacePersistenceManager
+from modex_agent.plugins.assembly.backend_factory import build_inbox
+from modex_agent.plugins.assembly.strategies.external import (
+    ExternalExecutionStrategy,
+    build_external_env_spec,
+)
 from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.workspace.scope_path import ScopePath
 
@@ -36,7 +37,7 @@ def test_build_inbox_uses_pool_record_scope_for_sqlite(tmp_path: Path) -> None:
         persistence,
         tmp_path / "inbox",
         tmp_path / "state.db",
-        "pool_coder",
+        BotRecordScope(pool="pool_coder"),
     )
 
     assert isinstance(inbox, SqliteInboxMQ)
@@ -51,7 +52,7 @@ def test_build_inbox_keeps_file_backend(tmp_path: Path) -> None:
         None,
         tmp_path / "inbox",
         tmp_path / "state.db",
-        "pool_coder",
+        BotRecordScope(pool="pool_coder"),
     )
 
     assert isinstance(inbox, LocalFileInboxMQ)
@@ -145,7 +146,7 @@ async def test_external_main_uses_runtime_root_and_context_control_origin(
     )
     monkeypatch.setenv("MODEXBOT_BIN_DIR", str(bin_dir))
     monkeypatch.setattr(
-        "bot.service.external_strategy.shutil.which", lambda _: "opencode"
+        "modex_agent.plugins.assembly.strategies.external.shutil.which", lambda _: "opencode"
     )
 
     pool_spec = PoolSpec(
@@ -167,7 +168,7 @@ async def test_external_main_uses_runtime_root_and_context_control_origin(
         inbox_server=MagicMock(),
         agent_bus=MagicMock(),
         output_adapter=MagicMock(),
-        safety=MagicMock(),
+        safety=RuntimeSafetyPolicy(),
         retention=MagicMock(),
         registry=MagicMock(),
         workspace_handle=WorkspaceHandle(
@@ -179,8 +180,12 @@ async def test_external_main_uses_runtime_root_and_context_control_origin(
 
     assembled = await strategy.assemble_main(context)
 
-    assert assembled.external_deps is not None
-    spec = assembled.external_deps["spec"]
+    # W5: the strategy builds its main runtime directly — the env spec
+    # rides the built ExternalAgent (the former ``external_deps`` dict is
+    # deleted).
+    assert assembled.main is not None
+    agent = assembled.main.instance.pipeline.agent
+    spec = agent._spec_template
     assert spec.workspace_root == workspace_root
     assert spec.workdir == workspace_root
     assert spec.control_origin == expected_origin

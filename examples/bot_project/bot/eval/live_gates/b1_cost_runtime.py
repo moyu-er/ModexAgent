@@ -18,14 +18,15 @@ from bot.eval.agent_harness import build_trace_only_services, static_system_prom
 from bot.eval.evalenv import LangfuseCredentials
 from bot.eval.experiment_runner import _NoopEmitter
 from bot.service.pool.declaration import boot_scope_spec
-from bot.workspace.handle import WorkspaceHandle, WorkspaceHandleRootProvider
+from bot.workspace.handle import WorkspaceHandle
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.emitter import StopReason
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage, MessageRole
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.ioc.configs.llm import LLMConfig
-from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.core.tool_vocabulary import ToolPreset
+from modex_agent.core.turn.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity
 from modex_agent.memory.context import ContextState
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.plugins.assembly.single_agent import (
@@ -35,14 +36,14 @@ from modex_agent.plugins.assembly.single_agent import (
 )
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import TurnIdentity
+from modex_agent.providers.factory import create_llm_provider
+from modex_agent.providers.llm_config import LLMConfig
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.overlay import AgentOverlay, PoolOverlay, ScopeOverlay, apply_scope_overlay
-from modex_agent.tools.presets import ToolPreset
 from modex_agent.trace.langfuse_query import _MAX_PAGES, LangfuseClient, ScoreReadData
+from modex_agent.workspace.handle import WorkspaceHandleRootProvider
 
 HEALTH_TIMEOUT_SECONDS: Final = 2.0
 SCORE_POLL_ATTEMPTS: Final = 10

@@ -21,7 +21,7 @@ from bot.config.mcp_registry import (
     write_registry,
 )
 
-from modex_agent.ioc.configs.mcp import MCPServerEntry
+from modex_agent.tools.mcp_config import MCPServerEntry
 
 
 def _reg_path(tmp_path: Path) -> Path:

@@ -20,25 +20,26 @@ from bot.eval.harbor.pool_mode import (
 from bot.eval.harbor.pool_mode_types import PoolUsageArtifact
 from bot.eval.probes.budget import BudgetedProvider
 from bot.scope import BotRecordScope
-from bot.service.builders import build_memory_registry, resolve_declared_root_prompt
-from plugins.bot_strategies import BotDefaultLLMConfig
 from pydantic import BaseModel
 
+from modex_agent.agents.react.hooks.checkpoint import CheckpointHook
+from modex_agent.agents.react.hooks.knowledge_hook import KnowledgeHook
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
+from modex_agent.core.turn.models import JsonValue
 from modex_agent.hook.builtin import CurrentTimeInjectionHook
-from modex_agent.hook.builtin.checkpoint import CheckpointHook
-from modex_agent.hook.builtin.knowledge_hook import KnowledgeHook
-from modex_agent.interceptor.builtin import ToolResultLimitInterceptor
+from modex_agent.memory.registry import HybridMemoryStoreRegistry
 from modex_agent.memory.scope import MemoryContext, MemoryLayerName, SessionScope
 from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import WorkspacePersistenceManager
-from modex_agent.persistence.memory_registry import HybridMemoryStoreRegistry
-from modex_agent.plugins.abc import ComponentFactory
+from modex_agent.plugins.assembly.backend_factory import build_memory_registry
 from modex_agent.plugins.assembly.context import AssemblyContext
-from modex_agent.runtime.models import JsonValue
+from modex_agent.plugins.assembly.pool_factory import resolve_declared_root_prompt
+from modex_agent.plugins.defaults.llm import MultiLLMProviderConfig
+from modex_agent.scope.components import ComponentFactory
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
+from modex_agent.tools.overflow.result_limit import ToolResultLimitInterceptor
 from modex_agent.tools.terminal.persistent_bash import (
     PersistentBashTool,
     persistent_bash_supported,
@@ -103,7 +104,7 @@ class _DelegatingProvider(CallbackStreamProvider):
 
 
 class _ProviderFactory(ComponentFactory):
-    config_model = BotDefaultLLMConfig
+    config_model = MultiLLMProviderConfig
 
     def __init__(self, provider: LLMProvider) -> None:
         self._provider = provider
@@ -451,7 +452,7 @@ async def test_pool_assembly_mirrors_production_values(tmp_path: Path) -> None:
     assert pool_name_arg == config.pool_name
     assert root_agent_arg is declared.pool.root_agent
     assert pool_kwargs["assembly_deps"] is assembly_deps_arg
-    assert pool_kwargs["bot_model_config"] is not None
+    assert pool_kwargs["model_assembly"] is not None
     assert assembly_deps_arg.memory is not None
     # Deep binding: the default arm's tools_remove strips the DECLARED
     # experience name pre-compile, so the compiled product drives the

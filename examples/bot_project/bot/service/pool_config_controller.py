@@ -50,7 +50,7 @@ from bot.config.scope_pools import (
 )
 from bot.config.skills_store import SkillsStore
 from bot.service.config_controller import FieldValidationError
-from modex_agent.ioc.configs.mcp import MCPServerEntry
+from modex_agent.tools.mcp_config import MCPServerEntry
 
 logger = logging.getLogger(__name__)
 

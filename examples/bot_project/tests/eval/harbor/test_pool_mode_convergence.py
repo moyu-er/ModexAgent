@@ -19,7 +19,6 @@ from bot.eval.harbor.pool_mode_convergence import (
     RootResultCaptureEmitter,
     read_back_root_result,
 )
-from plugins.bot_strategies import BotDefaultLLMConfig
 from pydantic import BaseModel
 
 from modex_agent.core.emitter import AgentResult, StopReason
@@ -27,17 +26,18 @@ from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.provider import CallbackStreamProvider, LLMProvider
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.models import JsonValue
 from modex_agent.memory.scope import MemoryContext
-from modex_agent.plugins.abc import ComponentFactory
 from modex_agent.plugins.assembly.context import AssemblyContext
-from modex_agent.runtime.models import JsonValue
+from modex_agent.plugins.defaults.llm import MultiLLMProviderConfig
+from modex_agent.scope.components import ComponentFactory
 from modex_agent.trace.pricing import PriceBook, PriceEntry
 
 _ROOT_SESSION_ID = "harbor_item-id.orchestrator"
 
 
 class _ProviderFactory(ComponentFactory):
-    config_model = BotDefaultLLMConfig
+    config_model = MultiLLMProviderConfig
 
     def __init__(self, provider: LLMProvider) -> None:
         self._provider = provider

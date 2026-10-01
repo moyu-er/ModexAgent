@@ -16,9 +16,9 @@ from typing import Final, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict
 
-from bot.service.model_config import BotModelConfig
+from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.core.llm_request import ReasoningEffort
-from modex_agent.ioc.configs.llm import InterfaceFormat
+from modex_agent.providers.llm_config import InterfaceFormat
 
 ModelSource = Literal["cli", "env", "model-default"]
 
@@ -26,7 +26,7 @@ _BOT_PROJECT: Final = Path(__file__).resolve().parents[3]
 DEFAULT_MODEL_YML: Final = _BOT_PROJECT / "config" / "model.yml"
 _DEFAULT_TEMPERATURE: Final = 0.7
 _DEFAULT_REASONING_EFFORT: Final = ReasoningEffort.NONE
-# Mirrors the BotModelConfig.max_context_tokens field default.
+# Mirrors the ModelRegistry.max_context_tokens field default.
 _DEFAULT_MAX_CONTEXT_TOKENS: Final = 200000
 # Mirrors the ModelCfg.max_output_tokens field default.
 _DEFAULT_MAX_OUTPUT_TOKENS: Final = 50000
@@ -65,7 +65,7 @@ def _load_yml_defaults(path: Path) -> tuple[_YmlModelDefaults | None, str | None
     if not path.is_file():
         return None, f"model.yml not found: {path}"
     try:
-        config = BotModelConfig.from_yaml(path)
+        config = ModelRegistry.from_yaml(path)
         llm = config.synthesize_llm_config()
     except (OSError, ValueError, yaml.YAMLError) as error:
         return None, f"model.yml unusable: {error}"

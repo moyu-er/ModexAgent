@@ -13,7 +13,6 @@ from bot.workspace.factory import PoolResourceFactory  # noqa: F401
 from bot.workspace.handle import (  # noqa: F401
     PoolWorkspaceResources,
     WorkspaceHandle,
-    WorkspaceHandleRootProvider,
     WorkspaceResolverCell,
 )
 from bot.workspace.pool_data import PoolData, build_pool_data  # noqa: F401
@@ -26,7 +25,6 @@ from bot.workspace.pool_data import PoolData, build_pool_data  # noqa: F401
 __all__ = [
     "PoolWorkspaceResources",
     "WorkspaceHandle",
-    "WorkspaceHandleRootProvider",
     "WorkspaceResolverCell",
     "PoolResourceFactory",
     "WorkspaceMessageDispatcher",

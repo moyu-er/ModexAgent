@@ -15,8 +15,9 @@ from unittest.mock import MagicMock
 
 import pytest
 from bot.input_pipeline.context import BotInputContext
-from bot.input_pipeline.stages.persist_user_message import PersistUserMessageStage
-from bot.input_pipeline.stages.resolve_pool import RoutingMeta
+from bot.input_pipeline.stages.persist_user_message import (
+    write_user_message_to_transcript,
+)
 from bot.service.attachment_index import find_attachment
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import (
@@ -27,7 +28,11 @@ from bot.webui.events import (
 from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.core.media import Attachment, AttachmentLocator, Kind
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.envelope import UserInputEnvelope
+from modex_agent.pipeline.input.stages.persist_user_message import (
+    PersistUserMessageStage,
+)
+from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
 
@@ -162,7 +167,7 @@ class TestPersistStageWiring:
             env.metadata[RoutingMeta.WORKSPACE] = str(root)
             env.resolved_attachments = [att]
             with bind_workspace_root(root):
-                await PersistUserMessageStage().process(env, _ctx(store))
+                await PersistUserMessageStage(write_user_message_to_transcript).process(env, _ctx(store))
                 events = await store.load("u1.main")
             assert len(events) == 1
             persisted = events[0]
@@ -180,7 +185,7 @@ class TestPersistStageWiring:
             env.metadata[RoutingMeta.RESOLVED_AGENT] = "main"
             env.metadata[RoutingMeta.WORKSPACE] = str(root)
             with bind_workspace_root(root):
-                await PersistUserMessageStage().process(env, _ctx(store))
+                await PersistUserMessageStage(write_user_message_to_transcript).process(env, _ctx(store))
                 events = await store.load("u1.main")
             assert len(events) == 1
             persisted = events[0]

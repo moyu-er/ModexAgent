@@ -6,7 +6,7 @@ never blocks the main reply. This module owns that task's body:
 
 - read the earliest real user input from the transcript (<=1000 chars)
 - lazily resolve ONE pinned provider for the bot GLOBAL default model
-  (D-6: a :class:`~bot.service.model_provider.PinnedModelProvider` — the
+  (D-6: a :class:`~modex_agent.app.models.provider.PinnedModelProvider` — the
   real provider is built on first call, and the turn-scoped ContextVar is
   deliberately ignored)
 - one no-tools ``chat`` call with the DESIGN §2.2 prompt
@@ -39,7 +39,7 @@ from modex_agent.core.message import ChatMessage, MessageRole
 if TYPE_CHECKING:
     from collections.abc import Awaitable
 
-    from bot.service.model_provider import PinnedModelProvider
+    from modex_agent.app.models.provider import PinnedModelProvider
     from modex_agent.core.session_id import SessionInfo
 
 logger = logging.getLogger(__name__)

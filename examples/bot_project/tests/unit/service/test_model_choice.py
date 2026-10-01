@@ -9,12 +9,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service.model_choice import (
+from modex_agent.app.models.choice import (
     ModelChoiceBindHook,
     ModelChoiceRegistry,
     current_model_choice,
 )
-from bot.service.model_config import BotModelConfig
+from modex_agent.app.models.registry import ModelRegistry
 
 _YML = """
 models:
@@ -25,10 +25,10 @@ models:
 """
 
 
-def _cfg(tmp_path: Path) -> BotModelConfig:
+def _cfg(tmp_path: Path) -> ModelRegistry:
     p = tmp_path / "model.yml"
     p.write_text(_YML, encoding="utf-8")
-    return BotModelConfig.from_yaml(p)
+    return ModelRegistry.from_yaml(p)
 
 
 def test_registry_set_get_lru(tmp_path: Path) -> None:
@@ -115,7 +115,7 @@ async def test_hook_model_info_carries_declared_budget(tmp_path: Path) -> None:
     """当轮覆写的 model_info 携带该模型的预算档案(数据源:ResolvedModel → ModelCfg)。"""
     p = tmp_path / "model.yml"
     p.write_text(_BUDGET_YML, encoding="utf-8")
-    cfg = BotModelConfig.from_yaml(p)
+    cfg = ModelRegistry.from_yaml(p)
     reg = ModelChoiceRegistry()
     services = SimpleNamespace(model_info=None)
     hook = ModelChoiceBindHook(cfg, reg)
@@ -130,7 +130,7 @@ async def test_hook_model_info_budget_none_when_undeclared(tmp_path: Path) -> No
     """选中未声明 context_limit 的模型 → 档案字段为 None(消费方回退池级静态配置)。"""
     p = tmp_path / "model.yml"
     p.write_text(_BUDGET_YML, encoding="utf-8")
-    cfg = BotModelConfig.from_yaml(p)
+    cfg = ModelRegistry.from_yaml(p)
     reg = ModelChoiceRegistry()
     m2 = cfg.resolve("A", "M2")
     assert m2 is not None

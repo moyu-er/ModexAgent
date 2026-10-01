@@ -244,7 +244,7 @@ async def test_control_command_intercepted_before_enqueue() -> None:
     )
 
     # Verify /stop added a control command to the channel
-    from modex_agent.control.types import ControlCommandType, ControlScope
+    from modex_agent.core.control import ControlCommandType, ControlScope
 
     cmds = await channel.drain(
         ControlScope(session_id="test-session.main"),
@@ -340,9 +340,8 @@ async def test_fan_in_propagates_to_all_sources() -> None:
 @pytest.mark.asyncio
 async def test_pool_mapping_survives_server_recreation() -> None:
     """Pool mapping saved to disk must survive server restart."""
-    from bot.service.session_store import WorkspacePoolSessionStore
-
     from modex_agent.core.session_id import SessionIdFactory
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
 
     data_dir = Path(tempfile.mkdtemp())
     pool_by_agent = {"main": "main", "coding": "coding"}
@@ -745,9 +744,8 @@ async def test_conversations_survive_pool_switching() -> None:
 
     Regression test for: switching pool → sidebar empty → switching back → still empty.
     """
-    from bot.service.session_store import WorkspacePoolSessionStore
-
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
     from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
@@ -844,9 +842,8 @@ async def test_conversation_visible_after_first_message() -> None:
     """A conversation created via WS attach + send_message must appear in
     /api/sessions after the first message. Empty (no-message) sessions are
     client-side only and do NOT appear in the server session list."""
-    from bot.service.session_store import WorkspacePoolSessionStore
-
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
     from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())
@@ -942,10 +939,10 @@ async def test_sessions_includes_external_adapter_conversations() -> None:
 
     This is the root cause of: "IM conversations can't be loaded".
     """
-    from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
 
     from modex_agent.core.session_id import SessionInfo
+    from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
     from modex_agent.utils.time import now_ms
 
     data_dir = Path(tempfile.mkdtemp())

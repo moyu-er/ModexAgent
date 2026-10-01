@@ -8,11 +8,11 @@ import pytest
 from pydantic import ValidationError
 
 from modex_agent.core.llm_request import ReasoningEffort
-from modex_agent.ioc.configs.llm import InterfaceFormat, LLMConfig, Modality
+from modex_agent.providers.llm_config import InterfaceFormat, LLMConfig, Modality
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service.model_config import BotModelConfig, ResolvedModel
+from modex_agent.app.models.registry import ModelRegistry, ResolvedModel
 
 _YML = """
 models:
@@ -37,10 +37,10 @@ models:
 """
 
 
-def _load(tmp_path: Path) -> BotModelConfig:
+def _load(tmp_path: Path) -> ModelRegistry:
     p = tmp_path / "model.yml"
     p.write_text(_YML, encoding="utf-8")
-    return BotModelConfig.from_yaml(p)
+    return ModelRegistry.from_yaml(p)
 
 
 def test_parse_providers_and_models(tmp_path: Path) -> None:
@@ -97,7 +97,7 @@ def test_reasoning_effort_absent_defaults_to_none(tmp_path: Path) -> None:
         '    - {key: minimax, name: "MiniMax", base_url: u, api_key: k, models: [{name: M2, model: m2}]}\n',
         encoding="utf-8",
     )
-    cfg = BotModelConfig.from_yaml(p)
+    cfg = ModelRegistry.from_yaml(p)
     llm = cfg.synthesize_llm_config()
     assert llm.reasoning_effort == ReasoningEffort.NONE
 
@@ -113,7 +113,7 @@ def test_reasoning_effort_none_defaults_to_none(tmp_path: Path) -> None:
         "       models: [{name: M2, model: m2, reasoning_effort: none}]}\n",
         encoding="utf-8",
     )
-    cfg = BotModelConfig.from_yaml(p)
+    cfg = ModelRegistry.from_yaml(p)
     llm = cfg.synthesize_llm_config()
     assert llm.reasoning_effort == ReasoningEffort.NONE
 
@@ -130,7 +130,7 @@ def test_reasoning_effort_invalid_raises(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with pytest.raises(ValidationError):
-        BotModelConfig.from_yaml(p)
+        ModelRegistry.from_yaml(p)
 
 
 def test_missing_default_raises(tmp_path: Path) -> None:
@@ -141,7 +141,7 @@ def test_missing_default_raises(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with pytest.raises(ValidationError):
-        BotModelConfig.from_yaml(p)
+        ModelRegistry.from_yaml(p)
 
 
 def test_duplicate_provider_name_raises(tmp_path: Path) -> None:
@@ -153,7 +153,7 @@ def test_duplicate_provider_name_raises(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with pytest.raises(ValidationError):
-        BotModelConfig.from_yaml(p)
+        ModelRegistry.from_yaml(p)
 
 
 def test_all_choices(tmp_path: Path) -> None:
@@ -192,20 +192,20 @@ models:
 """
 
 
-def _routing_cfg(tmp_path: Path) -> BotModelConfig:
+def _routing_cfg(tmp_path: Path) -> ModelRegistry:
     p = tmp_path / "model.yml"
     p.write_text(_ROUTING_YML, encoding="utf-8")
-    return BotModelConfig.from_yaml(p)
+    return ModelRegistry.from_yaml(p)
 
 
-def _anthropic_cfg(tmp_path: Path) -> BotModelConfig:
+def _anthropic_cfg(tmp_path: Path) -> ModelRegistry:
     p = tmp_path / "model.yml"
     p.write_text(_ANTHROPIC_YML, encoding="utf-8")
-    return BotModelConfig.from_yaml(p)
+    return ModelRegistry.from_yaml(p)
 
 
 def test_bare_model_with_openai_compatible_uses_compat_engine(tmp_path: Path) -> None:
-    from modex_agent.ioc.factories.llm import create_llm_provider
+    from modex_agent.providers.factory import create_llm_provider
     from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
     from modex_agent.providers.http.provider import HTTPStreamProvider
 
@@ -219,7 +219,7 @@ def test_bare_model_with_openai_compatible_uses_compat_engine(tmp_path: Path) ->
 
 
 def test_openai_prefixed_model_loads_verbatim(tmp_path: Path) -> None:
-    from modex_agent.ioc.factories.llm import create_llm_provider
+    from modex_agent.providers.factory import create_llm_provider
     from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
     from modex_agent.providers.http.provider import HTTPStreamProvider
 
@@ -238,7 +238,7 @@ def test_openai_prefixed_model_loads_verbatim(tmp_path: Path) -> None:
 
 
 def test_anthropic_format_uses_anthropic_engine(tmp_path: Path) -> None:
-    from modex_agent.ioc.factories.llm import create_llm_provider
+    from modex_agent.providers.factory import create_llm_provider
     from modex_agent.providers.http.formats.anthropic import AnthropicProtocol
     from modex_agent.providers.http.provider import HTTPStreamProvider
 
@@ -272,14 +272,14 @@ models:
 def test_legacy_url_alias_parses_as_base_url(tmp_path: Path) -> None:
     p = tmp_path / "model.yml"
     p.write_text(_LEGACY_YML, encoding="utf-8")
-    cfg = BotModelConfig.from_yaml(p)
+    cfg = ModelRegistry.from_yaml(p)
     assert cfg.providers[0].base_url == "https://api.minimaxi.com/v1"
 
 
 def test_legacy_openai_prefix_loads_verbatim_with_default_format(tmp_path: Path) -> None:
     p = tmp_path / "model.yml"
     p.write_text(_LEGACY_YML, encoding="utf-8")
-    cfg = BotModelConfig.from_yaml(p)
+    cfg = ModelRegistry.from_yaml(p)
     llm = cfg.synthesize_llm_config()
     # No prefix stripping, no interface_format inference from the prefix —
     # the default format applies and the model name passes through verbatim.
@@ -303,13 +303,13 @@ models:
 
 
 def test_legacy_anthropic_prefix_loads_verbatim_without_inference(tmp_path: Path) -> None:
-    from modex_agent.ioc.factories.llm import create_llm_provider
+    from modex_agent.providers.factory import create_llm_provider
     from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
     from modex_agent.providers.http.provider import HTTPStreamProvider
 
     p = tmp_path / "model.yml"
     p.write_text(_LEGACY_ANTHROPIC_YML, encoding="utf-8")
-    cfg = BotModelConfig.from_yaml(p)
+    cfg = ModelRegistry.from_yaml(p)
     resolved = cfg.resolve("P", "claude")
     assert resolved is not None
     # No inference: interface_format stays the default (OPENAI_COMPATIBLE),
@@ -327,7 +327,7 @@ def test_legacy_anthropic_prefix_loads_verbatim_without_inference(tmp_path: Path
 def test_legacy_models_wrapper_still_parses(tmp_path: Path) -> None:
     p = tmp_path / "model.yml"
     p.write_text(_LEGACY_YML, encoding="utf-8")
-    cfg = BotModelConfig.from_yaml(p)
+    cfg = ModelRegistry.from_yaml(p)
     assert cfg.default_provider == "MiniMax"
     assert cfg.default_model == "M3"
     assert cfg.providers[0].key == "minimax"
@@ -352,10 +352,10 @@ models:
 """
 
 
-def _budget_cfg(tmp_path: Path) -> BotModelConfig:
+def _budget_cfg(tmp_path: Path) -> ModelRegistry:
     p = tmp_path / "model.yml"
     p.write_text(_BUDGET_YML, encoding="utf-8")
-    return BotModelConfig.from_yaml(p)
+    return ModelRegistry.from_yaml(p)
 
 
 def test_context_limit_parses_and_none_means_inherit_global(tmp_path: Path) -> None:
@@ -388,7 +388,7 @@ models:
         encoding="utf-8",
     )
     with pytest.raises(ValidationError):
-        BotModelConfig.from_yaml(p)
+        ModelRegistry.from_yaml(p)
 
 
 def test_context_limit_none_leaves_max_output_untouched(tmp_path: Path) -> None:
@@ -401,7 +401,7 @@ def test_context_limit_none_leaves_max_output_untouched(tmp_path: Path) -> None:
 
 
 def test_context_limit_clamps_max_output_tokens(tmp_path: Path) -> None:
-    from bot.service.model_config import DEFAULT_OUTPUT_RESERVE_TOKENS
+    from modex_agent.app.models.registry import DEFAULT_OUTPUT_RESERVE_TOKENS
 
     cfg = _budget_cfg(tmp_path)
     small = cfg.resolve("P", "small")
@@ -440,7 +440,7 @@ def test_context_limit_non_positive_rejected(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with pytest.raises(ValidationError):
-        BotModelConfig.from_yaml(p)
+        ModelRegistry.from_yaml(p)
 
 
 def test_resolved_model_info_carries_budget_profile(tmp_path: Path) -> None:

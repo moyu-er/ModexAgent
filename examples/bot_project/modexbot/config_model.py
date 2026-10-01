@@ -1,7 +1,7 @@
 # modexbot/config_model.py
 """config/model.yml 的 models: 块读写（多 provider/多模型）。
 
-仅 CLI 使用；运行时解析走 bot.service.model_config.BotModelConfig。
+CLI-only; runtime parsing goes through bot.service.model_config.ModelRegistry.
 """
 
 from __future__ import annotations

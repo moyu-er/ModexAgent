@@ -4,8 +4,7 @@ import logging
 import uuid
 from pathlib import Path
 
-from plugins.bot_strategies import BotDefaultLLMConfig
-
+from bot.config.webui_config import build_control_origin
 from bot.eval.harbor.entry import EntryConfig
 from bot.eval.harbor.pool_budget import pool_budget_config_from_env, register_pool_budget
 from bot.eval.harbor.pool_mode_artifacts import (
@@ -31,24 +30,29 @@ from bot.eval.harbor.pool_mode_types import (
     build_model_config,
 )
 from bot.eval.probes.budget import BudgetLedger
-from bot.service.model_choice import ModelChoiceRegistry
-from bot.service.model_provider import BotModelProvider
-from bot.service.pool.factory import create_pool
-from bot.service.session_pool_index import SessionPoolIndex
+from bot.scope import BotRecordScope
 from bot.workspace.handle import WorkspaceHandle
+from modex_agent.app.models.assembly import ModelRegistryAssembly
+from modex_agent.app.models.choice import ModelChoiceRegistry
+from modex_agent.app.models.provider import ModelSelectionProvider
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.messaging.agent_messages import (
+    AgentAddress,
+    AgentMessageEnvelope,
+    AgentMessageType,
+)
 from modex_agent.messaging.broker import AddressKind
-from modex_agent.messaging.broker_bridge import BrokerInputPayload
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
-from modex_agent.multi_agent.message_type import AgentMessageType
-from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
+from modex_agent.multi_agent.session_tree.pool_index import SessionPoolIndex
+from modex_agent.pipeline.broker_bridge import BrokerInputPayload
+from modex_agent.plugins.assembly.pool_factory import create_pool
 from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER, MultiLLMProviderConfig
 from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot, SimpleFactory
 from modex_agent.tools.terminal.persistent_bash import PersistentBashTool
 
 logger = logging.getLogger(__name__)
@@ -74,16 +78,16 @@ async def _registry(
         registry,
         PluginDiscoveryConfig(
             bundled_factories=(DefaultPlugin(),),
-            project_plugin_paths=(config.project_dir / "plugins",),
+            project_plugin_paths=(config.project_dir / "bot_plugins",),
         ),
     )
     provider_factory = dependencies.provider_factory or SimpleFactory(
-        BotModelProvider(build_model_config(config.entry)),
-        BotDefaultLLMConfig,
+        ModelSelectionProvider(build_model_config(config.entry)),
+        MultiLLMProviderConfig,
     )
     registry.register(
         ComponentSlot.LLM_PROVIDER,
-        "bot_default",
+        MULTI_LLM_PROVIDER,
         provider_factory,
         overwrite=True,
     )
@@ -205,6 +209,10 @@ async def execute_pool_entry(
             shared_interceptor_chain=assembly.shared_interceptor_chain,
             control_channel=None,
             command_processor=None,
+            control_origin=build_control_origin(config.project_dir / "config"),
+            model_assembly=ModelRegistryAssembly(assembly.bot_model_config),
+            default_llm_provider_name=MULTI_LLM_PROVIDER,
+            record_scope=BotRecordScope(pool=config.pool_name),
             pool_data=assembly.pool_data,
             workspace_handle=WorkspaceHandle(
                 target=config.entry.task_workspace, data_root=config.data_dir
@@ -214,8 +222,6 @@ async def execute_pool_entry(
             on_subagent_created=on_subagent_created,
             session_registry=assembly.session_registry,
             session_store=assembly.session_store,
-            transcript_store=None,
-            bot_model_config=assembly.bot_model_config,
             model_choice_registry=ModelChoiceRegistry(),
             mcp_registry=None,
             persistence=assembly.persistence,

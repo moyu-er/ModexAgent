@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated
 
-from bot.config.domain import (
+from pydantic import BaseModel, ConfigDict, ValidationError
+
+from modex_agent.app.config_domain import (
     ConfigDomain,
     DomainFlavor,
     FieldDescriptor,
@@ -18,7 +20,6 @@ from bot.config.domain import (
     merge,
     register_domain,
 )
-from pydantic import BaseModel, ConfigDict, ValidationError
 
 
 class Inner(BaseModel):

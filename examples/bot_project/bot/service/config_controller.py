@@ -14,7 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from bot.config.domain import (
+from modex_agent.app.config_domain import (
     ConfigDomain,
     DomainFlavor,
     FieldDescriptor,

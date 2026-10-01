@@ -35,8 +35,9 @@ from bot.webui.events import AssistantTextEvent, ToolCallEvent, ToolResultEvent
 from bot.webui.transcript_store import TranscriptStore
 
 from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
 from modex_agent.approval.ui import IMUserInterface
-from modex_agent.approval.views import ApprovalRequestView
+from modex_agent.approval.views import ApprovalRequestView, approval_output_message
 from modex_agent.core.llm_struct import LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
@@ -48,16 +49,15 @@ from modex_agent.core.turn_events import (
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
-from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
-from modex_agent.ioc.factories.approval import build_approval_runtime
 from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.messaging.models import InputMessage, OutputMessage, OutputMessageType
-from modex_agent.pipeline.approval_renderer import ApprovalRenderer, approval_output_message
+from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager

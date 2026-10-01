@@ -9,8 +9,8 @@ from modex_agent.hook.builtin.control_drain import (
     ControlDrainInterceptor,
     LlmCancelInterceptor,
 )
-from modex_agent.interceptor.builtin import ToolResultLimitInterceptor
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
+from modex_agent.tools.overflow.result_limit import ToolResultLimitInterceptor
 
 
 def test_builder_without_channel_has_only_tool_result_limit(tmp_path: Path) -> None:

@@ -20,12 +20,12 @@ from bot.service.session_gc import (
     SessionGarbageCollector,
     SessionGcConfig,
 )
-from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.session_title import SessionTitleOps
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.server import WebUIServer
 
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
 from modex_agent.persistence.session_registry import InMemorySessionRegistry
 from modex_agent.workspace.paths import WorkspacePaths
 

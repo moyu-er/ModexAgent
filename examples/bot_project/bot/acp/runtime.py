@@ -187,7 +187,7 @@ class AcpRuntime(AcpSessionBackend):
     async def _boot(self, project_root: Path) -> None:
         from dotenv import load_dotenv
 
-        from bot.service.roots import BotAssemblyRoots
+        from modex_agent.app.roots import AppAssemblyRoots
 
         from .emitter import AcpEmitterHub, AcpOutputAdapter, AcpTurnEmitter
 
@@ -224,7 +224,7 @@ class AcpRuntime(AcpSessionBackend):
             _NullInputAdapter(),
             output,
             emitter_factory,
-            roots=BotAssemblyRoots(
+            roots=AppAssemblyRoots(
                 config_dir=self._config_dir,
                 resource_root=resource_root,
                 workspace_home=project_root,
@@ -301,7 +301,10 @@ class AcpRuntime(AcpSessionBackend):
             raise RuntimeError("Bot input dependencies are not assembled")
         skills = PoolSkillResolverRegistry(lambda workspace, pool: instance.skill_resolver if workspace == resources.target and pool == instance.name else None)
         self.preparation = await build_acp_pipeline(
-            registry=resources.component_registry, ctx=assembly, skill_registry=skills,
+            registry=resources.component_registry,
+            ctx=assembly,
+            skill_registry=skills,
+            stage_order=app_config.input_stage_order.acp,
         )
         self.input_context = BotInputContext(
             default_pool=instance.name,

@@ -21,7 +21,7 @@ from bot.eval.judge import calibration
 from bot.eval.judge._models import JudgeResult, Verdict
 from bot.eval.judge.rubrics import load_rubric_set
 from bot.eval.judge.runner import JudgeInput, JudgeRunner
-from modex_agent.runtime.models import JsonValue
+from modex_agent.core.turn.models import JsonValue
 from modex_agent.trace.langfuse_query import _MAX_PAGES, LangfuseClient, LangfuseQueryError
 from modex_agent.trace.score_injector import L2ScoreInjector, ScoreSpec
 

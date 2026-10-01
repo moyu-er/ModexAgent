@@ -7,10 +7,10 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from bot.service._model_config_loader import _apply_bot_model_config, _load_app_config
 from bot.service.core import BotService
-from bot.service.model_config import BotModelConfig
 
-from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.ioc.configs.llm import InterfaceFormat
+from modex_agent.app.config import AppConfig
+from modex_agent.app.models.registry import ModelRegistry
+from modex_agent.providers.llm_config import InterfaceFormat
 
 
 def _write_config(tmp_path: Path) -> Path:
@@ -47,7 +47,7 @@ def test_load_app_config_injects_bot_model_config(tmp_path: Path) -> None:
     svc._bot_model_config = _apply_bot_model_config(config_dir, app_cfg)
     assert isinstance(app_cfg, AppConfig)
     assert svc._bot_model_config is not None
-    assert isinstance(svc._bot_model_config, BotModelConfig)
+    assert isinstance(svc._bot_model_config, ModelRegistry)
     resolved = svc._bot_model_config.default_resolved()
     # Prefixed model names load VERBATIM (no stripping — user ruling
     # 2026-08-26); the legacy url: alias still maps to base_url.

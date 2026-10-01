@@ -1,13 +1,13 @@
 """Approval wiring on the main pipeline — opt-in, main-only.
 
-Pins that ``bot.service.pool.pipeline_wiring._wire_main_pipeline`` installs an
+Pins that ``modex_agent.plugins.assembly.pipeline_wiring.wire_main_pipeline`` installs an
 ``ApprovalRuntime`` on the main agent's pipeline when the main agent's
 ``ApprovalConfig`` is enabled + gates tools, and leaves approval unwired
 otherwise (default-off). The model info carrier
 (``model_info``) is threaded in both branches so the deferred
 inline renderer (ADR-0013 §10) can bind to it per turn.
 
-Main-only coverage is structural: ``_wire_main_pipeline`` only ever touches
+Main-only coverage is structural: ``wire_main_pipeline`` only ever touches
 ``pool._agents[main_agent_name].pipeline`` — it never iterates subagents.
 A full subagent-pool fixture is therefore unnecessary to pin the main-only
 contract; the function has no role-based branching to regress.
@@ -25,18 +25,17 @@ import pytest
 # Bot tests resolve ``bot.*`` via the repo root inserted into sys.path.
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service.model_config import BotModelConfig
-from bot.service.pool.pipeline_wiring import _wire_main_pipeline
-
 from modex_agent.agents.react.nodes.tool_classification import decision_of
-from modex_agent.approval.constants import ApprovalDecision
+from modex_agent.app.models.registry import ModelRegistry
+from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
 from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.core.agent import AgentCommKind, ExecutionStrategyKind
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
+from modex_agent.core.turn.approval_types import ApprovalDecision
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.memory.context import ContextState, InMemoryContextManager
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
@@ -55,6 +54,7 @@ from modex_agent.pipeline.turn_context_config import (
 )
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+from modex_agent.plugins.assembly.pipeline_wiring import wire_main_pipeline
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.sandbox.settings import (
     ExclusiveConfig,
@@ -64,7 +64,6 @@ from modex_agent.sandbox.settings import (
 )
 from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.tools.manager import InMemoryToolManager
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 _YML = """
 models:
@@ -75,11 +74,11 @@ models:
 """
 
 
-def _bot_model_config() -> BotModelConfig:
+def _bot_model_config() -> ModelRegistry:
     with tempfile.TemporaryDirectory() as d:
         p = Path(d) / "model.yml"
         p.write_text(_YML, encoding="utf-8")
-        return BotModelConfig.from_yaml(p)
+        return ModelRegistry.from_yaml(p)
 
 
 _BOT_CFG = _bot_model_config()
@@ -116,7 +115,7 @@ class _Agent:
 
 class _StandInPool:
     """Minimal stand-in for AgentPool exposing the single attribute
-    ``_wire_main_pipeline`` reads: ``_agents[name].pipeline``.
+    ``wire_main_pipeline`` reads: ``_agents[name].pipeline``.
 
     Building a real AgentPool (LLM provider, broker, terminal, inbox) is far
     heavier than the function's actual surface, so we wire a real
@@ -200,7 +199,7 @@ def _wire(
         main_spec = main_spec.model_copy(update={
             "interceptor_configs": {"sandbox_guard": {"sandbox": sandbox.model_dump(mode="json")}}
         })
-    _wire_main_pipeline(
+    wire_main_pipeline(
         pool=pool,
         root_agent_name="main",
         inbox_consumer=MagicMock(name="inbox_consumer"),
@@ -214,7 +213,7 @@ def _wire(
         pool_name="main",
         tool_manager=InMemoryToolManager(),
         pool_spec=PoolSpec(name="main", agents=[main_spec]),
-        bot_model_config=_BOT_CFG,
+        model_info=_BOT_CFG.default_resolved().model_info,
         root_provider=root_provider,
     )
     return pipeline
@@ -242,7 +241,7 @@ def test_wires_approval_runtime_when_enabled_and_tools_gated() -> None:
 
 
 def test_leaves_approval_untouched_but_threads_model_info_when_disabled() -> None:
-    from modex_agent.ioc.configs.llm import Modality
+    from modex_agent.providers.llm_config import Modality
 
     pipeline = _wire(
         approval=ApprovalConfig(
@@ -261,14 +260,14 @@ def test_leaves_approval_untouched_but_threads_model_info_when_disabled() -> Non
 
 
 def test_wired_classifier_anchors_to_live_workspace_root() -> None:
-    """``_wire_main_pipeline`` threads the per-workspace ``WorkspaceRootProvider``
+    """``wire_main_pipeline`` threads the per-workspace ``WorkspaceRootProvider``
     so ``./*`` follows the active workspace, not the static bot project_dir."""
-    from modex_agent.approval.constants import ApprovalTier
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.message import ToolCall
+    from modex_agent.core.turn.approval_types import ApprovalTier
+    from modex_agent.core.workspace_root import WorkspaceRootProvider
     from modex_agent.memory.history import ListMessageHistory
     from modex_agent.tools.manager import InMemoryToolManager
-    from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
     workspace = Path("/some/workspace").resolve()
     project_dir = Path("/proj")  # deliberately NOT the workspace
@@ -285,7 +284,7 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
             tools={"write": ToolApprovalEntry(allowed_paths=["./*"])},
         )
     )
-    _wire_main_pipeline(
+    wire_main_pipeline(
         pool=pool,
         root_agent_name="main",
         inbox_consumer=MagicMock(name="inbox_consumer"),
@@ -300,7 +299,7 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
         tool_manager=InMemoryToolManager(),
         pool_spec=PoolSpec(name="main", agents=[main_spec]),
         root_provider=_Provider(),
-        bot_model_config=_BOT_CFG,
+        model_info=_BOT_CFG.default_resolved().model_info,
     )
 
     builder = pipeline._turn_runner.turn_context_builder
@@ -343,7 +342,7 @@ def test_wires_graph_context_resolver_and_config_pipeline_when_passed() -> None:
     def _resolver(gid: int) -> None:
         return None
 
-    _wire_main_pipeline(
+    wire_main_pipeline(
         pool=pool,
         root_agent_name="main",
         inbox_consumer=MagicMock(name="inbox_consumer"),
@@ -357,7 +356,7 @@ def test_wires_graph_context_resolver_and_config_pipeline_when_passed() -> None:
         pool_name="main",
         tool_manager=InMemoryToolManager(),
         pool_spec=PoolSpec(name="main", agents=[main_spec]),
-        bot_model_config=_BOT_CFG,
+        model_info=_BOT_CFG.default_resolved().model_info,
         graph_context_resolver=_resolver,
     )
 
@@ -484,7 +483,7 @@ def test_memory_backed_pool_gets_compaction_governance_head(tmp_path: Path) -> N
     pool = _StandInPool("main", pipeline)
     main_spec = _make_main_spec(approval=None)
     context_manager = _memory_context_manager(tmp_path)
-    _wire_main_pipeline(
+    wire_main_pipeline(
         pool=pool,
         root_agent_name="main",
         inbox_consumer=MagicMock(name="inbox_consumer"),
@@ -498,7 +497,7 @@ def test_memory_backed_pool_gets_compaction_governance_head(tmp_path: Path) -> N
         pool_name="main",
         tool_manager=InMemoryToolManager(),
         pool_spec=PoolSpec(name="main", agents=[main_spec]),
-        bot_model_config=_BOT_CFG,
+        model_info=_BOT_CFG.default_resolved().model_info,
         memory_context_manager=context_manager,
     )
 
@@ -526,7 +525,7 @@ def test_memory_less_wiring_keeps_legacy_chain(tmp_path: Path) -> None:
     pipeline = _make_pipeline()
     pool = _StandInPool("main", pipeline)
     main_spec = _make_main_spec(approval=None)
-    _wire_main_pipeline(
+    wire_main_pipeline(
         pool=pool,
         root_agent_name="main",
         inbox_consumer=MagicMock(name="inbox_consumer"),
@@ -540,7 +539,7 @@ def test_memory_less_wiring_keeps_legacy_chain(tmp_path: Path) -> None:
         pool_name="main",
         tool_manager=InMemoryToolManager(),
         pool_spec=PoolSpec(name="main", agents=[main_spec]),
-        bot_model_config=_BOT_CFG,
+        model_info=_BOT_CFG.default_resolved().model_info,
     )
 
     builder = pipeline._turn_runner.turn_context_builder

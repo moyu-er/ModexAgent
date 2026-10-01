@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from bot.adapters.channels import AdapterBuildContext, register
+from bot.adapters.channels import AdapterBuildContext
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
 from bot.webui.emitter import WebBotEmitter
 from bot.webui.events import SessionMeta
@@ -62,7 +62,6 @@ def build_websocket_emitter(
     )
 
 
-@register("websocket", enabled=True)
 def build_websocket(ctx: AdapterBuildContext):
     """Build WebSocket channel adapters + emitter."""
     global _ws_input, _ws_output

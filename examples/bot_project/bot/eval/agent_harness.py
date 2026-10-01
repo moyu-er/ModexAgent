@@ -17,7 +17,10 @@ from bot.eval.memory_harness import (
 )
 from bot.eval.task_spec import EvalToolset
 from bot.service.pool.declaration import boot_scope_spec
-from bot.workspace.handle import WorkspaceHandle, WorkspaceHandleRootProvider
+from bot.workspace.handle import WorkspaceHandle
+from modex_agent.agents.react.hooks.checkpoint import CheckpointHook
+from modex_agent.agents.react.hooks.iteration_span import IterationSpanHook
+from modex_agent.agents.react.hooks.loop_detection import LoopDetectionHook
 from modex_agent.core.capabilities import ModelCapabilities
 from modex_agent.core.llm_struct import LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.message import ChatMessage, ContentFormat, ContentPart, ImageUrlPart, TextPart
@@ -26,15 +29,9 @@ from modex_agent.core.tool_manager import (
     Tool,
     ToolResult,
 )
+from modex_agent.core.tool_vocabulary import ToolPreset
+from modex_agent.core.turn.models import JsonValue
 from modex_agent.hook import HookRunner, HookSpec
-from modex_agent.hook.builtin import LoopDetectionHook
-from modex_agent.hook.builtin.checkpoint import CheckpointHook
-from modex_agent.ioc.configs.observability import (
-    ObservabilityConfig,
-    PromptCaptureMode,
-    TraceBackend,
-    TraceSpanMode,
-)
 from modex_agent.plugins.assembly.single_agent import (
     SingleAgentAssembled,
     SingleAgentInfra,
@@ -42,10 +39,9 @@ from modex_agent.plugins.assembly.single_agent import (
 )
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
-from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.runtime.models import JsonValue
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.overlay import (
     AgentOverlay,
@@ -53,15 +49,21 @@ from modex_agent.scope.overlay import (
     ScopeOverlay,
     apply_scope_overlay,
 )
-from modex_agent.tools.presets import ToolPreset
 from modex_agent.trace.cassette import (
     CassetteFlushHook,
     CassetteRecorder,
     CassetteReplayEngine,
 )
 from modex_agent.trace.factory import build_trace_hooks
+from modex_agent.trace.observability import (
+    ObservabilityConfig,
+    PromptCaptureMode,
+    TraceBackend,
+    TraceSpanMode,
+)
 from modex_agent.trace.otel_store import build_trace_stores
 from modex_agent.trace.score_injector import L2ScoreInjector
+from modex_agent.workspace.handle import WorkspaceHandleRootProvider
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +265,7 @@ async def assemble_harness_agent(
         component_registry,
         PluginDiscoveryConfig(
             bundled_factories=(DefaultPlugin(),),
-            project_plugin_paths=(_BOT_PROJECT / "plugins",),
+            project_plugin_paths=(_BOT_PROJECT / "bot_plugins",),
         ),
     )
     declaration = load_scope_declaration(_REACT_HARNESS_DECLARATION)
@@ -350,6 +352,7 @@ def build_runtime_services(
         score_injector=score_injector,
         store=trace_store,
         pricebook_yml_path=_MODEL_PRICES_PATH,
+        extra_full_hooks=lambda base: [IterationSpanHook(**base)],
     )
     hook_specs.extend(
         [
@@ -389,6 +392,7 @@ def build_trace_only_services(
         score_injector=score_injector,
         store=trace_store,
         pricebook_yml_path=_MODEL_PRICES_PATH,
+        extra_full_hooks=lambda base: [IterationSpanHook(**base)],
     )
     return AgentRuntimeServices(
         hooks=HookRunner(hook_specs),

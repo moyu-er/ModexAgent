@@ -1,16 +1,15 @@
-"""Pool builder subpackage.
+"""Pool mode assembly — declared-pool boot and bot pool glue.
 
-Re-exports the public API previously available from ``pool_builder.py``.
-Internal modules are split per ADR-0025 ticket 6 for locality and
-maintainability.
+``create_pool`` and the execution strategies live in the framework
+(:mod:`modex_agent.plugins.assembly.pool_factory` /
+:mod:`modex_agent.plugins.assembly.strategies`, promoted W4a); this
+package keeps the declaration boot and the bot-owned hooks.
 """
 
 from __future__ import annotations
 
 from bot.service.pool.communication import UserNoticeCleanupHook
-from bot.service.pool.factory import create_pool
 
 __all__ = [
     "UserNoticeCleanupHook",
-    "create_pool",
 ]

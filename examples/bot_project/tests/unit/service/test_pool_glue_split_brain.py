@@ -15,19 +15,19 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from bot.service.model_choice import ModelChoiceRegistry
-from bot.service.pool import create_pool
+from bot.config.webui_config import build_control_origin
 from bot.service.pool.declaration import (
     boot_scope_declaration,
     declared_pool_build,
 )
-from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
 from bot.workspace.handle import WorkspaceHandle
 from bot.workspace.pool_data import build_pool_data
 from bot.workspace.wiring.stack import declared_assembly_deps
 
 from examples.bot_project.tests.service._title_support import title_workspace
 from modex_agent.adapters.output import OutputAdapter
+from modex_agent.app.models.assembly import ModelRegistryAssembly
+from modex_agent.app.models.choice import ModelChoiceRegistry
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
 from modex_agent.hook import HookRunner
@@ -35,12 +35,14 @@ from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
+from modex_agent.plugins.assembly.pool_factory import create_pool
 from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 from modex_agent.plugins.loader import (
     ComponentRegistryLoader,
     PluginDiscoveryConfig,
 )
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -75,7 +77,7 @@ async def _load_registry() -> ComponentRegistry:
         registry,
         PluginDiscoveryConfig(
             bundled_factories=(DefaultPlugin(),),
-            project_plugin_paths=(BOT_BASE / "plugins",),
+            project_plugin_paths=(BOT_BASE / "bot_plugins",),
         ),
     )
     return registry
@@ -116,7 +118,7 @@ def _boot_declaration(data_dir: Path):
         project_dir=BOT_BASE,
         data_dir=data_dir,
         graphs_dirs=(BOT_BASE / "config" / "graphs",),
-        default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        default_llm_provider=MULTI_LLM_PROVIDER,
         registry=_compile_registry(),
     )
 
@@ -161,7 +163,9 @@ async def _declared_boot(tmp_path: Path):
             shared_hook_runner=HookRunner(),
             shared_interceptor_chain=InterceptorChain(),
             workspace_resolver=None,
-            bot_model_config=None,
+            model_assembly=ModelRegistryAssembly(None),
+            default_llm_provider_name=MULTI_LLM_PROVIDER,
+            control_origin=build_control_origin(tmp_path / "config"),
             model_choice_registry=ModelChoiceRegistry(),
             component_registry=registry,
             pool_data=pool_data,

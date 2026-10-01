@@ -12,8 +12,8 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.llm_struct import FinishReason, LLMResponse
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import CallbackStreamProvider
+from modex_agent.core.turn.models import JsonValue
 from modex_agent.hook import BeforeGraphHook, HookSpec
-from modex_agent.runtime.models import JsonValue
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.trace.langfuse_query import ScoreReadData
 from modex_agent.trace.score_injector import INJECTOR_VERSION

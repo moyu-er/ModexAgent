@@ -4,11 +4,12 @@ from pathlib import Path
 
 import pytest
 import yaml
-from bot.config.domain import SecretMask, get_domain
 from bot.config.domains import (
     model as model_module,  # noqa: F401 - import registers the model domain
 )
 from pydantic import ValidationError
+
+from modex_agent.app.config_domain import SecretMask, get_domain
 
 
 def _write_model(path: Path) -> None:
@@ -74,7 +75,7 @@ def test_model_domain_write_overwrites_api_key(tmp_path: Path) -> None:
 # ── PUT 校验:max_output_tokens <= context_limit − 输出预留(PRD §4.7 D6)──
 # 运行时解析(from_yaml)对超限声明宽容(装配期钳制兜底);写面
 # (PUT /api/config/model)拒绝并给可操作错误,磁盘不动。预留常量与运行时
-# 钳制单一同源(bot.service.model_config.DEFAULT_OUTPUT_RESERVE_TOKENS)。
+# clamping is single-sourced (modex_agent.app.models.registry.DEFAULT_OUTPUT_RESERVE_TOKENS).
 
 
 def _model_with_budget(context_limit: int | None, max_output_tokens: int) -> dict:

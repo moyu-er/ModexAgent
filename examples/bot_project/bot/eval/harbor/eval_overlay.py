@@ -10,9 +10,9 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.core.tool_vocabulary import ToolPreset
 from modex_agent.scope import AgentOverlay, PoolOverlay, ScopeOverlay
 from modex_agent.scope.spec import MemoryDeclaration
-from modex_agent.tools.presets import ToolPreset
 
 _TARGET_POOL_KEY = "target_pool"
 

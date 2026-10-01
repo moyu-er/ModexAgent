@@ -8,12 +8,12 @@ artifacts) — this module owns only the cleanup-notice hook.
 
 from __future__ import annotations
 
-from modex_agent.hook.notification import AgentNotificationService
-from modex_agent.memory.hooks import (
+from modex_agent.core.memory_hooks import (
     CleanupFinishedHook,
     CleanupTriggeredHook,
     MemoryHookContext,
 )
+from modex_agent.hook.notification import AgentNotificationService
 
 
 class UserNoticeCleanupHook(CleanupTriggeredHook, CleanupFinishedHook):

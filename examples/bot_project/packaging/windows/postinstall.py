@@ -121,7 +121,7 @@ def create_cli_shims(app_dir: Path) -> None:
 def register_scripts_on_path(app_dir: Path) -> None:
     """Register ``<install>/python/Scripts`` on ``HKCU\\Environment\\Path``.
 
-    Uses the shared ``modex_agent.runtime.bundled_bin.register_public_path``
+    Uses the installer-side ``path_registry.register_public_path``
     helper with a product-specific marker so only ModexBot's own entries
     are touched — other products' ``python\\Scripts`` PATH entries are
     preserved.
@@ -130,7 +130,7 @@ def register_scripts_on_path(app_dir: Path) -> None:
     if str(src_dir) not in sys.path:
         sys.path.insert(0, str(src_dir))
 
-    from modex_agent.runtime.bundled_bin import register_public_path
+    from path_registry import register_public_path
 
     scripts_dir = app_dir / "python" / "Scripts"
     marker = "\\ModexBot\\python\\Scripts"

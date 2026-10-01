@@ -17,21 +17,23 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.hook.builtin.inbox_flush import InboxFlushHook
 from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.messaging.agent_messages import (
+    AgentAddress,
+    AgentMessageEnvelope,
+    AgentMessageType,
+)
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.messaging.models import InputMessage
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+from modex_agent.multi_agent.inbox.flush_hook import InboxFlushHook
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxMQ
 from modex_agent.multi_agent.inbox_poller import InboxPoller
-from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
 from modex_agent.multi_agent.session_tree.models import (

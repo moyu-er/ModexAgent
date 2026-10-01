@@ -82,7 +82,7 @@ Source: "staging\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recurs
 
 ; Bundled CLI tools (rg.exe) — bot-private, NOT on system PATH.
 ; The bot process prepends <install>\bin\windows\ to its own PATH at
-; startup via modex_agent.runtime.bundled_bin.ensure_bundled_bin_on_path().
+; startup via modex_agent.tools.terminal.bundled_bin.ensure_bundled_bin_on_path().
 #ifexist "staging\bin\windows\rg.exe"
   Source: "staging\bin\windows\*"; DestDir: "{app}\bin\windows"; Flags: ignoreversion
 #endif
@@ -298,7 +298,7 @@ end;
 // Uninstall-time PATH cleanup
 // ============================================================================
 // Install-time PATH registration is done by postinstall.py via the shared
-// Python helper ``modex_agent.runtime.bundled_bin.register_public_path()``
+// Python helper ``path_registry.register_public_path()`` (installer-side, packaging/windows/)
 // (marker-based, idempotent — same algorithm as below).  Uninstall cannot
 // reliably run Python (the interpreter may be mid-deletion), so the Pascal
 // ``EnvRemovePath`` below uses the same marker (``\python\Scripts``) to
