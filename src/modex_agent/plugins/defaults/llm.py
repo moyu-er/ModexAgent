@@ -1,29 +1,38 @@
-"""Default LLM_PROVIDER factory — loads provider config from model.yml path.
+"""Default LLM_PROVIDER factories — ``default`` (single model.yml) + ``multi``.
 
-Registers the ``default`` LLM provider factory (SPEC §5.7, §6.7). The
-factory reads a single-provider (FW ``GlobalModelConfig``) model YAML file
-and builds an :class:`LLMProvider` via :func:`create_llm_provider`.
-Multi-provider model.yml formats are a business concern: the BIZ
-``bot_default`` factory parses the real ``BotModelConfig`` shape, and this
-FW factory serves only the FW single-provider schema (a ``providers:`` key
-is rejected by ``GlobalModelConfig``'s ``extra="forbid"`` validation).
+Registers two LLM provider factories (SPEC §5.7, §6.7):
+
+- ``default`` reads a single-provider (FW ``GlobalModelConfig``) model YAML
+  file and builds an :class:`LLMProvider` via :func:`create_llm_provider`.
+  Multi-provider model.yml formats are rejected by ``GlobalModelConfig``'s
+  ``extra="forbid"`` validation.
+- ``multi`` (W4b, promoted from the bot's ``bot_default`` factory) builds
+  the deployment's per-turn model-selection proxy through the pool's
+  :class:`~modex_agent.plugins.assembly.model_assembly.PoolModelAssembly`
+  seam (``selection_provider()``) — the multi-provider ``model.yml`` shape
+  (``ModelRegistry``) with per-turn switching and explicit model pins.
 """
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 import yaml
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.ioc.configs.llm import LLMConfig
-from modex_agent.ioc.configs.model import GlobalModelConfig
-from modex_agent.ioc.factories.llm import create_llm_provider
-from modex_agent.plugins.abc import ComponentFactory
 from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.providers.factory import create_llm_provider
+from modex_agent.providers.llm_config import LLMConfig
+from modex_agent.providers.model_config import GlobalModelConfig
+from modex_agent.scope.components import ComponentFactory
 
 if TYPE_CHECKING:
-    from modex_agent.plugins.assembly.context import WorkspaceContext
+    from modex_agent.core.provider import LLMProvider
+    from modex_agent.plugins.assembly.context import AssemblyContext, WorkspaceContext
+
+#: The multi-provider LLM slot name — the single assembly-side reference to
+#: the ``multi`` factory registered by ``DefaultPlugin``.
+MULTI_LLM_PROVIDER: Final = "multi"
 
 
 class DefaultLLMProviderConfig(BaseModel):
@@ -69,5 +78,48 @@ class DefaultLLMProviderFactory(ComponentFactory):
 
 
 def register_default_llm(ctx: PluginRegistrationContext) -> None:
-    """Register the ``default`` LLM_PROVIDER factory into *ctx*."""
+    """Register the ``default`` + ``multi`` LLM_PROVIDER factories into *ctx*."""
     ctx.register_provider("default", DefaultLLMProviderFactory())
+    ctx.register_provider(MULTI_LLM_PROVIDER, MultiModelProviderFactory())
+
+
+class MultiLLMProviderConfig(BaseModel):
+    """Config for the multi-provider factory (no construction knobs)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class MultiModelProviderFactory(ComponentFactory):
+    """Build the per-turn model-selection proxy from the pool's model assembly.
+
+    The factory reads ``pool_assembly_ctx.model_assembly`` (threaded by
+    ``create_pool``) and returns its ``selection_provider()`` — a provider
+    that follows the current turn's model choice and falls back to the
+    registry's default model. The model universe itself
+    (:class:`~modex_agent.app.models.registry.ModelRegistry`) lives in
+    ``app.models``; this factory reaches it through the
+    :class:`~modex_agent.plugins.assembly.model_assembly.PoolModelAssembly`
+    seam so the plugin layer never imports the app layer.
+    """
+
+    config_model = MultiLLMProviderConfig
+
+    async def create(
+        self, config: BaseModel, ctx: AssemblyContext  # noqa: ARG002
+    ) -> LLMProvider:
+        pool_runtime = ctx.pool_runtime
+        pool_assembly = (
+            pool_runtime.pool_assembly_ctx if pool_runtime is not None else None
+        )
+        if pool_assembly is None:
+            raise ValueError(
+                f"pool_assembly_ctx is required for {MULTI_LLM_PROVIDER}; "
+                "reference it from a pool roster"
+            )
+        model_assembly = pool_assembly.model_assembly
+        if model_assembly is None:
+            raise ValueError(
+                f"model_assembly is required for {MULTI_LLM_PROVIDER}; pass a "
+                "PoolModelAssembly (e.g. ModelRegistryAssembly) to create_pool"
+            )
+        return model_assembly.selection_provider()

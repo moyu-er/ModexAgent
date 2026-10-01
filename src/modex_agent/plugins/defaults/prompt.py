@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.prompt import SystemPromptProvider
-from modex_agent.plugins.abc import ComponentFactory
 from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.scope.components import ComponentFactory
 
 if TYPE_CHECKING:
     from modex_agent.plugins.assembly.context import AssemblyContext

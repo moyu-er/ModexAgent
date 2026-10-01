@@ -15,10 +15,10 @@ from modex_agent.memory.snapshot import (
     DEFAULT_SNAPSHOT_MAX_CONTENT_LEN,
     DEFAULT_SNAPSHOT_MAX_MESSAGES,
 )
-from modex_agent.plugins.abc import AgentType, ReactHookFactory
 from modex_agent.plugins.defaults.capabilities.experience.capability import (
     require_experience_supply,
 )
+from modex_agent.scope.components import AgentType, ReactHookFactory
 
 if TYPE_CHECKING:
     from modex_agent.plugins.assembly.context import PoolContext

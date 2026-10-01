@@ -154,7 +154,6 @@ ignore = ["E501", "E402", "B027"]
 # spelling for cross-referencing the Windows API docs — PEP 8 casing here
 # would hurt greppability, not help it.
 "src/modex_agent/tools/terminal/backends/visible_windows_host.py" = ["N806", "N801"]
-"src/modex_agent/runtime/bundled_bin.py" = ["N806"]
 
 [tool.mypy]
 python_version = "3.12"

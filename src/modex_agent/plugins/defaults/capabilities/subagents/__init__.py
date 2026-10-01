@@ -47,9 +47,9 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.core.agent import AgentCommKind, ExecutionStrategyKind
+from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.prompt import SystemPromptProvider
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.tools import (
     SEND_TO_AGENT_TOOL_NAME,
@@ -57,8 +57,7 @@ from modex_agent.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
 )
-from modex_agent.plugins.abc import AgentType
-from modex_agent.plugins.capability import (
+from modex_agent.scope.capability import (
     AgentDeclarationView,
     Capability,
     CapabilityBinding,
@@ -73,6 +72,8 @@ from modex_agent.plugins.capability import (
     PromptSectionSpec,
     TreePositionView,
 )
+from modex_agent.scope.components import AgentType
+from modex_agent.scope.execution_kind import strategy_name_of
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -392,8 +393,11 @@ class SubagentsCapability(Capability):
     config_model: ClassVar[type[BaseModel]] = SubagentsCapabilityConfig
 
     def applies(self, view: AgentDeclarationView) -> bool:
-        # 该 agent 参与通信拓扑才启用：有子、或非根、或有 peer。
-        # 无子无 peer 的根 = 今日行为（通信三件套一样不得）——零配置等价的锚点。
+        # Enabled only when this agent participates in the communication
+        # topology: has children, or is non-root, or has peers.
+        # A root with no children and no peers = today's behavior (the
+        # communication trio stays unavailable) — the zero-config
+        # equivalence anchor.
         return bool(view.children) or not view.is_root or bool(view.peers)
 
     def contribute(self, tree: TreePositionView, config: BaseModel) -> CapabilityContribution:
@@ -550,7 +554,7 @@ class SubagentsCapability(Capability):
                         name=child.name,
                         kind=AgentCommKind.SUBAGENT,
                         description=child.description,
-                        execution_strategy=ExecutionStrategyKind(child.execution_strategy),
+                        execution_strategy=strategy_name_of(child.execution_strategy),
                     )
                 )
         if is_main and store is not None:

@@ -36,8 +36,10 @@ from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.scope import RecordScope
+from modex_agent.core.turn.todo import TodoStore
+from modex_agent.persistence.adapters.todo_store import JsonFileTodoStore
 from modex_agent.persistence.config import PersistenceBackend
-from modex_agent.plugins.capability import (
+from modex_agent.scope.capability import (
     Capability,
     CapabilityBinding,
     CapabilityContribution,
@@ -49,7 +51,6 @@ from modex_agent.plugins.capability import (
     PromptSectionSpec,
     TreePositionView,
 )
-from modex_agent.runtime.todo import JsonFileTodoStore, TodoStore
 from modex_agent.workspace.paths import SUBDIR_RUNTIME, SUBDIR_TODOS
 
 if TYPE_CHECKING:

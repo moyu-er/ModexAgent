@@ -5,6 +5,33 @@ Replaces the legacy injection bridge with the new component-factory-based
 plugin system (SPEC §4.5). A plugin declares its config schema and
 registers component factories via ``register(ctx)``; the registration
 context buffers factories and flushes them atomically on clean exit.
+
+Besides the 11 compile-time component slots, the context carries a
+service-level channel-adapter registration face
+(:meth:`PluginRegistrationContext.register_channel_adapter`) — channel
+adapters are resolved once per service boot from config, not compiled
+into assembly specs, so they land in a dedicated
+:class:`ChannelAdapterRegistry` instead of a ``ComponentSlot``.
+
+Packaging contract (W6 — the directory layout is NOT the API):
+
+- **Project dir** — ``PluginDiscoveryConfig.project_plugin_paths``;
+  the deployment's plugin package directory (e.g. the bot project's
+  ``bot_plugins/``). Each ``*.py`` file in the directory is imported
+  under a QUALIFIED synthetic name
+  (``modex_agent_userplugins_<dir-sha>.<module>``) via importlib —
+  no ``sys.path`` mutation, no top-level ``plugins`` package, no
+  importable-name requirements on the directory. A plugin may also be
+  an installed distribution exposing entry points in the
+  ``modex_agent.plugins`` group (``ComponentRegistryLoader`` resolves
+  them through :mod:`importlib.metadata`).
+- **User dir** — ``PluginDiscoveryConfig.user_plugin_path``; enabled by
+  default at ``DEFAULT_USER_PLUGIN_DIR`` (``~/.modex_agent/plugins``)
+  by the app-service registry load, opt-out via the app-config flag
+  ``user_plugins_enabled: false``. Same qualified loading as the
+  project dir; a missing user dir is normal (debug log, not a warning).
+- **Priority** — user > project > entry_points > bundled
+  (SPEC §3.5 O2), resolved by the registration flush, not scan order.
 """
 from __future__ import annotations
 
@@ -14,16 +41,21 @@ import importlib.util
 import inspect
 import logging
 import sys
+import types
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar, cast
+from typing import Any, ClassVar, cast
 
 from pydantic import BaseModel
 
-from modex_agent.plugins.abc import ComponentFactory, ComponentSlot, PluginSource
-from modex_agent.plugins.capability import Capability
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.adapters.output import OutputAdapter
+from modex_agent.core.emitter import ContentEmitter
+from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.scope.capability import Capability
+from modex_agent.scope.component_registry import ComponentRegistry, PluginSource
+from modex_agent.scope.components import ComponentFactory, ComponentSlot
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +64,82 @@ __all__ = [
     "PluginRegistrationContext",
     "PluginDiscoveryConfig",
     "ComponentRegistryLoader",
+    "ChannelAdapterRegistry",
+    "ChannelBuildContext",
+    "ChannelBuildResult",
+    "ChannelAdapterFactory",
+    "DEFAULT_USER_PLUGIN_DIR",
+    "USER_PLUGIN_PACKAGE_PREFIX",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Channel adapters — service-level registration (NOT a compile-time slot)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ChannelBuildContext:
+    """Generic build context handed to a channel-adapter factory.
+
+    ``raw_config`` is the open per-channel config payload (IM sections from
+    the deployment's config files) — genuinely open/heterogeneous across
+    channels, the sanctioned rule-3 exception.
+    """
+
+    config_dir: Path
+    raw_config: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class ChannelBuildResult:
+    """The adapters + emitter factory one channel contributes."""
+
+    input_adapter: InputAdapter
+    output_adapter: OutputAdapter
+    emitter_factory: Callable[[str, str], ContentEmitter[Any]]
+
+
+#: A channel factory returns ``None`` when the channel is configured off.
+ChannelAdapterFactory = Callable[[ChannelBuildContext], ChannelBuildResult | None]
+
+
+class ChannelAdapterRegistry:
+    """name → channel-adapter factory, populated via
+    :meth:`PluginRegistrationContext.register_channel_adapter`.
+
+    The service-level counterpart of the compile-time component slots:
+    adapters resolve once per boot from config (``resolve``), never through
+    scope compilation. Re-registering the same ``(name, factory)`` pair is
+    idempotent (plugin modules are imported once under deterministic
+    names); the same name with a DIFFERENT factory is a packaging error.
+    """
+
+    def __init__(self) -> None:
+        self._factories: dict[str, ChannelAdapterFactory] = {}
+
+    def register(self, name: str, factory: ChannelAdapterFactory) -> None:
+        existing = self._factories.get(name)
+        if existing is not None and existing is not factory:
+            raise ValueError(
+                f"channel adapter {name!r} registered twice with different "
+                "factories (packaging/config error)"
+            )
+        self._factories[name] = factory
+
+    def resolve(self, name: str) -> ChannelAdapterFactory:
+        """The factory registered under *name* (the config-resolution face)."""
+        try:
+            return self._factories[name]
+        except KeyError:
+            raise ValueError(
+                f"channel adapter {name!r} is not registered — no plugin "
+                "contributed it to the channel-adapter registry"
+            ) from None
+
+    def names(self) -> tuple[str, ...]:
+        """Registered channel names, in registration order."""
+        return tuple(self._factories)
 
 
 # ---------------------------------------------------------------------------
@@ -92,17 +199,31 @@ class PluginRegistrationContext:
     values.
     """
 
-    def __init__(self, registry: ComponentRegistry, *, source: PluginSource | None = None) -> None:
+    def __init__(
+        self,
+        registry: ComponentRegistry | None = None,
+        *,
+        source: PluginSource | None = None,
+        channel_adapters: ChannelAdapterRegistry | None = None,
+    ) -> None:
         self._registry = registry
         self._source: PluginSource | None = source
+        self._channel_adapters = channel_adapters
         # CAPABILITY entries are capability instances, not factories
         # (SPEC §4) — the one slot whose buffered object is not a
         # ComponentFactory.
         self._buffer: list[tuple[ComponentSlot, str, ComponentFactory | Capability]] = []
+        self._channel_buffer: list[tuple[str, ChannelAdapterFactory]] = []
 
     def _add(
         self, slot: ComponentSlot, name: str, component: ComponentFactory | Capability
     ) -> None:
+        if self._registry is None:
+            raise ValueError(
+                f"component {name!r} in slot {slot.value!r} cannot register: "
+                "this PluginRegistrationContext carries no ComponentRegistry "
+                "(channel-adapter-only contexts register channel adapters)"
+            )
         self._buffer.append((slot, name, component))
 
     # ---- 11 register_* methods (one per ComponentSlot) ----
@@ -147,6 +268,29 @@ class PluginRegistrationContext:
         """
         self._add(ComponentSlot.CAPABILITY, name, capability)
 
+    def register_channel_adapter(self, name: str, factory: ChannelAdapterFactory) -> None:
+        """Register a channel-adapter factory under *name* (service level).
+
+        Channel adapters are NOT a compile-time component slot: they are
+        resolved once per service boot from config through the
+        :class:`ChannelAdapterRegistry` attached to this context. When the
+        context carries no channel registry (e.g. a registry-only load),
+        the entry is buffered and dropped at flush with a warning naming
+        the plugin — channel registrations are owned by whichever load
+        attached the registry.
+        """
+        self._channel_buffer.append((name, factory))
+
+    def pending_channel_adapters(self) -> tuple[str, ...]:
+        """Channel-adapter names buffered but not yet flushed.
+
+        The loader's read face for the drop warning: a load that carries
+        no :class:`ChannelAdapterRegistry` checks this after
+        ``plugin.register()`` so the warning can name the plugin and its
+        dropped adapters before :meth:`flush` drains the buffer.
+        """
+        return tuple(name for name, _factory in self._channel_buffer)
+
     # ---- context manager protocol ----
 
     def __enter__(self) -> PluginRegistrationContext:
@@ -183,6 +327,11 @@ class PluginRegistrationContext:
         """
         buffer = self._buffer
         self._buffer = []
+        channel_buffer = self._channel_buffer
+        self._channel_buffer = []
+        if channel_buffer and self._channel_adapters is not None:
+            for name, channel_factory in channel_buffer:
+                self._channel_adapters.register(name, channel_factory)
         if not buffer:
             return
 
@@ -272,6 +421,26 @@ class PluginDiscoveryConfig:
     project_plugin_paths: tuple[Path, ...]
     user_plugin_path: Path | None = None
     entry_point_group: str = "modex_agent.plugins"
+    channel_adapters: ChannelAdapterRegistry | None = None
+    """Landing registry for plugin channel-adapter registrations. When
+    ``None``, a plugin that registers channel adapters gets a WARNING and
+    the registrations are dropped — channel registrations are only owned
+    by whichever load attached a registry (the app-service boot does)."""
+
+
+#: Default per-user plugin directory — enabled by default by the
+#: app-service registry load; opt out with the app-config flag
+#: ``user_plugins_enabled: false``. A missing directory is normal (no
+#: user plugins installed), so its absence logs at debug, not warning.
+DEFAULT_USER_PLUGIN_DIR = Path.home() / ".modex_agent" / "plugins"
+
+#: Qualified-name prefix for directory-discovered plugin modules. Each
+#: discovered directory becomes one synthetic parent package
+#: (``modex_agent_userplugins_<dir-sha>``) whose ``__path__`` anchors the
+#: directory, and each plugin file loads as its submodule — nothing lands
+#: at the top level of ``sys.modules`` and no ``sys.path`` entry is
+#: required.
+USER_PLUGIN_PACKAGE_PREFIX = "modex_agent_userplugins"
 
 
 # ---------------------------------------------------------------------------
@@ -310,16 +479,23 @@ class ComponentRegistryLoader:
         """
         # 1. Bundled (already-instantiated Plugin instances)
         for plugin in discovery.bundled_factories:
-            cls._register_one(registry, plugin, source=PluginSource.BUNDLED)
+            cls._register_one(
+                registry, plugin, source=PluginSource.BUNDLED,
+                channel_adapters=discovery.channel_adapters,
+            )
 
         # 2. Project directories
         for path in discovery.project_plugin_paths:
-            cls._load_from_directory(registry, path, source=PluginSource.PROJECT)
+            cls._load_from_directory(
+                registry, path, source=PluginSource.PROJECT,
+                channel_adapters=discovery.channel_adapters,
+            )
 
         # 3. User directory (optional)
         if discovery.user_plugin_path is not None:
             cls._load_from_directory(
-                registry, discovery.user_plugin_path, source=PluginSource.USER
+                registry, discovery.user_plugin_path, source=PluginSource.USER,
+                channel_adapters=discovery.channel_adapters,
             )
 
         # 4. Entry points (PyPI)
@@ -333,7 +509,10 @@ class ComponentRegistryLoader:
                     e,
                 )
                 continue
-            cls._register_one(registry, plugin, source=PluginSource.ENTRY_POINTS)
+            cls._register_one(
+                registry, plugin, source=PluginSource.ENTRY_POINTS,
+                channel_adapters=discovery.channel_adapters,
+            )
 
     # ---- internal helpers ----
 
@@ -344,6 +523,7 @@ class ComponentRegistryLoader:
         plugin: Plugin,
         *,
         source: PluginSource,
+        channel_adapters: ChannelAdapterRegistry | None = None,
     ) -> None:
         """Register one plugin instance.
 
@@ -351,10 +531,17 @@ class ComponentRegistryLoader:
         are logged and the plugin's buffered factories are discarded
         (atomicity — no half-registration). The flush itself is NOT
         fault-isolated: a same-source duplicate (SPEC §4.1) raises
-        ``ValueError`` out of ``load()`` so the conflicting source is
+        ``ValueError`` out of :meth:`load` so the conflicting source is
         fixed at boot instead of being silently shadowed.
+
+        Channel-adapter registrations land in *channel_adapters* when the
+        load carries one; without one they are dropped with a WARNING
+        naming the plugin and its adapters (the generic load path's only
+        channel face — service-level boots attach a registry).
         """
-        ctx = PluginRegistrationContext(registry, source=source)
+        ctx = PluginRegistrationContext(
+            registry, source=source, channel_adapters=channel_adapters
+        )
         try:
             plugin.register(ctx)
         except Exception as e:
@@ -365,6 +552,18 @@ class ComponentRegistryLoader:
                 e,
             )
             return
+        if channel_adapters is None:
+            dropped = ctx.pending_channel_adapters()
+            if dropped:
+                logger.warning(
+                    "Plugin %s from %s registered channel adapters %s but "
+                    "the load carries no ChannelAdapterRegistry — dropping "
+                    "them (attach a registry via PluginDiscoveryConfig."
+                    "channel_adapters to keep them)",
+                    type(plugin).__name__,
+                    source,
+                    list(dropped),
+                )
         ctx.flush()
 
     @classmethod
@@ -374,26 +573,31 @@ class ComponentRegistryLoader:
         directory: Path,
         *,
         source: PluginSource,
+        channel_adapters: ChannelAdapterRegistry | None = None,
     ) -> None:
         """Scan *directory* for .py files, import Plugin subclasses.
 
-        Non-existent or non-directory paths log a warning and return.
-        Each .py file is imported under a deterministic per-file module
-        name (see :meth:`_import_plugin_classes`); concrete (non-abstract)
-        Plugin subclasses are instantiated and registered.
+        Non-existent paths log at debug (a missing plugin directory — the
+        default-on user dir — means "no plugins there", not an error); a
+        path that exists but is not a directory is a configuration
+        mistake and warns. Each .py file is imported under a qualified
+        name inside the directory's synthetic package (see
+        :meth:`_import_plugin_classes`); concrete (non-abstract)
+        ``Plugin`` subclasses are instantiated and registered.
         """
         if not directory.exists():
-            logger.warning("Plugin directory does not exist: %s", directory)
+            logger.debug("Plugin directory does not exist: %s", directory)
             return
 
         if not directory.is_dir():
             logger.warning("Plugin path is not a directory: %s", directory)
             return
 
+        package_name = cls._directory_package_name(directory)
         for py_file in sorted(directory.glob("*.py")):
             if py_file.name == "__init__.py":
                 continue
-            plugin_classes = cls._import_plugin_classes(py_file)
+            plugin_classes = cls._import_plugin_classes(py_file, package_name)
             for plugin_cls in plugin_classes:
                 try:
                     plugin = plugin_cls()
@@ -405,27 +609,54 @@ class ComponentRegistryLoader:
                         e,
                     )
                     continue
-                cls._register_one(registry, plugin, source=source)
+                cls._register_one(
+                    registry, plugin, source=source, channel_adapters=channel_adapters
+                )
 
     @classmethod
-    def _import_plugin_classes(cls, py_file: Path) -> list[type[Plugin]]:
-        """Import a .py file and return concrete Plugin subclasses.
+    def _directory_package_name(cls, directory: Path) -> str:
+        """The deterministic synthetic package name for *directory*.
 
-        The module name is DETERMINISTIC — derived from the resolved file
-        path (sha1 prefix) — so the same file discovered twice (re-scan,
-        path listed twice, overlapping project dirs) maps to ONE
-        ``sys.modules`` entry: the second discovery reuses the
-        already-executed module instead of executing it again under a new
-        name. This keeps Plugin class identity stable (``isinstance`` /
-        ``issubclass``) and stops each scan from leaking a fresh module
-        entry. The ``isinstance`` and ``issubclass`` checks are justified
+        Keyed on the RESOLVED directory path, so the same directory
+        discovered twice — a re-scan, the path listed twice, or an alias
+        (symlink) — maps to ONE package and its files to ONE
+        ``sys.modules`` entry each.
+        """
+        digest = hashlib.sha1(str(directory.resolve()).encode()).hexdigest()[:16]
+        return f"{USER_PLUGIN_PACKAGE_PREFIX}_{digest}"
+
+    @classmethod
+    def _import_plugin_classes(
+        cls,
+        py_file: Path,
+        package_name: str,
+    ) -> list[type[Plugin]]:
+        """Import a .py file as ``<package_name>.<stem>`` and return
+        concrete Plugin subclasses.
+
+        The parent ``package_name`` module is anchored in ``sys.modules``
+        with ``__path__`` pointing at the file's directory (created on
+        first use), so the module name is QUALIFIED — nothing is
+        materialized at the top level of ``sys.modules`` and no
+        ``sys.path`` mutation is needed. Relative imports between plugin
+        files in one directory resolve through the parent package's
+        ``__path__``. Names are deterministic, so the same file
+        discovered twice (re-scan, overlapping project dirs) reuses the
+        already-executed module — Plugin class identity stays stable
+        (``isinstance`` / ``issubclass``) and rescans do not leak module
+        entries. The ``isinstance``/``issubclass`` checks are justified
         at this extension boundary — dynamic module loading for plugin
         discovery requires inspecting loaded types (rule 9).
         """
         resolved = py_file.resolve()
-        module_name = (
-            f"_modex_discovered_{hashlib.sha1(str(resolved).encode()).hexdigest()[:16]}"
-        )
+        parent = sys.modules.get(package_name)
+        if parent is None:
+            parent = types.ModuleType(package_name)
+            parent.__path__ = [str(resolved.parent)]  # type: ignore[assignment]
+            parent.__package__ = package_name
+            sys.modules[package_name] = parent
+
+        module_name = f"{package_name}.{resolved.stem}"
         cached = sys.modules.get(module_name)
         if cached is not None:
             module = cached
@@ -436,11 +667,13 @@ class ComponentRegistryLoader:
                 return []
 
             module = importlib.util.module_from_spec(spec)
+            module.__package__ = package_name
             sys.modules[module_name] = module
             try:
                 spec.loader.exec_module(module)
             except Exception as e:
                 logger.error("Failed to execute plugin module %s: %s", py_file, e)
+                del sys.modules[module_name]
                 return []
 
         result: list[type[Plugin]] = []

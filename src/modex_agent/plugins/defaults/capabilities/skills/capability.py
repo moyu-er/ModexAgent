@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.plugins.capability import (
+from modex_agent.scope.capability import (
     Capability,
     CapabilityBinding,
     CapabilityContribution,
@@ -30,19 +30,18 @@ from modex_agent.workspace.parse import parse_user_path
 
 if TYPE_CHECKING:
     from modex_agent.plugins.assembly.context import AgentContext
-    from modex_agent.plugins.capability import (
+    from modex_agent.plugins.defaults.capabilities.skills.supply import SkillsSupply
+    from modex_agent.scope.capability import (
         AgentDeclarationView,
         FinalRosterView,
         PoolSupplyView,
         TreePositionView,
     )
-    from modex_agent.plugins.defaults.capabilities.skills.supply import SkillsSupply
+
+from modex_agent.scope.capability import SKILLS_CAPABILITY_NAME
 
 #: The section id rendered at the capability-section anchor.
 SKILLS_SECTION_ID = "skills.injection"
-
-#: The pool-level registration name (the ``capabilities:`` declaration key).
-SKILLS_CAPABILITY_NAME = "skills"
 
 
 class SkillsCapabilityConfig(BaseModel):

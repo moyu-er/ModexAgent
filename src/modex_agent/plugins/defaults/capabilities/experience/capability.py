@@ -11,13 +11,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel
 
-from modex_agent.plugins.capability import (
-    Capability,
-    CapabilityBinding,
-    CapabilityContribution,
-    CapabilityWiring,
-    PromptSectionSpec,
-)
 from modex_agent.plugins.defaults.capabilities.experience.config import (
     ExperienceCapabilityConfig,
     ExperienceConfigError,
@@ -25,17 +18,24 @@ from modex_agent.plugins.defaults.capabilities.experience.config import (
     ExperienceReviewConfig,
 )
 from modex_agent.plugins.defaults.capabilities.experience.paths import INJECTION_SECTION_ID
+from modex_agent.scope.capability import (
+    Capability,
+    CapabilityBinding,
+    CapabilityContribution,
+    CapabilityWiring,
+    PromptSectionSpec,
+)
 from modex_agent.tools.presets import EXPERIENCE_REVIEW_HOOK_NAME
 from modex_agent.workspace.paths import WorkspacePaths
 
 if TYPE_CHECKING:
     from modex_agent.plugins.assembly.context import AgentContext
-    from modex_agent.plugins.capability import (
+    from modex_agent.plugins.defaults.capabilities.experience.supply import ExperienceSupply
+    from modex_agent.scope.capability import (
         FinalRosterView,
         PoolSupplyView,
         TreePositionView,
     )
-    from modex_agent.plugins.defaults.capabilities.experience.supply import ExperienceSupply
 
 #: The experience tool's roster name — also the registration name the
 #: TOOL-slot factory resolves (the tool has no pre-built instance; pool

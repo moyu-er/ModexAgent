@@ -67,12 +67,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.ioc.configs.observability import (
-    ObservabilityConfig,
-    TraceBackend,
-    TraceSpanMode,
-)
-from modex_agent.plugins.capability import (
+from modex_agent.scope.capability import (
     Capability,
     CapabilityBinding,
     CapabilityContribution,
@@ -81,6 +76,11 @@ from modex_agent.plugins.capability import (
     FinalRosterView,
     PoolSupplyView,
     TreePositionView,
+)
+from modex_agent.trace.observability import (
+    ObservabilityConfig,
+    TraceBackend,
+    TraceSpanMode,
 )
 
 if TYPE_CHECKING:
@@ -122,7 +122,7 @@ _TIER_VOUCHED: dict[TraceSpanMode, tuple[str, ...]] = {
 
 class TracingCapabilityConfig(BaseModel):
     """The tracing capability's config — the agent-declarable subset of
-    :class:`~modex_agent.ioc.configs.observability.ObservabilityConfig`.
+    :class:`~modex_agent.trace.observability.ObservabilityConfig`.
 
     Model/provider never live here: they derive from the agent's own
     assembly inputs at ``assemble`` time. The OTLP endpoint/headers
@@ -366,6 +366,8 @@ class TracingCapability(Capability):
                 "max_tokens": llm.max_output_tokens,
             }
 
+        from modex_agent.agents.react.hooks.iteration_span import IterationSpanHook
+
         specs = build_trace_hooks(
             observability,
             model=model,
@@ -373,6 +375,7 @@ class TracingCapability(Capability):
             request_params=request_params,
             score_injector=supply.score_injector,
             store=supply.store,
+            extra_full_hooks=lambda base: [IterationSpanHook(**base)],
         )
         hooks: tuple[Hook, ...] = tuple(spec.hook for spec in specs)  # type: ignore[attr-defined]
         # The span hooks' ``Hook.name`` is the CLASS name (``RootSpanHook``),
@@ -393,7 +396,7 @@ class TracingCapability(Capability):
         """Rebuild the ``ObservabilityConfig`` face the trace family's
         builders consume (build_trace_stores / build_trace_hooks /
         build_prompt_capture read the global-config shape)."""
-        from modex_agent.ioc.configs.observability import PromptCaptureMode
+        from modex_agent.trace.observability import PromptCaptureMode
 
         return ObservabilityConfig(
             trace_backend=config.trace_backend,

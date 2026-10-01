@@ -62,32 +62,32 @@ from pydantic import BaseModel, ConfigDict
 
 from modex_agent.agents.external.cli_resolver import resolve_modexctl_bin_dir
 from modex_agent.agents.external.types import ExternalEnvSpec
-from modex_agent.core.agent import AgentCommKind, ExecutionStrategyKind
-from modex_agent.hook.builtin.deliver_retry import DeliverRetryHook
-from modex_agent.hook.builtin.env_injection import NativeEnvInjectionHook
-from modex_agent.hook.builtin.inbox_flush import InboxFlushHook
-from modex_agent.hook.builtin.length_guard import LengthGuardHook
+from modex_agent.agents.react.hooks.deliver_retry import DeliverRetryHook
+from modex_agent.agents.react.hooks.env_injection import NativeEnvInjectionHook
+from modex_agent.agents.react.hooks.length_guard import LengthGuardHook
+from modex_agent.agents.react.hooks.loop_detection import LoopDetectionHook
+from modex_agent.agents.react.hooks.todo_continuation import TodoContinuationHook
+from modex_agent.agents.react.hooks.todo_planning_nudge import TodoPlanningNudgeHook
+from modex_agent.core.agent import AgentCommKind
 from modex_agent.hook.builtin.logging import RunLoggingHook
-from modex_agent.hook.builtin.loop_detection import LoopDetectionHook
-from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
-from modex_agent.hook.builtin.todo_continuation import TodoContinuationHook
-from modex_agent.hook.builtin.todo_planning_nudge import TodoPlanningNudgeHook
-from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.memory.cleanup_hooks import TodoReorientationHook
+from modex_agent.memory.config import MemoryConfig
 from modex_agent.multi_agent.communication.peer_resolution import (
     build_agent_pool_map,
     build_routable_targets,
 )
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
-from modex_agent.plugins.abc import (
+from modex_agent.multi_agent.inbox.flush_hook import InboxFlushHook
+from modex_agent.plugins.defaults.capabilities.subagents.auto_send import SubagentAutoSendHook
+from modex_agent.plugins.defaults.capabilities.todo import require_todo_supply
+from modex_agent.scope.components import (
     AgentType,
     HookRunnerKind,
     MemoryHookFactory,
     ReactHookFactory,
     SimpleFactory,
 )
-from modex_agent.plugins.defaults.capabilities.todo import require_todo_supply
-from modex_agent.plugins.defaults.capabilities.tracing import require_tracing_supply
+from modex_agent.scope.execution_kind import strategy_name_of
 
 if TYPE_CHECKING:
     from modex_agent.plugins.assembly.context import AgentContext, PoolContext
@@ -443,7 +443,7 @@ class SubagentAutoSendHookFactory(ReactHookFactory):
             self_name=ctx.agent_name,
             parent_name=parent,
             runtime_dir=runtime_dir,
-            execution_strategy=ExecutionStrategyKind(spec.execution_strategy),
+            execution_strategy=strategy_name_of(spec.execution_strategy),
         )
 
 
@@ -458,6 +458,7 @@ class MemoryTraceHookFactory(MemoryHookFactory):
         config: BaseModel,
         ctx: PoolContext,  # noqa: ARG002
     ) -> MemoryTraceHook:
+        from modex_agent.plugins.defaults.capabilities.tracing import require_tracing_supply
         from modex_agent.trace.memory_trace_hook import MemoryTraceHook
 
         store = require_tracing_supply(ctx.pool_runtime).store
@@ -690,7 +691,7 @@ RunLoggingHookFactory: SimpleFactory = _make_simple_hook_factory(
 def _derive_native_env_spec(ctx: AgentContext) -> ExternalEnvSpec:
     """Derive the ``native_env`` hook's template from the context chain.
 
-    The retired injection sites (``_wire_main_pipeline`` for mains,
+    The retired injection sites (``wire_main_pipeline`` for mains,
     ``AgentTemplate.materialize`` for subagents) passed these exact
     values from these exact sources:
 

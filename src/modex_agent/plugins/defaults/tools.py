@@ -31,13 +31,13 @@ from collections.abc import Callable
 from pydantic import BaseModel
 
 from modex_agent.core.tool_manager import Tool
-from modex_agent.plugins.abc import ComponentFactory, PrototypeFactory
 from modex_agent.plugins.assembly.context import PoolContext
 from modex_agent.plugins.defaults.capabilities.shell.factory import (
     ShellToolGroupFactory,
 )
 from modex_agent.plugins.defaults.capabilities.todo import require_todo_supply
 from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.scope.components import ComponentFactory, PrototypeFactory
 from modex_agent.tools.presets import (
     make_aci_edit_tool,
     make_ast_grep_replace_tool,

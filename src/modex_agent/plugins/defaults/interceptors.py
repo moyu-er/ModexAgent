@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.interceptor.builtin.tool_timeout import ToolTimeoutInterceptor
-from modex_agent.plugins.abc import ComponentFactory
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.sandbox.decision import SecurityDecisionService
 from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
@@ -26,6 +25,7 @@ from modex_agent.sandbox.settings import (
     SandboxBackend,
     SandboxSettings,
 )
+from modex_agent.scope.components import ComponentFactory
 
 if TYPE_CHECKING:
     from modex_agent.plugins.assembly.context import AgentContext, AssemblyContext

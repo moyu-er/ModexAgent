@@ -24,16 +24,16 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 from modex_agent.core.tool_manager import Tool
-from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.multi_agent.tools import (
     CommunicationTargetStore,
     SendToAgentTool,
     SendToPeerTool,
     TaskDispatchTool,
 )
-from modex_agent.plugins.abc import AgentType, ComponentFactory
 from modex_agent.plugins.assembly.context import AgentContext
 from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.scope.components import AgentType, ComponentFactory
 
 if TYPE_CHECKING:
     from modex_agent.plugins.defaults.capabilities.subagents import SubagentsSupply

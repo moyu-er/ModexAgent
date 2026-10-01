@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.plugins.capability import (
+from modex_agent.scope.capability import (
     Capability,
     CapabilityBinding,
     CapabilityContribution,

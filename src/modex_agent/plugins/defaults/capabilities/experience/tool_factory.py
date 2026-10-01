@@ -6,10 +6,10 @@ from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.plugins.abc import ComponentFactory
 from modex_agent.plugins.defaults.capabilities.experience.capability import (
     require_experience_supply,
 )
+from modex_agent.scope.components import ComponentFactory
 
 
 class ExperienceToolConfig(BaseModel):

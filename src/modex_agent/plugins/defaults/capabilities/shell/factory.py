@@ -10,11 +10,11 @@ from typing import ClassVar
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.tool_group import ToolGroup, ToolGroupResource
-from modex_agent.plugins.abc import ComponentFactory
 from modex_agent.plugins.assembly.context import AgentContext
 from modex_agent.sandbox.container_executor import ContainerShellExecutor
 from modex_agent.sandbox.runtime import ResolvedSandbox
 from modex_agent.sandbox.settings import SandboxBackend
+from modex_agent.scope.components import ComponentFactory
 from modex_agent.tools.terminal.command_tool import CommandTool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.managers import (
@@ -254,6 +254,7 @@ def _sandbox_subprocess_group(
             backend=resolved.backend,
             shell_path=shell_path,
             binding=wiring.binding,
+            host_executor_factory=create_subprocess_executor,
         ),
         timeout=300,
         working_dir=wiring.initial_cwd,

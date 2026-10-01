@@ -34,8 +34,8 @@ from modex_agent.commands.handlers import (
     ControlCommandHandler,
 )
 from modex_agent.commands.models import CommandHandlingResult
-from modex_agent.plugins.abc import ComponentFactory
 from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.scope.components import ComponentFactory
 
 if TYPE_CHECKING:
     from modex_agent.commands.models import CommandContext, SlashCommandInvocation

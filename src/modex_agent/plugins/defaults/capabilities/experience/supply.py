@@ -16,7 +16,6 @@ from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any
 
-from modex_agent.plugins.capability import CapabilitySupply
 from modex_agent.plugins.defaults.capabilities.experience.catalog import ExperienceCatalog
 from modex_agent.plugins.defaults.capabilities.experience.config import (
     ExperiencePoolConfig,
@@ -26,6 +25,7 @@ from modex_agent.plugins.defaults.capabilities.experience.metadata import (
     ExperienceMetaStore,
     PerFileExperienceMetaStore,
 )
+from modex_agent.scope.capability import CapabilitySupply
 
 logger = logging.getLogger(__name__)
 

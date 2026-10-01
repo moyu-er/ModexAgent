@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 
 from modex_agent.commands.skill import SkillResolver
-from modex_agent.plugins.capability import CapabilitySupply
+from modex_agent.scope.capability import CapabilitySupply
 
 from .cache import DirectorySkillCache
 from .catalog import SkillCatalog

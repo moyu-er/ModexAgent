@@ -197,12 +197,12 @@ class ExperienceReviewAgent(ScopedFileAgent):
         from modex_agent.agents.summarizer.emitter import SummarizerTrajectoryEmitter
         from modex_agent.core.agent import AgentContext
         from modex_agent.core.message import MessageRole
+        from modex_agent.core.turn.enums import AgentKind, TurnPhase
+        from modex_agent.core.turn.models import TurnIdentity
         from modex_agent.hook.abc import HookErrorPolicy, HookSpec
         from modex_agent.hook.builtin import RunLoggingHook
         from modex_agent.hook.runner import HookRunner
         from modex_agent.memory.history import ListMessageHistory
-        from modex_agent.runtime.enums import AgentKind, TurnPhase
-        from modex_agent.runtime.models import TurnIdentity
         from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
         tools = [

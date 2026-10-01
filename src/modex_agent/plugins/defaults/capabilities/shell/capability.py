@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, ClassVar
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.tool_group import ToolGroupSpec, ToolGroupVariant
-from modex_agent.plugins.abc import AgentType
-from modex_agent.plugins.capability import (
+from modex_agent.sandbox.shell_plan import SandboxBinding, resolved_binding
+from modex_agent.scope.capability import (
     Capability,
     CapabilityBinding,
     CapabilityContribution,
@@ -17,7 +17,7 @@ from modex_agent.plugins.capability import (
     FinalRosterView,
     TreePositionView,
 )
-from modex_agent.sandbox.shell_plan import SandboxBinding, resolved_binding
+from modex_agent.scope.components import AgentType
 from modex_agent.workspace.boundary import canonicalize_path
 
 if TYPE_CHECKING:
