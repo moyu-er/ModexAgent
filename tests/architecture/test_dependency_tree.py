@@ -257,7 +257,7 @@ def test_tools_no_unexpected_runtime_imports_of_agents() -> None:
 WORKSPACE_ROOT = PACKAGE_ROOT / "workspace"
 MULTI_AGENT_ROOT = PACKAGE_ROOT / "multi_agent"
 # tier-3+ top-level modules workspace (tier 2) must not runtime-import.
-WORKSPACE_FORBIDDEN_TOP = {"pipeline", "multi_agent", "ioc"}
+WORKSPACE_FORBIDDEN_TOP = {"pipeline", "multi_agent", "app"}
 
 # Shrinks to empty as fixes land; the assertion stays strict (ADR-0006 pattern).
 EXPECTED_WORKSPACE_OFFENDERS: set[str] = set()
@@ -291,3 +291,120 @@ def test_workspace_manager_not_defined_in_multi_agent() -> None:
             if isinstance(node, ast.ClassDef) and node.name == "WorkspaceManager":
                 offenders.append(path.relative_to(MULTI_AGENT_ROOT).as_posix())
     assert not offenders, f"WorkspaceManager still defined in multi_agent: {offenders}"
+
+
+# ── Package layering tree (total order) ──────────────────────────────────
+#
+# Every top-level package belongs to exactly one level. A runtime import may
+# only point to a STRICTLY LOWER level; same-level package imports are
+# forbidden. The resulting dependency graph is therefore acyclic.
+#
+# - `utils` sits below `core`: the pure leaf core may import (ADR-0006).
+# - The package root facade (`modex_agent/__init__.py`, `__main__.py`) sits
+#   above everything by design — it re-exports the public API surface.
+# - TYPE_CHECKING-guarded annotation imports are exempt (ADR-0006 scope),
+#   excluded per concrete AST node by `_runtime_upward_modules`.
+#
+# Violations are pinned in EXPECTED_LAYERING_OFFENDERS as exact (file, module)
+# pairs, each annotated with the work wave that removes it; the set must
+# shrink to empty and new debt fails the gate.
+PACKAGE_LEVELS: dict[str, int] = {
+    "utils": -1,
+    "core": 0,
+    "hook": 1,
+    "interceptor": 1,
+    # messaging is pure message vocabulary (models + broker + agent-message
+    # vocabulary + formatting) — re-leveled 1→0 (W3b) after its broker-bridge
+    # composition edge sank to pipeline; this legalizes the level-1
+    # adapters/hook/commands imports of message models.
+    "messaging": 0,
+    "providers": 1,
+    "media": 1,
+    "workspace": 1,
+    "commands": 1,
+    "control": 1,
+    "adapters": 1,
+    # presentation projects the provider-neutral runtime event seam onto a
+    # UI-facing event vocabulary + transcript contract (ADR-0053); contracts
+    # + default projector only — it consumes core/messaging/utils-level
+    # types, never agent strategies.
+    "presentation": 1,
+    "approval": 2,
+    "persistence": 2,
+    "memory": 2,
+    "sandbox": 2,
+    "trace": 2,
+    "runtime": 2,
+    "tools": 3,
+    "scope": 3,
+    "agents": 4,
+    "orchestration": 4,
+    "pipeline": 5,
+    "multi_agent": 6,
+    "plugins": 7,
+    "acp": 8,
+    "app": 8,
+}
+ROOT_FACADE_LEVEL = 99
+
+
+def _source_package_of(path: Path) -> str:
+    """Top-level package owning `path`; "(root)" for the package-root facade."""
+    rel = path.relative_to(PACKAGE_ROOT)
+    if len(rel.parts) == 1:
+        return "(root)"
+    return rel.parts[0]
+
+
+def _layering_offenders() -> set[tuple[str, str]]:
+    """(file, imported-module) pairs violating the strictly-lower-level rule.
+
+    Intra-package imports (target top-level == source top-level) are not the
+    gate's concern; core-target imports can never violate (core is level 0
+    and is filtered out by ``TOP_LEVEL`` discovery anyway).
+    """
+    offenders: set[tuple[str, str]] = set()
+    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        src_pkg = _source_package_of(path)
+        src_level = (
+            ROOT_FACADE_LEVEL if src_pkg == "(root)" else PACKAGE_LEVELS[src_pkg]
+        )
+        for mod in _runtime_upward_modules(path, PACKAGE_ROOT):
+            tgt_pkg = mod.split(".")[1]
+            if tgt_pkg == src_pkg:
+                continue
+            if PACKAGE_LEVELS[tgt_pkg] >= src_level:
+                offenders.add(
+                    (path.relative_to(PACKAGE_ROOT).as_posix(), mod)
+                )
+    return offenders
+
+
+def test_package_levels_table_covers_every_package() -> None:
+    """A newly added top-level package must be assigned a level explicitly."""
+    discovered = set(TOP_LEVEL) | {"core"}
+    assert discovered == set(PACKAGE_LEVELS), (
+        "PACKAGE_LEVELS drift: "
+        f"unassigned packages: {sorted(discovered - set(PACKAGE_LEVELS))}, "
+        f"stale entries: {sorted(set(PACKAGE_LEVELS) - discovered)}"
+    )
+
+
+# W5 (cleared 2026-09): the template materialization cluster was inverted —
+# the materializer seam (AgentMaterializer ABC owned by multi_agent, the
+# native implementation injected by the plugins assembly wiring) replaced
+# template.py's direct plugins.assembly imports, and the skills capability
+# NAME sank to scope/capability.py. The ledger is EMPTY; new debt fails
+# the gate.
+EXPECTED_LAYERING_OFFENDERS: set[tuple[str, str]] = set()
+
+def test_no_upward_or_same_level_runtime_imports() -> None:
+    """Layering tree gate: runtime imports point strictly downward only."""
+    offenders = _layering_offenders()
+    assert offenders == EXPECTED_LAYERING_OFFENDERS, (
+        "package layering ledger mismatch "
+        "(every entry must name its removing wave):\n"
+        f"  new debt (remove or fix): {sorted(offenders - EXPECTED_LAYERING_OFFENDERS)}\n"
+        f"  stale entries (delete, the fix landed): "
+        f"{sorted(EXPECTED_LAYERING_OFFENDERS - offenders)}"
+    )

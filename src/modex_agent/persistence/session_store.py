@@ -5,17 +5,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.utils.file_io import safe_filename
 
-
-def safe_filename(name: str) -> str:
-    """Replace characters unsafe for file names across platforms.
-
-    All session stores and transcript stores must use this single implementation
-    so session_id -> filename mapping is consistent.
-    """
-    for ch in '<>:"/\\|?*':
-        name = name.replace(ch, "_")
-    return name
+__all__ = ["SessionStore", "safe_filename"]
 
 
 class SessionStore(ABC):

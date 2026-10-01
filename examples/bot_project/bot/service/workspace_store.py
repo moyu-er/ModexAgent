@@ -95,9 +95,9 @@ class _FileWorkspaceTranscriptStore(TranscriptStore):
         session_id: str,
         event: ServerEvent,
         *,
-        pool: str = _DEFAULT_POOL,
+        pool: str | None = None,
     ) -> None:
-        owner = pool
+        owner = pool if pool is not None else _DEFAULT_POOL
         await self._store_for(owner).append(session_id, event, pool=_pool_sanitized(owner))
 
     async def load(self, session_id: str) -> list[ServerEvent]:
@@ -253,7 +253,7 @@ class WorkspaceScopedTranscriptStore(WorkspaceRoutedTranscriptStore, WorkspaceIn
         session_id: str,
         event: ServerEvent,
         *,
-        pool: str = _DEFAULT_POOL,
+        pool: str | None = None,
         sessions_dir: Path | None = None,
     ) -> None:
         # Workspace resolution: prefer an explicit ``sessions_dir`` (resolver-cell
@@ -277,7 +277,7 @@ class WorkspaceScopedTranscriptStore(WorkspaceRoutedTranscriptStore, WorkspaceIn
         await (await self._workspace_store(resolved)).append(
             session_id,
             event,
-            pool=_pool_sanitized(pool),
+            pool=_pool_sanitized(pool) if pool is not None else None,
         )
 
     async def load(self, session_id: str, sessions_dir: Path | None = None) -> list[ServerEvent]:

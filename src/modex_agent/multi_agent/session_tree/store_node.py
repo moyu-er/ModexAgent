@@ -13,7 +13,7 @@ from modex_agent.multi_agent.session_tree.models import (
     NodeVersionStatus,
     TreeNodeRecord,
 )
-from modex_agent.persistence.session_store import safe_filename
+from modex_agent.utils.file_io import safe_filename
 from modex_agent.utils.file_io import atomic_write_text
 from modex_agent.utils.time import now_ms
 

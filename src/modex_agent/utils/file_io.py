@@ -43,6 +43,19 @@ _FALLBACK_ENCODINGS: tuple[str, ...] = ("gb18030", "gbk", "gb2312", "latin-1")
 # ── Atomic writes ─────────────────────────────────────────────────────────
 
 
+def safe_filename(name: str) -> str:
+    """Replace characters unsafe for file names across platforms.
+
+    All session stores and transcript stores must use this single implementation
+    so session_id -> filename mapping is consistent. (Moved from
+    ``persistence/session_store.py`` so the level-1 presentation transcript
+    store shares it; persistence keeps importing it from here.)
+    """
+    for ch in '<>:"/\\|?*':
+        name = name.replace(ch, "_")
+    return name
+
+
 def safe_atomic_replace(tmp_path: Path, target_path: Path) -> None:
     """Replace target with tmp file, with fallback for Windows file-locking.
 

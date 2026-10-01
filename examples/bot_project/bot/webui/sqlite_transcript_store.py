@@ -33,7 +33,7 @@ class SqliteTranscriptStore(TranscriptStore):
         session_id: str,
         event: ServerEvent,
         *,
-        pool: str = "main",
+        pool: str | None = None,
     ) -> None:
         if event.session_id != session_id:
             raise ValueError("event session_id does not match transcript key")
@@ -50,7 +50,7 @@ class SqliteTranscriptStore(TranscriptStore):
                 (
                     session_id,
                     session_id_prefix_of(session_id),
-                    pool,
+                    pool if pool is not None else "main",
                     event.agent_name,
                     event.event,
                     str(turn_id) if turn_id else None,

@@ -199,7 +199,7 @@ class AcpTurnEmitter(BotTranscriptEmitter):
             ),
         )
 
-    async def _project_turn_end(self, latency_ms: int) -> None:
+    async def _project_turn_end(self, latency_ms: int, turn_id: str) -> None:
         """ACP editors derive turn boundaries from session update state, not
         from an emitter event — no turn_end projection."""
 

@@ -206,12 +206,12 @@ class WebBotEmitter(BotTranscriptEmitter):
             )
         )
 
-    async def _project_turn_end(self, latency_ms: int) -> None:
+    async def _project_turn_end(self, latency_ms: int, turn_id: str) -> None:
         await self._send_event(
             TurnEndEvent(
                 session_id=self._session_id,
                 agent_name=self._agent_name,
-                turn_id=self._current_turn_id if self._turn_active else "",
+                turn_id=turn_id,
                 latency_ms=latency_ms,
             )
         )

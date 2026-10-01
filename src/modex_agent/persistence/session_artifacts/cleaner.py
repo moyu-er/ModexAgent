@@ -42,7 +42,8 @@ from pathlib import Path
 
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import agent_of
-from modex_agent.memory.stores.utils import sanitize_scope_key
+from modex_agent.core.turn.store import safe_turn_segment
+from modex_agent.persistence.adapters.todo_store import JsonFileTodoStore
 from modex_agent.persistence.session_artifacts.discovery import (
     discover_file_session_scopes,
 )
@@ -52,10 +53,9 @@ from modex_agent.persistence.session_artifacts.models import (
     SessionDatabaseCleanupError,
     SessionScopeMismatchError,
 )
-from modex_agent.persistence.session_store import safe_filename
-from modex_agent.runtime.store import JsonFileTurnStateStore
-from modex_agent.runtime.todo import JsonFileTodoStore
-from modex_agent.workspace.paths import WorkspacePaths, safe_segment
+from modex_agent.utils.file_io import safe_filename
+from modex_agent.utils.paths import safe_segment, sanitize_scope_key
+from modex_agent.workspace.paths import WorkspacePaths
 
 logger = logging.getLogger(__name__)
 
@@ -187,8 +187,8 @@ def _session_artifact_paths(
         paths.runtime_dir(pool, "todos")
         / f"{JsonFileTodoStore._safe_segment(session_id)}.json",  # todos
         paths.runtime_dir(pool, "turns")
-        / JsonFileTurnStateStore._safe_segment(agent)
-        / JsonFileTurnStateStore._safe_segment(session_id),  # turn state
+        / safe_turn_segment(agent)
+        / safe_turn_segment(session_id),  # turn state
         paths.overflow_dir / "tool_overflow" / safe,  # tool result overflow
     ]
 

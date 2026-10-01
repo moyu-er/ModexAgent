@@ -11,7 +11,6 @@ ownership is compile-time declaration knowledge
 from __future__ import annotations
 
 import logging
-from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,10 +18,11 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from modex_agent.core.session_id import session_id_prefix_of
+from modex_agent.core.stores import PoolRoutingStore
 from modex_agent.messaging.broker import MessageBroker
 from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent.pool_instance import PoolInstance
-from modex_agent.persistence.session_store import safe_filename
+from modex_agent.utils.file_io import safe_filename
 from modex_agent.pipeline.adapters import InputAdapter
 
 if TYPE_CHECKING:
@@ -53,53 +53,6 @@ def agent_pool_ownership(spec: ScopeSpec) -> dict[str, tuple[str, ...]]:
         for agent in pool.agents:
             ownership.setdefault(agent.name, []).append(pool.name)
     return {agent: tuple(owners) for agent, owners in ownership.items()}
-
-
-class PoolRoutingStore(ABC):
-    """Persistence interface for session-prefix to pool routing."""
-
-    @abstractmethod
-    def get_pool(self, session_prefix: str) -> str | None:
-        """Return the routed pool, or ``None`` when no route exists."""
-        ...
-
-    @abstractmethod
-    def set_pool(self, session_prefix: str, pool_name: str) -> None:
-        """Persist the pool route for a session prefix."""
-        ...
-
-    @abstractmethod
-    def delete_pool(self, session_prefix: str) -> None:
-        """Delete the route for a session prefix when present."""
-        ...
-
-    @abstractmethod
-    def list_prefixes(self) -> list[str]:
-        """Return all stored session prefixes in deterministic order."""
-        ...
-
-    @abstractmethod
-    def delete_pool_routes(self, pool_name: str) -> int:
-        """Delete all routes pointing to *pool_name*. Returns count deleted."""
-        ...
-
-    def get(self, session_prefix: str, default: str | None = None) -> str | None:
-        """Convenience alias: ``get_pool`` with a default fallback."""
-        return self.get_pool(session_prefix) or default
-
-    def set(self, session_prefix: str, pool_name: str) -> None:
-        """Convenience alias: delegate to ``set_pool``."""
-        self.set_pool(session_prefix, pool_name)
-
-    def close(self) -> None:  # noqa: B027 - no-op default; resource-owning stores override
-        """Release resources owned by this store.
-
-        The no-op default suits the file-backed routing stores, which own no
-        dedicated resources. Stores that own real resources (a shared SQLite
-        connection; an OTEL_HTTP trace store's sender thread + OTLP client)
-        override this and must be closed at teardown.
-        """
-        return None
 
 
 class _PoolRoutingRecord(BaseModel):

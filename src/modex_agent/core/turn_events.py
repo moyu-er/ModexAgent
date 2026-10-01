@@ -32,10 +32,23 @@ class TurnToolCallEvent(_TurnEventBase):
 
 
 class TurnToolResultEvent(_TurnEventBase):
+    """A tool call completed (ADR-0053 presentation seam enrichment).
+
+    ``error`` / ``seq`` carry the tool-error fact and the runtime's
+    ordering hint; ``arguments`` carries the originating call's arguments
+    when the producer knows them without a preceding
+    ``TurnToolCallEvent`` (e.g. a resumed approval turn re-emits only the
+    END). All three are optional — older producers keep constructing the
+    event with ``output`` alone.
+    """
+
     kind: Literal["tool_result"] = "tool_result"
     tool_name: Annotated[str, Field(min_length=1)]
     call_id: Annotated[str, Field(min_length=1)]
     output: str
+    error: str | None = None
+    seq: int | None = None
+    arguments: dict[str, JsonValue] | None = None
     part_id: str | None = None
 
 

@@ -10,16 +10,20 @@ share one ``turn_id`` and the materializer pairs them into one tool block
 (also the ONLY persistence point on a resumed approval turn, where the
 tool node re-emits just ``TOOL_CALL_END``).
 
-Projections receive full-fidelity facts (full tool args, full result,
-``seq``, ``part_id``) — display truncation is each projection's own
-concern.
+ADR-0053 convergence: turn identity, tool-call argument pairing, and the
+runtime-event mapping live on the framework
+``DefaultTurnEventProjector``; this base feeds it the neutral
+``RuntimeTurnEvent`` inputs (core ``TurnEvent``s plus lifecycle signals)
+and derives its recording + projection behavior from the resulting
+``PresentationEvent``s. Segment accumulation for the bot's transcript
+format remains bot-side (the store's materialization detail). Projections
+receive full-fidelity facts (full tool args, full result, ``seq``,
+``part_id``) — display truncation is each projection's own concern.
 """
 
 from __future__ import annotations
 
 import logging
-import time
-import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from pathlib import Path
@@ -28,7 +32,7 @@ from typing import Any
 from modex_agent.adapters.emitter import StreamingAwareEmitter
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.agents.react.constants import ToolCallEndPayload
+from modex_agent.agents.react.constants import ToolArgsDeltaPayload, ToolCallEndPayload
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.events import EmitterConfig
 from modex_agent.core.session_id import agent_of
@@ -38,6 +42,22 @@ from modex_agent.core.turn_events import (
     TurnTextEvent,
     TurnToolCallEvent,
     TurnToolResultEvent,
+)
+from modex_agent.messaging.models import OutputMessage
+from modex_agent.presentation import (
+    DefaultTurnEventProjector,
+    PresentationEvent,
+    RuntimeTurnEvent,
+    TextDelta,
+    ThinkingDelta,
+    ToolArgsDelta,
+    ToolArgsDeltaSignal,
+    ToolCallStarted,
+    ToolResult,
+    TurnEndedSignal,
+    TurnErrored,
+    TurnFailedSignal,
+    TurnFinished,
 )
 
 from ..events import (
@@ -67,9 +87,9 @@ def _empty_session_meta() -> SessionMeta:
 class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
     """Shared turn-record lifecycle with two concrete projections.
 
-    This base owns recording (transcript writes, segment buffering, turn
-    identity); subclasses own projection — translating each recorded fact
-    into their own sink format. The six ``_project_*`` hooks receive the
+    This base owns recording (transcript writes, segment buffering); the
+    framework projector owns turn identity and tool-card pairing; the
+    ``_project_*`` hooks remain the subclass sink contract, receiving the
     full-fidelity fact (never a display-truncated copy).
     """
 
@@ -105,6 +125,9 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
         self._sessions_dir_provider: Callable[[], Path | None] | None = (
             sessions_dir_provider
         )
+        # Framework projection state: lazy turn identity, tool-argument
+        # pairing, turn latency (ADR-0053).
+        self._projector = DefaultTurnEventProjector(session_id, pool=pool)
 
         # Incremental turn state — multiple segments tracked by part_id.
         # Each part_id accumulates independently so token-level interleaving
@@ -114,10 +137,6 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
         self._segments: dict[str, str] = {}
         self._segment_kinds: dict[str, str] = {}
         self._segment_order: list[str] = []
-        self._current_turn_id: str = ""
-        self._turn_active: bool = False
-        self._turn_started_at: float = time.time()
-        self._pending_external_tools: dict[str, tuple[str, dict[str, object]]] = {}
 
     # ------------------------------------------------------------------
     # Projection contract (subclass sink formats)
@@ -129,12 +148,14 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
     ) -> None:
         """Project one content delta (full text fragment, ``part_id`` if the
         source stream identifies output parts)."""
+        ...
 
     @abstractmethod
     async def _project_reasoning_delta(
         self, text: str, part_id: str | None
     ) -> None:
         """Project one reasoning delta."""
+        ...
 
     @abstractmethod
     async def _project_tool_start(
@@ -144,6 +165,7 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
         full_args: dict[str, Any],  # open extension payload — tool schemas evolve
     ) -> None:
         """Project a tool call start with the FULL argument dict."""
+        ...
 
     @abstractmethod
     async def _project_tool_end(
@@ -154,6 +176,7 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
         seq: int | None,
     ) -> None:
         """Project a tool call end with the FULL result text and ``seq``."""
+        ...
 
     async def _project_tool_args_delta(self, tool_name: str, call_id: str, args_fragment: str) -> None:
         """Project one streamed argument fragment (pre-``tool_call_start``).
@@ -163,12 +186,18 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
         """
 
     @abstractmethod
-    async def _project_turn_end(self, latency_ms: int) -> None:
-        """Project turn completion (``latency_ms`` since turn start)."""
+    async def _project_turn_end(self, latency_ms: int, turn_id: str) -> None:
+        """Project turn completion (``latency_ms`` since turn start;
+        ``turn_id`` is the finished turn's id, ``""`` for an idle turn)."""
+        ...
 
     # ------------------------------------------------------------------
-    # Turn lifecycle helpers
+    # Turn state (framework projector + bot segment accumulation)
     # ------------------------------------------------------------------
+
+    @property
+    def _current_turn_id(self) -> str:
+        return self._projector.current_turn_id
 
     async def _persist(self, event: ServerEvent) -> None:
         if self._transcript_store is None:
@@ -231,23 +260,10 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
                 "partial clear failed for session %s: %s", self._session_id, exc
             )
 
-    def _ensure_turn_started(self) -> None:
-        """Lazily start a new turn with UUID turn_id.
-
-        Projections may render turn boundaries for their sink; the turn start
-        itself is NOT persisted to the transcript store because it carries no
-        conversational content.
-        """
-        if self._turn_active:
-            return
-        self._current_turn_id = uuid.uuid4().hex[:12]
-        self._turn_active = True
-        self._turn_started_at = time.time()
-
     def _accumulate_segment(self, text: str, kind: str, part_id: str | None) -> None:
         if not text:
             return
-        self._ensure_turn_started()
+        self._projector.ensure_turn_started()
         key = part_id if part_id else f"_{kind}"
         if key not in self._segments:
             self._segments[key] = ""
@@ -289,51 +305,51 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
         await self._clear_partial()
 
     # ------------------------------------------------------------------
-    # Content entry points (single-write recording + projection)
+    # Presentation dispatch (framework events -> record + projection)
     # ------------------------------------------------------------------
 
-    async def emit_content(self, full_content: str) -> None:
-        self._ensure_turn_started()
-        text: str = full_content.strip()
-        if text:
-            self._accumulate_segment(text, "text", None)
+    async def _feed(self, event: RuntimeTurnEvent) -> None:
+        for presentation in self._projector.feed(event):
+            await self._handle_presentation(presentation)
 
-    async def emit_delta(self, delta: str) -> None:
-        if not delta:
-            return
-        self._ensure_turn_started()
-        self._accumulate_segment(delta, "text", None)
-        await self._record_text_delta(delta, None)
-
-    async def emit_stream_end(self, resuming: bool = False) -> None:
-        await self._flush_active_segment()
-
-    async def emit_turn_event(self, event: TurnEvent) -> None:
+    async def _handle_presentation(self, event: PresentationEvent) -> None:
         match event:
-            case TurnTextEvent(text=text, part_id=part_id):
-                self._accumulate_segment(text, "text", part_id)
-                await self._record_text_delta(text, part_id)
-            case TurnReasoningEvent(text=text, part_id=part_id):
-                self._ensure_turn_started()
-                self._accumulate_segment(text, "reasoning", part_id)
-                await self._record_reasoning_delta(text, part_id)
-            case TurnToolCallEvent(
-                tool_name=tool_name, call_id=call_id, arguments=arguments
+            case TextDelta(text=text, segment_id=segment_id):
+                self._accumulate_segment(text, "text", segment_id)
+                await self._record_text_delta(text, segment_id)
+            case ThinkingDelta(text=text, segment_id=segment_id):
+                self._accumulate_segment(text, "reasoning", segment_id)
+                await self._record_reasoning_delta(text, segment_id)
+            case ToolArgsDelta(
+                tool_name=tool_name, call_id=call_id, args_fragment=fragment
+            ):
+                # Transient warm-up signal: do not flush the text segment (the
+                # body may still be semantically unfinished), do not persist to
+                # the transcript, do not enter the partial buffer — refresh
+                # recovery relies on the subsequent tool_call_start full
+                # arguments, so losing the warm-up state is harmless.
+                await self._project_tool_args_delta(tool_name, call_id, fragment)
+            case ToolCallStarted(tool_name=tool_name, call_id=call_id, arguments=args):
+                await self._flush_active_segment()
+                await self._project_tool_start(tool_name, call_id, dict(args))
+            case ToolResult(
+                tool_name=tool_name,
+                call_id=call_id,
+                output=output,
+                error=error,
+                seq=seq,
+                arguments=arguments,
             ):
                 await self._flush_active_segment()
-                self._ensure_turn_started()
-                full_args: dict[str, object] = dict(arguments)
-                self._pending_external_tools[call_id] = (tool_name, full_args)
-                await self._project_tool_start(tool_name, call_id, full_args)
-            case TurnToolResultEvent(
-                tool_name=tool_name, call_id=call_id, output=output
-            ):
-                await self._flush_active_segment()
-                self._ensure_turn_started()
-                pending = self._pending_external_tools.pop(call_id, None)
-                full_args = pending[1] if pending is not None else {}
+                # Persist call + result TOGETHER so they share a turn_id and
+                # the materializer pairs them into one complete tool block.
+                # This is also the ONLY persistence point on a resumed
+                # approval turn (no preceding TOOL_CALL_START), where the
+                # result card carries the call args. ``arguments is None``
+                # marks an orphan result — persist the result alone, never a
+                # fabricated empty-args call.
                 if self._transcript_store is not None:
-                    if pending is not None:
+                    if arguments is not None:
                         await self._persist(
                             TcEvent(
                                 session_id=self._session_id,
@@ -341,7 +357,7 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
                                 turn_id=self._current_turn_id,
                                 call_id=call_id,
                                 tool_name=tool_name,
-                                args=full_args,
+                                args=dict(arguments),
                             )
                         )
                     await self._persist(
@@ -352,110 +368,153 @@ class BotTranscriptEmitter(StreamingAwareEmitter[ReActEvent], ABC):
                             call_id=call_id,
                             tool_name=tool_name,
                             result=output.strip(),
+                            error=error,
+                            seq=seq,
                         )
                     )
-                await self._project_tool_end(tool_name, call_id, output, None)
+                await self._project_tool_end(tool_name, call_id, output, seq)
+            case TurnErrored(message=message):
+                await self._safe_adapter_send(
+                    OutputMessage(content=f"Error: {message}"), log_label="emit_error"
+                )
+            case TurnFinished():
+                # Handled inside emit_complete (flush + super + projection
+                # ordering); never dispatched here.
+                pass
+            case _:
+                # TurnStarted / usage / approval cards: no bot sink today.
+                pass
+
+    # ------------------------------------------------------------------
+    # Content entry points (single-write recording + projection)
+    # ------------------------------------------------------------------
+
+    async def emit_content(self, full_content: str) -> None:
+        text: str = full_content.strip()
+        if text:
+            self._accumulate_segment(text, "text", None)
+
+    async def emit_delta(self, delta: str) -> None:
+        if not delta:
+            return
+        await self._feed(TurnTextEvent(text=delta))
+
+    async def emit_stream_end(self, resuming: bool = False) -> None:
+        await self._flush_active_segment()
+
+    async def emit_turn_event(self, event: TurnEvent) -> None:
+        await self._feed(event)
 
     async def emit_complete(self, result: AgentResult) -> None:
         try:
+            # Flush buffered segments FIRST — while the turn identity is
+            # still active — then feed the terminal signal (which resets the
+            # projector), then forward completion and project turn end.
             await self._flush_active_segment()
+            finished = self._projector.feed(
+                TurnEndedSignal(stop_reason=result.stop_reason, error=result.error)
+            )
             await super().emit_complete(result)
-            latency_ms: int = int((time.time() - self._turn_started_at) * 1000)
-            await self._project_turn_end(latency_ms)
+            for presentation in finished:
+                if isinstance(presentation, TurnFinished):
+                    await self._project_turn_end(
+                        presentation.latency_ms, presentation.turn_id
+                    )
         finally:
             await self._clear_partial()
             self._segments = {}
             self._segment_kinds = {}
             self._segment_order = []
-            self._pending_external_tools = {}
-            self._turn_active = False
-            self._turn_started_at = time.time()
+
+    async def emit_error(self, error: str) -> None:
+        await self._feed(TurnFailedSignal(message=error))
 
     async def _on_event(self, event: ReActEvent, data: Any = None) -> None:
-        """Handle framework events — record + project each one."""
-        event_value: str = event.value
+        """Translate the ReAct enum stream onto neutral projector inputs.
 
-        if event_value == "model_reasoning":
-            text: str = data
-            await self._record_reasoning_delta(text, None)
-            self._ensure_turn_started()
-            self._accumulate_segment(text, "reasoning", None)
-
-        elif event_value == "tool_args_delta":
-            # 瞬态预热信号: 不 flush 文本段(正文可能仍在语义上未结束)、不落
-            # transcript、不进 partial buffer —— 刷新恢复靠随后的 tool_call_start
-            # 全量参数, 丢失预热态无害。
-            self._ensure_turn_started()
-            await self._project_tool_args_delta(
-                data.tool_name, data.call_id, data.args_fragment
-            )
-
-        elif event_value == "tool_call_start":
-            tool_name: str = data.tool_name
-            full_args: dict[str, object] = data.arguments or {}
-            # The tool node canonicalizes call_id before emitting (assigning
-            # one when the provider omits it), so the id here is the SAME id
-            # the later END will carry — pass it through verbatim.
-            call_id: str = data.call_id
-
-            await self._flush_active_segment()
-            self._ensure_turn_started()
-            # NOTE: the ToolCallEvent is persisted together with its
-            # ToolResultEvent in the tool_call_end branch below -- NOT here.
-            # Persisting the call on START leaves orphan tool_call events when
-            # the turn suspends for approval before the tool runs; and on resume
-            # the tool node emits ONLY TOOL_CALL_END (the call was already
-            # decided in the suspended snapshot), so the call would otherwise
-            # land in a different turn / never pair with its result, and the
-            # materializer would drop it -> "no tool rendering after refresh".
-            await self._project_tool_start(tool_name, call_id, full_args)
-
-        elif event_value == "tool_call_end":
-            await self._flush_active_segment()
-            payload: ToolCallEndPayload = data
-            tc = payload.tool_call
-            tool_result = payload.result
-            seq = payload.seq
-            tool_name = tc.tool_name
-            raw_error: str | None = tool_result.error
-            full_result: str = tool_result.message_content()
-            # The canonical id assigned by the tool node — shared by the
-            # persisted pair AND the streamed END, equal to the START's id.
-            end_call_id: str | None = tc.call_id
-
-            if self._transcript_store is not None:
-                self._ensure_turn_started()
-                full_args = tc.arguments or {}
-                # Persist call + result TOGETHER so they share a turn_id and
-                # the materializer pairs them into one complete tool block.
-                # This is also the ONLY persistence point on a resumed approval
-                # turn (no preceding TOOL_CALL_START), so it must carry the
-                # call args -- otherwise the resumed tool renders result-only.
-                tc_evt = TcEvent(
-                    session_id=self._session_id,
-                    agent_name=self._agent_name,
-                    turn_id=self._current_turn_id,
-                    call_id=end_call_id,
-                    tool_name=tool_name,
-                    args=full_args,
+        Every translated value is a declared mapping; unlisted values fall
+        through to the streaming base (buffer/flush semantics unchanged).
+        The dispositions match the framework projector's declared
+        ``MAPPED_RUNTIME_EVENTS`` / ``IGNORED_RUNTIME_EVENTS``.
+        """
+        match event:
+            case ReActEvent.MODEL_REASONING:
+                await self._feed(TurnReasoningEvent(text=data))
+            case ReActEvent.TOOL_ARGS_DELTA:
+                payload: ToolArgsDeltaPayload = data
+                await self._feed(
+                    ToolArgsDeltaSignal(
+                        tool_name=payload.tool_name,
+                        call_id=payload.call_id,
+                        args_fragment=payload.args_fragment,
+                    )
                 )
-                await self._persist(tc_evt)
-                tr_evt = TrEvent(
-                    session_id=self._session_id,
-                    agent_name=self._agent_name,
-                    turn_id=self._current_turn_id,
-                    call_id=end_call_id,
-                    tool_name=tool_name,
-                    result=full_result.strip(),
-                    error=raw_error,
-                    seq=seq,
+            case ReActEvent.TOOL_CALL_START:
+                # The tool node canonicalizes call_id before emitting
+                # (assigning one when the provider omits it), so the id here
+                # is the SAME id the later END will carry — pass it through
+                # verbatim.
+                await self._feed(
+                    TurnToolCallEvent(
+                        tool_name=data.tool_name,
+                        call_id=data.call_id,
+                        arguments=data.arguments or {},
+                    )
                 )
-                await self._persist(tr_evt)
-
-            await self._project_tool_end(tool_name, end_call_id, full_result, seq)
-
-        else:
-            await super()._on_event(event, data)
+            case ReActEvent.TOOL_CALL_END:
+                end_payload: ToolCallEndPayload = data
+                tool_call = end_payload.tool_call
+                if tool_call.call_id:
+                    await self._feed(
+                        TurnToolResultEvent(
+                            tool_name=tool_call.tool_name,
+                            call_id=tool_call.call_id,
+                            output=end_payload.result.message_content(),
+                            error=end_payload.result.error,
+                            seq=end_payload.seq,
+                            arguments=tool_call.arguments,
+                        )
+                    )
+                else:
+                    # Degenerate call without identity (provider omitted the
+                    # id and canonicalization failed): the neutral seam
+                    # requires call identity, so record + project directly —
+                    # the legacy wire bytes (``call_id`` omitted) preserved.
+                    await self._flush_active_segment()
+                    if self._transcript_store is not None:
+                        self._projector.ensure_turn_started()
+                        await self._persist(
+                            TcEvent(
+                                session_id=self._session_id,
+                                agent_name=self._agent_name,
+                                turn_id=self._current_turn_id,
+                                call_id=tool_call.call_id,
+                                tool_name=tool_call.tool_name,
+                                args=tool_call.arguments or {},
+                            )
+                        )
+                        await self._persist(
+                            TrEvent(
+                                session_id=self._session_id,
+                                agent_name=self._agent_name,
+                                turn_id=self._current_turn_id,
+                                call_id=tool_call.call_id,
+                                tool_name=tool_call.tool_name,
+                                result=end_payload.result.message_content().strip(),
+                                error=end_payload.result.error,
+                                seq=end_payload.seq,
+                            )
+                        )
+                    await self._project_tool_end(
+                        tool_call.tool_name,
+                        tool_call.call_id,
+                        end_payload.result.message_content(),
+                        end_payload.seq,
+                    )
+            case ReActEvent.ERROR:
+                await self._feed(TurnFailedSignal(message=str(data)))
+            case _:
+                await super()._on_event(event, data)
 
     # ------------------------------------------------------------------
     # Internal helpers
