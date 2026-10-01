@@ -279,8 +279,9 @@ def _kill_process(pid: int) -> bool:
     try:
         if sys.platform == "win32":
             # Graceful: send CTRL_BREAK_EVENT via taskkill (no /f).
-            # The bot's signal handler (_install_signal_handlers in
-            # main.py) catches SIGBREAK → sets _shutdown_event →
+            # The framework supervisor's signal handler
+            # (modex_agent.app.supervisor.install_signal_handlers)
+            # catches SIGBREAK → sets _shutdown_event →
             # lifecycle().__aexit__ → opencode serve cleanup.
             subprocess.run(
                 ["taskkill", "/pid", str(pid)],
@@ -611,7 +612,8 @@ def _run_bot(config_str: str, port: int, no_webui: bool) -> None:
             "Configure your IDE to use it, or launch with 'modexbot start'."
         )
 
-    from modexbot.main import create_webui_service, run_with_supervisor
+    from modex_agent.app.supervisor import run_with_supervisor
+    from modexbot.main import create_webui_service
 
     config = Path(config_str)
     static_dist = None
