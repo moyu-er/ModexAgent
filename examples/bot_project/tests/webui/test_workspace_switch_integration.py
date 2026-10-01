@@ -13,11 +13,13 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import AssistantTurnEvent, UserMessageEvent, _unwrap_envelope
+from bot.webui.events import _unwrap_envelope
 from bot.webui.server import WebUIServer, _new_uuid_prefix
+from bot.webui.transcript_store import UserMessageRecord
 
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
+from modex_agent.presentation import TextDelta
 from modex_agent.workspace.control import WorkspaceController
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.registry import ScopeRegistry
@@ -83,7 +85,7 @@ async def _simulate_qa_turn(
     session_id = f"{conv_prefix}.{agent_name}"
     await store.append(
         session_id,
-        UserMessageEvent(
+        UserMessageRecord(
             session_id=session_id,
             agent_name=agent_name,
             content=user_content,
@@ -91,12 +93,12 @@ async def _simulate_qa_turn(
     )
     await store.append(
         session_id,
-        AssistantTurnEvent(
+        TextDelta(
             session_id=session_id,
             agent_name=agent_name,
             turn_id="turn-1",
-            blocks=[{"type": "text", "text": assistant_content}],
-            latency_ms=0,
+            text=assistant_content,
+            segment_id="_text",
         ),
     )
 
@@ -195,7 +197,7 @@ async def test_e2e_switch_workspace_attach_send_transcript_lands_in_ws_dir() -> 
                 session_id, sessions_dir=ws_a_sessions
             )
             assert len(events) >= 1
-            contents = [str(e.to_dict()) for e in events]
+            contents = [str(e.model_dump()) for e in events]
             assert any("hi A" in c for c in contents)
 
             # Step 6: Verify the transcript is NOT in workspace B
@@ -246,7 +248,7 @@ async def test_im_message_carries_ws_routes_transcript_to_workspace() -> None:
         with bind_workspace_root(ws_a):
             await store.append(
                 sid,
-                UserMessageEvent(session_id=sid, agent_name="main", content="IM msg"),
+                UserMessageRecord(session_id=sid, agent_name="main", content="IM msg"),
             )
 
         # Verify transcript lands in ws_a
@@ -255,7 +257,7 @@ async def test_im_message_carries_ws_routes_transcript_to_workspace() -> None:
             sid, sessions_dir=WorkspacePaths(root=ws_a / ".modex").sessions_dir
         )
         assert len(events) == 1
-        assert "IM msg" in str(events[0].to_dict())
+        assert "IM msg" in str(events[0].model_dump())
 
         # Verify it's NOT in home
         home_file = home / ".modex" / "sessions" / "main" / f"{sid}.jsonl"
@@ -292,14 +294,14 @@ async def test_multi_workspace_isolation_concurrent_appends() -> None:
             with bind_workspace_root(ws_a):
                 await store.append(
                     sid_a,
-                    UserMessageEvent(session_id=sid_a, agent_name="main", content="msg for A"),
+                    UserMessageRecord(session_id=sid_a, agent_name="main", content="msg for A"),
                 )
 
         async def _append_b() -> None:
             with bind_workspace_root(ws_b):
                 await store.append(
                     sid_b,
-                    UserMessageEvent(session_id=sid_b, agent_name="main", content="msg for B"),
+                    UserMessageRecord(session_id=sid_b, agent_name="main", content="msg for B"),
                 )
 
         await asyncio.gather(_append_a(), _append_b())
@@ -309,14 +311,14 @@ async def test_multi_workspace_isolation_concurrent_appends() -> None:
             sid_a, sessions_dir=WorkspacePaths(root=ws_a / ".modex").sessions_dir
         )
         assert len(events_a) == 1
-        assert "msg for A" in str(events_a[0].to_dict())
+        assert "msg for A" in str(events_a[0].model_dump())
 
         # Verify B's message is in ws_b
         events_b = await store.load(
             sid_b, sessions_dir=WorkspacePaths(root=ws_b / ".modex").sessions_dir
         )
         assert len(events_b) == 1
-        assert "msg for B" in str(events_b[0].to_dict())
+        assert "msg for B" in str(events_b[0].model_dump())
 
         # Verify cross-isolation: A's message is NOT in ws_b
         ws_b_file = ws_b / ".modex" / "sessions" / "main" / f"{sid_a}.jsonl"
@@ -351,19 +353,19 @@ async def test_multi_workspace_isolation_sequential_appends() -> None:
         with bind_workspace_root(ws_a):
             await store.append(
                 sid_a,
-                UserMessageEvent(session_id=sid_a, agent_name="main", content="first A"),
+                UserMessageRecord(session_id=sid_a, agent_name="main", content="first A"),
             )
         # Then append to B
         with bind_workspace_root(ws_b):
             await store.append(
                 sid_b,
-                UserMessageEvent(session_id=sid_b, agent_name="main", content="first B"),
+                UserMessageRecord(session_id=sid_b, agent_name="main", content="first B"),
             )
         # Append to A again
         with bind_workspace_root(ws_a):
             await store.append(
                 sid_a,
-                UserMessageEvent(session_id=sid_a, agent_name="main", content="second A"),
+                UserMessageRecord(session_id=sid_a, agent_name="main", content="second A"),
             )
 
         # Verify A has both messages
@@ -371,7 +373,7 @@ async def test_multi_workspace_isolation_sequential_appends() -> None:
             sid_a, sessions_dir=WorkspacePaths(root=ws_a / ".modex").sessions_dir
         )
         assert len(events_a) == 2
-        contents_a = [str(e.to_dict()) for e in events_a]
+        contents_a = [str(e.model_dump()) for e in events_a]
         assert any("first A" in c for c in contents_a)
         assert any("second A" in c for c in contents_a)
 
@@ -380,7 +382,7 @@ async def test_multi_workspace_isolation_sequential_appends() -> None:
             sid_b, sessions_dir=WorkspacePaths(root=ws_b / ".modex").sessions_dir
         )
         assert len(events_b) == 1
-        assert "first B" in str(events_b[0].to_dict())
+        assert "first B" in str(events_b[0].model_dump())
 
         # Verify no cross-contamination
         ws_b_has_a = (ws_b / ".modex" / "sessions" / "main" / f"{sid_a}.jsonl").exists()
@@ -428,16 +430,16 @@ async def test_im_zero_change_routing() -> None:
         with bind_workspace_root(ws_target):
             await store.append(
                 sid,
-                UserMessageEvent(session_id=sid, agent_name="main", content="QQ message"),
+                UserMessageRecord(session_id=sid, agent_name="main", content="QQ message"),
             )
             await store.append(
                 sid,
-                AssistantTurnEvent(
+                TextDelta(
                     session_id=sid,
                     agent_name="main",
                     turn_id="turn-1",
-                    blocks=[{"type": "text", "text": "QQ reply"}],
-                    latency_ms=0,
+                    text="QQ reply",
+                    segment_id="_text",
                 ),
             )
 
@@ -447,7 +449,7 @@ async def test_im_zero_change_routing() -> None:
             sessions_dir=WorkspacePaths(root=ws_target / ".modex").sessions_dir,
         )
         assert len(events) == 2
-        contents = [str(e.to_dict()) for e in events]
+        contents = [str(e.model_dump()) for e in events]
         assert any("QQ message" in c for c in contents)
         assert any("QQ reply" in c for c in contents)
 

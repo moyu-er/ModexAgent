@@ -24,8 +24,8 @@ from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
 from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import AssistantTurnEvent, UserMessageEvent
 from bot.webui.server import WebUIServer
+from bot.webui.transcript_store import AttachmentCarrier, UserMessageRecord
 
 from modex_agent.app.models.registry import ModelCfg, ModelRegistry, ProviderCfg
 from modex_agent.core.media import Attachment, AttachmentLocator, Kind
@@ -154,7 +154,7 @@ async def _append_user_message_with_attachment(
 ) -> None:
     await store.append(
         session_id,
-        UserMessageEvent(
+        UserMessageRecord(
             session_id=session_id,
             agent_name="main",
             content="hi",
@@ -172,10 +172,10 @@ async def _append_assistant_turn_with_attachment(
 ) -> None:
     await store.append(
         session_id,
-        AssistantTurnEvent(
+        AttachmentCarrier(
             session_id=session_id,
             agent_name="main",
-            blocks=[{"kind": "text", "text": "done"}],
+            turn_id="t1",
             attachments=[att.to_dict()],
         ),
         sessions_dir=sessions_dir,
@@ -841,8 +841,8 @@ async def test_history_replay_returns_outbound_attachment_records() -> None:
     (ADR-0013 §11).
 
     This is the regression guard for the fix that replaced the hardcoded
-    ``"attachments": []`` in ``_handle_get_messages`` with
-    ``MaterializedTurn.attachments`` (collected by ``_materialize_events``).
+    ``"attachments": []`` in the history route with
+    ``MaterializedTurn.attachments`` (collected by ``materialize_records``).
     """
     with tempfile.TemporaryDirectory() as tmp:
         ws_root = Path(tmp)
@@ -861,14 +861,13 @@ async def test_history_replay_returns_outbound_attachment_records() -> None:
         )
         # The file is on disk so a subsequent download still works.
         (ws_root / "report.txt").write_bytes(b"report-body")
-        # Persist exactly what SendFileToUserTool._persist_attachment writes:
-        # an AssistantTurnEvent with blocks=[], no turn_id, and one record.
+        # Persist exactly what SendFileToUserTool._persist_attachment
+        # writes: a standalone AttachmentCarrier with no turn_id.
         await store.append(
             session_id,
-            AssistantTurnEvent(
+            AttachmentCarrier(
                 session_id=session_id,
                 agent_name="main",
-                blocks=[],
                 attachments=[att.to_dict()],
             ),
             sessions_dir=_sessions_dir(ws_root),

@@ -11,7 +11,7 @@ call, asserting the three properties that were repeatedly broken:
    history (``context_state.history``) for every attachment, surviving the
    broker dispatch boundary AND the turn_runner user_content override.
 3. **Asymmetry** — the injection is NOT in session management (the persisted
-   transcript ``UserMessageEvent.content`` stays the original text) but IS
+   transcript ``UserMessageRecord.content`` stays the original text) but IS
    saved to session memory (``messages.jsonl`` carries the injection).
 
 These three drops (media_store wiring / broker serialization / turn_runner
@@ -31,7 +31,7 @@ from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
 from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import UserMessageEvent
+from bot.webui.transcript_store import UserMessageRecord
 
 from examples.bot_project.tests.input_pipeline.assembly_support import (
     TEST_ASSEMBLY_CTX,
@@ -207,7 +207,7 @@ async def test_attachment_flow_to_llm_injection_and_asymmetry() -> None:
         full_sid = env.metadata["full_session_id"]
         with bind_workspace_root(root):
             events = await transcript_store.load(full_sid)
-        user_events = [e for e in events if isinstance(e, UserMessageEvent)]
+        user_events = [e for e in events if isinstance(e, UserMessageRecord)]
         assert len(user_events) == 1
         assert user_events[0].content == user_text
         assert "[Attachment:" not in user_events[0].content

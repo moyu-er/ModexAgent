@@ -8,12 +8,19 @@ handler is a module-level async function that reads server state through
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from aiohttp import web
 
 from bot.webui.routes.sessions import resolve_agent
-from bot.webui.types import _DEFAULT_AGENT_NAME, _materialize_partial_deltas
+from bot.webui.transcript_store import (
+    MaterializedTurn,
+    TranscriptRecord,
+    UserMessageRecord,
+    materialize_records,
+)
+from bot.webui.types import _DEFAULT_AGENT_NAME
 from modex_agent.core.session_id import session_id_prefix_of
 from modex_agent.core.turn.todo import TodoStatus
 from modex_agent.persistence.adapters.todo_store import JsonFileTodoStore
@@ -23,11 +30,59 @@ if TYPE_CHECKING:
     from bot.webui.server import WebUIServer
 
 
+def _user_message_json(record: UserMessageRecord) -> dict[str, object]:
+    """Serialize one user-message record to the history-API JSON shape.
+
+    Byte-for-byte the dict the pre-cutover ``UserMessageEvent.to_dict()``
+    served — the frontend contract.
+    """
+    return {
+        "event": "user_message",
+        "session_id": record.session_id,
+        "agent_name": record.agent_name,
+        "timestamp": record.timestamp_ms,
+        "content": record.content,
+        "attachments": record.attachments,
+    }
+
+
+def partial_streaming_turn(
+    records: Sequence[TranscriptRecord], agent_name: str
+) -> dict[str, object] | None:
+    """Fold the partial streaming buffer into one synthetic streaming turn.
+
+    The buffer holds the ``TextDelta`` / ``ThinkingDelta`` records streamed
+    since the last flush boundary; the SAME framework materializer that
+    replays history folds them, and this projection maps the last open
+    turn onto the synthetic ``assistant_turn`` the route serves with
+    ``is_streaming=True`` (the frontend renders it as the in-progress
+    message and keeps appending live WS deltas on top). Returns ``None``
+    when the buffer holds no foldable content.
+    """
+    turns = materialize_records(records)
+    streaming: MaterializedTurn | None = turns[-1] if turns else None
+    if streaming is None or not streaming.blocks:
+        return None
+    return {
+        "event": "assistant_turn",
+        "session_id": "",
+        "agent_name": agent_name,
+        "timestamp": streaming.started_at,
+        "turn_id": streaming.turn_id,
+        "blocks": streaming.blocks,
+        "latency_ms": 0,
+        "is_streaming": True,
+    }
+
+
 async def handle_get_messages(request: web.Request) -> web.Response:
     """``GET /api/sessions/{session_id}/messages`` -- load transcript events.
 
     Returns user messages (as-is) and materialized assistant turns
     (synthetic assistant_turn dicts with blocks), merged by timestamp.
+    Turn folding is the framework's ``materialize_turns`` reached through
+    :func:`bot.webui.transcript_store.materialize_records` — the history
+    route is a pure projection of those turns onto the response JSON.
     """
     server: WebUIServer = request.app["server"]
     session_id: str = request.match_info["session_id"]
@@ -48,11 +103,11 @@ async def handle_get_messages(request: web.Request) -> web.Response:
     store = server._store
 
     user_events: list[dict[str, object]] = [
-        e.to_dict()
-        for e in await store.load_sessions_by_prefix(
+        _user_message_json(record)
+        for record in await store.load_sessions_by_prefix(
             session_prefix, sessions_dir=sessions_dir, pool=pool
         )
-        if e.event == "user_message"
+        if isinstance(record, UserMessageRecord)
     ]
 
     turns = await store.load_materialized_by_prefix(
@@ -69,10 +124,10 @@ async def handle_get_messages(request: web.Request) -> web.Response:
                 "turn_id": t.turn_id,
                 "blocks": t.blocks,
                 "latency_ms": 0,
-                # G7: SendFileToUserTool persists outbound Attachment records on
-                # an AssistantTurnEvent; _materialize_events collects them onto
-                # MaterializedTurn.attachments (including the standalone
-                # no-turn_id carriers G7 writes) so they survive a refresh.
+                # G7: SendFileToUserTool persists outbound Attachment records
+                # on a transcript carrier; materialize_records collects them
+                # onto MaterializedTurn.attachments (including the standalone
+                # no-turn carriers G7 writes) so they survive a refresh.
                 "attachments": t.attachments,
             }
         )
@@ -80,12 +135,13 @@ async def handle_get_messages(request: web.Request) -> web.Response:
     result = user_events + assistant_events
 
     # Partial streaming events — in-memory buffer, queried separately
-    # from the main transcript. Attached as a synthetic streaming turn.
+    # from the main transcript, folded by the SAME framework materializer
+    # and attached as a synthetic streaming turn.
     load_partial = getattr(store, "load_partial", None)
     if load_partial is not None:
-        partial_events = await load_partial(session_id, sessions_dir=sessions_dir)
-        if partial_events:
-            partial_turn = _materialize_partial_deltas(partial_events, agent_name)
+        partial_records = await load_partial(session_id, sessions_dir=sessions_dir)
+        if partial_records:
+            partial_turn = partial_streaming_turn(partial_records, agent_name)
             if partial_turn is not None:
                 result.append(partial_turn)
 

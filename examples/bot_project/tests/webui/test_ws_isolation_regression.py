@@ -21,8 +21,9 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import UserMessageEvent, _unwrap_envelope
+from bot.webui.events import _unwrap_envelope
 from bot.webui.server import WebUIServer
+from bot.webui.transcript_store import UserMessageRecord
 
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.multi_agent.pool_router import PoolSessionStore
@@ -78,7 +79,7 @@ async def _seed(
     with bind_workspace_root(ws_root):
         await store.append(
             session_id,
-            UserMessageEvent(session_id=session_id, agent_name="main", content=content),
+            UserMessageRecord(session_id=session_id, agent_name="main", content=content),
         )
 
 
@@ -274,7 +275,7 @@ async def _seed_for_pool(
     with bind_workspace_root(ws_root):
         await store.append(
             session_id,
-            UserMessageEvent(session_id=session_id, agent_name=agent_name, content=content),
+            UserMessageRecord(session_id=session_id, agent_name=agent_name, content=content),
             pool=agent_name,
         )
 

@@ -2,11 +2,11 @@
 WebUI / ACP projections.
 
 The base class owns ONE transcript writer per emitter: text/reasoning
-accumulate as segments and flush as single transcript events, tool pairs
-persist together with full fidelity. Projections translate the same facts
-into their own sink — the WebUI one truncates for display, the ACP one
-forwards full-fidelity ``TurnEvent``s. These tests pin the split: single
-write, full args, no duplicated text.
+accumulate as segments and persist as single complete delta records, tool
+pairs persist together with full fidelity. Projections translate the same
+facts into their own sink — the WebUI one truncates for display, the ACP
+one forwards full-fidelity ``TurnEvent``s. These tests pin the split:
+single write, full args, no duplicated text.
 """
 
 from __future__ import annotations
@@ -19,14 +19,12 @@ import pytest
 from bot.acp.emitter import AcpEmitterHub, AcpTurnEmitter
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
 from bot.webui.emitter import BotTranscriptEmitter, WebBotEmitter
-from bot.webui.events import (
-    AssistantReasoningEvent,
-    AssistantTextEvent,
-    ToolCallEvent,
-    ToolResultEvent,
-    WebUIEventType,
+from bot.webui.events import WebUIEventType
+from bot.webui.transcript_store import (
+    JSONLTranscriptStore,
+    TranscriptRecord,
+    TranscriptStore,
 )
-from bot.webui.transcript_store import JSONLTranscriptStore, TranscriptStore
 
 from modex_agent.core.emitter import AgentResult, turn_finished_event
 from modex_agent.core.turn_events import (
@@ -36,26 +34,34 @@ from modex_agent.core.turn_events import (
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
+from modex_agent.presentation import (
+    TextDelta,
+    ThinkingDelta,
+    ToolCallStarted,
+    ToolResult,
+)
 
 
 class _RecordingTranscriptStore(TranscriptStore):
     """In-memory TranscriptStore capturing appends per session."""
 
     def __init__(self) -> None:
-        self.events: dict[str, list[Any]] = {}
+        self.events: dict[str, list[TranscriptRecord]] = {}
 
     async def append(
-        self, session_id: str, event: Any, *, pool: str = "main"
+        self, session_id: str, event: TranscriptRecord, *, pool: str | None = None
     ) -> None:
+        del pool
         self.events.setdefault(session_id, []).append(event)
 
-    async def load(self, session_id: str) -> list[Any]:
+    async def load(self, session_id: str) -> list[TranscriptRecord]:
         return list(self.events.get(session_id, []))
 
     async def load_sessions_by_prefix(
         self, session_prefix: str, *, pool: str | None = None
-    ) -> list[Any]:
-        merged: list[Any] = []
+    ) -> list[TranscriptRecord]:
+        del pool
+        merged: list[TranscriptRecord] = []
         for sid, events in self.events.items():
             if sid.startswith(session_prefix):
                 merged.extend(events)
@@ -113,8 +119,8 @@ def test_base_emitter_is_abstract() -> None:
 
 @pytest.mark.asyncio
 async def test_lifecycle_single_write_text_and_reasoning() -> None:
-    """Deltas accumulate; exactly ONE AssistantTextEvent + ONE
-    AssistantReasoningEvent reach the transcript — never per-delta writes."""
+    """Deltas accumulate; exactly ONE TextDelta + ONE ThinkingDelta record
+    reach the transcript — never per-delta writes."""
     with tempfile.TemporaryDirectory() as tmp:
         store = JSONLTranscriptStore(Path(tmp))
         emitter = WebBotEmitter(
@@ -128,27 +134,17 @@ async def test_lifecycle_single_write_text_and_reasoning() -> None:
         await emitter.emit(TurnReasoningEvent(text="thinking"))
         await emitter.emit(turn_finished_event(AgentResult(content="done")))
 
-        events = await store.load("conv1.main")
-        texts = [
-            e
-            for e in events
-            if e.event == WebUIEventType.ASSISTANT_TEXT.value
-            and isinstance(e, AssistantTextEvent)
-        ]
-        reasoning = [
-            e
-            for e in events
-            if e.event == WebUIEventType.ASSISTANT_REASONING.value
-            and isinstance(e, AssistantReasoningEvent)
-        ]
+        records = await store.load("conv1.main")
+        texts = [r for r in records if isinstance(r, TextDelta)]
+        reasoning = [r for r in records if isinstance(r, ThinkingDelta)]
         assert len(texts) == 1 and texts[0].text == "Hello world"
         assert len(reasoning) == 1 and reasoning[0].text == "thinking"
 
 
 @pytest.mark.asyncio
 async def test_react_tool_pair_persisted_once_with_full_fidelity() -> None:
-    """TOOL_CALL_START + TOOL_CALL_END persist ONE pair sharing turn_id with
-    the FULL args and result (not the WS display truncations)."""
+    """The call+result persist as ONE pair sharing turn_id with the FULL
+    args and result (not the WS display truncations)."""
     with tempfile.TemporaryDirectory() as tmp:
         store = JSONLTranscriptStore(Path(tmp))
         emitter = WebBotEmitter(
@@ -166,14 +162,14 @@ async def test_react_tool_pair_persisted_once_with_full_fidelity() -> None:
             )
         )
 
-        events = await store.load("conv1.main")
-        tc_events = [e for e in events if isinstance(e, ToolCallEvent)]
-        tr_events = [e for e in events if isinstance(e, ToolResultEvent)]
-        assert len(tc_events) == 1 and len(tr_events) == 1
-        assert tc_events[0].args == big_args
-        assert tr_events[0].result == "r" * 1000
-        assert tr_events[0].seq == 7
-        assert tc_events[0].turn_id == tr_events[0].turn_id
+        records = await store.load("conv1.main")
+        tc_records = [r for r in records if isinstance(r, ToolCallStarted)]
+        tr_records = [r for r in records if isinstance(r, ToolResult)]
+        assert len(tc_records) == 1 and len(tr_records) == 1
+        assert tc_records[0].arguments == big_args
+        assert tr_records[0].output == "r" * 1000
+        assert tr_records[0].seq == 7
+        assert tc_records[0].turn_id == tr_records[0].turn_id
 
 
 @pytest.mark.asyncio
@@ -206,10 +202,10 @@ async def test_acp_projection_full_fidelity_no_truncation_single_writer() -> Non
     assert calls[0].call_id == "c1" == results[0].call_id
 
     persisted = transcripts.events["sess-1"]
-    tc_persisted = [e for e in persisted if isinstance(e, ToolCallEvent)]
-    tr_persisted = [e for e in persisted if isinstance(e, ToolResultEvent)]
+    tc_persisted = [r for r in persisted if isinstance(r, ToolCallStarted)]
+    tr_persisted = [r for r in persisted if isinstance(r, ToolResult)]
     assert len(tc_persisted) == 1 and len(tr_persisted) == 1
-    assert tr_persisted[0].result == big_result
+    assert tr_persisted[0].output == big_result
 
 
 @pytest.mark.asyncio
@@ -230,7 +226,7 @@ async def test_acp_text_projected_once_without_duplicate() -> None:
     assert "".join(e.text for e in texts) == "hello back"
 
     persisted = transcripts.events["sess-1"]
-    assistant_texts = [e for e in persisted if isinstance(e, AssistantTextEvent)]
+    assistant_texts = [r for r in persisted if isinstance(r, TextDelta)]
     assert len(assistant_texts) == 1
     assert assistant_texts[0].text == "hello back"
 

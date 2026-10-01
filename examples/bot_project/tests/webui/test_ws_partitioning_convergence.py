@@ -23,9 +23,10 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import DeltaEnvelope, UserMessageEvent, _unwrap_envelope
+from bot.webui.events import DeltaEnvelope, _unwrap_envelope
 from bot.webui.routes.websocket.streaming import _queue_belongs_to_connection
 from bot.webui.server import WebUIServer
+from bot.webui.transcript_store import UserMessageRecord
 
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
@@ -157,7 +158,7 @@ async def test_transcript_append_warns_when_ws_root_unbound(
     with caplog.at_level(logging.WARNING, logger="bot.service.workspace_store"):
         # No bind_workspace_root → unbound.
         await store.append(
-            sid, UserMessageEvent(session_id=sid, agent_name="main", content="x")
+            sid, UserMessageRecord(session_id=sid, agent_name="main", content="x")
         )
     assert any("[ws-partition]" in r.message for r in caplog.records), (
         "unbound append must log a [ws-partition] warning"
@@ -174,7 +175,7 @@ async def test_transcript_append_silent_when_ws_root_bound(
         logging.WARNING, logger="bot.service.workspace_store"
     ), bind_workspace_root(tmp_path):
         await store.append(
-            sid, UserMessageEvent(session_id=sid, agent_name="main", content="x")
+            sid, UserMessageRecord(session_id=sid, agent_name="main", content="x")
         )
     assert not any("[ws-partition]" in r.message for r in caplog.records), (
         "bound append must NOT warn"

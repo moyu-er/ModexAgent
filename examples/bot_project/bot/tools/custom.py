@@ -6,6 +6,7 @@ Contains user-facing tools (SendFileToUserTool).
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -137,7 +138,7 @@ class SendFileToUserTool(ExclusiveTool):
         # endpoint (G6) can resolve it via find_attachment (G4) the moment a
         # client receives the attachment-card delta. Persist is best-effort
         # (_persist_attachment swallows its own errors) so it cannot break the
-        # send below. The record rides on an assistant_turn ServerEvent
+        # send below. The record rides an AttachmentCarrier transcript record
         # (ADR-0013 §11), scanned by find_attachment alongside user_message
         # inbound records.
         await self._persist_attachment(session_id, attachment)
@@ -177,7 +178,7 @@ class SendFileToUserTool(ExclusiveTool):
     async def _persist_attachment(
         self, session_id: str, attachment: Attachment
     ) -> None:
-        """Record the outbound Attachment on an assistant_turn transcript event.
+        """Record the outbound Attachment on a transcript carrier record.
 
         Best-effort: a transcript write failure must not break the send (the
         file already reached the user via the adapter). The store's Resilient
@@ -187,12 +188,15 @@ class SendFileToUserTool(ExclusiveTool):
         if self._transcript_store is None:
             return
         try:
-            from bot.webui.events import AssistantTurnEvent
+            from bot.webui.transcript_store import AttachmentCarrier
 
-            event = AssistantTurnEvent(
+            # Standalone carrier (empty turn_id): the record replays as its
+            # own turn so the history API renders the download card after a
+            # refresh (ADR-0013 §11).
+            record = AttachmentCarrier(
                 session_id=session_id,
                 agent_name=agent_of(session_id, default="main"),
-                blocks=[],
+                timestamp_ms=int(time.time() * 1000),
                 attachments=[attachment.to_dict()],
             )
             sessions_dir = (
@@ -202,10 +206,10 @@ class SendFileToUserTool(ExclusiveTool):
             )
             if sessions_dir is not None:
                 await self._transcript_store.append(
-                    session_id, event, sessions_dir=sessions_dir
+                    session_id, record, sessions_dir=sessions_dir
                 )
             else:
-                await self._transcript_store.append(session_id, event)
+                await self._transcript_store.append(session_id, record)
         except Exception:
             logger.exception(
                 "Failed to persist outbound attachment %s for session %s; "

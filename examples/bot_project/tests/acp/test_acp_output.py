@@ -31,7 +31,6 @@ from bot.acp.emitter import (
     AcpOutputAdapter,
     AcpTurnEmitter,
 )
-from bot.webui.events import AssistantTextEvent, ToolCallEvent, ToolResultEvent
 from bot.webui.transcript_store import TranscriptStore
 
 from modex_agent.agents.react.agent import ReActAgent
@@ -58,6 +57,7 @@ from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
+from modex_agent.presentation import TextDelta, ToolCallStarted, ToolResult
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager
@@ -517,9 +517,9 @@ async def test_plain_turn_streams_text_once_and_persists_transcript(
     assert result is not None and result.stop_reason.value == "completed"
     texts = [e.text for e in collector.events if isinstance(e, TurnTextEvent)]
     assert "".join(texts) == "hello back"
-    # Canonical single-write transcript: one AssistantTextEvent, not deltas.
+    # Canonical single-write transcript: one TextDelta record, not per-delta writes.
     persisted = await harness.transcripts.load(harness.session.session_id)
-    assistant_texts = [e for e in persisted if isinstance(e, AssistantTextEvent)]
+    assistant_texts = [e for e in persisted if isinstance(e, TextDelta)]
     assert len(assistant_texts) == 1
     assert assistant_texts[0].text == "hello back"
 
@@ -561,11 +561,11 @@ async def test_tool_turn_projects_full_fidelity_tool_events(tmp_path: Path) -> N
     # The same turn wrote the canonical tool pair to the transcript — one
     # writer, two sinks.
     persisted = await harness.transcripts.load(harness.session.session_id)
-    tc = [e for e in persisted if isinstance(e, ToolCallEvent)]
-    tr = [e for e in persisted if isinstance(e, ToolResultEvent)]
+    tc = [e for e in persisted if isinstance(e, ToolCallStarted)]
+    tr = [e for e in persisted if isinstance(e, ToolResult)]
     assert len(tc) == 1 and len(tr) == 1
     assert tc[0].call_id == "c1" and tr[0].call_id == "c1"
-    assert tr[0].result == big_result
+    assert tr[0].output == big_result
     # Text precedes the tool call on the editor stream (flush-before-tool).
     first_text = next(i for i, e in enumerate(collector.events) if isinstance(e, TurnTextEvent))
     first_tool = next(i for i, e in enumerate(collector.events) if isinstance(e, TurnToolCallEvent))

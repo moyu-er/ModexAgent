@@ -13,7 +13,7 @@ from bot.acp.driver import PoolAcpSessionHandle
 from bot.acp.emitter import AcpApprovalRouteError
 from bot.acp.identity import create_acp_session
 from bot.acp.runtime import AcpRuntime
-from bot.webui.events import UserMessageEvent
+from bot.webui.transcript_store import UserMessageRecord
 
 from modex_agent.acp.backend import AcpInteraction
 from modex_agent.acp.types import (
@@ -22,12 +22,11 @@ from modex_agent.acp.types import (
     PermissionChoice,
     PermissionPrompt,
 )
-from modex_agent.core.turn_events import StopReason
 from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
 from modex_agent.core.session_id import SessionIdFactory
-from modex_agent.core.turn_events import TurnEvent
+from modex_agent.core.turn_events import StopReason, TurnEvent
 
 
 class _Interaction(AcpInteraction):
@@ -315,7 +314,7 @@ async def test_cancel_during_begin_request_window_is_not_lost(make_handle) -> No
     assert result.stop_reason == StopReason.CANCELLED
     assert provider.calls == 0
     events = await handle._runtime.input_context.transcript_store.load(handle.session_id)
-    assert [e.content for e in events if isinstance(e, UserMessageEvent)] == []
+    assert [e.content for e in events if isinstance(e, UserMessageRecord)] == []
 
 
 async def test_cancel_during_prepare_maps_reservation_lost_to_cancelled(make_handle) -> None:
@@ -509,8 +508,8 @@ async def test_busy_prompt_does_not_persist_or_call_provider(make_handle) -> Non
     assert (await asyncio.wait_for(first, 10)).stop_reason == StopReason.COMPLETED
     assert provider.calls == 1
     events = await handle._runtime.input_context.transcript_store.load(handle.session_id)
-    from bot.webui.events import UserMessageEvent
-    assert [event.content for event in events if isinstance(event, UserMessageEvent)] == ["first"]
+    from bot.webui.transcript_store import UserMessageRecord
+    assert [event.content for event in events if isinstance(event, UserMessageRecord)] == ["first"]
 
 
 async def test_read_history_rejects_across_whole_prompt_lifecycle(make_handle) -> None:
@@ -604,7 +603,7 @@ async def test_subagent_approval_roundtrips_through_real_child_session(make_hand
     assert (await asyncio.wait_for(root_prompt, 10)).stop_reason == StopReason.COMPLETED
     assert writes == ["child-outside.txt"]
     root_events = await runtime.input_context.transcript_store.load(handle.session_id)
-    assert [e.content for e in root_events if isinstance(e, UserMessageEvent)] == ["delegate"]
+    assert [e.content for e in root_events if isinstance(e, UserMessageRecord)] == ["delegate"]
 
 
 async def _until(predicate) -> None:

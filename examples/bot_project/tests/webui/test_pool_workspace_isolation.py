@@ -17,9 +17,9 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import UserMessageEvent, _unwrap_envelope
+from bot.webui.events import _unwrap_envelope
 from bot.webui.server import WebUIServer, _new_uuid_prefix
-from bot.webui.transcript_store import JSONLTranscriptStore
+from bot.webui.transcript_store import JSONLTranscriptStore, UserMessageRecord
 
 from modex_agent.multi_agent.pool_router import PoolSessionStore
 from modex_agent.workspace.paths import WorkspacePaths
@@ -184,7 +184,7 @@ async def test_pool_survives_multiple_attach_cycles() -> None:
 @pytest.mark.asyncio
 async def test_im_conversation_stored_in_current_workspace() -> None:
     """IM messages written while on the default workspace are visible there."""
-    from bot.webui.events import UserMessageEvent
+    from bot.webui.transcript_store import UserMessageRecord
 
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
@@ -208,7 +208,7 @@ async def test_im_conversation_stored_in_current_workspace() -> None:
         im_conv_id = "qq_user_999"
         im_sid = f"{im_conv_id}.main"
         routing_store.set_pool(im_conv_id, "main")
-        event = UserMessageEvent(
+        event = UserMessageRecord(
             session_id=im_sid,
             agent_name="main",
             content="QQ message from user"
@@ -242,7 +242,7 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
     In the new model each workspace has its own data dir (``.modex/sessions/``),
     so sessions are physically separate.
     """
-    from bot.webui.events import UserMessageEvent
+    from bot.webui.transcript_store import UserMessageRecord
 
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
@@ -274,7 +274,7 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
         conv_a = sid_a.split(".")[0]
         routing_store.set_pool(conv_a, "main")
 
-        event_a = UserMessageEvent(
+        event_a = UserMessageRecord(
             session_id=sid_a, agent_name="main", content="ws-a msg"
 )
         # Workspace-A write: bind to data_dir_a so it lands under
@@ -301,7 +301,7 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
         conv_b = sid_b.split(".")[0]
         routing_store.set_pool(conv_b, "main")
 
-        event_b = UserMessageEvent(
+        event_b = UserMessageRecord(
             session_id=sid_b, agent_name="main", content="ws-b msg"
 )
         # Workspace-B write: bind to data_dir_b so it lands under
@@ -356,14 +356,14 @@ async def test_append_follows_current_workspace_after_switch() -> None:
 
     # 1. Write in workspace A (default)
     with bind_workspace_root(ws_a):
-        await store.append(sid, UserMessageEvent(
+        await store.append(sid, UserMessageRecord(
             session_id=sid, agent_name="main", content="msg-in-home"
         ))
 
     # 2. Switch to workspace B (simulating cd E:\\download\\bot)
     # 3. Write another event for same session — must go to workspace B
     with bind_workspace_root(ws_b):
-        await store.append(sid, UserMessageEvent(
+        await store.append(sid, UserMessageRecord(
             session_id=sid, agent_name="main", content="msg-after-cd"
         ))
 
@@ -375,7 +375,7 @@ async def test_append_follows_current_workspace_after_switch() -> None:
         "Expected events in workspace B, but none found. "
         "append() must use CURRENT workspace, not sticky."
     )
-    assert any("msg-after-cd" in str(e.to_dict()) for e in events_b), (
+    assert any("msg-after-cd" in str(e.model_dump()) for e in events_b), (
         "msg-after-cd must appear in workspace B"
     )
 
@@ -383,7 +383,7 @@ async def test_append_follows_current_workspace_after_switch() -> None:
     events_a = await JSONLTranscriptStore(
         ws_a / ".modex" / "sessions" / "main"
     ).load(sid)
-    assert any("msg-in-home" in str(e.to_dict()) for e in events_a), (
+    assert any("msg-in-home" in str(e.model_dump()) for e in events_a), (
         "msg-in-home must still be in workspace A"
     )
 
@@ -401,25 +401,25 @@ async def test_append_follows_repeated_workspace_switches() -> None:
 
     # W1 → A
     with bind_workspace_root(ws_a):
-        await store.append(sid, UserMessageEvent(
+        await store.append(sid, UserMessageRecord(
             session_id=sid, agent_name="main", content="w1-in-A"
         ))
 
     # cd B, W2 → B
     with bind_workspace_root(ws_b):
-        await store.append(sid, UserMessageEvent(
+        await store.append(sid, UserMessageRecord(
             session_id=sid, agent_name="main", content="w2-in-B"
         ))
 
     # cd C, W3 → C
     with bind_workspace_root(ws_c):
-        await store.append(sid, UserMessageEvent(
+        await store.append(sid, UserMessageRecord(
             session_id=sid, agent_name="main", content="w3-in-C"
         ))
 
     # cd back to A, W4 → A
     with bind_workspace_root(ws_a):
-        await store.append(sid, UserMessageEvent(
+        await store.append(sid, UserMessageRecord(
             session_id=sid, agent_name="main", content="w4-back-in-A"
         ))
 
@@ -433,7 +433,7 @@ async def test_append_follows_repeated_workspace_switches() -> None:
         events = await JSONLTranscriptStore(
             root / ".modex" / "sessions" / "main"
         ).load(sid)
-        assert any(expected_content in str(e.to_dict()) for e in events), (
+        assert any(expected_content in str(e.model_dump()) for e in events), (
             f"Expected {expected_content!r} under {root}/.modex/sessions/main"
         )
 
@@ -523,24 +523,24 @@ async def test_transcript_store_resolver_routes_writes_correctly() -> None:
         # Unmapped prefix -> home
         sid_home = "conv1.main"
         with bind_workspace_root(home_dir):
-            await store.append(sid_home, UserMessageEvent(
+            await store.append(sid_home, UserMessageRecord(
                 session_id=sid_home, agent_name="main", content="home"
             ))
         home_events = await JSONLTranscriptStore(
             home_dir / ".modex" / "sessions" / "main"
         ).load(sid_home)
-        assert len(home_events) == 1 and "home" in str(home_events[0].to_dict())
+        assert len(home_events) == 1 and "home" in str(home_events[0].model_dump())
 
         # Mapped prefix -> workspace
         sid_ws = "conv2.main"
         with bind_workspace_root(ws_dir):
-            await store.append(sid_ws, UserMessageEvent(
+            await store.append(sid_ws, UserMessageRecord(
                 session_id=sid_ws, agent_name="main", content="workspace"
             ))
         ws_events = await JSONLTranscriptStore(
             ws_dir / ".modex" / "sessions" / "main"
         ).load(sid_ws)
-        assert len(ws_events) == 1 and "workspace" in str(ws_events[0].to_dict())
+        assert len(ws_events) == 1 and "workspace" in str(ws_events[0].model_dump())
 
         # Home should not have the workspace session
         home_events2 = await JSONLTranscriptStore(
@@ -571,13 +571,13 @@ async def test_transcript_store_prefix_resolver_routes_to_restored_workspace() -
 
         # Write goes directly to the restored workspace (bound root)
         with bind_workspace_root(restored_dir):
-            await store.append(sid, UserMessageEvent(
+            await store.append(sid, UserMessageRecord(
                 session_id=sid, agent_name="main", content="restored-write"
             ))
         restored_events = await JSONLTranscriptStore(
             restored_dir / ".modex" / "sessions" / "main"
         ).load(sid)
-        assert len(restored_events) == 1 and "restored-write" in str(restored_events[0].to_dict()), (
+        assert len(restored_events) == 1 and "restored-write" in str(restored_events[0].model_dump()), (
             "write must go to the bound (restored) workspace"
         )
 

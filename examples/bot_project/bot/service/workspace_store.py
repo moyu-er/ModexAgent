@@ -41,12 +41,15 @@ from pathlib import Path
 
 import pathvalidate
 
-from bot.webui.events import ServerEvent
 from bot.webui.transcript_store import (
+    AttachmentCarrier,
     JSONLTranscriptStore,
     ResilientTranscriptStore,
+    TranscriptRecord,
     TranscriptStore,
+    UserMessageRecord,
     WorkspaceRoutedTranscriptStore,
+    materialize_records,
 )
 from bot.webui.types import _DEFAULT_AGENT_NAME, WorkspaceIndex
 from modex_agent.workspace.paths import WorkspacePaths
@@ -57,6 +60,13 @@ WorkspaceTranscriptStoreResolver = Callable[[Path], Awaitable[TranscriptStore]]
 logger = logging.getLogger(__name__)
 
 _DEFAULT_POOL: str = _DEFAULT_AGENT_NAME
+
+
+def _record_time(record: TranscriptRecord) -> int:
+    """Timestamp key for cross-pool record merges (0 = unknown, sorts first)."""
+    if isinstance(record, UserMessageRecord | AttachmentCarrier):
+        return record.timestamp_ms
+    return record.timestamp_ms if record.timestamp_ms is not None else 0
 
 
 def _pool_sanitized(pool: str) -> str:
@@ -93,14 +103,14 @@ class _FileWorkspaceTranscriptStore(TranscriptStore):
     async def append(
         self,
         session_id: str,
-        event: ServerEvent,
+        event: TranscriptRecord,
         *,
         pool: str | None = None,
     ) -> None:
         owner = pool if pool is not None else _DEFAULT_POOL
         await self._store_for(owner).append(session_id, event, pool=_pool_sanitized(owner))
 
-    async def load(self, session_id: str) -> list[ServerEvent]:
+    async def load(self, session_id: str) -> list[TranscriptRecord]:
         return await (await self._owner(session_id)).load(session_id)
 
     async def load_sessions_by_prefix(
@@ -108,7 +118,7 @@ class _FileWorkspaceTranscriptStore(TranscriptStore):
         session_prefix: str,
         *,
         pool: str | None = None,
-    ) -> list[ServerEvent]:
+    ) -> list[TranscriptRecord]:
         stores = (
             [self._store_for(pool)]
             if pool is not None
@@ -119,7 +129,7 @@ class _FileWorkspaceTranscriptStore(TranscriptStore):
             for store in stores
             for event in await store.load_sessions_by_prefix(session_prefix)
         ]
-        events.sort(key=lambda event: event.timestamp)
+        events.sort(key=_record_time)
         return events
 
     async def list_sessions(self) -> set[str]:
@@ -174,7 +184,7 @@ class WorkspaceScopedTranscriptStore(WorkspaceRoutedTranscriptStore, WorkspaceIn
         self._generations: dict[Path, int] = {}
         # In-memory partial streaming buffer: key = "sessions_dir|session_id".
         # Single process-wide dict; cleared on turn_end, gone on crash.
-        self._partial_buffer: dict[str, list[ServerEvent]] = {}
+        self._partial_buffer: dict[str, list[TranscriptRecord]] = {}
 
     def set_store_resolver(self, resolver: WorkspaceTranscriptStoreResolver) -> None:
         """Configure the persistence-owned workspace adapter resolver."""
@@ -251,7 +261,7 @@ class WorkspaceScopedTranscriptStore(WorkspaceRoutedTranscriptStore, WorkspaceIn
     async def append(
         self,
         session_id: str,
-        event: ServerEvent,
+        event: TranscriptRecord,
         *,
         pool: str | None = None,
         sessions_dir: Path | None = None,
@@ -280,7 +290,7 @@ class WorkspaceScopedTranscriptStore(WorkspaceRoutedTranscriptStore, WorkspaceIn
             pool=_pool_sanitized(pool) if pool is not None else None,
         )
 
-    async def load(self, session_id: str, sessions_dir: Path | None = None) -> list[ServerEvent]:
+    async def load(self, session_id: str, sessions_dir: Path | None = None) -> list[TranscriptRecord]:
         resolved = self._resolve_dir(sessions_dir)
         return await (await self._workspace_store(resolved)).load(session_id)
 
@@ -290,7 +300,7 @@ class WorkspaceScopedTranscriptStore(WorkspaceRoutedTranscriptStore, WorkspaceIn
         *,
         pool: str | None = None,
         sessions_dir: Path | None = None,
-    ) -> list[ServerEvent]:
+    ) -> list[TranscriptRecord]:
         resolved = self._resolve_dir(sessions_dir)
         return await (await self._workspace_store(resolved)).load_sessions_by_prefix(
             session_prefix,
@@ -328,13 +338,11 @@ class WorkspaceScopedTranscriptStore(WorkspaceRoutedTranscriptStore, WorkspaceIn
         pool: str | None = None,
         sessions_dir: Path | None = None,
     ) -> list:
-        """Materialize events for *session_prefix* into merged turn blocks."""
-        from bot.webui.transcript_store import _materialize_events
-
+        """Replay events for *session_prefix* into merged turn blocks."""
         events = await self.load_sessions_by_prefix(
             session_prefix, sessions_dir=sessions_dir, pool=pool
         )
-        return _materialize_events(events)
+        return materialize_records(events)
 
     # ------------------------------------------------------------------
     # Partial streaming events — in-memory, cleared on turn_end, no crash leftover.
@@ -343,7 +351,7 @@ class WorkspaceScopedTranscriptStore(WorkspaceRoutedTranscriptStore, WorkspaceIn
     async def append_partial(
         self,
         session_id: str,
-        event: ServerEvent,
+        event: TranscriptRecord,
         *,
         sessions_dir: Path | None = None,
     ) -> None:
@@ -353,7 +361,7 @@ class WorkspaceScopedTranscriptStore(WorkspaceRoutedTranscriptStore, WorkspaceIn
 
     async def load_partial(
         self, session_id: str, sessions_dir: Path | None = None
-    ) -> list[ServerEvent]:
+    ) -> list[TranscriptRecord]:
         resolved = self._resolve_dir(sessions_dir)
         key = self._partial_key(resolved, session_id)
         return list(self._partial_buffer.get(key, ()))

@@ -26,7 +26,7 @@ from bot.input_pipeline.assembly import (
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.prepare import Handled, Prepared
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import UserMessageEvent
+from bot.webui.transcript_store import UserMessageRecord
 from bot_plugins.im_input_stages import IMInputStagesPlugin
 from pydantic import BaseModel, ConfigDict
 
@@ -140,7 +140,7 @@ async def test_replacement_envelope_drives_persistence_and_delivery(
 
             events = await store.load(delivered.session.session_id)
             assert len(events) == 1
-            assert isinstance(events[0], UserMessageEvent)
+            assert isinstance(events[0], UserMessageRecord)
             assert events[0].content == _REPLACED_CONTENT
             assert delivered.content == _REPLACED_CONTENT
 

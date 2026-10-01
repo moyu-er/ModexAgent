@@ -128,7 +128,7 @@ async def test_ws_sqlite_send_persists_user_before_enqueue(tmp_path: Path) -> No
         assert echoed["event"] == WebUIEventType.USER_MESSAGE.value
         assert await session_store.get(session_id) is not None
         events = await transcript_store.load(session_id, sessions_dir=paths.sessions_dir)
-        assert [event.to_dict().get("content") for event in events] == [
+        assert [event.model_dump().get("content") for event in events] == [
             "sqlite regression"
         ]
         with anyio.fail_after(1):

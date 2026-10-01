@@ -452,11 +452,11 @@ async def test_api_messages_loads_transcript() -> None:
         )
         server.set_workspace_index(store)
         # Append to the server's active workspace store, not the legacy one.
-        from bot.webui.events import UserMessageEvent
+        from bot.webui.transcript_store import UserMessageRecord
         with bind_workspace_root(workspace_root):
             await server._store.append(
                 "abc123.main",
-                UserMessageEvent(session_id="abc123.main", agent_name="main", content="hello")
+                UserMessageRecord(session_id="abc123.main", agent_name="main", content="hello")
 )
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -544,13 +544,13 @@ async def test_sessions_list_includes_pool() -> None:
         await asyncio.sleep(0.1)
 
         # Add transcript data to the server's workspace-scoped store.
-        from bot.webui.events import UserMessageEvent
+        from bot.webui.transcript_store import UserMessageRecord
         with bind_workspace_root(data_dir):
             await server._store.append(s1_sid,
-                UserMessageEvent(session_id=s1_sid, agent_name="coding", content="hi"),
+                UserMessageRecord(session_id=s1_sid, agent_name="coding", content="hi"),
                 pool="coding")
             await server._store.append(s2_sid,
-                UserMessageEvent(session_id=s2_sid, agent_name="main", content="hi"))
+                UserMessageRecord(session_id=s2_sid, agent_name="main", content="hi"))
 
         resp = await client.get("/api/sessions")
         assert resp.status == 200
@@ -567,7 +567,7 @@ async def test_sessions_list_includes_pool() -> None:
 @pytest.mark.asyncio
 async def test_delete_session_cleans_up_metadata() -> None:
     """DELETE /api/sessions/{session_id} removes the session transcript."""
-    from bot.webui.events import UserMessageEvent
+    from bot.webui.transcript_store import UserMessageRecord
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -607,7 +607,7 @@ async def test_delete_session_cleans_up_metadata() -> None:
         with bind_workspace_root(data_dir):
             await store.append(
                 session_id,
-                UserMessageEvent(session_id=session_id, agent_name="coding", content="test"),
+                UserMessageRecord(session_id=session_id, agent_name="coding", content="test"),
                 pool="coding",
             )
         transcript_file = data_dir / ".modex" / "sessions" / "coding" / f"{session_id}.jsonl"
@@ -918,7 +918,7 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
     switching back to main the list is empty; switching back to coding is
     also empty. This test pins the backend contract.
     """
-    from bot.webui.events import UserMessageEvent
+    from bot.webui.transcript_store import UserMessageRecord
 
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
@@ -998,7 +998,7 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
         with bind_workspace_root(data_dir):
             await server._store.append(
                 qq_sid,
-                UserMessageEvent(
+                UserMessageRecord(
                     session_id=qq_sid,
                     agent_name="main",
                     content="hello from QQ"
@@ -1113,7 +1113,7 @@ async def test_ws_attach_switches_all_sessions() -> None:
 @pytest.mark.asyncio
 async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
     """GET /api/sessions includes subagent sessions that have parent relationships."""
-    from bot.webui.events import UserMessageEvent
+    from bot.webui.transcript_store import UserMessageRecord
 
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
@@ -1150,10 +1150,10 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
     # Add transcript data for both parent and child
     with bind_workspace_root(data_dir):
         await store.append(parent_sid,
-            UserMessageEvent(session_id=parent_sid, agent_name="coding", content="hi"),
+            UserMessageRecord(session_id=parent_sid, agent_name="coding", content="hi"),
             pool="coding")
         await store.append(child_sid,
-            UserMessageEvent(session_id=child_sid, agent_name="reviewer", content="reviewing"),
+            UserMessageRecord(session_id=child_sid, agent_name="reviewer", content="reviewing"),
             pool="coding")
 
     client = TestClient(TestServer(server.app))
@@ -1181,7 +1181,7 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
 @pytest.mark.asyncio
 async def test_api_messages_loads_subagent_transcript() -> None:
     """GET /api/sessions/{subagent_id}/messages loads subagent transcript events."""
-    from bot.webui.events import UserMessageEvent
+    from bot.webui.transcript_store import UserMessageRecord
 
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
@@ -1211,10 +1211,10 @@ async def test_api_messages_loads_subagent_transcript() -> None:
     # Write transcript data for the subagent session
     with bind_workspace_root(data_dir):
         await store.append(parent_sid,
-            UserMessageEvent(session_id=parent_sid, agent_name="coding", content="hi"),
+            UserMessageRecord(session_id=parent_sid, agent_name="coding", content="hi"),
             pool="coding")
         await store.append(child_sid,
-            UserMessageEvent(session_id=child_sid, agent_name="reviewer", content="review result"),
+            UserMessageRecord(session_id=child_sid, agent_name="reviewer", content="review result"),
             pool="coding")
 
     # Save subagent session to the store so _resolve_agent finds "reviewer".
@@ -1514,7 +1514,7 @@ async def test_api_sessions_falls_back_to_transcripts_when_index_empty() -> None
     Regression: legacy workspaces only have ``.modex/sessions/<pool>/*.jsonl``
     files and no ``.modex/session_index/``, so the session list was empty.
     """
-    from bot.webui.events import UserMessageEvent
+    from bot.webui.transcript_store import UserMessageRecord
 
     from modex_agent.core.session_id import SessionIdFactory
     from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
@@ -1546,7 +1546,7 @@ async def test_api_sessions_falls_back_to_transcripts_when_index_empty() -> None
     with bind_workspace_root(data_dir):
         await store.append(
             legacy_sid,
-            UserMessageEvent(
+            UserMessageRecord(
                 session_id=legacy_sid, agent_name="coding", content="hi"
             ),
             pool="coding",
@@ -1574,7 +1574,7 @@ async def test_api_sessions_falls_back_preserves_index_entries() -> None:
     """When a session exists in BOTH the SessionInfo index and transcripts,
     the index entry wins (richer metadata), and the transcript is not duplicated.
     """
-    from bot.webui.events import UserMessageEvent
+    from bot.webui.transcript_store import UserMessageRecord
 
     from modex_agent.core.session_id import SessionIdFactory, SessionInfo
     from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
@@ -1615,7 +1615,7 @@ async def test_api_sessions_falls_back_preserves_index_entries() -> None:
     with bind_workspace_root(data_dir):
         await store.append(
             indexed_sid,
-            UserMessageEvent(
+            UserMessageRecord(
                 session_id=indexed_sid, agent_name="coding", content="hi"
             ),
             pool="coding",
@@ -1683,13 +1683,13 @@ async def test_workspace_cd_switches_current_workspace() -> None:
     await client.start_server()
     try:
         # ── Add a session in workspace A ───────────────────────────
-        from bot.webui.events import UserMessageEvent
+        from bot.webui.transcript_store import UserMessageRecord
 
         sid_a = f"{_new_uuid_prefix()}.main"
 
         with bind_workspace_root(ws_a):
             await store.append(
-                sid_a, UserMessageEvent(session_id=sid_a, agent_name="main", content="ws-a")
+                sid_a, UserMessageRecord(session_id=sid_a, agent_name="main", content="ws-a")
             )
 
         # Save session to session store so it appears in listing.
@@ -1712,7 +1712,7 @@ async def test_workspace_cd_switches_current_workspace() -> None:
 
         with bind_workspace_root(ws_b):
             await store.append(
-                sid_b, UserMessageEvent(session_id=sid_b, agent_name="main", content="ws-b")
+                sid_b, UserMessageRecord(session_id=sid_b, agent_name="main", content="ws-b")
             )
 
         await session_store.save(SessionInfo(
@@ -1739,7 +1739,7 @@ async def test_api_sessions_includes_subagent_sessions() -> None:
     Regression: the endpoint filtered to ``_pool_agent_names`` (main agents
     only), so subagent sessions never appeared and the tree was flat.
     """
-    from bot.webui.events import UserMessageEvent
+    from bot.webui.transcript_store import UserMessageRecord
 
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
@@ -1787,7 +1787,7 @@ async def test_api_sessions_includes_subagent_sessions() -> None:
     with bind_workspace_root(data_dir):
         await store.append(
             child_sid,
-            UserMessageEvent(
+            UserMessageRecord(
                 session_id=child_sid, agent_name="reviewer", content="review done"
             ),
             pool="coding",
@@ -1970,7 +1970,7 @@ async def test_subagent_invocation_id_matching_agent_name_still_registered() -> 
     for delta forwarding.  The fix uses ``agent_of()`` to extract the true agent
     segment and segment-count to detect main-agent sessions.
     """
-    from bot.webui.events import UserMessageEvent
+    from bot.webui.transcript_store import UserMessageRecord
 
     with tempfile.TemporaryDirectory() as tmp:
         workspace_root = Path(tmp)
@@ -1986,11 +1986,11 @@ async def test_subagent_invocation_id_matching_agent_name_still_registered() -> 
         with bind_workspace_root(workspace_root):
             await store.append(
                 "conv.main",
-                UserMessageEvent(session_id="conv.main", agent_name="main", content="hi")
+                UserMessageRecord(session_id="conv.main", agent_name="main", content="hi")
             )
             await store.append(
                 "conv.reviewer.main",  # prefix.reviewer.<invocation_id=main>
-                UserMessageEvent(session_id="conv.reviewer.main", agent_name="reviewer", content="review")
+                UserMessageRecord(session_id="conv.reviewer.main", agent_name="reviewer", content="review")
             )
 
         client = TestClient(TestServer(server.app))
@@ -2009,50 +2009,6 @@ async def test_subagent_invocation_id_matching_agent_name_still_registered() -> 
 
 
 # ── Frontend review follow-ups (small correctness fixes) ───────────────────
-
-
-@pytest.mark.asyncio
-async def test_api_messages_sorts_with_none_timestamp() -> None:
-    """A malformed/None timestamp must not crash the messages endpoint.
-
-    Regression: ``int(str(None))`` raises ValueError and produced a 500.
-    """
-    from bot.webui.events import UserMessageEvent
-
-    with tempfile.TemporaryDirectory() as tmp:
-        workspace_root = Path(tmp)
-        input_adapter = WebSocketInputAdapter()
-        store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
-        home_sessions_dir = WorkspacePaths(root=workspace_root / ".modex").sessions_dir
-        server = WebUIServer(input_adapter, store, static_dist=None, home_sessions_dir=home_sessions_dir)
-        server.set_workspace_index(store)
-        with bind_workspace_root(workspace_root):
-            await server._store.append(
-                "abc123.main",
-                UserMessageEvent(session_id="abc123.main", agent_name="main", content="hello")
-            )
-
-        # Simulate an event whose serialized form has a missing/None timestamp.
-        original_to_dict = UserMessageEvent.to_dict
-
-        def _to_dict_with_none_timestamp(self: UserMessageEvent) -> dict[str, object]:
-            data = original_to_dict(self)
-            data["timestamp"] = None
-            return data
-
-        UserMessageEvent.to_dict = _to_dict_with_none_timestamp  # type: ignore[method-assign]
-        try:
-            client = TestClient(TestServer(server.app))
-            await client.start_server()
-            try:
-                resp = await client.get("/api/sessions/abc123.main/messages")
-                assert resp.status == 200
-                data = await resp.json()
-                assert len(data) == 1
-            finally:
-                await client.close()
-        finally:
-            UserMessageEvent.to_dict = original_to_dict  # type: ignore[method-assign]
 
 
 @pytest.mark.asyncio

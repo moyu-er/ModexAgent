@@ -194,12 +194,12 @@ async def test_qq_attachment_ref_flows_through_im_pipeline_to_persisted_record()
         # splicing, no temp path — and the Attachment travels as a separate
         # structured record. The agent-perception injection is transient
         # (memory-only), added by preprocess, never the transcript content.
-        from bot.webui.events import UserMessageEvent
+        from bot.webui.transcript_store import UserMessageRecord
 
         full_sid = env.metadata["full_session_id"]
         with bind_workspace_root(root):
             events = await transcript_store.load(full_sid)
-        user_events = [e for e in events if isinstance(e, UserMessageEvent)]
+        user_events = [e for e in events if isinstance(e, UserMessageRecord)]
         assert user_events, "user message must be persisted to the transcript"
         assert user_events[0].content == "look at this"
         assert "Received files:" not in user_events[0].content

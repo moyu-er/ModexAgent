@@ -19,7 +19,6 @@ from uuid import uuid4
 from aiohttp import web
 
 from bot.adapters.web_socket import WebSocketInputAdapter
-from bot.webui.events import ServerEvent
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn.store import TurnStateStore
 from modex_agent.core.turn.todo import TodoStore
@@ -249,69 +248,6 @@ def _entry_from_session(session: SessionInfo, pool: str) -> SessionListEntry:
 def _new_uuid_prefix() -> str:
     """Generate a new 12-char uuid prefix for a session_id."""
     return uuid4().hex[:12]
-
-
-def _materialize_partial_deltas(
-    events: list[ServerEvent], agent_name: str
-) -> dict[str, object] | None:
-    """Fold partial streaming delta events into a synthetic streaming assistant_turn.
-
-    Deltas are grouped by ``segment_id`` (empty string → anonymous segment)
-    and merged append-wise per group, preserving order of first appearance.
-    The result carries ``is_streaming=True`` so the frontend renders it as an
-    in-progress message and continues appending live WS deltas on top.
-    """
-    from bot.webui.events import ModelContentDelta, ModelReasoningDelta
-
-    segment_order: list[str] = []
-    segment_text: dict[str, str] = {}
-    segment_kind: dict[str, str] = {}
-    first_ts: int | None = None
-    turn_id: str = ""
-
-    for evt in events:
-        if first_ts is None or evt.timestamp < first_ts:
-            first_ts = evt.timestamp
-        if not turn_id:
-            tid = getattr(evt, "turn_id", "")
-            if tid:
-                turn_id = tid
-        if isinstance(evt, ModelContentDelta):
-            seg = evt.segment_id or "_text"
-        elif isinstance(evt, ModelReasoningDelta):
-            seg = evt.segment_id or "_reasoning"
-        else:
-            continue
-        kind = "reasoning" if isinstance(evt, ModelReasoningDelta) else "text"
-        if seg not in segment_text:
-            segment_text[seg] = ""
-            segment_kind[seg] = kind
-            segment_order.append(seg)
-        segment_text[seg] += evt.text
-
-    if not segment_order:
-        return None
-
-    blocks: list[dict[str, object]] = []
-    for seg in segment_order:
-        kind = segment_kind[seg]
-        text = segment_text[seg]
-        if text:
-            blocks.append({"kind": kind, "text": text})
-
-    if not blocks:
-        return None
-
-    return {
-        "event": "assistant_turn",
-        "session_id": "",
-        "agent_name": agent_name,
-        "timestamp": first_ts or 0,
-        "turn_id": turn_id,
-        "blocks": blocks,
-        "latency_ms": 0,
-        "is_streaming": True,
-    }
 
 
 # ── Workspace membership seam (owned by the consumer) ──────────────────────

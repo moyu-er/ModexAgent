@@ -23,9 +23,6 @@ import pytest
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
 from bot.webui.emitter import WebBotEmitter
 from bot.webui.events import (
-    AssistantReasoningEvent,
-    ToolCallEvent,
-    ToolResultEvent,
     WebUIEventType,
 )
 from bot.webui.transcript_store import JSONLTranscriptStore
@@ -41,6 +38,12 @@ from modex_agent.core.turn_events import (
     TurnToolResultEvent,
 )
 from modex_agent.messaging.models import OutputMessage
+from modex_agent.presentation import (
+    TextDelta,
+    ThinkingDelta,
+    ToolCallStarted,
+    ToolResult,
+)
 
 
 def _make_emitter(
@@ -83,8 +86,8 @@ async def test_external_reasoning_streams_delta_and_persists_event() -> None:
         await emitter.emit(turn_finished_event(AgentResult(content="")))
 
         events = await store.load(sid)
-        assert len(events) == 1
-        assert isinstance(events[0], AssistantReasoningEvent)
+        assert len(events) == 2  # thinking_delta + turn_finished
+        assert isinstance(events[0], ThinkingDelta)
         assert events[0].text == "reasoning chunk"
 
 
@@ -100,7 +103,7 @@ async def test_external_reasoning_deltas_coalesced_into_single_event() -> None:
         await emitter.emit(turn_finished_event(AgentResult(content="")))
 
         events = await store.load("conv1.opencode")
-        reasoning_events = [e for e in events if isinstance(e, AssistantReasoningEvent)]
+        reasoning_events = [e for e in events if isinstance(e, ThinkingDelta)]
         assert len(reasoning_events) == 1
         assert reasoning_events[0].text == "Let me think about this."
 
@@ -121,8 +124,8 @@ async def test_interleaved_text_and_reasoning_produce_two_events_not_many() -> N
         await emitter.emit(turn_finished_event(AgentResult(content="")))
 
         events = await store.load("conv1.opencode")
-        text_events = [e for e in events if e.event == "assistant_text"]
-        reasoning_events = [e for e in events if e.event == "assistant_reasoning"]
+        text_events = [e for e in events if isinstance(e, TextDelta)]
+        reasoning_events = [e for e in events if isinstance(e, ThinkingDelta)]
         assert len(text_events) == 1
         assert len(reasoning_events) == 1
         assert text_events[0].text == "t0 t1 t2 t3 t4"
@@ -148,7 +151,7 @@ async def test_same_part_id_text_deltas_coalesce_across_tool_calls() -> None:
         await emitter.emit(turn_finished_event(AgentResult(content="")))
 
         events = await store.load("conv1.opencode")
-        text_events = [e for e in events if e.event == "assistant_text"]
+        text_events = [e for e in events if isinstance(e, TextDelta)]
         assert len(text_events) == 2
         assert text_events[0].text == "before"
         assert text_events[1].text == "after"
@@ -186,15 +189,15 @@ async def test_external_tool_start_end_streamed_and_persisted_with_shared_call_i
         assert second.event_type == WebUIEventType.TOOL_CALL_END.value
 
         events = await store.load(sid)
-        tc_events = [e for e in events if isinstance(e, ToolCallEvent)]
-        tr_events = [e for e in events if isinstance(e, ToolResultEvent)]
+        tc_events = [e for e in events if isinstance(e, ToolCallStarted)]
+        tr_events = [e for e in events if isinstance(e, ToolResult)]
         assert len(tc_events) == 1
         assert len(tr_events) == 1
         assert tc_events[0].call_id == call_id
         assert tr_events[0].call_id == call_id
         assert tc_events[0].tool_name == "bash"
         assert tr_events[0].tool_name == "bash"
-        assert tr_events[0].result == "file.txt"
+        assert tr_events[0].output == "file.txt"
         assert tr_events[0].seq is None
 
 
@@ -292,7 +295,7 @@ async def test_external_tool_result_without_use_persists_result_only() -> None:
         await emitter.emit(turn_finished_event(AgentResult(content="done")))
 
         events = await store.load("conv1.opencode")
-        assert any(isinstance(e, ToolResultEvent) for e in events)
+        assert any(isinstance(e, ToolResult) for e in events)
 
 
 # ---------------------------------------------------------------------------
@@ -329,15 +332,15 @@ async def test_text_before_tool_call_preserves_order_in_transcript() -> None:
         await emitter.emit(turn_finished_event(AgentResult(content="done")))
 
         events = await store.load("conv1.opencode")
-        event_types = [str(e.event) for e in events]
+        event_types = [str(e.kind) for e in events]
 
-        assert "assistant_text" in event_types, f"Missing assistant_text; got: {event_types}"
-        assert "tool_call" in event_types, f"Missing tool_call; got: {event_types}"
+        assert "text_delta" in event_types, f"Missing flushed text record; got: {event_types}"
+        assert "tool_call_started" in event_types, f"Missing tool call record; got: {event_types}"
 
-        text_idx = event_types.index("assistant_text")
-        tool_idx = event_types.index("tool_call")
+        text_idx = event_types.index("text_delta")
+        tool_idx = event_types.index("tool_call_started")
         assert text_idx < tool_idx, (
-            f"assistant_text (idx={text_idx}) must appear before tool_call "
+            f"text record (idx={text_idx}) must appear before the tool record "
             f"(idx={tool_idx}) in transcript; got order: {event_types}"
         )
 
@@ -375,13 +378,13 @@ async def test_text_between_tool_calls_preserves_position_in_transcript() -> Non
         await emitter.emit(turn_finished_event(AgentResult(content="done")))
 
         events = await store.load("conv1.opencode")
-        event_types = [str(e.event) for e in events]
+        event_types = [str(e.kind) for e in events]
 
-        text_indices = [i for i, t in enumerate(event_types) if t == "assistant_text"]
-        assert len(text_indices) == 2, f"Expected 2 assistant_text events, got {len(text_indices)}; order: {event_types}"
+        text_indices = [i for i, t in enumerate(event_types) if t == "text_delta"]
+        assert len(text_indices) == 2, f"Expected 2 flushed text records, got {len(text_indices)}; order: {event_types}"
 
-        tool1_idx = event_types.index("tool_call")
-        tool2_idx = event_types.index("tool_call", tool1_idx + 1)
+        tool1_idx = event_types.index("tool_call_started")
+        tool2_idx = event_types.index("tool_call_started", tool1_idx + 1)
 
         assert text_indices[0] < tool1_idx, f"First text must be before first tool_call; got: {event_types}"
         assert tool1_idx < text_indices[1] < tool2_idx, (
@@ -414,9 +417,9 @@ async def test_react_reasoning_and_tool_projection_unchanged() -> None:
         await emitter.emit(turn_finished_event(AgentResult(content="done")))
 
         events = await store.load(sid)
-        assert any(isinstance(e, AssistantReasoningEvent) for e in events)
-        tc_events = [e for e in events if isinstance(e, ToolCallEvent)]
-        tr_events = [e for e in events if isinstance(e, ToolResultEvent)]
+        assert any(isinstance(e, ThinkingDelta) for e in events)
+        tc_events = [e for e in events if isinstance(e, ToolCallStarted)]
+        tr_events = [e for e in events if isinstance(e, ToolResult)]
         assert len(tc_events) == 1
         assert len(tr_events) == 1
         assert tc_events[0].call_id == tr_events[0].call_id == "call_0"

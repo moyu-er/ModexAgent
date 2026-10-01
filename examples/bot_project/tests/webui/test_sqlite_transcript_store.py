@@ -12,22 +12,24 @@ from bot.service.session_gc import (
     SessionGcConfig,
 )
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import (
-    AssistantTextEvent,
-    AssistantTurnEvent,
-    ServerEvent,
-    ToolCallEvent,
-    ToolResultEvent,
-    UserMessageEvent,
-)
 from bot.webui.sqlite_transcript_store import SqliteTranscriptStore
-from bot.webui.transcript_store import ResilientTranscriptStore
+from bot.webui.transcript_store import (
+    AttachmentCarrier,
+    ResilientTranscriptStore,
+    TranscriptRecord,
+    UserMessageRecord,
+)
 
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.session_store import SqliteSessionStore
 from modex_agent.persistence.session_artifacts import SessionCleanupResult
+from modex_agent.presentation import (
+    TextDelta,
+    ToolCallStarted,
+    ToolResult,
+)
 from modex_agent.workspace.paths import WorkspacePaths
 
 
@@ -48,17 +50,21 @@ def _message(
     *,
     timestamp: int = 100,
     agent_name: str = "main",
-) -> UserMessageEvent:
-    return UserMessageEvent(
+) -> UserMessageRecord:
+    return UserMessageRecord(
         session_id=session_id,
         agent_name=agent_name,
         content=content,
-        timestamp=timestamp,
+        timestamp_ms=timestamp,
     )
 
 
-def _contents(events: Sequence[ServerEvent]) -> list[object]:
-    return [event.to_dict().get("content") for event in events]
+def _contents(records: Sequence[TranscriptRecord]) -> list[object]:
+    return [
+        record.content
+        for record in records
+        if isinstance(record, UserMessageRecord)
+    ]
 
 
 async def test_crud_isolated_by_full_session_and_exact_prefix(
@@ -125,49 +131,50 @@ async def test_structured_events_and_materialization_round_trip(
     session_id = "conv.main"
     await store.append(
         session_id,
-        AssistantTextEvent(
+        TextDelta(
             session_id=session_id,
             agent_name="main",
             turn_id="turn-1",
             text="你好",
-            timestamp=100,
+            segment_id="_text",
+            timestamp_ms=100,
         ),
         pool="main",
     )
     await store.append(
         session_id,
-        ToolCallEvent(
+        ToolCallStarted(
             session_id=session_id,
             agent_name="main",
             turn_id="turn-1",
             call_id="call-1",
             tool_name="read_file",
-            args={"path": "README.md"},
-            timestamp=200,
+            arguments={"path": "README.md"},
+            timestamp_ms=200,
         ),
         pool="main",
     )
     await store.append(
         session_id,
-        ToolResultEvent(
+        ToolResult(
             session_id=session_id,
             agent_name="main",
             turn_id="turn-1",
             call_id="call-1",
             tool_name="read_file",
-            result="内容",
-            timestamp=300,
+            output="内容",
+            timestamp_ms=300,
         ),
         pool="main",
     )
     await store.append(
         session_id,
-        AssistantTurnEvent(
+        AttachmentCarrier(
             session_id=session_id,
             agent_name="main",
             turn_id="turn-1",
             attachments=[{"id": "file-1", "name": "报告.txt"}],
-            timestamp=400,
+            timestamp_ms=400,
         ),
         pool="main",
     )

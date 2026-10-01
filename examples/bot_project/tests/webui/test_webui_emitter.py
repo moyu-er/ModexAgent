@@ -15,7 +15,6 @@ from bot.webui.events import (
     ApprovalResolvedEvent,
     ServerEvent,
     ToolArgsDeltaEvent,
-    ToolResultEvent,
     UsageSummaryEvent,
     WebUIEventType,
 )
@@ -25,7 +24,11 @@ from modex_agent.core.emitter import AgentResult, TurnEventSink, turn_finished_e
 from modex_agent.core.llm_struct import TokenUsage
 from modex_agent.core.turn_events import (
     ApprovalRequestedEvent as CoreApprovalRequestedEvent,
+)
+from modex_agent.core.turn_events import (
     ApprovalResolvedEvent as CoreApprovalResolvedEvent,
+)
+from modex_agent.core.turn_events import (
     IterationFinishedEvent,
     StopReason,
     TurnEvent,
@@ -39,6 +42,7 @@ from modex_agent.core.turn_events import (
 from modex_agent.core.turn_events import (
     ToolArgsDeltaEvent as CoreToolArgsDeltaEvent,
 )
+from modex_agent.presentation import ToolResult
 
 
 def _text(text: str) -> TurnTextEvent:
@@ -189,10 +193,11 @@ async def test_segment_flush_saves_assistant_text_to_transcript() -> None:
         input_adapter.register_connection("conv1.main", None)
         await emitter.emit(_text("Hello World"))
         await emitter.emit(_segment_end())
-        events = await store.load("conv1.main")
-        # TurnStartEvent is WebSocket-only (not persisted). Only AssistantTextEvent.
-        assert len(events) == 1
-        assert events[0].event == WebUIEventType.ASSISTANT_TEXT.value
+        records = await store.load("conv1.main")
+        # turn_started is wire-only metadata. The flushed text segment is the
+        # only persisted record — one complete TextDelta.
+        assert len(records) == 1
+        assert records[0].kind == "text_delta"
 
 
 @pytest.mark.asyncio
@@ -206,9 +211,11 @@ async def test_turn_finished_flushes_remaining_text_buffer() -> None:
         input_adapter.register_connection("conv1.main", None)
         await emitter.emit(_text("Hello World"))
         await emitter.emit(_turn_finished(AgentResult(content="done")))
-        events = await store.load("conv1.main")
-        assert any(e.event == WebUIEventType.ASSISTANT_TEXT.value for e in events)
-        assert not any(e.event == WebUIEventType.TURN_END.value for e in events)
+        records = await store.load("conv1.main")
+        assert any(record.kind == "text_delta" for record in records)
+        # The terminal record IS persisted now (turn-scoped stop
+        # classification); the wire-only turn_end never was.
+        assert any(record.kind == "turn_finished" for record in records)
 
 
 @pytest.mark.asyncio
@@ -229,10 +236,12 @@ async def test_tool_call_events_persisted_incrementally() -> None:
                 tool_name="read_file", call_id="call_0", output="content", seq=7
             )
         )
-        events = await store.load("conv1.main")
-        assert any(e.event == WebUIEventType.TOOL_CALL.value for e in events)
-        assert any(e.event == WebUIEventType.TOOL_RESULT.value for e in events)
-        tool_result = next(e for e in events if isinstance(e, ToolResultEvent))
+        records = await store.load("conv1.main")
+        assert any(record.kind == "tool_call_started" for record in records)
+        assert any(record.kind == "tool_result" for record in records)
+        tool_result = next(
+            record for record in records if isinstance(record, ToolResult)
+        )
         assert tool_result.seq == 7
 
 
@@ -296,8 +305,11 @@ async def test_reasoning_not_persisted_to_transcript() -> None:
         input_adapter.register_connection("conv1.main", None)
         await emitter.emit(TurnReasoningEvent(text="thinking..."))
         await emitter.emit(_turn_finished(AgentResult(content="done")))
-        events = await store.load("conv1.main")
-        assert not any(e.event == WebUIEventType.MODEL_REASONING_DELTA.value for e in events)
+        records = await store.load("conv1.main")
+        # Reasoning persists as a flushed ThinkingDelta record (the segment
+        # record), never as per-delta writes.
+        assert any(record.kind == "thinking_delta" for record in records)
+        assert len(records) == 2  # thinking_delta + turn_finished
 
 
 @pytest.mark.asyncio
@@ -309,8 +321,8 @@ async def test_emit_content_empty_skips_persist() -> None:
         emitter = WebBotEmitter(output_adapter, "conv1.main", transcript_store=store)
         input_adapter.register_connection("conv1.main", None)
         await emitter.emit(_text("   "))
-        events = await store.load("conv1.main")
-        assert all(e.event != WebUIEventType.ASSISTANT_TEXT.value for e in events)
+        records = await store.load("conv1.main")
+        assert all(record.kind != "text_delta" for record in records)
 
 
 @pytest.mark.asyncio
@@ -330,9 +342,9 @@ async def test_streaming_delta_flush_persists_content() -> None:
         await emitter.emit(_text("Hello "))
         await emitter.emit(_text("world"))
         await emitter.emit(_segment_end())
-        events = await store.load("conv1.main")
-        assert any(e.event == WebUIEventType.ASSISTANT_TEXT.value for e in events), (
-            f"Expected assistant text in transcript, got: {[e.event for e in events]}"
+        records = await store.load("conv1.main")
+        assert any(record.kind == "text_delta" for record in records), (
+            f"Expected the flushed text record in transcript, got: {[record.kind for record in records]}"
         )
 
 
@@ -490,6 +502,7 @@ async def test_tool_args_delta_is_noop_for_acp_projection() -> None:
             )
         )
         assert seen == []
+        # Transient warm-up: nothing ever reaches the store.
         assert await store.load("conv1.main") == []
 
 
@@ -513,8 +526,13 @@ def test_tool_args_delta_event_roundtrip() -> None:
 
 
 @pytest.mark.asyncio
-async def test_approval_requested_streams_card_without_transcript_record() -> None:
-    """approval_requested: one WS envelope per suspension, no transcript record."""
+async def test_approval_requested_streams_card_and_persists_record() -> None:
+    """approval_requested: one WS envelope per suspension + one durable record.
+
+    Since the W6 transcript cutover the approval lifecycle persists (the
+    durable L2 record set); the folded replay ignores it, so history
+    blocks are unchanged.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         input_adapter = WebSocketInputAdapter()
         output_adapter = WebSocketOutputAdapter(input_adapter)
@@ -543,11 +561,12 @@ async def test_approval_requested_streams_card_without_transcript_record() -> No
         assert approval_env.payload["turn_id"] == text_env.payload["turn_id"]
         assert q.empty()
 
-        # Transient card: the transcript keeps only the streamed text record.
-        events = await store.load("conv1.main")
-        assert not any(
-            e.event == WebUIEventType.APPROVAL_REQUESTED.value for e in events
-        )
+        # The card persists as its durable record. The streamed text is
+        # still segment-buffered here (approval is not a flush boundary);
+        # it lands as its TextDelta record at the next boundary.
+        records = await store.load("conv1.main")
+        kinds = [record.kind for record in records]
+        assert kinds == ["approval_requested"]
 
 
 @pytest.mark.asyncio
@@ -633,7 +652,11 @@ async def test_resumed_binding_continues_same_turn_id() -> None:
 
 @pytest.mark.asyncio
 async def test_approval_and_usage_projections_are_noop_for_acp() -> None:
-    """ACP projection keeps the base no-op hooks: no hub event, no record."""
+    """ACP projection keeps the base no-op hooks: no hub event.
+
+    The shared recording lifecycle still persists the durable approval /
+    usage records (they fold into the turn and never surface as blocks).
+    """
     with tempfile.TemporaryDirectory() as tmp:
         store = JSONLTranscriptStore(Path(tmp))
         hub = AcpEmitterHub()
@@ -652,7 +675,16 @@ async def test_approval_and_usage_projections_are_noop_for_acp() -> None:
         await emitter.emit(UsageEvent(usage=TokenUsage(input_tokens=1)))
 
         assert seen == []
-        assert await store.load("conv1.main") == []
+        records = await store.load("conv1.main")
+        assert [record.kind for record in records] == [
+            "approval_requested",
+            "approval_resolved",
+            "usage_summary",
+        ]
+        # Observation-only records replay to nothing (no empty turns).
+        from bot.webui.transcript_store import materialize_records
+
+        assert materialize_records(records) == []
 
 
 def test_approval_and_usage_event_roundtrip() -> None:

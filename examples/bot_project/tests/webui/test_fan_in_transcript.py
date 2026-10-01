@@ -212,7 +212,7 @@ async def test_im_pipeline_persists_qq_message() -> None:
     # Persisted
     events = await store.load(_sid("main", "qq_user_123"))
     assert len(events) == 1
-    assert events[0].event == "user_message"
+    assert events[0].kind == "user_message"
     assert events[0].content == "help me write a Python script"
     assert events[0].session_id == _sid("main", "qq_user_123")
     assert events[0].agent_name == "main"

@@ -939,7 +939,7 @@ async def test_sessions_includes_external_adapter_conversations() -> None:
 
     This is the root cause of: "IM conversations can't be loaded".
     """
-    from bot.webui.events import UserMessageEvent
+    from bot.webui.transcript_store import UserMessageRecord
 
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
@@ -963,7 +963,7 @@ async def test_sessions_includes_external_adapter_conversations() -> None:
     qq_conv_id = "qq_user_12345"
     qq_sid = f"{qq_conv_id}.main"
     routing_store.set(qq_conv_id, "main")
-    event = UserMessageEvent(
+    event = UserMessageRecord(
         session_id=qq_sid,
         agent_name="main",
         content="QQ message",

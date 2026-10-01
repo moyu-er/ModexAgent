@@ -40,7 +40,7 @@ from bot.control.models import (
     SendResult,
 )
 from bot.scope import BotRecordScope
-from bot.webui.transcript_store import TranscriptStore, _materialize_events
+from bot.webui.transcript_store import TranscriptStore, materialize_records
 from bot.workspace.handle import PoolWorkspaceResources
 from bot.workspace.request_resolver import resolve_ws_request
 from modex_agent.core.agent import AgentCommKind, AgentContext, ExecutionStrategyKind
@@ -216,15 +216,15 @@ class BotControlFacade:
         """External-coding transcript path (T05).
 
         Loads the observable transcript for the exact ``session_id`` (no
-        prefix fan-in), materializes the complete event sequence via
-        :func:`_materialize_events`, then projects to :class:`HistoryMessage`
-        via :func:`project_transcript_history`. ``limit`` is applied to the
-        logical records, never to raw events.
+        prefix fan-in), replays the record sequence through the framework
+        materializer via :func:`materialize_records`, then projects to
+        :class:`HistoryMessage` via :func:`project_transcript_history`.
+        ``limit`` is applied to the logical records, never to raw records.
         """
         caller = request.caller
         transcript_store = await self._transcript_store_provider(resources)
-        events = await transcript_store.load(caller.session_id)
-        turns = _materialize_events(events)
+        records = await transcript_store.load(caller.session_id)
+        turns = materialize_records(records)
         items = project_transcript_history(turns, request.limit)
         return HistoryResult(
             source=HistorySource.OBSERVABLE_TRANSCRIPT,

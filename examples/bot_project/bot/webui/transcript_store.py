@@ -11,30 +11,58 @@ The session prefix (everything before the first ``.``) is the user-facing
 grouping: a UI conversation owns many sessions (the main agent + each
 subagent invocation).  ``load_sessions_by_prefix`` merges them by timestamp.
 
-ADR-0053 convergence: the persistence lifecycle (append / load / list /
-delete / prefix merge) and the JSONL file machinery are owned by the
-framework ``modex_agent.presentation`` transcript contract. The bot's
-``TranscriptStore`` below is the ServerEvent-parameterized specialization
-carrying the bot's block materialization face; ``JSONLTranscriptStore``
-plugs a ``ServerEvent`` codec into the framework JSONL store so on-disk
-bytes are unchanged.
+ADR-0053/0054 transcript cutover: the durable record is the framework
+``PresentationEvent`` plus the two bot-side carrier records — user messages
+and outbound attachments — united in ``TranscriptRecord``. The persistence
+lifecycle (append / load / list / delete / prefix merge) and the JSONL file
+machinery are owned by the framework ``modex_agent.presentation`` transcript
+contract; ``TranscriptRecordCodec`` detects the record generation per line so
+pre-cutover ``ServerEvent`` transcripts keep replaying (the legacy read
+adapter converts them at read time — the single conversion point). Turn
+folding is the framework's ``materialize_turns``; ``materialize_records`` is
+the history-API projection layered on top of it.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import time
+import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass as _dataclass
 from dataclasses import field as _dc_field
 from pathlib import Path
+from typing import Annotated, Literal, cast
 
-from bot.webui.events import ServerEvent
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
+
+from bot.webui.events import (
+    AssistantReasoningEvent,
+    AssistantTextEvent,
+    AssistantTurnEvent,
+    ModelContentDelta,
+    ModelReasoningDelta,
+    ServerEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+    TurnStartEvent,
+    UserMessageEvent,
+)
 from modex_agent.presentation import (
     JsonlTranscriptStore as FrameworkJsonlTranscriptStore,
 )
 from modex_agent.presentation import (
+    PresentationEvent,
+    TextDelta,
+    ThinkingDelta,
+    ToolCallStarted,
+    ToolResult,
     TranscriptCodec,
+    TurnStarted,
+    TurnView,
+    materialize_turns,
 )
 from modex_agent.presentation import (
     TranscriptStore as FrameworkTranscriptStore,
@@ -43,17 +71,86 @@ from modex_agent.presentation import (
 logger = logging.getLogger(__name__)
 
 
-# ── ServerEvent codec (unchanged JSONL wire form) ──────────────────────────
+# ── Durable record vocabulary (the post-cutover on-disk generation) ─────────
 
 
-class ServerEventTranscriptCodec(TranscriptCodec[ServerEvent]):
-    """Serialize/deserialize ``ServerEvent`` records, byte-identical to the
-    pre-convergence JSONL lines (``json.dumps(to_dict, ensure_ascii=False)``)."""
+class UserMessageRecord(BaseModel):
+    """A persisted user message (the S7 writer's record shape).
 
-    def dump(self, event: ServerEvent) -> str:
-        return json.dumps(event.to_dict(), ensure_ascii=False)
+    ``attachments`` carries the serialized inbound :class:`Attachment`
+    records (metadata only) produced by the attachment ingest stage — an
+    open extension payload (``Attachment.to_dict()`` forms) whose keys
+    evolve with the media layer.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["user_message"] = "user_message"
+    session_id: str
+    agent_name: str
+    timestamp_ms: int = Field(default_factory=lambda: int(time.time() * 1000))
+    content: str = ""
+    attachments: list[dict[str, JsonValue]] = Field(default_factory=list)
+
+
+class AttachmentCarrier(BaseModel):
+    """Outbound attachment records riding the transcript (ADR-0013 §11).
+
+    ``SendFileToUserTool`` persists one carrier per sent file. A carrier
+    with an empty ``turn_id`` (the production shape) replays as its own
+    turn so the history API keeps rendering download cards after a
+    refresh; one carrying a turn id attaches its records to that turn —
+    the replay shape of the pre-cutover ``assistant_turn`` records that
+    carried attachments.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["attachments"] = "attachments"
+    session_id: str
+    agent_name: str
+    timestamp_ms: int = Field(default_factory=lambda: int(time.time() * 1000))
+    turn_id: str = ""
+    attachments: list[dict[str, JsonValue]] = Field(default_factory=list)
+
+
+TranscriptRecord = Annotated[
+    UserMessageRecord | AttachmentCarrier | PresentationEvent,
+    Field(discriminator="kind"),
+]
+"""The durable bot transcript record (discriminated by ``kind``).
+
+The agent-turn facts are the framework's ``PresentationEvent`` union; the
+two bot-side carriers cover what a UI conversation transcript needs that
+the agent-turn envelope does not express (the user's side of the
+conversation, and files the agent handed back).
+"""
+
+
+def _json_attachments(records: list[dict[str, object]]) -> list[dict[str, JsonValue]]:
+    """Re-type serialized Attachment dicts at the JSON boundary."""
+    return [cast(dict[str, JsonValue], dict(record)) for record in records]
+
+
+# ── Legacy read adapter (pre-cutover ServerEvent lines) ─────────────────────
+
+
+class ServerEventTranscriptCodec:
+    """LEGACY READ adapter — decodes pre-cutover ``ServerEvent`` JSONL lines.
+
+    This is not a write codec and never persists: since the transcript
+    cutover no production path writes a ``ServerEvent`` to a store (the
+    WebSocket wire projection is the only remaining ``ServerEvent``
+    producer). The class survives exclusively so
+    :class:`TranscriptRecordCodec` can read on-disk transcripts written
+    before the cutover (``event``-discriminator lines), handing each
+    decoded record to :func:`adapt_legacy_records` for read-time
+    conversion. ``event_time`` keeps the legacy timestamp key so prefix
+    merges order old and new records identically.
+    """
 
     def parse(self, line: str) -> ServerEvent | None:
+        """Decode one legacy JSONL line; ``None`` skips it (malformed/blank)."""
         try:
             data = json.loads(line)
         except json.JSONDecodeError:
@@ -64,15 +161,252 @@ class ServerEventTranscriptCodec(TranscriptCodec[ServerEvent]):
         return event.timestamp
 
 
+def _legacy_segment_id() -> str:
+    """A fresh segment id for one expanded legacy block.
+
+    Each pre-materialized block IS one complete segment, so each must get
+    its own id — reusing a stable id would let the folder merge two
+    adjacent same-kind blocks that the legacy transcript kept apart.
+    """
+    return f"_legacy_{uuid.uuid4().hex[:8]}"
+
+
+def adapt_legacy_records(event: ServerEvent) -> list[TranscriptRecord]:
+    """Convert one legacy ``ServerEvent`` record to L2 transcript records.
+
+    THE read-time conversion point: every legacy line decodes through the
+    old registry and lands here, and replay never sees a ``ServerEvent``
+    afterwards (no second materializer). Wire-only kinds that no writer
+    ever persisted (tool_call_start/end, tool_args_delta, turn_end, ...)
+    convert to nothing.
+    """
+    match event:
+        case UserMessageEvent():
+            return [
+                UserMessageRecord(
+                    session_id=event.session_id,
+                    agent_name=event.agent_name,
+                    timestamp_ms=event.timestamp,
+                    content=event.content,
+                    attachments=_json_attachments(event.attachments),
+                )
+            ]
+        case ModelContentDelta():
+            return [
+                TextDelta(
+                    session_id=event.session_id,
+                    agent_name=event.agent_name,
+                    turn_id=event.turn_id,
+                    timestamp_ms=event.timestamp,
+                    text=event.text,
+                    segment_id=event.segment_id or "_text",
+                )
+            ]
+        case ModelReasoningDelta():
+            return [
+                ThinkingDelta(
+                    session_id=event.session_id,
+                    agent_name=event.agent_name,
+                    turn_id=event.turn_id,
+                    timestamp_ms=event.timestamp,
+                    text=event.text,
+                    segment_id=event.segment_id or "_reasoning",
+                )
+            ]
+        case TurnStartEvent():
+            return [
+                TurnStarted(
+                    session_id=event.session_id,
+                    agent_name=event.agent_name,
+                    turn_id=event.turn_id,
+                    timestamp_ms=event.timestamp,
+                )
+            ]
+        case AssistantTextEvent():
+            return [
+                TextDelta(
+                    session_id=event.session_id,
+                    agent_name=event.agent_name,
+                    turn_id=event.turn_id,
+                    timestamp_ms=event.timestamp,
+                    text=event.text,
+                    segment_id=_legacy_segment_id(),
+                )
+            ]
+        case AssistantReasoningEvent():
+            return [
+                ThinkingDelta(
+                    session_id=event.session_id,
+                    agent_name=event.agent_name,
+                    turn_id=event.turn_id,
+                    timestamp_ms=event.timestamp,
+                    text=event.text,
+                    segment_id=_legacy_segment_id(),
+                )
+            ]
+        case ToolCallEvent():
+            return [
+                ToolCallStarted(
+                    session_id=event.session_id,
+                    agent_name=event.agent_name,
+                    turn_id=event.turn_id,
+                    timestamp_ms=event.timestamp,
+                    tool_name=event.tool_name,
+                    call_id=event.call_id or "",
+                    arguments=cast(
+                        dict[str, JsonValue], dict(event.args)
+                    ),
+                )
+            ]
+        case ToolResultEvent():
+            return [
+                ToolResult(
+                    session_id=event.session_id,
+                    agent_name=event.agent_name,
+                    turn_id=event.turn_id,
+                    timestamp_ms=event.timestamp,
+                    tool_name=event.tool_name,
+                    call_id=event.call_id or "",
+                    output=event.result,
+                    error=event.error,
+                    seq=event.seq,
+                )
+            ]
+        case AssistantTurnEvent():
+            # Pre-materialized turn record: expand each block into its
+            # presentation event (own segment — see _legacy_segment_id)
+            # and ride the attachments on a carrier under the same turn.
+            records: list[TranscriptRecord] = []
+            for block in event.blocks:
+                kind = str(block.get("kind", ""))
+                text = block.get("text")
+                if kind == "text":
+                    records.append(
+                        TextDelta(
+                            session_id=event.session_id,
+                            agent_name=event.agent_name,
+                            turn_id=event.turn_id,
+                            timestamp_ms=event.timestamp,
+                            text=str(text or ""),
+                            segment_id=_legacy_segment_id(),
+                        )
+                    )
+                elif kind == "reasoning":
+                    records.append(
+                        ThinkingDelta(
+                            session_id=event.session_id,
+                            agent_name=event.agent_name,
+                            turn_id=event.turn_id,
+                            timestamp_ms=event.timestamp,
+                            text=str(text or ""),
+                            segment_id=_legacy_segment_id(),
+                        )
+                    )
+                elif kind == "tool":
+                    args = block.get("args")
+                    # Started + result share one fresh call id so the
+                    # folder pairs them back into a single tool card.
+                    call_id = _legacy_segment_id()
+                    records.append(
+                        ToolCallStarted(
+                            session_id=event.session_id,
+                            agent_name=event.agent_name,
+                            turn_id=event.turn_id,
+                            timestamp_ms=event.timestamp,
+                            tool_name=str(block.get("tool", "")),
+                            call_id=call_id,
+                            arguments=cast(
+                                dict[str, JsonValue],
+                                dict(args) if isinstance(args, dict) else {},
+                            ),
+                        )
+                    )
+                    records.append(
+                        ToolResult(
+                            session_id=event.session_id,
+                            agent_name=event.agent_name,
+                            turn_id=event.turn_id,
+                            timestamp_ms=event.timestamp,
+                            tool_name=str(block.get("tool", "")),
+                            call_id=call_id,
+                            output=str(block.get("result", "")),
+                            error=cast(str | None, block.get("error")),
+                        )
+                    )
+            if event.attachments:
+                records.append(
+                    AttachmentCarrier(
+                        session_id=event.session_id,
+                        agent_name=event.agent_name,
+                        timestamp_ms=event.timestamp,
+                        turn_id=event.turn_id,
+                        attachments=_json_attachments(event.attachments),
+                    )
+                )
+            return records
+        case _:
+            # Wire-only legacy kinds (never persisted by any writer) and
+            # foreign records convert to nothing — same records today's
+            # materializer dropped.
+            return []
+
+
+# ── Generation-detecting line codec ─────────────────────────────────────────
+
+
+class TranscriptRecordCodec(TranscriptCodec[TranscriptRecord]):
+    """Line codec for the durable ``TranscriptRecord`` generation.
+
+    ``dump`` writes the new ``kind``-discriminator wire form. ``parse``
+    detects the generation per line: a ``kind`` key decodes the record
+    union directly; an ``event`` key is a legacy line, decoded by the
+    legacy read adapter and converted at read time (a legacy
+    ``assistant_turn`` line expands to several records).
+    """
+
+    _adapter: TypeAdapter[TranscriptRecord] = TypeAdapter(TranscriptRecord)
+    _legacy: ServerEventTranscriptCodec = ServerEventTranscriptCodec()
+
+    def dump(self, record: TranscriptRecord) -> str:
+        return record.model_dump_json()
+
+    def parse(self, line: str) -> list[TranscriptRecord]:
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(data, dict):
+            return []
+        if "kind" in data:
+            try:
+                return [self._adapter.validate_python(data)]
+            except ValueError:
+                return []
+        legacy = self._legacy.parse(line)
+        if legacy is None:
+            return []
+        return adapt_legacy_records(legacy)
+
+    def event_time(self, record: TranscriptRecord) -> int:
+        match record:
+            case UserMessageRecord(timestamp_ms=ts) | AttachmentCarrier(
+                timestamp_ms=ts
+            ):
+                return ts
+            case _:
+                return record.timestamp_ms if record.timestamp_ms is not None else 0
+
+
 # ── Bot contract ───────────────────────────────────────────────────────────
 
 
-class TranscriptStore(FrameworkTranscriptStore[ServerEvent], ABC):
-    """Bot transcript contract: ``ServerEvent`` records + turn materialization.
+class TranscriptStore(FrameworkTranscriptStore[TranscriptRecord], ABC):
+    """Bot transcript contract: ``TranscriptRecord`` records + turn replay.
 
-    The persistence lifecycle is the framework ABC's (ADR-0053); the bot adds
-    the ``MaterializedTurn`` blocks materialization consumed by the history
-    replay API.
+    The persistence lifecycle is the framework ABC's (ADR-0053); the bot
+    adds the ``MaterializedTurn`` replay face consumed by the history
+    APIs (folding is the framework's ``materialize_turns`` — see
+    :func:`materialize_records`).
     """
 
     async def load_materialized_by_prefix(
@@ -81,14 +415,9 @@ class TranscriptStore(FrameworkTranscriptStore[ServerEvent], ABC):
         *,
         pool: str | None = None,
     ) -> list[MaterializedTurn]:
-        """Materialize incremental events into merged turn blocks.
-
-        Loads all events whose session ids share *session_prefix* and
-        materializes them via :func:`_materialize_events`.
-        Returns turns sorted by start time.
-        """
+        """Replay every session sharing *session_prefix* into turn blocks."""
         events = await self.load_sessions_by_prefix(session_prefix, pool=pool)
-        return _materialize_events(events)
+        return materialize_records(events)
 
 
 class WorkspaceRoutedTranscriptStore(TranscriptStore):
@@ -113,7 +442,7 @@ class WorkspaceRoutedTranscriptStore(TranscriptStore):
     async def append(
         self,
         session_id: str,
-        event: ServerEvent,
+        event: TranscriptRecord,
         *,
         pool: str | None = None,
         sessions_dir: Path | None = None,
@@ -126,7 +455,7 @@ class WorkspaceRoutedTranscriptStore(TranscriptStore):
     async def append_partial(
         self,
         session_id: str,
-        event: ServerEvent,
+        event: TranscriptRecord,
         *,
         sessions_dir: Path | None = None,
     ) -> None:
@@ -161,7 +490,7 @@ class ResilientTranscriptStore(TranscriptStore):
     async def append(
         self,
         session_id: str,
-        event: ServerEvent,
+        event: TranscriptRecord,
         *,
         pool: str | None = None,
     ) -> None:
@@ -172,10 +501,10 @@ class ResilientTranscriptStore(TranscriptStore):
                 "transcript append failed for session %s (event=%s); "
                 "continuing without persisting this event",
                 session_id,
-                getattr(event, "event", type(event).__name__),
+                getattr(event, "kind", type(event).__name__),
             )
 
-    async def load(self, session_id: str) -> list[ServerEvent]:
+    async def load(self, session_id: str) -> list[TranscriptRecord]:
         return await self._delegate.load(session_id)
 
     async def load_sessions_by_prefix(
@@ -183,7 +512,7 @@ class ResilientTranscriptStore(TranscriptStore):
         session_prefix: str,
         *,
         pool: str | None = None,
-    ) -> list[ServerEvent]:
+    ) -> list[TranscriptRecord]:
         return await self._delegate.load_sessions_by_prefix(session_prefix, pool=pool)
 
     async def list_sessions(self) -> set[str]:
@@ -202,21 +531,21 @@ class ResilientTranscriptStore(TranscriptStore):
         return await self._delegate.last_updated(session_id)
 
 
-# ── Materialization helpers ────────────────────────────────────────────────
+# ── Replay projection (framework folder -> history-API shape) ───────────────
 
 
 @_dataclass
 class MaterializedTurn:
-    """A complete ReAct turn materialized from incremental events.
+    """A complete turn materialized from transcript records.
 
-    ``attachments`` carries serialized outbound :class:`Attachment` records
-    collected from any :class:`AssistantTurnEvent` in this turn (populated by
-    ``SendFileToUserTool``). Empty for turns that produced no files. An
-    ``AssistantTurnEvent`` written with no ``turn_id`` (the standalone
-    attachment-record carrier ``SendFileToUserTool`` persists) is emitted as
-    its own ``MaterializedTurn`` with empty ``blocks`` and the record list, so
-    the history-replay API returns it for the frontend to render download
-    cards after a refresh (ADR-0013 §11).
+    Folding is the framework's ``materialize_turns``;
+    :func:`materialize_records` maps each ``TurnView`` onto this
+    API-facing shape. ``attachments`` carries serialized outbound
+    :class:`Attachment` records attached to the turn (a standalone
+    carrier — the record ``SendFileToUserTool`` persists with no
+    ``turn_id`` — replays as its own turn with empty ``blocks``, so the
+    history-replay API returns it for the frontend to render download
+    cards after a refresh, ADR-0013 §11).
     """
     turn_id: str = ""
     blocks: list[dict[str, object]] = _dc_field(default_factory=list)
@@ -224,129 +553,120 @@ class MaterializedTurn:
     started_at: int = 0  # ms epoch
 
 
-def _materialize_events(events: list[ServerEvent]) -> list[MaterializedTurn]:
-    """Convert incremental transcript events into merged turn blocks.
+def _turn_view_blocks(view: TurnView) -> list[dict[str, object]]:
+    """Map one framework ``TurnView`` onto the history-API block shape.
 
-    Groups events by turn_id, matches ToolCallEvent -> ToolResultEvent
-    by call_id, and builds blocks arrays identical to the old
-    AssistantTurnEvent.blocks format.
-
-    Uses isinstance dispatch for type narrowing — this is a legitimate
-    polymorphic boundary where events arrive as a heterogeneous list of
-    ServerEvent subclasses (rule 6 + rule 9).
+    The block dicts are the frontend contract (the same shape the
+    pre-cutover ``AssistantTurnEvent.blocks`` carried): text / reasoning
+    segments and tool cards with the error rendered into ``result``.
     """
-    from bot.webui.events import (
-        AssistantReasoningEvent,
-        AssistantTextEvent,
-        AssistantTurnEvent,
-        ToolCallEvent,
-        ToolResultEvent,
-        TurnStartEvent,
-    )
+    blocks: list[dict[str, object]] = []
+    for block in view.blocks:
+        if block.kind == "text":
+            blocks.append({"kind": "text", "text": block.text})
+        elif block.kind == "thinking":
+            blocks.append({"kind": "reasoning", "text": block.text})
+        else:
+            result = (
+                f"Error: {block.error}" if block.error is not None else block.output
+            )
+            blocks.append(
+                {
+                    "kind": "tool",
+                    "tool": block.tool_name,
+                    "args": dict(block.arguments) if block.arguments else {},
+                    "result": result,
+                }
+            )
+    return blocks
 
-    _event_with_turn = (
-        TurnStartEvent,
-        AssistantReasoningEvent,
-        AssistantTextEvent,
-        ToolCallEvent,
-        ToolResultEvent,
-        AssistantTurnEvent,
-    )
-    turns: dict[str, list[ServerEvent]] = {}
-    # AssistantTurnEvent carriers with NO turn_id — written by
-    # ``SendFileToUserTool`` as standalone outbound-attachment records (no
-    # conversational content, just the id→path index). They would be dropped
-    # by the turn_id grouping below; preserve them as standalone turns so the
-    # history-replay API returns them for rendering after refresh (ADR-0013 §11).
-    standalone_attachment_turns: list[AssistantTurnEvent] = []
-    for evt in events:
-        if isinstance(evt, AssistantTurnEvent) and not evt.turn_id:
-            standalone_attachment_turns.append(evt)
+
+def materialize_records(records: Sequence[TranscriptRecord]) -> list[MaterializedTurn]:
+    """Replay transcript records into the history-API materialized turns.
+
+    The ONLY folding implementation is the framework's
+    ``materialize_turns``; this projection maps each ``TurnView`` onto
+    ``MaterializedTurn``, attaches ``AttachmentCarrier`` records by turn
+    id (standalone carriers become their own turns), and derives each
+    turn's start timestamp from its earliest record. Turns come back
+    sorted by start time.
+    """
+    presentation: list[PresentationEvent] = []
+    carriers: list[AttachmentCarrier] = []
+    for record in records:
+        if isinstance(record, UserMessageRecord):
             continue
-        if isinstance(evt, _event_with_turn) and evt.turn_id:
-            turns.setdefault(evt.turn_id, []).append(evt)
+        if isinstance(record, AttachmentCarrier):
+            carriers.append(record)
+            continue
+        presentation.append(record)
+
+    started_at: dict[str, int] = {}
+    for event in presentation:
+        timestamp = event.timestamp_ms if event.timestamp_ms is not None else 0
+        turn_id = event.turn_id
+        if turn_id not in started_at or timestamp < started_at[turn_id]:
+            started_at[turn_id] = timestamp
+
+    attachments_by_turn: dict[str, list[dict[str, JsonValue]]] = {}
+    for carrier in carriers:
+        attachments_by_turn.setdefault(carrier.turn_id, []).extend(
+            carrier.attachments
+        )
 
     result: list[MaterializedTurn] = []
-
-    for turn_id, group in turns.items():
-        group_sorted = sorted(group, key=lambda e: e.timestamp)
-        blocks: list[dict[str, object]] = []
-        attachments: list[dict[str, object]] = []
-        tool_calls = {
-            evt.call_id: {"tool": evt.tool_name, "args": evt.args}
-            for evt in group_sorted
-            if isinstance(evt, ToolCallEvent)
-        }
-        sequenced_tool_results = iter(
-            evt
-            for _seq, _position, evt in sorted(
-                (evt.seq, position, evt)
-                for position, evt in enumerate(group_sorted)
-                if isinstance(evt, ToolResultEvent) and evt.seq is not None
+    attached: set[str] = set()
+    for view in materialize_turns(presentation):
+        blocks = _turn_view_blocks(view)
+        attachments = list(attachments_by_turn.get(view.turn_id, ()))
+        # A turn with no blocks and no attachments has no replay surface —
+        # observation-only groups (usage / approval records on an idle
+        # identity) must not surface as empty assistant turns.
+        if not blocks and not attachments:
+            continue
+        result.append(
+            MaterializedTurn(
+                turn_id=view.turn_id,
+                blocks=blocks,
+                attachments=attachments,
+                started_at=started_at.get(view.turn_id, 0),
             )
         )
-        started_at: int = group_sorted[0].timestamp
+        attached.add(view.turn_id)
 
-        for evt in group_sorted:
-            if isinstance(evt, AssistantTurnEvent):
-                blocks.extend(evt.blocks)
-                attachments.extend(evt.attachments)
-            elif isinstance(evt, AssistantReasoningEvent):
-                blocks.append({"kind": "reasoning", "text": evt.text})
-            elif isinstance(evt, AssistantTextEvent):
-                blocks.append({"kind": "text", "text": evt.text})
-            elif isinstance(evt, ToolResultEvent):
-                if evt.seq is not None:
-                    evt = next(sequenced_tool_results)
-                entry = tool_calls.get(evt.call_id, {})
-                block: dict[str, object] = {
-                    "kind": "tool",
-                    "tool": evt.tool_name,
-                    "args": entry.get("args", {}),
-                }
-                if evt.error:
-                    block["result"] = f"Error: {evt.error}"
-                else:
-                    block["result"] = evt.result
-                blocks.append(block)
+    # Carriers with no matching replayed turn (the standalone outbound
+    # attachment records SendFileToUserTool persists) replay as their own
+    # turns so the history API keeps rendering download cards after a
+    # refresh. Timestamp keeps them chronological relative to real turns.
+    for carrier in carriers:
+        if carrier.turn_id in attached:
+            continue
+        attached.add(carrier.turn_id)
+        result.append(
+            MaterializedTurn(
+                turn_id=carrier.turn_id,
+                blocks=[],
+                attachments=list(attachments_by_turn.get(carrier.turn_id, ())),
+                started_at=carrier.timestamp_ms,
+            )
+        )
 
-        result.append(MaterializedTurn(
-            turn_id=turn_id,
-            blocks=blocks,
-            attachments=attachments,
-            started_at=started_at,
-        ))
-
-    # Emit AssistantTurnEvent carriers with no turn_id as standalone turns,
-    # preserving BOTH their blocks and attachments. Production
-    # ``SendFileToUserTool`` writes these with blocks=[] (the record is the
-    # only content), but preserving blocks too guards against any other
-    # writer — never silently drop conversational content. Timestamp keeps
-    # them in chronological order relative to the real turns.
-    for evt in standalone_attachment_turns:
-        result.append(MaterializedTurn(
-            turn_id="",
-            blocks=list(evt.blocks),
-            attachments=list(evt.attachments),
-            started_at=evt.timestamp,
-        ))
-
-    result.sort(key=lambda t: t.started_at)
+    result.sort(key=lambda turn: turn.started_at)
     return result
 
 
-# ── JSONL implementation (framework machinery + ServerEvent codec) ─────────
+# ── JSONL implementation (framework machinery + generation-detecting codec) ─
 
 
-class JSONLTranscriptStore(FrameworkJsonlTranscriptStore[ServerEvent], TranscriptStore):
+class JSONLTranscriptStore(FrameworkJsonlTranscriptStore[TranscriptRecord], TranscriptStore):
     """Stores events as one JSONL file per full session id.
 
     File layout: ``base_dir/{safe_session_id}.jsonl`` where *session_id* is the
     full receiver-owned identifier (``{conv}.{agent}[.{invocation_id}]``). The
     append/load/list/delete lifecycle is the framework JSONL store's
-    (ADR-0053); the ``ServerEvent`` codec and the materialization face are
+    (ADR-0053); the generation-detecting record codec and the replay face are
     bot-owned.
     """
 
     def __init__(self, base_dir: Path) -> None:
-        super().__init__(base_dir, ServerEventTranscriptCodec())
+        super().__init__(base_dir, TranscriptRecordCodec())

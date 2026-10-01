@@ -3,9 +3,10 @@
 ``TranscriptStore[E]`` is the generic persistence contract for per-session
 event transcripts: append, load, list, delete. The record type ``E`` is
 the extension point — the framework ships a presentation-event codec, and
-consumers with their own wire records (e.g. a WebUI ``ServerEvent``)
-plug their codec into the same JSONL machinery instead of re-deriving
-file layout, prefix merging, and deletion semantics.
+a consumer that once persisted its own wire records decodes them in its
+codec (adapting each legacy line to zero or more ``E`` records at read
+time) while reusing the same JSONL machinery instead of re-deriving file
+layout, prefix merging, and deletion semantics.
 
 ``materialize_turns`` folds a presentation-event stream back into
 ``TurnView``s (merged text/thinking segments, paired tool cards, terminal
@@ -104,7 +105,13 @@ class TranscriptStore[E](ABC):
 
 
 class TranscriptCodec[E](ABC):
-    """Line codec between a transcript record and its JSONL wire form."""
+    """Line codec between a transcript record and its JSONL wire form.
+
+    ``parse`` decodes one JSONL line into ZERO OR MORE records: a line of
+    the codec's own generation yields one record, while a legacy line may
+    expand into several records at read time (read-time generation
+    adaptation) or be skipped when malformed/blank.
+    """
 
     @abstractmethod
     def dump(self, event: E) -> str:
@@ -112,8 +119,8 @@ class TranscriptCodec[E](ABC):
         ...
 
     @abstractmethod
-    def parse(self, line: str) -> E | None:
-        """Parse one JSONL line; ``None`` skips it (malformed/blank)."""
+    def parse(self, line: str) -> list[E]:
+        """Decode one JSONL line; empty list skips it (malformed/blank)."""
         ...
 
     def event_time(self, event: E) -> int:
@@ -157,10 +164,10 @@ class JsonlTranscriptStore[E](TranscriptStore[E]):
         """
         return path.stem
 
-    def _parse_line(self, line: str) -> E | None:
+    def _parse_line(self, line: str) -> list[E]:
         stripped = line.strip()
         if not stripped:
-            return None
+            return []
         return self._codec.parse(stripped)
 
     # ------------------------------------------------------------------
@@ -192,9 +199,7 @@ class JsonlTranscriptStore[E](TranscriptStore[E]):
             events: list[E] = []
             with file_path.open("r", encoding="utf-8") as file:
                 for line in file:
-                    parsed = self._parse_line(line)
-                    if parsed is not None:
-                        events.append(parsed)
+                    events.extend(self._parse_line(line))
             return events
 
         return await asyncio.to_thread(_load)
@@ -258,11 +263,11 @@ class PresentationTranscriptCodec(TranscriptCodec[PresentationEvent]):
     def dump(self, event: PresentationEvent) -> str:
         return event.model_dump_json()
 
-    def parse(self, line: str) -> PresentationEvent | None:
+    def parse(self, line: str) -> list[PresentationEvent]:
         try:
-            return self._adapter.validate_json(line)
+            return [self._adapter.validate_json(line)]
         except ValueError:
-            return None
+            return []
 
     def event_time(self, event: PresentationEvent) -> int:
         return event.timestamp_ms if event.timestamp_ms is not None else 0
@@ -355,7 +360,7 @@ class _MutableToolBlock:
 
 
 class _TextSlot:
-    """Ordered slot for one text/thinking segment (merged at freeze time)."""
+    """Ordered slot for one contiguous text/thinking segment run."""
 
     def __init__(self, key: str, kind: Literal["text", "thinking"]) -> None:
         self.key = key
@@ -368,7 +373,6 @@ class _TurnAccumulator:
 
     def __init__(self, turn_id: str) -> None:
         self.turn_id = turn_id
-        self.slots: dict[str, _TextSlot] = {}
         self.tools: dict[str, _MutableToolBlock] = {}
         self.order: list[_TextSlot | _MutableToolBlock] = []
         self.stop_reason: StopReason | None = None
@@ -378,11 +382,9 @@ class _TurnAccumulator:
     def feed(self, event: PresentationEvent) -> None:
         match event:
             case TextDelta(text=text, segment_id=segment):
-                slot = self._text_slot(f"text:{segment}", "text")
-                slot.parts.append(text)
+                self._text_slot("text", segment).parts.append(text)
             case ThinkingDelta(text=text, segment_id=segment):
-                slot = self._text_slot(f"thinking:{segment}", "thinking")
-                slot.parts.append(text)
+                self._text_slot("thinking", segment).parts.append(text)
             case ToolCallStarted(tool_name=name, call_id=call_id, arguments=args):
                 tool = self.tools.get(call_id)
                 if tool is None:
@@ -417,15 +419,23 @@ class _TurnAccumulator:
                 self.error = error
                 self.latency_ms = latency
 
-    def _text_slot(self, key: str, kind: Literal["text", "thinking"]) -> _TextSlot:
-        slot = self.slots.get(key)
-        if slot is None:
-            slot = _TextSlot(key=key, kind=kind)
-            self.slots[key] = slot
-            self.order.append(slot)
+    def _text_slot(self, kind: Literal["text", "thinking"], segment: str) -> _TextSlot:
+        """Return the slot continuing this segment's CURRENT run.
+
+        A segment's deltas merge only while its slot is the newest item:
+        once a tool card (or another segment) intervenes, the segment's
+        next delta opens a NEW slot, so replay never hoists later text
+        above the tool card that actually separated the runs.
+        """
+        head = self.order[-1] if self.order else None
+        if isinstance(head, _TextSlot) and head.kind == kind and head.key == segment:
+            return head
+        slot = _TextSlot(key=segment, kind=kind)
+        self.order.append(slot)
         return slot
 
     def view(self) -> TurnView:
+        self._order_seq_tool_cards()
         blocks: list[TurnBlock] = []
         for item in self.order:
             if isinstance(item, _MutableToolBlock):
@@ -441,6 +451,26 @@ class _TurnAccumulator:
             latency_ms=self.latency_ms,
             blocks=blocks,
         )
+
+    def _order_seq_tool_cards(self) -> None:
+        """Redistribute tool cards carrying a ``seq`` hint by that hint.
+
+        Parallel tools COMPLETE in arbitrary order; ``seq`` is the
+        runtime's model-order hint. Cards with a seq are stable-sorted by
+        it and redistributed to the positions those cards occupy, while
+        seq-less cards (a legacy writer's results) keep their arrival
+        slot.
+        """
+        indexed: list[tuple[int, _MutableToolBlock]] = [
+            (index, item)
+            for index, item in enumerate(self.order)
+            if isinstance(item, _MutableToolBlock) and item.seq is not None
+        ]
+        if len(indexed) < 2:
+            return
+        ordered = sorted((card for _, card in indexed), key=lambda card: card.seq)
+        for (index, _), card in zip(indexed, ordered, strict=True):
+            self.order[index] = card
 
 
 def materialize_turns(events: Sequence[PresentationEvent]) -> list[TurnView]:

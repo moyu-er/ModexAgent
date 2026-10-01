@@ -70,7 +70,6 @@ from bot.webui.types import (  # noqa: F401 — re-exports for backward compatib
     _WEBUI_STATIC_PREFIX,
     RuntimeStores,
     WorkspaceIndex,
-    _materialize_partial_deltas,
     _new_uuid_prefix,
     _safe_send_json,
     _WsConnectionState,

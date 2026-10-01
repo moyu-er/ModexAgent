@@ -1,10 +1,10 @@
-"""Tests for the in-memory partial streaming event buffer.
+"""Tests for the in-memory partial streaming record buffer.
 
-Partial events (ModelContentDelta / ModelReasoningDelta) are held in an
-in-memory dict on ``WorkspaceScopedTranscriptStore`` during streaming and
-cleared on turn completion. Process crash drops the whole buffer (no
-leftover, no startup sweep needed). The main transcript store (SQLite or
-file) never sees them — two independent stores, two separate queries.
+Partial records (TextDelta / ThinkingDelta) are held in an in-memory dict
+on ``WorkspaceScopedTranscriptStore`` during streaming and cleared on turn
+completion. Process crash drops the whole buffer (no leftover, no startup
+sweep needed). The main transcript store (SQLite or file) never sees them
+— two independent stores, two separate queries.
 """
 
 from __future__ import annotations
@@ -13,34 +13,33 @@ from pathlib import Path
 
 import pytest
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import (
-    ModelContentDelta,
-    ModelReasoningDelta,
-    UserMessageEvent,
-)
+from bot.webui.routes.sessions.messages import partial_streaming_turn
+from bot.webui.transcript_store import UserMessageRecord
+
+from modex_agent.presentation import TextDelta, ThinkingDelta
 
 pytestmark = pytest.mark.asyncio
 
 
-def _content_delta(session_id: str, text: str, *, segment_id: str = "_text", turn_id: str = "t1", ts: int = 100) -> ModelContentDelta:
-    return ModelContentDelta(
+def _content_delta(session_id: str, text: str, *, segment_id: str = "_text", turn_id: str = "t1", ts: int = 100) -> TextDelta:
+    return TextDelta(
         session_id=session_id,
         agent_name="main",
         text=text,
         turn_id=turn_id,
         segment_id=segment_id,
-        timestamp=ts,
+        timestamp_ms=ts,
     )
 
 
-def _reasoning_delta(session_id: str, text: str, *, segment_id: str = "_reasoning", turn_id: str = "t1", ts: int = 100) -> ModelReasoningDelta:
-    return ModelReasoningDelta(
+def _reasoning_delta(session_id: str, text: str, *, segment_id: str = "_reasoning", turn_id: str = "t1", ts: int = 100) -> ThinkingDelta:
+    return ThinkingDelta(
         session_id=session_id,
         agent_name="main",
         text=text,
         turn_id=turn_id,
         segment_id=segment_id,
-        timestamp=ts,
+        timestamp_ms=ts,
     )
 
 
@@ -56,8 +55,8 @@ async def test_append_and_load_partial() -> None:
         await store.append_partial(sid, _content_delta(sid, " world", ts=101), sessions_dir=sessions_dir)
         partials = await store.load_partial(sid, sessions_dir=sessions_dir)
         assert len(partials) == 2
-        assert partials[0].event == "model_content_delta"
-        assert partials[1].event == "model_content_delta"
+        assert partials[0].kind == "text_delta"
+        assert partials[1].kind == "text_delta"
     finally:
         import shutil
         shutil.rmtree(sessions_dir, ignore_errors=True)
@@ -93,10 +92,10 @@ async def test_partial_does_not_leak_into_main_transcript() -> None:
     sid = "abc.main"
     try:
         await store.append_partial(sid, _content_delta(sid, "streaming delta"), sessions_dir=sessions_dir)
-        await store.append(sid, UserMessageEvent(session_id=sid, agent_name="main", content="hi"), sessions_dir=sessions_dir)
+        await store.append(sid, UserMessageRecord(session_id=sid, agent_name="main", content="hi"), sessions_dir=sessions_dir)
         events = await store.load_sessions_by_prefix("abc", sessions_dir=sessions_dir)
-        assert all(e.event != "model_content_delta" for e in events)
-        assert any(e.event == "user_message" for e in events)
+        assert all(e.kind != "text_delta" for e in events)
+        assert any(e.kind == "user_message" for e in events)
     finally:
         import shutil
         shutil.rmtree(sessions_dir, ignore_errors=True)
@@ -157,18 +156,16 @@ async def test_load_partial_returns_snapshot_not_live_ref() -> None:
         shutil.rmtree(sessions_dir, ignore_errors=True)
 
 
-# ── _materialize_partial_deltas ─────────────────────────────────────────────
+# ── partial_streaming_turn (the route's synthetic streaming turn) ──────────
 
 
-async def test_materialize_partial_deltas_single_text_segment() -> None:
-    from bot.webui.server import _materialize_partial_deltas
-
+async def test_partial_streaming_turn_single_text_segment() -> None:
     sid = "abc.main"
-    events = [
+    records = [
         _content_delta(sid, "Hello", segment_id="_text", ts=100),
         _content_delta(sid, " world", segment_id="_text", ts=101),
     ]
-    result = _materialize_partial_deltas(events, "main")
+    result = partial_streaming_turn(records, "main")
     assert result is not None
     assert result["event"] == "assistant_turn"
     assert result["is_streaming"] is True
@@ -179,15 +176,13 @@ async def test_materialize_partial_deltas_single_text_segment() -> None:
     assert blocks[0]["text"] == "Hello world"
 
 
-async def test_materialize_partial_deltas_reasoning_and_text() -> None:
-    from bot.webui.server import _materialize_partial_deltas
-
+async def test_partial_streaming_turn_reasoning_and_text() -> None:
     sid = "abc.main"
-    events = [
+    records = [
         _reasoning_delta(sid, "Thinking...", segment_id="_reasoning", ts=100),
         _content_delta(sid, "Answer", segment_id="_text", ts=101),
     ]
-    result = _materialize_partial_deltas(events, "main")
+    result = partial_streaming_turn(records, "main")
     assert result is not None
     blocks = result["blocks"]
     assert len(blocks) == 2
@@ -197,20 +192,20 @@ async def test_materialize_partial_deltas_reasoning_and_text() -> None:
     assert blocks[1]["text"] == "Answer"
 
 
-async def test_materialize_partial_deltas_empty_returns_none() -> None:
-    from bot.webui.server import _materialize_partial_deltas
-
-    assert _materialize_partial_deltas([], "main") is None
+async def test_partial_streaming_turn_empty_returns_none() -> None:
+    assert partial_streaming_turn([], "main") is None
 
 
-async def test_materialize_partial_deltas_carries_turn_id() -> None:
-    from bot.webui.server import _materialize_partial_deltas
-
+async def test_partial_streaming_turn_carries_turn_id_and_first_timestamp() -> None:
     sid = "abc.main"
-    events = [_content_delta(sid, "Hi", turn_id="turn_42")]
-    result = _materialize_partial_deltas(events, "main")
+    records = [
+        _content_delta(sid, "Hi", turn_id="turn_42", ts=300),
+        _content_delta(sid, " there", turn_id="turn_42", ts=400),
+    ]
+    result = partial_streaming_turn(records, "main")
     assert result is not None
     assert result["turn_id"] == "turn_42"
+    assert result["timestamp"] == 300
 
 
 # ── End-to-end: WebBotEmitter clears partial on turn_finished ────────────────

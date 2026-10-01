@@ -30,7 +30,7 @@ from bot.webui.events import (
     ToolResultEvent,
     TurnStartEvent,
 )
-from bot.webui.transcript_store import TranscriptStore
+from bot.webui.transcript_store import TranscriptStore, adapt_legacy_records
 from bot.workspace.handle import PoolWorkspaceResources
 
 from modex_agent.core.agent import AgentCommKind, ExecutionStrategyKind
@@ -74,7 +74,17 @@ def _make_facade_mixed_pool(
     # Mock TranscriptStore — has the external subagent's events
     mock_transcript_store = MagicMock(spec=TranscriptStore)
     mock_transcript_store.load = AsyncMock(
-        return_value=transcript_events if transcript_events is not None else _make_transcript_events()
+        return_value=(
+            [
+                record
+                for event in (
+                    transcript_events
+                    if transcript_events is not None
+                    else _make_transcript_events()
+                )
+                for record in adapt_legacy_records(event)
+            ]
+        )
     )
 
     # Build CommunicationTargetStore with the external subagent
@@ -293,8 +303,12 @@ class TestExternalMainAgentSelfHistory:
         mock_transcript_store = MagicMock(spec=TranscriptStore)
         mock_transcript_store.load = AsyncMock(
             return_value=[
-                TurnStartEvent(session_id="conv1.opencode", agent_name="opencode", timestamp=1000, turn_id="t1"),
-                AssistantTextEvent(session_id="conv1.opencode", agent_name="opencode", timestamp=1010, turn_id="t1", text="Working on it"),
+                record
+                for event in [
+                    TurnStartEvent(session_id="conv1.opencode", agent_name="opencode", timestamp=1000, turn_id="t1"),
+                    AssistantTextEvent(session_id="conv1.opencode", agent_name="opencode", timestamp=1010, turn_id="t1", text="Working on it"),
+                ]
+                for record in adapt_legacy_records(event)
             ]
         )
 

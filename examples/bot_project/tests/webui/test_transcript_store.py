@@ -7,20 +7,22 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from bot.webui.events import (
-    AssistantTextEvent,
-    AssistantTurnEvent,
-    ModelContentDelta,
-    ServerEvent,
-    ToolCallEvent,
-    ToolResultEvent,
-    TurnStartEvent,
-    UserMessageEvent,
-)
 from bot.webui.transcript_store import (
+    AttachmentCarrier,
     JSONLTranscriptStore,
     ResilientTranscriptStore,
+    TranscriptRecord,
     TranscriptStore,
+    UserMessageRecord,
+)
+
+from modex_agent.core.turn_events import StopReason
+from modex_agent.presentation import (
+    TextDelta,
+    ToolCallStarted,
+    ToolResult,
+    TurnFinished,
+    TurnStarted,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -33,12 +35,12 @@ def _make_store() -> JSONLTranscriptStore:
     return JSONLTranscriptStore(Path(tempfile.mkdtemp()))
 
 
-def _msg(session_id: str, content: str = "hi", **kwargs: object) -> UserMessageEvent:
-    return UserMessageEvent(
+def _msg(session_id: str, content: str = "hi", **kwargs: object) -> UserMessageRecord:
+    return UserMessageRecord(
         session_id=session_id,
-        agent_name=kwargs.get("agent_name", "main"),
+        agent_name=str(kwargs.get("agent_name", "main")),
+        timestamp_ms=int(kwargs.get("timestamp", 100)),
         content=content,
-        timestamp=kwargs.get("timestamp", 100.0),
     )
 
 
@@ -50,12 +52,18 @@ async def test_append_and_load_events() -> None:
     await store.append("abc.main", _msg("abc.main"))
     await store.append(
         "abc.main",
-        ModelContentDelta(session_id="abc.main", agent_name="main", text="hello", turn_id="t1"),
+        TextDelta(
+            session_id="abc.main",
+            agent_name="main",
+            turn_id="t1",
+            timestamp_ms=101,
+            text="hello",
+        ),
     )
-    events = await store.load("abc.main")
-    assert len(events) == 2
-    assert events[0].event == "user_message"
-    assert events[1].event == "model_content_delta"
+    records = await store.load("abc.main")
+    assert len(records) == 2
+    assert records[0].kind == "user_message"
+    assert records[1].kind == "text_delta"
 
 
 async def test_load_empty_session_returns_nothing() -> None:
@@ -78,8 +86,8 @@ async def test_two_subagent_invocations_persist_to_separate_sessions() -> None:
     second = await store.load("conv.reviewer.bb22")
     assert len(first) == 1
     assert len(second) == 1
-    assert first[0].content == "review 1"  # type: ignore[attr-defined]
-    assert second[0].content == "review 2"  # type: ignore[attr-defined]
+    assert first[0].content == "review 1"
+    assert second[0].content == "review 2"
 
 
 # ── Listing ────────────────────────────────────────────────────────────────
@@ -107,35 +115,34 @@ async def test_list_sessions_by_prefix_groups_by_prefix() -> None:
 
 async def test_load_sessions_by_prefix_merges_sessions_by_timestamp() -> None:
     store: TranscriptStore = _make_store()
-    await store.append("conv.main", _msg("conv.main", "hi", timestamp=100.0))
+    await store.append("conv.main", _msg("conv.main", "hi", timestamp=100))
     await store.append(
         "conv.main",
-        AssistantTurnEvent(
+        TurnFinished(
             session_id="conv.main",
             agent_name="main",
-            blocks=[{"kind": "text", "text": "hello"}],
             turn_id="t1",
-            latency_ms=500,
-            timestamp=200.0,
+            timestamp_ms=200,
+            stop_reason=StopReason.COMPLETED,
         ),
     )
     await store.append(
         "conv.reviewer.aa",
-        AssistantTurnEvent(
+        TextDelta(
             session_id="conv.reviewer.aa",
             agent_name="reviewer",
-            blocks=[{"kind": "text", "text": "review"}],
             turn_id="t1",
-            latency_ms=300,
-            timestamp=150.0,
+            timestamp_ms=150,
+            text="review",
+            segment_id="_legacy_a",
         ),
     )
 
-    all_events = await store.load_sessions_by_prefix("conv")
-    assert len(all_events) == 3
-    assert all_events[0].event == "user_message"
-    assert all_events[1].agent_name == "reviewer"  # t=150
-    assert all_events[2].agent_name == "main"  # t=200
+    all_records = await store.load_sessions_by_prefix("conv")
+    assert len(all_records) == 3
+    assert all_records[0].kind == "user_message"
+    assert all_records[1].agent_name == "reviewer"  # t=150
+    assert all_records[2].agent_name == "main"  # t=200
 
 
 async def test_load_sessions_by_prefix_empty_returns_nothing() -> None:
@@ -165,29 +172,71 @@ async def test_delete_sessions_by_prefix_removes_all_sessions_in_conversation() 
     assert "xyz.main" in await store.list_sessions()
 
 
-# ── Round-trip & migration ─────────────────────────────────────────────────
+# ── Round-trip & legacy generation detection ────────────────────────────────
 
 
-async def test_assistant_turn_roundtrip() -> None:
-    store: TranscriptStore = _make_store()
-    ev = AssistantTurnEvent(
-        session_id="conv1.main",
-        agent_name="main",
-        blocks=[
+async def test_legacy_server_event_lines_replay_through_the_same_store() -> None:
+    """A pre-cutover JSONL file (``event`` discriminator lines) loads and
+    replays through the same store as new ``kind`` records — read
+    compatibility with no on-disk migration."""
+    base_dir = Path(tempfile.mkdtemp())
+    store = JSONLTranscriptStore(base_dir)
+    legacy_user = {
+        "event": "user_message",
+        "session_id": "conv1.main",
+        "agent_name": "main",
+        "timestamp": 1718234567.0,
+        "content": "hello",
+    }
+    legacy_turn = {
+        "event": "assistant_turn",
+        "session_id": "conv1.main",
+        "agent_name": "main",
+        "timestamp": 1718234568.0,
+        "blocks": [
             {"kind": "reasoning", "text": "The user said hi"},
             {"kind": "text", "text": "Hello"},
             {"kind": "tool", "tool": "read", "args": {"path": "x"}, "result": "ok"},
         ],
-        turn_id="turn_1",
-        latency_ms=500,
+        "turn_id": "turn_1",
+        "latency_ms": 500,
+        "attachments": [
+            {"id": "att-1", "kind": "other", "name": "report.txt",
+             "mime": "text/plain", "size": 4, "path": "/x/report.txt",
+             "locator": "workspace"}
+        ],
+    }
+    # Written exactly as the pre-cutover writer serialized them.
+    (base_dir / "conv1.main.jsonl").write_text(
+        json.dumps(legacy_user, ensure_ascii=False) + "\n"
+        + json.dumps(legacy_turn, ensure_ascii=False) + "\n",
+        encoding="utf-8",
     )
-    await store.append("conv1.main", ev)
-    loaded = await store.load("conv1.main")
-    assert len(loaded) == 1
-    assert loaded[0].event == "assistant_turn"
-    blocks = loaded[0].blocks  # type: ignore[attr-defined]
-    assert len(blocks) == 3
-    assert blocks[2] == {"kind": "tool", "tool": "read", "args": {"path": "x"}, "result": "ok"}
+
+    records = await store.load("conv1.main")
+    kinds = [record.kind for record in records]
+    assert kinds == [
+        "user_message",
+        "thinking_delta",
+        "text_delta",
+        "tool_call_started",
+        "tool_result",
+        "attachments",
+    ]
+
+    turns = await store.load_materialized_by_prefix("conv1")
+    assert len(turns) == 1
+    assert turns[0].turn_id == "turn_1"
+    assert turns[0].blocks == [
+        {"kind": "reasoning", "text": "The user said hi"},
+        {"kind": "text", "text": "Hello"},
+        {"kind": "tool", "tool": "read", "args": {"path": "x"}, "result": "ok"},
+    ]
+    # The legacy turn's attachment records ride a carrier attached to the
+    # same turn id.
+    assert turns[0].attachments[0]["id"] == "att-1"
+    # Float seconds -> int milliseconds at the legacy decode boundary.
+    assert turns[0].started_at == 1_718_234_568_000
 
 
 async def test_old_format_assistant_turn_migrated_on_load(tmp_path: Path) -> None:
@@ -212,13 +261,48 @@ async def test_old_format_assistant_turn_migrated_on_load(tmp_path: Path) -> Non
         encoding="utf-8",
     )
 
-    loaded = await store.load("conv1.main")
-    assert len(loaded) == 1
-    blocks = loaded[0].blocks  # type: ignore[attr-defined]
+    turns = await store.load_materialized_by_prefix("conv1")
+    assert len(turns) == 1
+    blocks = turns[0].blocks
     assert len(blocks) == 3
     assert blocks[0] == {"kind": "reasoning", "text": "The user said hi"}
     assert blocks[1] == {"kind": "text", "text": "Hello World"}
     assert blocks[2]["tool"] == "read"
+
+
+async def test_mixed_generation_file_replays_in_one_pass(tmp_path: Path) -> None:
+    """Old and new lines may interleave in one file (a session that spans
+    the cutover); both replay through the single materializer."""
+    store = JSONLTranscriptStore(tmp_path)
+    legacy_text = {
+        "event": "assistant_text",
+        "session_id": "conv1.main",
+        "agent_name": "main",
+        "timestamp": 100,
+        "turn_id": "t1",
+        "text": "legacy block",
+    }
+    (tmp_path / "conv1.main.jsonl").write_text(
+        json.dumps(legacy_text, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    await store.append(
+        "conv1.main",
+        TextDelta(
+            session_id="conv1.main",
+            agent_name="main",
+            turn_id="t1",
+            timestamp_ms=200,
+            text="new block",
+            segment_id="_text",
+        ),
+    )
+    turns = await store.load_materialized_by_prefix("conv1")
+    assert len(turns) == 1
+    assert turns[0].blocks == [
+        {"kind": "text", "text": "legacy block"},
+        {"kind": "text", "text": "new block"},
+    ]
 
 
 # ── load_materialized_by_prefix ─────────────────────────────────────────
@@ -226,10 +310,11 @@ async def test_old_format_assistant_turn_migrated_on_load(tmp_path: Path) -> Non
 
 async def test_materialize_single_text_turn() -> None:
     store = _make_store()
-    await store.append("conv.main", TurnStartEvent(
-        session_id="conv.main", agent_name="main", turn_id="t1", timestamp=100.0))
-    await store.append("conv.main", AssistantTextEvent(
-        session_id="conv.main", agent_name="main", turn_id="t1", text="Hello", timestamp=200.0))
+    await store.append("conv.main", TurnStarted(
+        session_id="conv.main", agent_name="main", turn_id="t1", timestamp_ms=100))
+    await store.append("conv.main", TextDelta(
+        session_id="conv.main", agent_name="main", turn_id="t1",
+        timestamp_ms=200, text="Hello", segment_id="_text"))
     turns = await store.load_materialized_by_prefix("conv")
     assert len(turns) == 1
     assert turns[0].turn_id == "t1"
@@ -238,16 +323,17 @@ async def test_materialize_single_text_turn() -> None:
 
 async def test_materialize_text_and_tool_turn() -> None:
     store = _make_store()
-    await store.append("conv.main", TurnStartEvent(
-        session_id="conv.main", agent_name="main", turn_id="t1", timestamp=100.0))
-    await store.append("conv.main", AssistantTextEvent(
-        session_id="conv.main", agent_name="main", turn_id="t1", text="Let me check.", timestamp=200.0))
-    await store.append("conv.main", ToolCallEvent(
+    await store.append("conv.main", TurnStarted(
+        session_id="conv.main", agent_name="main", turn_id="t1", timestamp_ms=100))
+    await store.append("conv.main", TextDelta(
+        session_id="conv.main", agent_name="main", turn_id="t1",
+        text="Let me check.", timestamp_ms=200, segment_id="_text"))
+    await store.append("conv.main", ToolCallStarted(
         session_id="conv.main", agent_name="main", turn_id="t1", call_id="call_0",
-        tool_name="read_file", args={"path": "/x"}, timestamp=300.0))
-    await store.append("conv.main", ToolResultEvent(
+        tool_name="read_file", arguments={"path": "/x"}, timestamp_ms=300))
+    await store.append("conv.main", ToolResult(
         session_id="conv.main", agent_name="main", turn_id="t1", call_id="call_0",
-        tool_name="read_file", result="content", timestamp=400.0))
+        tool_name="read_file", output="content", timestamp_ms=400))
     turns = await store.load_materialized_by_prefix("conv")
     assert len(turns) == 1
     blocks = turns[0].blocks
@@ -259,13 +345,13 @@ async def test_materialize_text_and_tool_turn() -> None:
 async def test_materialize_single_batch_tools_in_model_sequence() -> None:
     store = _make_store()
     for call_id, seq, timestamp in [("B", 1, 100), ("A", 0, 200)]:
-        await store.append("conv.main", ToolCallEvent(
+        await store.append("conv.main", ToolCallStarted(
             session_id="conv.main", agent_name="main", turn_id="t1",
-            call_id=call_id, tool_name=call_id, timestamp=timestamp))
-        await store.append("conv.main", ToolResultEvent(
+            call_id=call_id, tool_name=call_id, arguments={}, timestamp_ms=timestamp))
+        await store.append("conv.main", ToolResult(
             session_id="conv.main", agent_name="main", turn_id="t1",
-            call_id=call_id, tool_name=call_id, result=call_id,
-            seq=seq, timestamp=timestamp + 1))
+            call_id=call_id, tool_name=call_id, output=call_id,
+            seq=seq, timestamp_ms=timestamp + 1))
 
     turns = await store.load_materialized_by_prefix("conv")
 
@@ -281,13 +367,13 @@ async def test_materialize_two_batches_in_turn_wide_model_sequence() -> None:
         ("batch2-C", 2, 400),
     ]
     for call_id, seq, timestamp in completed:
-        await store.append("conv.main", ToolCallEvent(
+        await store.append("conv.main", ToolCallStarted(
             session_id="conv.main", agent_name="main", turn_id="t1",
-            call_id=call_id, tool_name=call_id, timestamp=timestamp))
-        await store.append("conv.main", ToolResultEvent(
+            call_id=call_id, tool_name=call_id, arguments={}, timestamp_ms=timestamp))
+        await store.append("conv.main", ToolResult(
             session_id="conv.main", agent_name="main", turn_id="t1",
-            call_id=call_id, tool_name=call_id, result=call_id,
-            seq=seq, timestamp=timestamp + 1))
+            call_id=call_id, tool_name=call_id, output=call_id,
+            seq=seq, timestamp_ms=timestamp + 1))
 
     turns = await store.load_materialized_by_prefix("conv")
 
@@ -303,13 +389,13 @@ async def test_materialize_legacy_tool_result_stays_in_timestamp_slot() -> None:
     store = _make_store()
     completed = [("B", 1, 100), ("legacy", None, 200), ("A", 0, 300)]
     for call_id, seq, timestamp in completed:
-        await store.append("conv.main", ToolCallEvent(
+        await store.append("conv.main", ToolCallStarted(
             session_id="conv.main", agent_name="main", turn_id="t1",
-            call_id=call_id, tool_name=call_id, timestamp=timestamp))
-        await store.append("conv.main", ToolResultEvent(
+            call_id=call_id, tool_name=call_id, arguments={}, timestamp_ms=timestamp))
+        await store.append("conv.main", ToolResult(
             session_id="conv.main", agent_name="main", turn_id="t1",
-            call_id=call_id, tool_name=call_id, result=call_id,
-            seq=seq, timestamp=timestamp + 1))
+            call_id=call_id, tool_name=call_id, output=call_id,
+            seq=seq, timestamp_ms=timestamp + 1))
 
     turns = await store.load_materialized_by_prefix("conv")
 
@@ -318,14 +404,16 @@ async def test_materialize_legacy_tool_result_stays_in_timestamp_slot() -> None:
 
 async def test_materialize_multiple_turns_sorted() -> None:
     store = _make_store()
-    await store.append("conv.main", TurnStartEvent(
-        session_id="conv.main", agent_name="main", turn_id="t2", timestamp=300.0))
-    await store.append("conv.main", AssistantTextEvent(
-        session_id="conv.main", agent_name="main", turn_id="t2", text="Second", timestamp=400.0))
-    await store.append("conv.main", TurnStartEvent(
-        session_id="conv.main", agent_name="main", turn_id="t1", timestamp=100.0))
-    await store.append("conv.main", AssistantTextEvent(
-        session_id="conv.main", agent_name="main", turn_id="t1", text="First", timestamp=200.0))
+    await store.append("conv.main", TurnStarted(
+        session_id="conv.main", agent_name="main", turn_id="t2", timestamp_ms=300))
+    await store.append("conv.main", TextDelta(
+        session_id="conv.main", agent_name="main", turn_id="t2",
+        text="Second", timestamp_ms=400, segment_id="_text"))
+    await store.append("conv.main", TurnStarted(
+        session_id="conv.main", agent_name="main", turn_id="t1", timestamp_ms=100))
+    await store.append("conv.main", TextDelta(
+        session_id="conv.main", agent_name="main", turn_id="t1",
+        text="First", timestamp_ms=200, segment_id="_text"))
     turns = await store.load_materialized_by_prefix("conv")
     assert len(turns) == 2
     assert turns[0].turn_id == "t1"
@@ -334,27 +422,30 @@ async def test_materialize_multiple_turns_sorted() -> None:
 
 async def test_materialize_tool_call_with_error_result() -> None:
     store = _make_store()
-    await store.append("conv.main", TurnStartEvent(
-        session_id="conv.main", agent_name="main", turn_id="t1", timestamp=100.0))
-    await store.append("conv.main", ToolCallEvent(
+    await store.append("conv.main", TurnStarted(
+        session_id="conv.main", agent_name="main", turn_id="t1", timestamp_ms=100))
+    await store.append("conv.main", ToolCallStarted(
         session_id="conv.main", agent_name="main", turn_id="t1", call_id="c0",
-        tool_name="rm", args={"path": "/x"}, timestamp=200.0))
-    await store.append("conv.main", ToolResultEvent(
+        tool_name="rm", arguments={"path": "/x"}, timestamp_ms=200))
+    await store.append("conv.main", ToolResult(
         session_id="conv.main", agent_name="main", turn_id="t1", call_id="c0",
-        tool_name="rm", result="", error="Permission denied", timestamp=300.0))
+        tool_name="rm", output="", error="Permission denied", timestamp_ms=300))
     turns = await store.load_materialized_by_prefix("conv")
     assert turns[0].blocks[0]["result"] == "Error: Permission denied"
 
 
-async def test_materialize_legacy_assistant_turn_falls_through() -> None:
+async def test_materialize_orphan_tool_result_without_call() -> None:
+    """A resumed approval turn persists ONLY the result record (no started
+    card): the card materializes at the result with empty args — the
+    orphan-result shape the resume path writes."""
     store = _make_store()
-    await store.append("conv.main", AssistantTurnEvent(
-        session_id="conv.main", agent_name="main", turn_id="t1",
-        blocks=[{"kind": "reasoning", "text": "think"}, {"kind": "text", "text": "reply"}],
-        latency_ms=500, timestamp=100.0))
+    await store.append("conv.main", ToolResult(
+        session_id="conv.main", agent_name="main", turn_id="t1", call_id="c0",
+        tool_name="search", output="hits", timestamp_ms=100))
     turns = await store.load_materialized_by_prefix("conv")
-    assert len(turns) == 1
-    assert len(turns[0].blocks) == 2
+    assert turns[0].blocks == [
+        {"kind": "tool", "tool": "search", "args": {}, "result": "hits"}
+    ]
 
 
 async def test_materialize_empty_returns_empty() -> None:
@@ -362,35 +453,23 @@ async def test_materialize_empty_returns_empty() -> None:
     assert await store.load_materialized_by_prefix("nonexistent") == []
 
 
-async def test_materialize_tool_call_without_result_not_in_blocks() -> None:
-    store = _make_store()
-    await store.append("conv.main", TurnStartEvent(
-        session_id="conv.main", agent_name="main", turn_id="t1", timestamp=100.0))
-    await store.append("conv.main", ToolCallEvent(
-        session_id="conv.main", agent_name="main", turn_id="t1", call_id="orphan",
-        tool_name="search", args={"q": "x"}, timestamp=200.0))
-    turns = await store.load_materialized_by_prefix("conv")
-    assert turns[0].blocks == []
-
-
 async def test_materialize_assistant_turn_carries_attachments() -> None:
-    """An AssistantTurnEvent with turn_id and attachments contributes its
-    attachments to the materialized turn so history replay can re-render
-    download cards after a refresh (ADR-0013 §11).
+    """An AttachmentCarrier with a turn_id attaches its records to that
+    turn so history replay can re-render download cards after a refresh
+    (ADR-0013 §11) — the replay shape of legacy assistant_turn records
+    that carried attachments.
     """
     store = _make_store()
-    await store.append("conv.main", TurnStartEvent(
-        session_id="conv.main", agent_name="main", turn_id="t1", timestamp=100.0))
-    await store.append("conv.main", AssistantTextEvent(
+    await store.append("conv.main", TurnStarted(
+        session_id="conv.main", agent_name="main", turn_id="t1", timestamp_ms=100))
+    await store.append("conv.main", TextDelta(
         session_id="conv.main", agent_name="main", turn_id="t1",
-        text="here is the file", timestamp=200.0))
-    await store.append("conv.main", AssistantTurnEvent(
-        session_id="conv.main", agent_name="main", turn_id="t1",
-        blocks=[{"kind": "text", "text": "done"}],
+        text="here is the file", timestamp_ms=200, segment_id="_text"))
+    await store.append("conv.main", AttachmentCarrier(
+        session_id="conv.main", agent_name="main", turn_id="t1", timestamp_ms=300,
         attachments=[{"id": "att-1", "kind": "other", "name": "report.txt",
-                       "mime": "text/plain", "size": 4, "path": "/x/report.txt",
-                       "locator": "workspace"}],
-        timestamp=300.0))
+                      "mime": "text/plain", "size": 4, "path": "/x/report.txt",
+                      "locator": "workspace"}]))
     turns = await store.load_materialized_by_prefix("conv")
     assert len(turns) == 1
     assert turns[0].turn_id == "t1"
@@ -399,30 +478,27 @@ async def test_materialize_assistant_turn_carries_attachments() -> None:
     assert turns[0].attachments[0]["name"] == "report.txt"
 
 
-async def test_materialize_attachment_only_event_without_turn_id_emits_standalone_turn() -> None:
-    """A SendFileToUserTool-persisted AssistantTurnEvent has no turn_id and
-    empty blocks (it only carries the outbound Attachment record). It must be
-    emitted as its own MaterializedTurn with empty blocks and the attachment
-    list, so the history-replay API returns it for the frontend to render a
-    download card after refresh.
+async def test_materialize_attachment_only_carrier_emits_standalone_turn() -> None:
+    """A SendFileToUserTool-persisted carrier has no turn_id (it only
+    carries the outbound Attachment record). It must be emitted as its own
+    MaterializedTurn with empty blocks and the attachment list, so the
+    history-replay API returns it for the frontend to render a download
+    card after refresh.
     """
     store = _make_store()
-    await store.append("conv.main", _msg("conv.main", "hi", timestamp=100.0))
-    await store.append("conv.main", AssistantTurnEvent(
-        session_id="conv.main", agent_name="main",
-        blocks=[],
+    await store.append("conv.main", _msg("conv.main", "hi", timestamp=100))
+    await store.append("conv.main", AttachmentCarrier(
+        session_id="conv.main", agent_name="main", timestamp_ms=200,
         attachments=[{"id": "att-out", "kind": "image", "name": "chart.png",
-                       "mime": "image/png", "size": 11,
-                       "path": "/ws/chart.png", "locator": "workspace"}],
-        timestamp=200.0))
+                      "mime": "image/png", "size": 11,
+                      "path": "/ws/chart.png", "locator": "workspace"}]))
     turns = await store.load_materialized_by_prefix("conv")
     assert len(turns) == 1
     assert turns[0].turn_id == ""
     assert turns[0].blocks == []
     assert len(turns[0].attachments) == 1
     assert turns[0].attachments[0]["id"] == "att-out"
-    # ServerEvent.from_dict migrates float seconds -> int milliseconds on load.
-    assert turns[0].started_at == 200_000
+    assert turns[0].started_at == 200
 
 
 async def test_materialize_mixed_real_turn_and_attachment_only_turn_sorted() -> None:
@@ -430,18 +506,16 @@ async def test_materialize_mixed_real_turn_and_attachment_only_turn_sorted() -> 
     turn_id) both materialize and stay ordered by timestamp.
     """
     store = _make_store()
-    await store.append("conv.main", TurnStartEvent(
-        session_id="conv.main", agent_name="main", turn_id="t1", timestamp=100.0))
-    await store.append("conv.main", AssistantTextEvent(
+    await store.append("conv.main", TurnStarted(
+        session_id="conv.main", agent_name="main", turn_id="t1", timestamp_ms=100))
+    await store.append("conv.main", TextDelta(
         session_id="conv.main", agent_name="main", turn_id="t1",
-        text="hi", timestamp=150.0))
-    await store.append("conv.main", AssistantTurnEvent(
-        session_id="conv.main", agent_name="main",
-        blocks=[],
+        text="hi", timestamp_ms=150, segment_id="_text"))
+    await store.append("conv.main", AttachmentCarrier(
+        session_id="conv.main", agent_name="main", timestamp_ms=200,
         attachments=[{"id": "att-mid", "kind": "other", "name": "data.csv",
-                       "mime": "text/csv", "size": 5, "path": "/x/data.csv",
-                       "locator": "workspace"}],
-        timestamp=200.0))
+                      "mime": "text/csv", "size": 5, "path": "/x/data.csv",
+                      "locator": "workspace"}]))
     turns = await store.load_materialized_by_prefix("conv")
     assert len(turns) == 2
     assert turns[0].turn_id == "t1"
@@ -460,33 +534,33 @@ class _FlakyDelegate(TranscriptStore):
     """In-memory delegate whose ``append`` fails on demand."""
 
     def __init__(self) -> None:
-        self.events: list[tuple[str, ServerEvent]] = []
+        self.records: list[tuple[str, TranscriptRecord]] = []
         self.fail_next: bool = False
 
     async def append(
-        self, session_id: str, event: ServerEvent, *, pool: str = "main"
+        self, session_id: str, event: TranscriptRecord, *, pool: str | None = None
     ) -> None:
         del pool
         if self.fail_next:
             self.fail_next = False
             raise OSError("simulated disk full")
-        self.events.append((session_id, event))
+        self.records.append((session_id, event))
 
-    async def load(self, session_id: str) -> list[ServerEvent]:
-        return [evt for sid, evt in self.events if sid == session_id]
+    async def load(self, session_id: str) -> list[TranscriptRecord]:
+        return [evt for sid, evt in self.records if sid == session_id]
 
     async def load_sessions_by_prefix(
         self, session_prefix: str, *, pool: str | None = None
-    ) -> list[ServerEvent]:
+    ) -> list[TranscriptRecord]:
         del pool
         return [
             evt
-            for sid, evt in self.events
+            for sid, evt in self.records
             if sid.split(".", 1)[0] == session_prefix
         ]
 
     async def list_sessions(self) -> set[str]:
-        return {sid for sid, _ in self.events}
+        return {sid for sid, _ in self.records}
 
     async def list_sessions_by_prefix(self, session_prefix: str) -> set[str]:
         return {
@@ -496,10 +570,10 @@ class _FlakyDelegate(TranscriptStore):
         }
 
     async def delete_session(self, session_id: str) -> None:
-        self.events = [(s, e) for s, e in self.events if s != session_id]
+        self.records = [(s, e) for s, e in self.records if s != session_id]
 
     async def delete_sessions_by_prefix(self, session_prefix: str) -> None:
-        self.events = [(s, e) for s, e in self.events if s.split(".", 1)[0] != session_prefix]
+        self.records = [(s, e) for s, e in self.records if s.split(".", 1)[0] != session_prefix]
 
 
 async def test_resilient_append_swallows_io_error() -> None:
@@ -521,8 +595,8 @@ async def test_resilient_append_recovers_after_failure() -> None:
     await store.append("conv.main", _msg("conv.main", "lost"))
     await store.append("conv.main", _msg("conv.main", "kept"))
 
-    assert [e for _, e in delegate.events]  # the recovery write landed
-    assert delegate.events[0][1].content == "kept"  # type: ignore[attr-defined]
+    assert [e for _, e in delegate.records]  # the recovery write landed
+    assert delegate.records[0][1].content == "kept"
 
 
 async def test_resilient_delegates_read_paths() -> None:
@@ -554,13 +628,10 @@ async def test_workspace_store_append_is_resilient(
 
     from modex_agent.workspace.runtime import bind_workspace_root
 
-    def _workspace() -> str:
-        return "ws"
-
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
 
     async def _boom(
-        self: object, session_id: str, event: object, *, pool: str = "main"
+        self: object, session_id: str, event: object, *, pool: str | None = None
     ) -> None:
         del pool
         raise OSError("disk full")
@@ -570,5 +641,3 @@ async def test_workspace_store_append_is_resilient(
     # Must NOT raise — proving the resilient wrapper sits in the write path.
     with bind_workspace_root(tmp_path):
         await store.append("conv.main", _msg("conv.main", "hi"))
-
-

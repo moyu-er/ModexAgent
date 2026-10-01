@@ -91,9 +91,9 @@ class TestOutboundAttachmentRecord:
             # The tool generated an opaque id; find it by scanning the only
             # outbound record in the transcript.
             events = await store.load("s1.main")
-            from bot.webui.events import AssistantTurnEvent
+            from bot.webui.transcript_store import AttachmentCarrier
 
-            att_events = [e for e in events if isinstance(e, AssistantTurnEvent)]
+            att_events = [e for e in events if isinstance(e, AttachmentCarrier)]
             assert len(att_events) == 1
             records = att_events[0].attachments
             assert len(records) == 1
@@ -197,10 +197,10 @@ class TestOutboundAttachmentRecord:
             await tool.execute(file_path=str(file))
 
             events = await store.load("s1.main")
-            from bot.webui.events import AssistantTurnEvent
+            from bot.webui.transcript_store import AttachmentCarrier
 
             att = next(
-                e for e in events if isinstance(e, AssistantTurnEvent)
+                e for e in events if isinstance(e, AttachmentCarrier)
             ).attachments[0]
         assert att["mime"] == "image/png"
         assert att["kind"] == Kind.IMAGE.value
@@ -265,7 +265,7 @@ class TestOutboundCapAndGateBypass:
     async def test_type_failing_inbound_gate_accepted_outbound(self) -> None:
         """An executable-type file (rejected by the inbound perception gate)
         is accepted outbound — outbound bypasses the perception gate."""
-        from bot.webui.events import AssistantTurnEvent
+        from bot.webui.transcript_store import AttachmentCarrier
 
         with TemporaryDirectory() as tmp:
             store = JSONLTranscriptStore(Path(tmp))
@@ -284,7 +284,7 @@ class TestOutboundCapAndGateBypass:
             # tmpdir block — the JSONL file is deleted when it exits.
             events = await store.load("s1.main")
             att = next(
-                e for e in events if isinstance(e, AssistantTurnEvent)
+                e for e in events if isinstance(e, AttachmentCarrier)
             ).attachments[0]
         # kind is OTHER (not an image/extractable-document) but it was accepted.
         assert att["kind"] == Kind.OTHER.value

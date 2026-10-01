@@ -1,10 +1,10 @@
 """G4 tests — transcript id→path index for attachments.
 
-Covers (4.1) Attachment records ride on ``user_message`` and
-``assistant_turn`` ServerEvents and round-trip through the transcript, the
-persist stage serializes ``envelope.resolved_attachments``; (4.2)
-``find_attachment`` scans both event types and resolves an id → Attachment VO
-(or None). No bytes are ever stored.
+Covers (4.1) Attachment records ride on ``UserMessageRecord`` /
+``AttachmentCarrier`` transcript records and round-trip through the store,
+the persist stage serializes ``envelope.resolved_attachments``; (4.2)
+``find_attachment`` scans both record kinds and resolves an id → Attachment
+VO (or None). No bytes are ever stored.
 """
 
 from __future__ import annotations
@@ -20,12 +20,11 @@ from bot.input_pipeline.stages.persist_user_message import (
 )
 from bot.service.attachment_index import find_attachment
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import (
-    AssistantTurnEvent,
-    ServerEvent,
-    UserMessageEvent,
+from bot.webui.transcript_store import (
+    AttachmentCarrier,
+    JSONLTranscriptStore,
+    UserMessageRecord,
 )
-from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.core.media import Attachment, AttachmentLocator, Kind
 from modex_agent.pipeline.input.envelope import UserInputEnvelope
@@ -111,43 +110,40 @@ class TestAttachmentSerialization:
 class TestEventAttachments:
     def test_user_message_round_trips_attachment(self) -> None:
         att = _inbound_attachment()
-        ev = UserMessageEvent(
+        record = UserMessageRecord(
             session_id="s1.main",
             agent_name="main",
+            timestamp_ms=1,
             content="hi",
             attachments=[att.to_dict()],
         )
-        loaded = ServerEvent.from_dict(ev.to_dict())
-        assert isinstance(loaded, UserMessageEvent)
+        loaded = UserMessageRecord.model_validate_json(record.model_dump_json())
         assert len(loaded.attachments) == 1
-        assert Attachment.from_dict(loaded.attachments[0]) == att  # type: ignore[arg-type]
+        assert Attachment.from_dict(loaded.attachments[0]) == att
 
     def test_user_message_defaults_to_empty_attachments(self) -> None:
-        ev = UserMessageEvent(session_id="s1.main", agent_name="main", content="hi")
-        assert ev.attachments == []
+        record = UserMessageRecord(session_id="s1.main", agent_name="main", content="hi")
+        assert record.attachments == []
         # Omitted field survives a round-trip (default applies on load).
-        loaded = ServerEvent.from_dict(ev.to_dict())
-        assert isinstance(loaded, UserMessageEvent)
+        loaded = UserMessageRecord.model_validate_json(record.model_dump_json())
         assert loaded.attachments == []
 
-    def test_assistant_turn_accepts_attachments_field(self) -> None:
+    def test_attachment_carrier_round_trips_attachment(self) -> None:
         att = _outbound_attachment()
-        ev = AssistantTurnEvent(
+        record = AttachmentCarrier(
             session_id="s1.main",
             agent_name="main",
-            blocks=[{"kind": "text", "text": "done"}],
+            timestamp_ms=1,
             attachments=[att.to_dict()],
         )
-        loaded = ServerEvent.from_dict(ev.to_dict())
-        assert isinstance(loaded, AssistantTurnEvent)
+        loaded = AttachmentCarrier.model_validate_json(record.model_dump_json())
         assert len(loaded.attachments) == 1
-        assert Attachment.from_dict(loaded.attachments[0]) == att  # type: ignore[arg-type]
+        assert Attachment.from_dict(loaded.attachments[0]) == att
 
-    def test_assistant_turn_defaults_to_empty_attachments(self) -> None:
-        ev = AssistantTurnEvent(session_id="s1.main", agent_name="main")
-        assert ev.attachments == []
-        loaded = ServerEvent.from_dict(ev.to_dict())
-        assert isinstance(loaded, AssistantTurnEvent)
+    def test_attachment_carrier_defaults_to_empty_attachments(self) -> None:
+        record = AttachmentCarrier(session_id="s1.main", agent_name="main", timestamp_ms=1)
+        assert record.attachments == []
+        loaded = AttachmentCarrier.model_validate_json(record.model_dump_json())
         assert loaded.attachments == []
 
 
@@ -171,9 +167,9 @@ class TestPersistStageWiring:
                 events = await store.load("u1.main")
             assert len(events) == 1
             persisted = events[0]
-            assert isinstance(persisted, UserMessageEvent)
+            assert isinstance(persisted, UserMessageRecord)
             assert len(persisted.attachments) == 1
-            assert Attachment.from_dict(persisted.attachments[0]) == att  # type: ignore[arg-type]
+            assert Attachment.from_dict(persisted.attachments[0]) == att
 
     @pytest.mark.asyncio
     async def test_persist_empty_when_no_attachments(self) -> None:
@@ -189,7 +185,7 @@ class TestPersistStageWiring:
                 events = await store.load("u1.main")
             assert len(events) == 1
             persisted = events[0]
-            assert isinstance(persisted, UserMessageEvent)
+            assert isinstance(persisted, UserMessageRecord)
             assert persisted.attachments == []
 
 
@@ -204,7 +200,7 @@ class TestFindAttachment:
             store = JSONLTranscriptStore(Path(tmp))
             await store.append(
                 "s1.main",
-                UserMessageEvent(
+                UserMessageRecord(
                     session_id="s1.main",
                     agent_name="main",
                     content="hi",
@@ -221,7 +217,7 @@ class TestFindAttachment:
             store = JSONLTranscriptStore(Path(tmp))
             await store.append(
                 "s1.main",
-                UserMessageEvent(
+                UserMessageRecord(
                     session_id="s1.main",
                     agent_name="main",
                     content="hi",
@@ -233,16 +229,15 @@ class TestFindAttachment:
 
     @pytest.mark.asyncio
     async def test_hit_on_assistant_turn(self) -> None:
-        """Outbound records (populated in G7) are found via assistant_turn."""
+        """Outbound records (populated in G7) are found via the carrier."""
         att = _outbound_attachment()
         with TemporaryDirectory() as tmp:
             store = JSONLTranscriptStore(Path(tmp))
             await store.append(
                 "s1.main",
-                AssistantTurnEvent(
+                AttachmentCarrier(
                     session_id="s1.main",
                     agent_name="main",
-                    blocks=[{"kind": "text", "text": "done"}],
                     attachments=[att.to_dict()],
                 ),
             )
@@ -258,14 +253,14 @@ class TestFindAttachment:
 
     @pytest.mark.asyncio
     async def test_skips_non_attachment_events(self) -> None:
-        """Events without the attachments field are scanned past."""
+        """Records without the attachments field are scanned past."""
         att = _inbound_attachment()
         with TemporaryDirectory() as tmp:
             store = JSONLTranscriptStore(Path(tmp))
             # A user_message WITHOUT the matching id, then one WITH it.
             await store.append(
                 "s1.main",
-                UserMessageEvent(
+                UserMessageRecord(
                     session_id="s1.main",
                     agent_name="main",
                     content="first",
@@ -284,7 +279,7 @@ class TestFindAttachment:
             )
             await store.append(
                 "s1.main",
-                UserMessageEvent(
+                UserMessageRecord(
                     session_id="s1.main",
                     agent_name="main",
                     content="second",
@@ -310,7 +305,7 @@ class TestFindAttachment:
             sessions_dir = WorkspacePaths(root / ".modex").sessions_dir
             await ws_store.append(
                 "u1.main",
-                UserMessageEvent(
+                UserMessageRecord(
                     session_id="u1.main",
                     agent_name="main",
                     content="hi",
@@ -345,12 +340,12 @@ class TestFindAttachment:
         )
         with TemporaryDirectory() as tmp:
             store = JSONLTranscriptStore(Path(tmp))
-            # First a user_message carrying `first`, then an assistant_turn
+            # First a user message record carrying `first`, then a carrier
             # carrying `second` — both under the same id. Append order is the
             # transcript's chronological order.
             await store.append(
                 "s1.main",
-                UserMessageEvent(
+                UserMessageRecord(
                     session_id="s1.main",
                     agent_name="main",
                     content="hi",
@@ -359,10 +354,9 @@ class TestFindAttachment:
             )
             await store.append(
                 "s1.main",
-                AssistantTurnEvent(
+                AttachmentCarrier(
                     session_id="s1.main",
                     agent_name="main",
-                    blocks=[{"kind": "text", "text": "done"}],
                     attachments=[second.to_dict()],
                 ),
             )

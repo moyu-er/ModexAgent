@@ -3,12 +3,19 @@
 Owns the recording half of a bot turn so concrete projections (the WebUI
 WebSocket emitter, the ACP editor emitter) only translate fully-factual
 events into their own sink. One transcript writer per process per session:
-text/reasoning accumulate as segments (keyed by ``part_id``) and are
-flushed as single ``AssistantTextEvent`` / ``AssistantReasoningEvent`` at
-segment boundaries; a tool call/result pair is persisted TOGETHER so both
-share one ``turn_id`` and the materializer pairs them into one tool block
-(also the ONLY persistence point on a resumed approval turn, where the
-tool node re-emits just the tool result).
+text/reasoning accumulate as segments (keyed by ``segment_id``) and are
+persisted as single ``TextDelta`` / ``ThinkingDelta`` records at segment
+boundaries; a tool call/result pair is persisted TOGETHER (a
+``ToolCallStarted`` record ahead of the received ``ToolResult``) so both
+share one ``turn_id`` and the framework folder pairs them into one tool
+block (also the ONLY persistence point on a resumed approval turn, where
+the tool node re-emits just the tool result).
+
+The durable record is the framework ``PresentationEvent`` (the W6
+transcript cutover): terminal/approval/usage records persist as received,
+``tool_args_delta`` never touches the store (transient warm-up), and no
+``ServerEvent`` is written to any store — the wire projection is the only
+remaining ``ServerEvent`` producer.
 
 The input face is the core ``TurnEvent`` union (the framework's single
 event stream): this base delegates projection + fan-out to the framework
@@ -67,21 +74,8 @@ from modex_agent.presentation import (
     UsageSummary,
 )
 
-from ..events import (
-    AssistantReasoningEvent,
-    AssistantTextEvent,
-    ModelContentDelta,
-    ModelReasoningDelta,
-    ServerEvent,
-    SessionMeta,
-)
-from ..events import (
-    ToolCallEvent as TcEvent,
-)
-from ..events import (
-    ToolResultEvent as TrEvent,
-)
-from ..transcript_store import TranscriptStore, WorkspaceRoutedTranscriptStore
+from ..events import SessionMeta
+from ..transcript_store import TranscriptRecord, TranscriptStore, WorkspaceRoutedTranscriptStore
 
 logger = logging.getLogger(__name__)
 
@@ -157,14 +151,17 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
             (self, _ProjectionBridge(self)),
         )
 
-        # Incremental turn state — multiple segments tracked by part_id.
-        # Each part_id accumulates independently so token-level interleaving
-        # (text part_1 and reasoning part_2 alternating) produces exactly 2
-        # transcript events, not hundreds. Projections still fire per-token
-        # (true streaming).
+        # Incremental turn state — multiple segments tracked by segment id.
+        # Each segment accumulates independently so token-level interleaving
+        # (text part_1 and reasoning part_2 alternating) persists exactly 2
+        # transcript records, not hundreds. Projections still fire per-token
+        # (true streaming). ``_segment_heads`` remembers each segment's
+        # first received delta so the flushed record reuses its identity
+        # envelope + projector timestamp.
         self._segments: dict[str, str] = {}
         self._segment_kinds: dict[str, str] = {}
         self._segment_order: list[str] = []
+        self._segment_heads: dict[str, TextDelta | ThinkingDelta] = {}
         # Per-turn flag: a mid-flight turn_errored already carried the
         # user-facing error message, so the terminal render is suppressed.
         self._error_delivered = False
@@ -252,7 +249,7 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
     def _current_turn_id(self) -> str:
         return self._event_hub.projector.current_turn_id
 
-    async def _persist(self, event: ServerEvent) -> None:
+    async def _persist(self, record: TranscriptRecord) -> None:
         if self._transcript_store is None:
             return
         sessions_dir = self._sessions_dir_provider() if self._sessions_dir_provider else None
@@ -262,13 +259,13 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
         # fixed store is already bound to its physical directory.
         if isinstance(self._transcript_store, WorkspaceRoutedTranscriptStore):
             await self._transcript_store.append(
-                self._session_id, event, pool=pool, sessions_dir=sessions_dir
+                self._session_id, record, pool=pool, sessions_dir=sessions_dir
             )
         else:
-            await self._transcript_store.append(self._session_id, event, pool=pool)
+            await self._transcript_store.append(self._session_id, record, pool=pool)
 
-    async def _persist_partial(self, event: ServerEvent) -> None:
-        """Append a streaming delta to the in-memory partial buffer.
+    async def _persist_partial(self, record: TranscriptRecord) -> None:
+        """Append a streaming delta record to the in-memory partial buffer.
 
         Routed to ``WorkspaceScopedTranscriptStore.append_partial`` (in-memory
         dict, not a file). Failure here must not break the turn — partial is
@@ -282,7 +279,7 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
         sessions_dir = self._sessions_dir_provider() if self._sessions_dir_provider else None
         try:
             await self._transcript_store.append_partial(
-                self._session_id, event, sessions_dir=sessions_dir
+                self._session_id, record, sessions_dir=sessions_dir
             )
         except Exception as exc:
             logger.warning(
@@ -303,48 +300,64 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
         except Exception as exc:
             logger.warning("partial clear failed for session %s: %s", self._session_id, exc)
 
-    def _accumulate_segment(self, text: str, kind: str, part_id: str | None) -> None:
-        if not text:
+    def _accumulate_segment(self, event: TextDelta | ThinkingDelta, kind: str) -> None:
+        """Accumulate one streamed delta into its segment (and remember the head)."""
+        if not event.text:
             return
         self._event_hub.projector.ensure_turn_started()
-        key = part_id if part_id else f"_{kind}"
+        key = event.segment_id
         if key not in self._segments:
             self._segments[key] = ""
             self._segment_kinds[key] = kind
             self._segment_order.append(key)
-        self._segments[key] += text
+            self._segment_heads[key] = event
+        self._segments[key] += event.text
 
     async def _flush_active_segment(self) -> None:
+        """Persist each accumulated segment as one complete delta record.
+
+        The flushed record reuses the segment head's identity envelope and
+        the projector's timestamp, carries the segment's full (stripped)
+        text, and keeps the runtime segment id — the framework folder then
+        merges replayed records exactly as it folds the live stream.
+        """
         for key in self._segment_order:
             text = self._segments.get(key, "").strip()
-            if not text:
+            head = self._segment_heads.get(key)
+            if not text or head is None:
                 continue
             kind = self._segment_kinds.get(key, "text")
+            record: TranscriptRecord
             if kind == "reasoning":
-                evt: ServerEvent = AssistantReasoningEvent(
-                    session_id=self._session_id,
-                    agent_name=self._agent_name,
+                record = ThinkingDelta(
+                    session_id=head.session_id,
+                    agent_name=head.agent_name,
                     turn_id=self._current_turn_id,
+                    timestamp_ms=head.timestamp_ms,
                     text=text,
+                    segment_id=key,
                 )
             else:
-                evt = AssistantTextEvent(
-                    session_id=self._session_id,
-                    agent_name=self._agent_name,
+                record = TextDelta(
+                    session_id=head.session_id,
+                    agent_name=head.agent_name,
                     turn_id=self._current_turn_id,
+                    timestamp_ms=head.timestamp_ms,
                     text=text,
+                    segment_id=key,
                 )
-            await self._persist(evt)
+            await self._persist(record)
         self._segments = {}
         self._segment_kinds = {}
         self._segment_order = []
+        self._segment_heads = {}
         # Clear the partial buffer here so it only holds deltas accumulated
         # since the last flush boundary (tool call / stream end). Without
         # this, the partial buffer retains ALL deltas for the entire turn —
-        # including text already persisted as AssistantTextEvent — and
-        # _materialize_partial_deltas produces a synthetic streaming turn
-        # whose single concatenated text block duplicates the materialized
-        # transcript turn's text.
+        # including text already persisted as a flushed record — and the
+        # partial replay produces a synthetic streaming turn whose single
+        # concatenated text block duplicates the materialized transcript
+        # turn's text.
         await self._clear_partial()
 
     # ------------------------------------------------------------------
@@ -353,12 +366,12 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
 
     async def handle(self, event: PresentationEvent) -> None:
         match event:
-            case TextDelta(text=text, segment_id=segment_id):
-                self._accumulate_segment(text, "text", segment_id)
-                await self._record_text_delta(text, segment_id)
-            case ThinkingDelta(text=text, segment_id=segment_id):
-                self._accumulate_segment(text, "reasoning", segment_id)
-                await self._record_reasoning_delta(text, segment_id)
+            case TextDelta():
+                self._accumulate_segment(event, "text")
+                await self._persist_partial(event)
+            case ThinkingDelta():
+                self._accumulate_segment(event, "reasoning")
+                await self._persist_partial(event)
             case ToolArgsDelta():
                 # Transient warm-up signal: no record here — do not flush the
                 # text segment (the body may still be semantically finished),
@@ -375,52 +388,46 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
             case ToolResult(
                 tool_name=tool_name,
                 call_id=call_id,
-                output=output,
-                error=error,
-                seq=seq,
                 arguments=arguments,
             ):
                 await self._flush_active_segment()
                 # Persist call + result TOGETHER so they share a turn_id and
-                # the materializer pairs them into one complete tool block.
-                # This is also the ONLY persistence point on a resumed
-                # approval turn (no preceding tool_call), where the
+                # the framework folder pairs them into one complete tool
+                # block. This is also the ONLY persistence point on a resumed
+                # approval turn (no preceding tool_call), where the received
                 # result card carries the call args. ``arguments is None``
                 # marks an orphan result — persist the result alone, never a
                 # fabricated empty-args call.
                 if self._transcript_store is not None:
                     if arguments is not None:
                         await self._persist(
-                            TcEvent(
-                                session_id=self._session_id,
-                                agent_name=self._agent_name,
+                            ToolCallStarted(
+                                session_id=event.session_id,
+                                agent_name=event.agent_name,
                                 turn_id=self._current_turn_id,
-                                call_id=call_id,
+                                timestamp_ms=event.timestamp_ms,
                                 tool_name=tool_name,
-                                args=dict(arguments),
+                                call_id=call_id,
+                                arguments=dict(arguments),
                             )
                         )
-                    await self._persist(
-                        TrEvent(
-                            session_id=self._session_id,
-                            agent_name=self._agent_name,
-                            turn_id=self._current_turn_id,
-                            call_id=call_id,
-                            tool_name=tool_name,
-                            result=output.strip(),
-                            error=error,
-                            seq=seq,
-                        )
-                    )
+                    await self._persist(event)
             case TurnErrored(message=message):
                 self._error_delivered = True
                 await self._safe_adapter_send(
                     OutputMessage(content=f"Error: {message}"), log_label="emit_error"
                 )
+            case TurnFinished():
+                # Terminal record — stop classification + latency. An idle
+                # turn (no identity) has no replayable surface: today's
+                # transcripts never carried one, so it stays unpersisted.
+                if event.turn_id:
+                    await self._persist(event)
+            case ApprovalRequested() | ApprovalResolved() | UsageSummary():
+                await self._persist(event)
             case _:
-                # TurnStarted / TurnFinished / usage / approval cards: no
-                # bot record (the terminal record lifecycle runs in the
-                # terminal branch before the hub projects TurnFinished).
+                # TurnStarted has no bot record: turn grouping rides the
+                # record identity envelope (turn_id) alone.
                 pass
 
     # ------------------------------------------------------------------
@@ -472,47 +479,12 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
             self._segments = {}
             self._segment_kinds = {}
             self._segment_order = []
+            self._segment_heads = {}
             self._error_delivered = False
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    async def _record_text_delta(self, text: str, part_id: str | None) -> None:
-        """Partial-buffer record for one content delta (the wire projection
-        rides the hub's bridge consumer)."""
-        evt = self._content_delta_event(text, part_id)
-        await self._persist_partial(evt)
-
-    async def _record_reasoning_delta(self, text: str, part_id: str | None) -> None:
-        """Partial-buffer record for one reasoning delta."""
-        evt = self._reasoning_delta_event(text, part_id)
-        await self._persist_partial(evt)
-
-    def _content_delta_event(self, text: str, part_id: str | None) -> ServerEvent:
-        """WebUI-shaped content delta for the partial buffer (one schema).
-
-        Kept WebUI-shaped because the partial buffer is consumed by the
-        WebUI's refresh-mid-stream materialization; ACP shares the same
-        in-memory record without projecting it.
-        """
-        return ModelContentDelta(
-            session_id=self._session_id,
-            agent_name=self._agent_name,
-            text=text,
-            turn_id=self._current_turn_id,
-            segment_id=part_id if part_id else "_text",
-        )
-
-    def _reasoning_delta_event(self, text: str, part_id: str | None) -> ServerEvent:
-        """WebUI-shaped reasoning delta for the partial buffer."""
-        return ModelReasoningDelta(
-            session_id=self._session_id,
-            agent_name=self._agent_name,
-            text=text,
-            turn_id=self._current_turn_id,
-            segment_id=part_id if part_id else "_reasoning",
-        )
 
     def set_sessions_dir_provider(self, provider: Callable[[], Path | None] | None) -> None:
         """Inject the per-workspace sessions_dir resolver (resolver cell).

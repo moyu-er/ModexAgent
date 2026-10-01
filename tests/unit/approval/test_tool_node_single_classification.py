@@ -320,6 +320,7 @@ class TestSingleClassification:
                     session_id="s1.main",
                     pool_data=pool_data,
                     agent_context=ctx.agent_ctx,
+                    emitter=None,
                     tool_call_id="c1",
                 )
                 is store
@@ -383,6 +384,7 @@ class TestSingleClassification:
                 session_id="s1.main",
                 pool_data=None,
                 agent_context=ctx.agent_ctx,
+                emitter=None,
                 tool_call_id="c2",
             )
             is store

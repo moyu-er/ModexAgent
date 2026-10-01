@@ -5,7 +5,7 @@ history only. The persisted transcript user-message event keeps the ORIGINAL
 content and carries the Attachment record separately (G4). So after a turn
 with an accepted attachment:
 
-* the persisted ``UserMessageEvent.content`` does NOT contain ``[Attachment:``;
+* the persisted ``UserMessageRecord.content`` does NOT contain ``[Attachment:``;
 * the agent LLM history (the ``sanitized_content`` preprocess returns, which
   ``assemble_context`` appends to ``context_state.history``) DOES contain it.
 
@@ -23,7 +23,7 @@ from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import PoolSkillResolverRegistry
 from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import UserMessageEvent
+from bot.webui.transcript_store import UserMessageRecord
 
 from modex_agent.app.models.registry import ModelCfg, ModelRegistry, ProviderCfg
 from modex_agent.core.media import AttachmentLocator, Kind
@@ -143,7 +143,7 @@ async def test_injection_is_transient_transcript_excludes_it() -> None:
         full_sid = env.metadata["full_session_id"]
         with bind_workspace_root(root):
             events = await transcript_store.load(full_sid)
-        user_events = [e for e in events if isinstance(e, UserMessageEvent)]
+        user_events = [e for e in events if isinstance(e, UserMessageRecord)]
         assert len(user_events) == 1
         persisted = user_events[0]
         assert persisted.content == "look at this", "transcript keeps the original content"

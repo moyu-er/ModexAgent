@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 from bot.persistence.migration import BotWorkspaceMigrationRunner
-from bot.webui.events import UserMessageEvent
 from bot.webui.sqlite_transcript_store import SqliteTranscriptStore
+from bot.webui.transcript_store import UserMessageRecord
 
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 
@@ -100,14 +100,14 @@ async def test_transcript_table_still_works_after_kb_migration(
     store = SqliteTranscriptStore(migrated_connection)
     await store.append(
         "conv.main",
-        UserMessageEvent(
+        UserMessageRecord(
             session_id="conv.main",
             agent_name="main",
             content="hello",
-            timestamp=100,
+            timestamp_ms=100,
         ),
         pool="main",
     )
-    events = await store.load("conv.main")
-    assert len(events) == 1
-    assert events[0].to_dict().get("content") == "hello"
+    records = await store.load("conv.main")
+    assert len(records) == 1
+    assert records[0].model_dump().get("content") == "hello"

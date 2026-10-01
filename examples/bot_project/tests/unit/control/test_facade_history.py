@@ -36,7 +36,7 @@ from bot.webui.events import (
     ToolResultEvent,
     TurnStartEvent,
 )
-from bot.webui.transcript_store import TranscriptStore
+from bot.webui.transcript_store import TranscriptStore, adapt_legacy_records
 
 from modex_agent.core.agent import ExecutionStrategyKind
 from modex_agent.core.message import MessageRole
@@ -234,10 +234,19 @@ def _make_facade(
         return_value=messages if messages is not None else _SAMPLE_MESSAGES
     )
 
-    # Mock TranscriptStore
+    # Mock TranscriptStore — a real store returns the read-adapted records
+    # for the on-disk legacy ServerEvent lines (the single conversion point).
     mock_transcript_store = MagicMock(spec=TranscriptStore)
     mock_transcript_store.load = AsyncMock(
-        return_value=transcript_events if transcript_events is not None else []
+        return_value=(
+            [
+                record
+                for event in transcript_events
+                for record in adapt_legacy_records(event)
+            ]
+            if transcript_events is not None
+            else []
+        )
     )
 
     # Mock resources (only session_index_store + target are accessed)

@@ -14,8 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.emitter import WebBotEmitter
-from bot.webui.events import ServerEvent, ToolResultEvent
-from bot.webui.transcript_store import JSONLTranscriptStore
+from bot.webui.transcript_store import JSONLTranscriptStore, TranscriptRecord
 
 from modex_agent.core.emitter import AgentResult, turn_finished_event
 from modex_agent.core.turn_events import (
@@ -25,6 +24,7 @@ from modex_agent.core.turn_events import (
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
+from modex_agent.presentation import ToolResult
 from modex_agent.workspace.runtime import bind_workspace_root
 
 
@@ -41,7 +41,7 @@ def _build_emitter(session_id: str, store: WorkspaceScopedTranscriptStore) -> We
     pool = "coding" if session_id.endswith(".coding") else "main"
     transcript_store = MagicMock(wraps=store)
 
-    async def _append_with_pool(sid: str, event: ServerEvent, **kwargs) -> None:
+    async def _append_with_pool(sid: str, event: TranscriptRecord, **kwargs) -> None:
         await store.append(sid, event, pool=kwargs.get("pool", pool), sessions_dir=kwargs.get("sessions_dir"))
 
     transcript_store.append = AsyncMock(side_effect=_append_with_pool)
@@ -70,12 +70,13 @@ class TestTranscriptPersistence:
                 await emitter.emit(TurnTextEvent(text="Hello world"))
                 await emitter.emit(IterationFinishedEvent(iteration=0, has_tool_calls=False))
 
-            # Read back — TurnStartEvent/TurnEndEvent are WebSocket-only,
-            # not persisted. AssistantTextEvent is the only persisted event here.
+            # Read back — the text segment persisted as one complete
+            # TextDelta record (the only persisted record here).
             jstore = JSONLTranscriptStore(base / "main")
-            events = await jstore.load("conv.main")
-            assert len(events) == 1, f"Expected 1 event, got {len(events)}"
-            assert "Hello" in str(events[0].to_dict())
+            records = await jstore.load("conv.main")
+            assert len(records) == 1, f"Expected 1 record, got {len(records)}"
+            assert records[0].kind == "text_delta"
+            assert "Hello" in str(records[0].model_dump())
 
     @pytest.mark.parametrize(
         "session_id,expected_pool",
@@ -131,21 +132,22 @@ class TestTranscriptPersistence:
             # Verify A has s1
             assert (ws_a / "main" / "s1.main.jsonl").exists(), "A must still have s1"
             events_a = await JSONLTranscriptStore(ws_a / "main").load("s1.main")
-            assert any("in-A" in str(e.to_dict()) for e in events_a)
+            assert any("in-A" in str(e.model_dump()) for e in events_a)
 
             # Verify B has s2
             assert (ws_b / "main" / "s2.main.jsonl").exists(), "B must have s2"
             events_b = await JSONLTranscriptStore(ws_b / "main").load("s2.main")
-            assert any("in-B" in str(e.to_dict()) for e in events_b)
+            assert any("in-B" in str(e.model_dump()) for e in events_b)
 
             # Verify A does not have s2
             assert not (ws_a / "main" / "s2.main.jsonl").exists(), "A must not have s2"
 
     async def test_tool_events_persisted(self) -> None:
-        """Tool call and result events are correctly persisted.
+        """Tool call and result records are correctly persisted.
 
-        ``TurnStartEvent`` and ``TurnEndEvent`` are intentionally NOT
-        persisted — they are sent only via WebSocket for the frontend UI.
+        The call+result pair is persisted TOGETHER at result time (a
+        ``ToolCallStarted`` record ahead of the ``ToolResult``), and the
+        text segments around it flush as complete ``TextDelta`` records.
         """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -172,24 +174,28 @@ class TestTranscriptPersistence:
                 result = AgentResult(stop_reason=StopReason.COMPLETED, content="Done!")
                 await emitter.emit(turn_finished_event(result))
 
-            events = await JSONLTranscriptStore(base / "main").load("conv.main")
-            event_types = [e.__class__.__name__ for e in events]
+            records = await JSONLTranscriptStore(base / "main").load("conv.main")
+            kinds = [record.kind for record in records]
 
-            # Content events must be present
-            for expected in ["ToolCallEvent", "AssistantTextEvent", "ToolResultEvent"]:
-                assert expected in event_types, f"Missing {expected} in {event_types}"
-            tool_result = next(e for e in events if isinstance(e, ToolResultEvent))
+            # Content records must be present
+            for expected in ["tool_call_started", "text_delta", "tool_result"]:
+                assert expected in kinds, f"Missing {expected} in {kinds}"
+            tool_result = next(
+                record
+                for record in records
+                if isinstance(record, ToolResult)
+            )
             assert tool_result.seq == 7
 
-            # Metadata events must NOT be persisted
-            for forbidden in ["TurnStartEvent", "TurnEndEvent"]:
-                assert forbidden not in event_types, (
+            # Metadata records must NOT be persisted
+            for forbidden in ["turn_started", "tool_args_delta"]:
+                assert forbidden not in kinds, (
                     f"{forbidden} should NOT be persisted — it is "
-                    f"WebSocket-only metadata"
+                    f"transient wire-only metadata"
                 )
 
     async def test_files_are_valid_jsonl(self) -> None:
-        """Each line is valid JSON and readable as a ServerEvent."""
+        """Each line is valid JSON and decodable as a transcript record."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             store = _build_store()
@@ -206,4 +212,4 @@ class TestTranscriptPersistence:
             for line in lines:
                 data = json.loads(line)
                 assert "session_id" in data
-                assert "event" in data
+                assert "kind" in data

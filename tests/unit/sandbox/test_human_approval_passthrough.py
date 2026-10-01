@@ -260,6 +260,7 @@ class TestMarkerWrite:
                 session_id="s1",
                 pool_data=None,
                 agent_context=_agent_ctx(_turn_state()),
+                emitter=None,
             )
         assert result is None  # no turn_store → non-resuming, but the marker persists
         marked = _payload_custom(snapshot).get(TurnCustomKey.HUMAN_APPROVED_CALLS.value)
@@ -274,6 +275,7 @@ class TestMarkerWrite:
                 session_id="s1",
                 pool_data=None,
                 agent_context=_agent_ctx(_turn_state()),
+                emitter=None,
             )
         marked = _payload_custom(snapshot).get(TurnCustomKey.HUMAN_APPROVED_CALLS.value)
         assert marked == {"c1": str(Path("/etc/hosts").resolve(strict=False))}
@@ -286,6 +288,7 @@ class TestMarkerWrite:
             session_id="s1",
             pool_data=None,
             agent_context=_agent_ctx(_turn_state()),
+            emitter=None,
         )
         assert TurnCustomKey.HUMAN_APPROVED_CALLS.value not in _payload_custom(snapshot)
 
@@ -298,6 +301,7 @@ class TestMarkerWrite:
                 session_id="s1",
                 pool_data=None,
                 agent_context=_agent_ctx(_turn_state()),
+                emitter=None,
             )
         state = ReActSnapshotPolicy.state_from_snapshot(snapshot)
         marked = state.custom[TurnCustomKey.HUMAN_APPROVED_CALLS]
@@ -495,6 +499,7 @@ class TestEndToEndWhiteApproval:
                 session_id="s1",
                 pool_data=None,
                 agent_context=_agent_ctx(_turn_state()),
+                emitter=None,
             )
 
         # 3. resume restores the state (marker rides along)

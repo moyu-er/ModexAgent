@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import UserMessageEvent
+from bot.webui.transcript_store import UserMessageRecord
 
 from modex_agent.workspace.runtime import bind_workspace_root
 
@@ -37,7 +37,7 @@ async def test_append_lands_in_bound_workspace(tmp_path: Path) -> None:
     with bind_workspace_root(ws_b):
         await store.append(
             "convB.main",
-            UserMessageEvent(session_id="convB.main", agent_name="main", content="hi"),
+            UserMessageRecord(session_id="convB.main", agent_name="main", content="hi"),
         )
     assert (ws_b / ".modex" / "sessions" / "main" / "convB.main.jsonl").exists()
     assert not (home / ".modex" / "sessions").exists() or not (
@@ -55,7 +55,7 @@ async def test_no_bind_defaults_to_cwd(
     store = _store()
     await store.append(
         "convX.main",
-        UserMessageEvent(session_id="convX.main", agent_name="main", content="hi"),
+        UserMessageRecord(session_id="convX.main", agent_name="main", content="hi"),
     )
     assert (home / ".modex" / "sessions" / "main" / "convX.main.jsonl").exists()
 
@@ -68,7 +68,7 @@ async def test_read_with_explicit_sessions_dir(tmp_path: Path) -> None:
     with bind_workspace_root(ws_b):
         await store.append(
             "convB.main",
-            UserMessageEvent(session_id="convB.main", agent_name="main", content="hi"),
+            UserMessageRecord(session_id="convB.main", agent_name="main", content="hi"),
         )
     b_sessions = _sessions_dir(ws_b)
     assert "convB.main" in await store.list_sessions(b_sessions)
@@ -86,7 +86,7 @@ async def test_load_reads_explicit_dir_without_binding(
     with bind_workspace_root(ws_b):
         await store.append(
             "convB.main",
-            UserMessageEvent(session_id="convB.main", agent_name="main", content="hi"),
+            UserMessageRecord(session_id="convB.main", agent_name="main", content="hi"),
         )
     # Read from an unrelated cwd with the explicit sessions_dir.
     monkeypatch.chdir(tmp_path)

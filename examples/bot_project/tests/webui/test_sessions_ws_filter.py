@@ -12,12 +12,13 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import AssistantTurnEvent, UserMessageEvent
 from bot.webui.server import WebUIServer
+from bot.webui.transcript_store import UserMessageRecord
 
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.multi_agent.pool_router import PoolSessionStore
 from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
+from modex_agent.presentation import TextDelta
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
 
@@ -78,7 +79,7 @@ async def _simulate_qa_turn(
     with bind_workspace_root(root):
         await store.append(
             session_id,
-            UserMessageEvent(
+            UserMessageRecord(
                 session_id=session_id,
                 agent_name=agent_name,
                 content=user_content,
@@ -87,12 +88,12 @@ async def _simulate_qa_turn(
         )
         await store.append(
             session_id,
-            AssistantTurnEvent(
+            TextDelta(
                 session_id=session_id,
                 agent_name=agent_name,
                 turn_id="turn-1",
-                blocks=[{"type": "text", "text": assistant_content}],
-                latency_ms=0,
+                text=assistant_content,
+                segment_id="_text",
             ),
             pool="default",
         )

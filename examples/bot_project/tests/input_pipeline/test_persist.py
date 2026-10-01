@@ -10,7 +10,7 @@ from bot.input_pipeline.stages.persist_user_message import (
     write_user_message_to_transcript,
 )
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import UserMessageEvent
+from bot.webui.transcript_store import UserMessageRecord
 
 from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
 from modex_agent.pipeline.input.envelope import UserInputEnvelope
@@ -47,7 +47,7 @@ async def test_persist_writes_user_message_with_full_session_id() -> None:
             await PersistUserMessageStage(write_user_message_to_transcript).process(env, _ctx(store))
             events = await store.load("u1.coding")
         assert len(events) == 1
-        assert isinstance(events[0], UserMessageEvent)
+        assert isinstance(events[0], UserMessageRecord)
         assert events[0].content == "hello"
 
 

@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from sqlite3 import Row
 from typing import TYPE_CHECKING, Final
 
-from bot.webui.events import ServerEvent
 from bot.webui.transcript_store import (
     MaterializedTurn,
     TranscriptPersistenceError,
+    TranscriptRecord,
+    TranscriptRecordCodec,
     TranscriptStore,
-    _materialize_events,
+    UserMessageRecord,
+    materialize_records,
 )
 from modex_agent.core.session_id import session_id_prefix_of
 
@@ -20,6 +21,10 @@ if TYPE_CHECKING:
     from modex_agent.persistence.connection import ConnectionManager
 
 _SELECT_EVENT: Final = "SELECT payload_json FROM bot_webui_transcript_events"
+
+#: Shared line codec — its ``event_time`` and generation-detecting
+#: ``parse`` are the single record decode path for SQLite rows too.
+_CODEC: Final = TranscriptRecordCodec()
 
 
 class SqliteTranscriptStore(TranscriptStore):
@@ -31,14 +36,16 @@ class SqliteTranscriptStore(TranscriptStore):
     async def append(
         self,
         session_id: str,
-        event: ServerEvent,
+        event: TranscriptRecord,
         *,
         pool: str | None = None,
     ) -> None:
         if event.session_id != session_id:
             raise ValueError("event session_id does not match transcript key")
-        payload = json.dumps(event.to_dict(), ensure_ascii=False, separators=(",", ":"))
-        turn_id = event.to_dict().get("turn_id")
+        payload = event.model_dump_json()
+        # The user-message record has no turn identity; every other
+        # record (presentation events + attachment carriers) carries one.
+        turn_id = None if isinstance(event, UserMessageRecord) else event.turn_id
         try:
             await self._connection.execute(
                 """
@@ -52,16 +59,16 @@ class SqliteTranscriptStore(TranscriptStore):
                     session_id_prefix_of(session_id),
                     pool if pool is not None else "main",
                     event.agent_name,
-                    event.event,
+                    event.kind,
                     str(turn_id) if turn_id else None,
-                    event.timestamp,
+                    _CODEC.event_time(event),
                     payload,
                 ),
             )
         except sqlite3.Error as exc:
             raise TranscriptPersistenceError from exc
 
-    async def load(self, session_id: str) -> list[ServerEvent]:
+    async def load(self, session_id: str) -> list[TranscriptRecord]:
         rows = await self._connection.query_all(
             f"{_SELECT_EVENT} WHERE session_id = ? ORDER BY event_id",
             (session_id,),
@@ -73,7 +80,7 @@ class SqliteTranscriptStore(TranscriptStore):
         session_prefix: str,
         *,
         pool: str | None = None,
-    ) -> list[ServerEvent]:
+    ) -> list[TranscriptRecord]:
         if pool is None:
             rows = await self._connection.query_all(
                 f"{_SELECT_EVENT} WHERE session_prefix = ? "
@@ -130,10 +137,18 @@ class SqliteTranscriptStore(TranscriptStore):
         *,
         pool: str | None = None,
     ) -> list[MaterializedTurn]:
-        return _materialize_events(
+        return materialize_records(
             await self.load_sessions_by_prefix(session_prefix, pool=pool)
         )
 
 
-def _decode(rows: list[Row]) -> list[ServerEvent]:
-    return [ServerEvent.from_dict(json.loads(str(row[0]))) for row in rows]
+def _decode(rows: list[Row]) -> list[TranscriptRecord]:
+    """Decode payload rows through the shared generation-detecting codec.
+
+    Legacy rows (pre-cutover ``ServerEvent`` payloads) convert at read
+    time inside the codec — the single conversion point.
+    """
+    records: list[TranscriptRecord] = []
+    for row in rows:
+        records.extend(_CODEC.parse(str(row[0])))
+    return records

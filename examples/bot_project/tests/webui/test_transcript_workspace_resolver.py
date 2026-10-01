@@ -23,12 +23,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.emitter import CompositeEmitter, WebBotEmitter
-from bot.webui.events import AssistantTextEvent
 
 from modex_agent.core.turn_events import (
     IterationFinishedEvent,
     TurnTextEvent,
 )
+from modex_agent.presentation import TextDelta
 from modex_agent.workspace.runtime import is_workspace_root_bound
 
 _DATA_DIR_NAME = ".modex"
@@ -41,8 +41,10 @@ def _build_store() -> WorkspaceScopedTranscriptStore:
     return WorkspaceScopedTranscriptStore(data_dir_name=_DATA_DIR_NAME)
 
 
-def _event(sid: str = "conv.main") -> AssistantTextEvent:
-    return AssistantTextEvent(session_id=sid, agent_name="main", turn_id="t1", text="x")
+def _event(sid: str = "conv.main") -> TextDelta:
+    return TextDelta(
+        session_id=sid, agent_name="main", turn_id="t1", text="x", segment_id="_text"
+    )
 
 
 @pytest.mark.asyncio

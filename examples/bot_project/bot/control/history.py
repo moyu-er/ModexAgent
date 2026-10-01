@@ -162,13 +162,14 @@ def project_transcript_history(
 
     Used by :meth:`BotControlFacade.history` when
     ``execution_strategy == EXTERNAL`` (T05). The transcript path
-    reuses :func:`bot.webui.transcript_store._materialize_events` for
-    grouping/coalescing/pairing, then projects each materialized block to
+    reuses :func:`bot.webui.transcript_store.materialize_records` (the
+    framework materialize_turns folder) for grouping/coalescing/pairing,
+    then projects each materialized block to
     a logical :class:`HistoryMessage` record following Source Fidelity (D21):
 
     - ``text`` block → ``role=assistant, content=text``
     - ``tool`` block → ``role=tool, content=result, tool_name=tool``
-      (already paired by ``_materialize_events`` via ``call_id``)
+      (already paired by the folder via ``call_id``)
     - ``reasoning`` block → **discarded** (not in the 8-field CLI output)
     - unknown block kinds → **discarded** (no representable CLI history record)
 
