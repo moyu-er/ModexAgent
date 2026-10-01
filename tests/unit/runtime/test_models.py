@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.runtime.enums import (
+from modex_agent.core.turn.enums import (
     AgentKind,
     MessageDeltaSource,
     OperationKind,
@@ -11,7 +11,7 @@ from modex_agent.runtime.enums import (
     ToolBatchStatus,
     TurnPhase,
 )
-from modex_agent.runtime.models import (
+from modex_agent.core.turn.models import (
     MessageDelta,
     OperationState,
     ToolArguments,

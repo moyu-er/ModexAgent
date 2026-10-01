@@ -12,14 +12,14 @@ from unittest.mock import AsyncMock, MagicMock
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult, ContentEmitter, StopReason
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.enums import AgentKind, TurnPhase
+from modex_agent.core.turn.models import TurnIdentity, TurnStateBase
 from modex_agent.hook import Hook, HookErrorPolicy, HookRunner, HookSpec
 from modex_agent.hook.abc import AfterToolExecutionHook, AfterTurnHook, BeforeTurnHook
-from modex_agent.hook.builtin import SubagentAutoSendHook
 from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
+from modex_agent.plugins.defaults.capabilities.subagents.auto_send import SubagentAutoSendHook
 from modex_agent.runtime.context import RuntimeContextManager
-from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.hooks import RuntimeContextHook
-from modex_agent.runtime.models import TurnIdentity, TurnStateBase
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
 

@@ -17,8 +17,8 @@ import pytest
 
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.messaging.broker import Address, BrokerMessage
-from modex_agent.messaging.broker_bridge import BrokerBridgeService
 from modex_agent.messaging.models import InputMessage
+from modex_agent.pipeline.broker_bridge import BrokerBridgeService
 
 
 class _FakeBroker:

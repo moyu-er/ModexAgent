@@ -250,7 +250,7 @@ def test_max_parallel_tool_calls_constant() -> None:
 
 
 def test_turn_custom_key_members() -> None:
-    from modex_agent.runtime.enums import TurnCustomKey
+    from modex_agent.core.turn.enums import TurnCustomKey
 
     assert TurnCustomKey.MAX_PARALLEL_TOOL_CALLS == "max_parallel_tool_calls"
     assert TurnCustomKey.TOOL_SEQ_COUNTER == "_tool_seq_counter"

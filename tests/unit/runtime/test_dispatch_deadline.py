@@ -12,9 +12,9 @@ from modex_agent.core.llm_struct import (
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,
 )
+from modex_agent.core.turn.dispatch import DispatchDeadline, current_dispatch_deadline
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.state import AgentState
-from modex_agent.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
 
 
 class _FakeBroker:

@@ -40,7 +40,6 @@ _PIPELINE = _FRAMEWORK_SRC / "pipeline" / "pipeline.py"
 # Files allowed to contain `execution_strategy ==` (runtime dispatch/routing/
 # validation/docstring, NOT assembly branching — per ADR-0025 D5).
 # - peer_normal.py — runtime per-target routing (which reply mechanism).
-# - factory.py — _get_builder runtime agent-construction dispatch.
 # - subagent_validator.py — runtime subagent registration validation.
 # - execution_strategy.py — docstring text (the phrase "if execution_strategy =="
 #   appears in the module docstring describing what the ABC replaces).
@@ -48,21 +47,25 @@ _PIPELINE = _FRAMEWORK_SRC / "pipeline" / "pipeline.py"
 #   (provider_kind set iff execution_strategy == EXTERNAL). Same
 #   validation category as subagent_validator.py; not assembly branching.
 # - communication/strategies/subagent_dispatch.py — build_result picks ack
-#   field shape (output_path/trace_dir omitted for external targets) based on
-#   req.target.execution_strategy. Same per-target runtime category as
+#   field shape (output_path/trace_dir omitted for external targets) based
+#   on req.target.execution_strategy. Same per-target runtime category as
 #   peer_normal.py; added with ADR-0027 (external coding subagent).
-# - template.py — materialize's early dispatch of EXTERNAL subagents to
-#   ExecutionStrategy.assemble_sub (ADR-0025 D5 runtime dispatch category;
-#   the react path below it is the default). Restored with the direct
-#   subagent construction path (SPEC Errata-5).
+# - defaults/capabilities/subagents/auto_send.py — the auto-send hook picks
+#   the result envelope by the target's strategy name (W5: name compare on
+#   the now-str field; previously an `is`-compare on the enum member — same
+#   per-target runtime category, allowlisted when the compare form changed).
+# W5 REMOVED two entries: factory.py (the `_get_builder` enum dispatch died —
+# the runtime is an EXECUTION_STRATEGY slot product) and template.py (the
+# EXTERNAL dispatch moved behind the AgentMaterializer seam, which selects
+# by strategy_name_of(...) — not a raw compare). The allowlist is designed
+# to shrink.
 _ALLOWED_EXECUTION_STRATEGY_FILES = {
-    _FRAMEWORK_SRC / "multi_agent" / "template.py",
     _FRAMEWORK_SRC / "multi_agent" / "communication" / "strategies" / "peer_normal.py",
-    _FRAMEWORK_SRC / "multi_agent" / "factory.py",
     _FRAMEWORK_SRC / "multi_agent" / "subagent_validator.py",
     _FRAMEWORK_SRC / "multi_agent" / "execution_strategy.py",
     _FRAMEWORK_SRC / "multi_agent" / "pool_config" / "specs.py",
     _FRAMEWORK_SRC / "multi_agent" / "communication" / "strategies" / "subagent_dispatch.py",
+    _FRAMEWORK_SRC / "plugins" / "defaults" / "capabilities" / "subagents" / "auto_send.py",
     # scope/spec.py: the AgentSpec model validator enforcing the
     # provider_kind ↔ external pairing — a runtime validation site (D5
     # category), not an assembly branch (ticket 02; allowlist gap found
@@ -174,7 +177,7 @@ def test_pipeline_init_param_count() -> None:
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == "AgentPipeline":
             for item in node.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "__init__":
+                if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef) and item.name == "__init__":
                     arg_count = len(item.args.args) + len(item.args.kwonlyargs)
                     assert arg_count <= 14, (
                         f"AgentPipeline.__init__ has {arg_count} params "

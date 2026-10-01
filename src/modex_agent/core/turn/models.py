@@ -21,10 +21,10 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolResult
 
+from .approval_types import ApprovalDecision, ApprovalStatus, ApprovalTier
 from .enums import (
     AgentKind,
     ApprovalSubjectType,
@@ -272,7 +272,7 @@ class ApprovalTransaction(BaseModel):
 
 @dataclass(frozen=True)
 class ApprovalDenialContext:
-    """审批拒绝时的完整上下文，写入 checkpoint 供恢复分析。"""
+    """Full context of an approval denial, written into the checkpoint for resume analysis."""
 
     tool_name: str
     tool_call_id: str

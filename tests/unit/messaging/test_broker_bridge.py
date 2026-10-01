@@ -6,16 +6,16 @@ from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.messaging.broker import Address, AddressKind, BrokerMessage
-from modex_agent.messaging.broker_bridge import (
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.models import InputMessage, OutputMessage
+from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.pipeline.broker_bridge import (
     BrokerBridgeService,
     BrokerInputAdapter,
     BrokerOutputAdapter,
     OutputRoute,
     _broker_msg_to_input_message,
 )
-from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-from modex_agent.messaging.models import InputMessage, OutputMessage
-from modex_agent.pipeline.adapters import InputAdapter
 
 
 class MockInputAdapter(InputAdapter):

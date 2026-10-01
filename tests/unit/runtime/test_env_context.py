@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import contextvars
 
-from modex_agent.runtime.env_context import _current_session_id, _modex_env
+from modex_agent.core.turn.env_context import _current_session_id, _modex_env
 
 
 def test_default_is_none() -> None:

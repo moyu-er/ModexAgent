@@ -11,14 +11,14 @@ import pytest
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.messaging.broker import Address, BrokerMessage
-from modex_agent.messaging.broker_bridge import (
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.models import InputMessage, OutputMessage
+from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.pipeline.broker_bridge import (
     BrokerBridgeService,
     BrokerOutputAdapter,
     OutputRoute,
 )
-from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-from modex_agent.messaging.models import InputMessage, OutputMessage
-from modex_agent.pipeline.adapters import InputAdapter
 
 
 class _MockInputAdapter(InputAdapter):

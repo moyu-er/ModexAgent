@@ -25,7 +25,7 @@ class _TerminalishTool(Tool):
         return "<command_result><output>data</output></command_result>"
 
     def result_metadata(self, result) -> tuple[ContentFormat | None, list[str] | None]:  # type: ignore[override]
-        from modex_agent.tools.terminal.types import terminal_result_metadata
+        from modex_agent.core.terminal import terminal_result_metadata
 
         return terminal_result_metadata(result)
 

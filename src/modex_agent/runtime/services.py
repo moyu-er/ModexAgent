@@ -12,9 +12,8 @@ from typing import TYPE_CHECKING, TypeVar
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.media import MediaStore
-
-from .enums import TurnCustomKey
-from .models import TurnSnapshot, TurnStateBase
+from modex_agent.core.turn.enums import TurnCustomKey
+from modex_agent.core.turn.models import TurnSnapshot, TurnStateBase
 
 if TYPE_CHECKING:
     import asyncio
@@ -22,13 +21,13 @@ if TYPE_CHECKING:
     from modex_agent.approval.runtime import ApprovalRuntime
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.agent import AgentContext
+    from modex_agent.core.turn.approval_decision import ApprovalAuditStore
     from modex_agent.hook import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.memory.context_governance import ContextGovernance
     from modex_agent.sandbox.delegation import DelegationSnapshot
     from modex_agent.trace.otel_store import OtelSpanTraceStore
 
-    from .approval_decision import ApprovalAuditStore
     from .context import RuntimeContext, RuntimeContextManager
     from .store import TurnStateStore
 

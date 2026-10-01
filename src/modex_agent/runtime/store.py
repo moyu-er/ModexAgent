@@ -1,52 +1,32 @@
-"""Turn state stores — ABCs and default implementations.
+"""Turn state stores — default implementations.
 
-TurnStateStore: semantic turn-snapshot persistence.
+The :class:`~modex_agent.core.turn.store.TurnStateStore` ABC,
+:class:`ActiveTurnConflictError`, and the shared path transform
+(:func:`~modex_agent.core.turn.store.safe_turn_segment`) live in
+``core/turn/store.py`` (W3b); this module keeps the framework's default
+backends: no-op, in-memory, and the one-JSON-file-per-turn store.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import re
-from abc import ABC, abstractmethod
 from pathlib import Path
 
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
+from modex_agent.core.turn.enums import AgentKind, TurnPhase
+from modex_agent.core.turn.models import StateQueryScope, TurnIdentity, TurnSnapshot
+from modex_agent.core.turn.store import (
+    ActiveTurnConflictError,
+    TurnStateStore,
+    safe_turn_segment,
+)
 from modex_agent.utils.file_io import read_json_robust
-
-from .codec import RuntimeStateCodecRegistry
-from .enums import TurnPhase
-from .models import StateQueryScope, TurnIdentity, TurnSnapshot
 
 logger = logging.getLogger(__name__)
 
 _ACTIVE_PHASES = {TurnPhase.RUNNING, TurnPhase.SUSPENDED}
-
-
-class ActiveTurnConflictError(Exception):
-    """Raised when a second active turn is saved for the same (agent_id, session_id)."""
-
-
-# ===========================================================================
-# TurnStateStore
-# ===========================================================================
-
-
-class TurnStateStore(ABC):
-    """Semantic turn-snapshot persistence."""
-
-    @abstractmethod
-    async def save_turn(self, snapshot: TurnSnapshot) -> None: ...
-
-    @abstractmethod
-    async def load_turn(self, identity: TurnIdentity) -> TurnSnapshot | None: ...
-
-    @abstractmethod
-    async def delete_turn(self, identity: TurnIdentity) -> None: ...
-
-    @abstractmethod
-    async def list_active_turns(self, scope: StateQueryScope) -> list[TurnSnapshot]: ...
 
 
 class NoOpTurnStateStore(TurnStateStore):
@@ -109,8 +89,6 @@ class InMemoryTurnStateStore(TurnStateStore):
 class JsonFileTurnStateStore(TurnStateStore):
     """Default file backend — one JSON file per turn snapshot."""
 
-    _SAFE_RE = re.compile(r"[^A-Za-z0-9_-]")
-
     def __init__(self, workspace: Path, codec_registry: RuntimeStateCodecRegistry) -> None:
         self._workspace = workspace
         self._workspace.mkdir(parents=True, exist_ok=True)
@@ -118,23 +96,15 @@ class JsonFileTurnStateStore(TurnStateStore):
 
     # ---- path helpers ----
 
-    @classmethod
-    def _safe_segment(cls, raw: str) -> str:
-        sanitized = cls._SAFE_RE.sub("_", raw)
-        if sanitized != raw:
-            digest = hashlib.sha256(raw.encode()).hexdigest()[:8]
-            return f"{sanitized}--{digest}"
-        return sanitized
-
     def _dir(self, identity: TurnIdentity) -> Path:
         return (
             self._workspace
-            / self._safe_segment(identity.agent_id)
-            / self._safe_segment(str(identity.session))
+            / safe_turn_segment(identity.agent_id)
+            / safe_turn_segment(str(identity.session))
         )
 
     def _path(self, identity: TurnIdentity) -> Path:
-        return self._dir(identity) / f"{self._safe_segment(identity.turn_id)}.json"
+        return self._dir(identity) / f"{safe_turn_segment(identity.turn_id)}.json"
 
     # ---- store API ----
 
@@ -163,8 +133,6 @@ class JsonFileTurnStateStore(TurnStateStore):
         if not data:
             return None
         agent_kind_raw = data.get("agent_kind", "react")
-        from .enums import AgentKind
-
         agent_kind = AgentKind(agent_kind_raw)
         codec = self._codec_registry.get(agent_kind)
         return codec.decode_turn(data)
@@ -217,8 +185,6 @@ class JsonFileTurnStateStore(TurnStateStore):
             return None
         try:
             agent_kind_raw = data.get("agent_kind", "react")
-            from .enums import AgentKind
-
             agent_kind = AgentKind(agent_kind_raw)
             codec = self._codec_registry.get(agent_kind)
             return codec.decode_turn(data)
@@ -239,4 +205,3 @@ class JsonFileTurnStateStore(TurnStateStore):
         if scope.reason is not None and snapshot.reason != scope.reason:
             return False
         return not (scope.created_before is not None and snapshot.created_at >= scope.created_before)
-

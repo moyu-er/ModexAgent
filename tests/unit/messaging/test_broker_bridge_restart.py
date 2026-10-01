@@ -1,13 +1,14 @@
 """Tests for BrokerBridgeService restart_on_failure (P1 Step 15.2)."""
 
 import asyncio
+import contextlib
 
 import pytest
 
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.messaging.broker import Address
-from modex_agent.messaging.broker_bridge import BrokerBridgeService
 from modex_agent.messaging.models import InputMessage
+from modex_agent.pipeline.broker_bridge import BrokerBridgeService
 
 
 class FakeBroker:
@@ -96,20 +97,16 @@ class TestBridgeRestart:
 
         # Cancel the running task and inject a failing task
         original_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await original_task
-        except asyncio.CancelledError:
-            pass
 
         fail_task = asyncio.create_task(_fail_immediately())
         fail_task.add_done_callback(
             lambda t, n=f"input:{adapter.name}": service._bridge_done_callback(t, n)
         )
         service._tasks[0] = fail_task
-        try:
+        with contextlib.suppress(RuntimeError):
             await fail_task
-        except RuntimeError:
-            pass
 
         # Wait for restart
         await asyncio.sleep(0.15)
@@ -132,14 +129,11 @@ class TestBridgeRestart:
         )
 
         await service.start()
-        task_count_after_start = len(service._tasks)
 
         original_task = service._tasks[0]
         original_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await original_task
-        except asyncio.CancelledError:
-            pass
 
         # First failure — should trigger restart (retry 1/1)
         fail_task = asyncio.create_task(_fail_immediately())
@@ -147,10 +141,8 @@ class TestBridgeRestart:
             lambda t, n=f"input:{adapter.name}": service._bridge_done_callback(t, n)
         )
         service._tasks[0] = fail_task
-        try:
+        with contextlib.suppress(RuntimeError):
             await fail_task
-        except RuntimeError:
-            pass
 
         await asyncio.sleep(0.05)
         # After first restart, should have one new task
@@ -159,20 +151,16 @@ class TestBridgeRestart:
         # Second failure — should NOT restart (max_retries=1 exceeded)
         second_task = service._tasks[0]
         second_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await second_task
-        except asyncio.CancelledError:
-            pass
 
         fail_task2 = asyncio.create_task(_fail_immediately())
         fail_task2.add_done_callback(
             lambda t, n=f"input:{adapter.name}": service._bridge_done_callback(t, n)
         )
         service._tasks[0] = fail_task2
-        try:
+        with contextlib.suppress(RuntimeError):
             await fail_task2
-        except RuntimeError:
-            pass
 
         await asyncio.sleep(0.05)
         retry_name = f"input:{adapter.name}"
@@ -194,20 +182,16 @@ class TestBridgeRestart:
         await service.start()
         task = service._tasks[0]
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
         fail_task = asyncio.create_task(_fail_immediately())
         fail_task.add_done_callback(
             lambda t, n=f"input:{adapter.name}": service._bridge_done_callback(t, n)
         )
         service._tasks[0] = fail_task
-        try:
+        with contextlib.suppress(RuntimeError):
             await fail_task
-        except RuntimeError:
-            pass
 
         await asyncio.sleep(0.02)
         # First restart (backoff = 0.01)
@@ -215,20 +199,16 @@ class TestBridgeRestart:
 
         task = service._tasks[0]
         task.cancel()
-        try:
+        with contextlib.suppress(Exception, asyncio.CancelledError):
             await task
-        except (Exception, asyncio.CancelledError):
-            pass
 
         fail_task = asyncio.create_task(_fail_immediately())
         fail_task.add_done_callback(
             lambda t, n=f"input:{adapter.name}": service._bridge_done_callback(t, n)
         )
         service._tasks[0] = fail_task
-        try:
+        with contextlib.suppress(RuntimeError):
             await fail_task
-        except RuntimeError:
-            pass
 
         await asyncio.sleep(0.04)
         # Second restart (backoff = 0.02)

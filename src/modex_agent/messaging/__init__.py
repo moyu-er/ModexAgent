@@ -1,12 +1,20 @@
-"""消息系统模块 (Broker 抽象层)
+"""Messaging module — the pure message-vocabulary layer (level 0).
 
 提供轻量、可插拔的消息总线抽象：
 - 核心抽象: Address, BrokerMessage, MessageBroker, DeliveryError
 - 内存实现: InMemoryMessageBroker
-- Pipeline 桥接: BrokerInputAdapter, BrokerOutputAdapter, BrokerBridgeService, OutputRoute
+- Agent message vocabulary (AgentAddress / AgentMessageEnvelope / AgentMessageType /
+  AgentMessageRouter) and message formatting live in ``agent_messages`` / ``message_format``
+
+The pipeline bridge (BrokerInputAdapter / BrokerOutputAdapter /
+BrokerBridgeService / OutputRoute) moved to
+``modex_agent.pipeline.broker_bridge`` (W3b) — it composes the pipeline's
+InputAdapter, so it lives above the messaging vocabulary.
 """
 
-from .models import (  # noqa: I001 - payloads must bind before bridge imports pipeline
+from .broker import Address, AddressKind, BrokerMessage, DeliveryError, MessageBroker
+from .broker_memory import InMemoryMessageBroker
+from .models import (
     ApprovalAction,
     ApprovalDecisionInput,
     BrokerInputPayload,
@@ -17,18 +25,12 @@ from .models import (  # noqa: I001 - payloads must bind before bridge imports p
     OutputMessageType,
     ReminderKind,
 )
-from .broker import Address, AddressKind, BrokerMessage, DeliveryError, MessageBroker
-from .broker_bridge import BrokerBridgeService, BrokerInputAdapter, BrokerOutputAdapter, OutputRoute
-from .broker_memory import InMemoryMessageBroker
 
 __all__ = [
     "Address",
     "AddressKind",
     "BrokerMessage",
-    "BrokerBridgeService",
-    "BrokerInputAdapter",
     "BrokerInputPayload",
-    "BrokerOutputAdapter",
     "BrokerOutputPayload",
     "DeliveryError",
     "MessageBroker",
@@ -39,6 +41,5 @@ __all__ = [
     "MessageType",
     "OutputMessage",
     "OutputMessageType",
-    "OutputRoute",
     "ReminderKind",
 ]

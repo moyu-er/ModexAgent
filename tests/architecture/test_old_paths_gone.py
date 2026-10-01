@@ -31,6 +31,51 @@ LIVE_PYTHON_ROOTS: tuple[Path, ...] = (
 
 # Paths relative to src/modex_agent (posix). All verified gone today.
 FORBIDDEN_MODULE_PATHS: tuple[str, ...] = (
+    # ── W3b layering surgery (2026-09): contract sinks and domain-home moves.
+    # Every path below was relocated with no shim; importers were converged
+    # to the new owner in the same wave.
+    # Store contracts → core/stores.py (+ core/turn/store.py for turn state)
+    "memory/core/split_stores.py",
+    "runtime/codec.py",
+    # Hybrid registry → memory/registry/hybrid.py (port: ScopedBundleFactory)
+    "persistence/memory_registry.py",
+    # Memory lifecycle hook contracts → core/memory_hooks.py
+    "memory/hooks.py",
+    # Scope-key sanitizers → utils/paths.py
+    "memory/stores/utils.py",
+    # Control vocabulary → core/control.py
+    "control/types.py",
+    "control/exceptions.py",
+    # Interceptor ABCs → core/interceptor.py
+    "interceptor/abc.py",
+    # Terminal vocabulary + executor ABCs → core/terminal.py
+    "tools/terminal/types.py",
+    # Child-process env builders → utils/child_env.py / utils/bundled_bin.py
+    "tools/terminal/env.py",
+    "tools/terminal/bundled_bin.py",
+    # Guard verdicts → core/guard.py; classifier → approval/security.py
+    "sandbox/verdict.py",
+    "sandbox/security_classifier.py",
+    # Approval classification vocabulary → core/turn/approval_types.py
+    "approval/classification.py",
+    # Broker bridge → pipeline/broker_bridge.py
+    "messaging/broker_bridge.py",
+    # Agent-message vocabulary → messaging/agent_messages.py (+message_format)
+    "multi_agent/address.py",
+    "multi_agent/envelope.py",
+    "multi_agent/message_type.py",
+    "multi_agent/message_format.py",
+    # MediaConfig → core/media.py
+    "multi_agent/pool_config/media.py",
+    # InboxMQ contract → core/inbox.py
+    "multi_agent/inbox/types.py",
+    "multi_agent/inbox/server.py",
+    # ExternalTurnRunner → pipeline/external_turn_runner.py
+    "agents/external/turn_runner.py",
+    # ReAct-state trace hooks → agents/react/hooks/
+    "trace/iteration_span_hook.py",
+    "trace/training_data_hook.py",
+
     # Graph engine relocated to the standalone modex_graph package
     # (ADR-0033 D13 Stage 4). Import references are guarded separately in
     # test_no_modex_agent_core_graph_imports.py.
@@ -116,6 +161,47 @@ FORBIDDEN_MODULE_PATHS: tuple[str, ...] = (
     # Review closure: the final ADR-0006 AgentCommKind compatibility shim is
     # deleted; all callers import the core facade directly.
     "multi_agent/comm_kind.py",
+    # W1 (package-layering surgery): the turn-execution vocabulary moved to
+    # core/turn/ and the approval enums to core/turn/approval_types.py — the
+    # old modules are deleted with no shims.
+    "runtime/enums.py",
+    "runtime/models.py",
+    "runtime/dispatch.py",
+    "runtime/approval_decision.py",
+    "runtime/env_context.py",
+    "runtime/todo.py",
+    "approval/constants.py",
+    # W2 (package-layering surgery): domain ownership moves — the ReAct
+    # hooks to agents/react/hooks/, subagent_auto_send to the subagents
+    # capability package, inbox_flush to multi_agent/inbox/, training_data
+    # to trace/, the summarizer ABC + outcomes to memory/summarizer.py,
+    # ArgumentMatcher to approval/, graph_control/graph_recovery/spec_loader
+    # to orchestration/ (the graph/ package is deleted), dream_locks to
+    # memory/consolidation/, bundled_bin split (runtime half to
+    # tools/terminal/, installer registry half to the installer side),
+    # input_pipeline merged into pipeline/input/, result_limit to
+    # tools/overflow/. Old paths deleted with no shims.
+    "hook/builtin/checkpoint.py",
+    "hook/builtin/deliver_retry.py",
+    "hook/builtin/env_injection.py",
+    "hook/builtin/knowledge_hook.py",
+    "hook/builtin/length_guard.py",
+    "hook/builtin/loop_detection.py",
+    "hook/builtin/todo_continuation.py",
+    "hook/builtin/todo_planning_nudge.py",
+    "hook/builtin/subagent_auto_send.py",
+    "hook/builtin/inbox_flush.py",
+    "hook/builtin/training_data.py",
+    "agents/summarizer/abc.py",
+    "agents/summarizer/outcomes.py",
+    "interceptor/builtin/tool_approval.py",
+    "interceptor/builtin/result_limit.py",
+    "control/graph_control.py",
+    "control/graph_recovery.py",
+    "graph",
+    "runtime/dream_locks.py",
+    "runtime/bundled_bin.py",
+    "input_pipeline",
 )
 
 # (shim module, origin module) — the shim must not import anything from the
@@ -238,13 +324,13 @@ def _python_identifiers(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     identifiers: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
             identifiers.add(node.name)
         elif isinstance(node, ast.Name):
             identifiers.add(node.id)
         elif isinstance(node, ast.Attribute):
             identifiers.add(node.attr)
-        elif isinstance(node, (ast.arg, ast.keyword)) and node.arg is not None:
+        elif isinstance(node, ast.arg | ast.keyword) and node.arg is not None:
             identifiers.add(node.arg)
         elif isinstance(node, ast.alias):
             identifiers.add(node.name.rsplit(".", maxsplit=1)[-1])

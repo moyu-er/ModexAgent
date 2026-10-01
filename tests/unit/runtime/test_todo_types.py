@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.runtime.todo import TodoItem, TodoStatus
+from modex_agent.core.turn.todo import TodoItem, TodoStatus
 
 
 def test_todo_item_frozen():

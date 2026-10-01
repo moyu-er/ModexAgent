@@ -25,8 +25,8 @@ from .tool_manager import ToolManager
 if TYPE_CHECKING:
     from modex_agent.core.capabilities import ModelCapabilities
     from modex_agent.core.prompt import SystemPromptPipeline
+    from modex_agent.core.turn.models import TurnIdentity
     from modex_agent.pipeline.snapshot import PoolDataSnapshot
-    from modex_agent.runtime.models import TurnIdentity
     from modex_agent.runtime.services import AgentRuntime
     from modex_graph.context import GraphContext
 

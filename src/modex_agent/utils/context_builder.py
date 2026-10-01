@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from modex_agent.messaging.agent_messages import AgentMessageEnvelope
     from modex_agent.multi_agent.descriptor import AgentDescriptor
-    from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 
 
 class MultiAgentContextBuilder:

@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from .enums import AgentKind
-from .models import JsonValue, TurnSnapshot
+from modex_agent.core.turn.enums import AgentKind
+from modex_agent.core.turn.models import JsonValue, TurnSnapshot
 
 
 class RuntimeStateCodecError(Exception):

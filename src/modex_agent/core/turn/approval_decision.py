@@ -5,12 +5,12 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.approval.constants import (
+from .approval_types import (
     ApprovalAuditDecision,
     ApprovalAuditSource,
     DecisionActor,
 )
-from modex_agent.runtime.models import TurnSnapshot
+from .models import TurnSnapshot
 
 SANDBOX_GUARD_DECIDED_BY: str = DecisionActor.SANDBOX_GUARD.value
 """``ApprovalAuditEntry.decided_by`` value for guard-made decisions.

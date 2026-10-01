@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.runtime.enums import AgentKind, MessageDeltaSource, SnapshotReason, TurnPhase
-from modex_agent.runtime.models import MessageDelta, ResumePoint, TurnIdentity, TurnSnapshot
+from modex_agent.core.turn.enums import AgentKind, MessageDeltaSource, SnapshotReason, TurnPhase
+from modex_agent.core.turn.models import MessageDelta, ResumePoint, TurnIdentity, TurnSnapshot
 
 
 class _FakeCodec:

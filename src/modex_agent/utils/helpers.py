@@ -1,5 +1,6 @@
 """通用工具函数"""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -125,3 +126,45 @@ def strip_think(text: str | None) -> str | None:
     """
     result = extract_think_prefix(text)
     return result.cleaned if result.cleaned else None
+
+
+# ---------------------------------------------------------------------------
+# Deep merge (config inheritance)
+# ---------------------------------------------------------------------------
+
+
+def deep_merge(
+    base: dict[str, object],
+    override: dict[str, object] | None,
+) -> dict[str, object]:
+    """Deep merge two dicts. Lists are replaced, None clears the key.
+
+    Args:
+        base: The base dict providing defaults.
+        override: The override dict. None values explicitly clear keys.
+
+    Returns:
+        A new merged dict. base is never mutated.
+    """
+    if override is None:
+        return {**base}
+
+    result: dict[str, object] = {}
+    all_keys = set(base.keys()) | set(override.keys())
+
+    for key in all_keys:
+        if key in override:
+            val = override[key]
+            if val is None:
+                continue
+            base_value = base.get(key)
+            if isinstance(val, Mapping) and isinstance(base_value, Mapping):
+                result[key] = deep_merge(
+                    dict(base_value),
+                    dict(val),
+                )
+            else:
+                result[key] = val
+        else:
+            result[key] = base[key]
+    return result

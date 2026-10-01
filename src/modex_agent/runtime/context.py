@@ -22,8 +22,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.core.session_id import SessionInfo
-
-from .models import JsonValue
+from modex_agent.core.turn.models import JsonValue
 
 #: Internal key used by :meth:`InMemoryRuntimeContext.record_tool_call`.
 _TOOL_CALLS_KEY = "_tool_calls"

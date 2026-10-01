@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from .enums import SnapshotReason
-from .models import TurnSnapshot, TurnStateBase
+from modex_agent.core.turn.enums import SnapshotReason
+from modex_agent.core.turn.models import TurnSnapshot, TurnStateBase
 
 
 class SnapshotPolicy(ABC):

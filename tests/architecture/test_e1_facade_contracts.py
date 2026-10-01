@@ -101,14 +101,15 @@ EXPECTED_PERSISTENCE_ADAPTERS_ALL = [
     "SqliteScopeRegistryStore",
 ]
 
+# W3b: the broker bridge (BrokerInputAdapter / BrokerOutputAdapter /
+# BrokerBridgeService / OutputRoute) moved to pipeline.broker_bridge — it
+# composes the pipeline's InputAdapter, so it lives above the messaging
+# vocabulary. The messaging facade keeps pure message/broker vocabulary.
 EXPECTED_MESSAGING_ALL = [
     "Address",
     "AddressKind",
     "BrokerMessage",
-    "BrokerBridgeService",
-    "BrokerInputAdapter",
     "BrokerInputPayload",
-    "BrokerOutputAdapter",
     "BrokerOutputPayload",
     "DeliveryError",
     "MessageBroker",
@@ -119,7 +120,6 @@ EXPECTED_MESSAGING_ALL = [
     "MessageType",
     "OutputMessage",
     "OutputMessageType",
-    "OutputRoute",
     "ReminderKind",
 ]
 
@@ -129,12 +129,10 @@ EXPECTED_PIPELINE_ALL = [
 ]
 
 EXPECTED_RUNTIME_ALL = [
-    "AgentKind",
     "AgentRuntime",
     "AgentRuntimeServices",
     "EXECUTOR_PROCESS_ID_KEY",
     "InMemoryRuntimeContext",
-    "JsonFileTodoStore",
     "ProcessIdentity",
     "ProcessRegistry",
     "RuntimeContext",
@@ -142,11 +140,6 @@ EXPECTED_RUNTIME_ALL = [
     "SingletonProcessRegistry",
     "SnapshotPolicy",
     "ToolCallRecord",
-    "TodoItem",
-    "TodoStatus",
-    "TodoStore",
-    "TurnCustomKey",
-    "TurnPhase",
     "require_runtime_state",
 ]
 

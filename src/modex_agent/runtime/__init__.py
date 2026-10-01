@@ -2,6 +2,10 @@
 
 Replaces scattered ``ctx.metadata`` / ``ctx.extensions`` state with scoped,
 persistable turn snapshots and typed operation records.
+
+The turn-execution vocabulary (enums, models, dispatch, approval decision
+contracts, env ContextVars, todo values) moved to ``modex_agent.core.turn``
+(W1 layering surgery) — import it module-qualified from there.
 """
 
 from __future__ import annotations
@@ -13,20 +17,16 @@ from .context import (
     RuntimeContextManager,
     ToolCallRecord,
 )
-from .enums import AgentKind, TurnCustomKey, TurnPhase
 from .policy import SnapshotPolicy
 from .process_identity import ProcessIdentity
 from .process_registry import ProcessRegistry, SingletonProcessRegistry
 from .services import AgentRuntime, AgentRuntimeServices, require_runtime_state
-from .todo import JsonFileTodoStore, TodoItem, TodoStatus, TodoStore
 
 __all__ = [
-    "AgentKind",
     "AgentRuntime",
     "AgentRuntimeServices",
     "EXECUTOR_PROCESS_ID_KEY",
     "InMemoryRuntimeContext",
-    "JsonFileTodoStore",
     "ProcessIdentity",
     "ProcessRegistry",
     "RuntimeContext",
@@ -34,10 +34,5 @@ __all__ = [
     "SingletonProcessRegistry",
     "SnapshotPolicy",
     "ToolCallRecord",
-    "TodoItem",
-    "TodoStatus",
-    "TodoStore",
-    "TurnCustomKey",
-    "TurnPhase",
     "require_runtime_state",
 ]

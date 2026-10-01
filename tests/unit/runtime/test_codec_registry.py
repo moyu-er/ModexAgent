@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.runtime.codec import RuntimeStateCodecRegistry, UnsupportedAgentKindError
-from modex_agent.runtime.enums import AgentKind
+from modex_agent.core.turn.codec import RuntimeStateCodecRegistry, UnsupportedAgentKindError
+from modex_agent.core.turn.enums import AgentKind
 
 
 class _FakeCodec:
