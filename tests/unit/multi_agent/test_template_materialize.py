@@ -537,8 +537,8 @@ async def test_materialize_external_injects_emitter_factory_into_turn_runner():
     react subagents + external main agent). The framework must inject the
     emitter in ``_materialize_external`` so the external subagent's turns
     write transcript events. Without it, ``ExternalTurnRunner`` keeps the
-    default ``StreamingAwareEmitter``+``BrokerOutputAdapter`` from
-    ``assemble_pipeline`` and turns are invisible in the WebUI history.
+    default ``BufferingSink`` over ``assemble_pipeline``'s output adapter
+    and turns are invisible in the WebUI history.
     """
     from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
     from modex_agent.core.session_id import SessionInfo

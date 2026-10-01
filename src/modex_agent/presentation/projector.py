@@ -8,12 +8,11 @@ vocabulary BOTH execution planes emit onto) and produces
 consumers (WebUI emitters, editors, consoles) translate its output to
 their sink without re-deriving turn bookkeeping.
 
-Layering: this package may not import concrete agent strategies, so a
-plane still emitting its legacy enum stream translates that stream onto
-the core union in its consumer-side emitter (the migration path of
-ADR-0054); the disposition of every core event kind is declared below
-(``MAPPED_TURN_EVENT_KINDS`` / ``IGNORED_TURN_EVENT_KINDS``) — never a
-silent drop.
+Layering: both execution planes emit the core union at the source (the
+ADR-0054 migration is complete); this package imports no agent strategy
+by layer discipline. The disposition of every core event kind is
+declared below (``MAPPED_TURN_EVENT_KINDS`` /
+``IGNORED_TURN_EVENT_KINDS``) — never a silent drop.
 """
 
 from __future__ import annotations
@@ -96,6 +95,10 @@ class DefaultTurnEventProjector(TurnEventProjector):
       id (``uuid4().hex[:12]`` by default) and emits ``TurnStarted``
       ahead of the content event. Turn identity resets after
       ``turn_finished``.
+    - **Agent identity** — derived from the session id (second ``.``
+      segment) unless an explicit ``agent_name`` overrides it (the hub
+      passes its binding's, so the envelope never has two assignment
+      paths that can disagree).
     - **Segment ids** — text/thinking deltas carry the runtime ``part_id``
       when present, else ``"_text"`` / ``"_reasoning"``.
     - **Tool pairing** — ``TurnToolCallEvent`` remembers the call's full
@@ -105,6 +108,10 @@ class DefaultTurnEventProjector(TurnEventProjector):
       results keep ``arguments=None``.
     - **Latency** — ``TurnFinished.latency_ms`` is measured from turn
       start through the ``clock`` (injectable; wall clock by default).
+      On a resumed turn (an approval resume re-invocation) the
+      measurement starts at the resumed projector's construction — the
+      resume time — not the original turn start: the projector has no
+      memory of the suspended leg's start time.
     """
 
     MAPPED_TURN_EVENT_KINDS: ClassVar[frozenset[str]] = frozenset(
@@ -142,13 +149,14 @@ class DefaultTurnEventProjector(TurnEventProjector):
         self,
         session_id: str,
         *,
+        agent_name: str | None = None,
         pool: str | None = None,
         workspace: str | None = None,
         turn_id_factory: Callable[[], str] | None = None,
         clock: Callable[[], float] | None = None,
     ) -> None:
         self._session_id = session_id
-        self._agent_name = agent_of(session_id, default="main")
+        self._agent_name = agent_name or agent_of(session_id, default="main")
         self._pool = pool
         self._workspace = workspace
         self._turn_id_factory = turn_id_factory or (lambda: uuid.uuid4().hex[:12])

@@ -15,26 +15,15 @@ constructs core ``TurnEvent`` objects directly at every emission site.
 
 from __future__ import annotations
 
-import typing
-
-from modex_agent.core.turn_events import TurnEvent
+from modex_agent.core.turn_events import turn_event_kind_literals
 from modex_agent.presentation.projector import DefaultTurnEventProjector
-
-
-def _turn_event_kinds() -> set[str]:
-    """Every ``kind`` literal in the core ``TurnEvent`` union."""
-    union = typing.get_args(TurnEvent)[0]
-    kinds: set[str] = set()
-    for variant in typing.get_args(union):
-        kinds.update(typing.get_args(variant.model_fields["kind"].annotation))
-    return kinds
 
 
 def test_projector_disposition_covers_every_turn_event_kind() -> None:
     """Anchor A: mapped ∪ ignored == the full core kind set."""
     mapped = set(DefaultTurnEventProjector.MAPPED_TURN_EVENT_KINDS)
     ignored = set(DefaultTurnEventProjector.IGNORED_TURN_EVENT_KINDS)
-    all_kinds = _turn_event_kinds()
+    all_kinds = set(turn_event_kind_literals())
     missing = all_kinds - (mapped | ignored)
     assert not missing, f"TurnEvent kinds without a declared disposition: {missing}"
     extra = (mapped | ignored) - all_kinds

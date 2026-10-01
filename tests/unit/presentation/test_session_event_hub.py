@@ -30,6 +30,7 @@ from modex_agent.core.turn_events import (
     TurnStartedEvent,
     TurnTextEvent,
     TurnToolCallEvent,
+    TurnToolResultEvent,
 )
 from modex_agent.presentation import (
     PresentationEvent,
@@ -98,6 +99,25 @@ async def test_binding_identity_carries_into_every_envelope() -> None:
     assert delta.pool == "pool-a"
     assert delta.workspace == "/ws/alpha"
     assert hub.binding.session_id == "conv.reviewer.x1"
+
+
+async def test_binding_agent_name_wins_over_derived_identity() -> None:
+    """The envelope's agent identity has ONE assignment path: the binding.
+
+    The projector can derive an agent name from the session id, but the
+    hub passes the binding's ``agent_name`` explicitly — the two must
+    never disagree, so a binding whose name differs from the session's
+    derived segment still stamps the binding's name on every envelope.
+    """
+    sink = RecordingPresentationSink("only", [])
+    hub = SessionEventHub(
+        TurnBinding(session_id="conv.main", agent_name="reviewer"),
+        [sink],
+    )
+
+    await hub.emit(TurnTextEvent(text="hi"))
+
+    assert {event.agent_name for event in sink.events} == {"reviewer"}
 
 
 async def test_binding_turn_id_adopted_when_non_empty() -> None:
@@ -191,6 +211,51 @@ async def test_consumers_receive_events_in_registration_order() -> None:
         ("first", "tool_call_started", log[0][2]),
         ("second", "tool_call_started", log[0][2]),
     ]
+
+
+class _RaisingPresentationSink(PresentationSink):
+    """Consumer whose handle always raises (a buggy consumer)."""
+
+    async def handle(self, event: PresentationEvent) -> None:
+        raise RuntimeError(f"consumer exploded on {event.kind}")
+
+
+async def test_raising_consumer_is_isolated_across_a_scripted_native_turn() -> None:
+    """Fan-out failure policy: a buggy consumer must not corrupt the turn.
+
+    Drives a scripted native turn (started -> text -> tool call ->
+    tool result -> terminal COMPLETED) through a hub whose FIRST consumer
+    raises on every event and whose second consumer records. Pinned:
+
+    - the raise never propagates to the emitting node (emit returns);
+    - the recording consumer still receives every presentation event;
+    - the turn's terminal stays the single COMPLETED ``turn_finished`` —
+      a consumer defect must not convert a completed turn into an errored
+      one (no extra ``turn_errored`` / second terminal).
+    """
+    recorder = RecordingPresentationSink("healthy", [])
+    hub = _hub([_RaisingPresentationSink(), recorder])
+
+    await hub.emit(TurnStartedEvent())
+    await hub.emit(TurnTextEvent(text="working"))
+    await hub.emit(
+        TurnToolCallEvent(tool_name="echo", call_id="c1", arguments={"text": "hi"})
+    )
+    await hub.emit(TurnToolResultEvent(tool_name="echo", call_id="c1", output="echo: hi"))
+    await hub.emit(TurnFinishedEvent(stop_reason=StopReason.COMPLETED))
+
+    assert [entry[1] for entry in recorder.log] == [
+        "turn_started",
+        "text_delta",
+        "tool_call_started",
+        "tool_result",
+        "turn_finished",
+    ]
+    terminals = [e for e in recorder.events if e.kind in ("turn_finished", "turn_errored")]
+    assert len(terminals) == 1, "a consumer defect must not add a terminal event"
+    finished = terminals[0]
+    assert finished.kind == "turn_finished"
+    assert finished.stop_reason is StopReason.COMPLETED
 
 
 async def test_gate_filters_before_projection() -> None:

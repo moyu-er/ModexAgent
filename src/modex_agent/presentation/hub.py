@@ -27,6 +27,7 @@ lazy first-content announcement.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
@@ -36,6 +37,8 @@ from modex_agent.core.turn_events import TurnEvent
 
 from .events import PresentationEvent
 from .projector import DefaultTurnEventProjector
+
+logger = logging.getLogger(__name__)
 
 
 class PresentationSink(ABC):
@@ -53,7 +56,12 @@ class PresentationSink(ABC):
         raise NotImplementedError
 
     async def flush(self) -> None:
-        """Force-deliver any buffered output (concrete no-op default)."""
+        """Force-deliver any buffered output (consumer escape hatch).
+
+        The primary flush boundary is the terminal event — buffering
+        consumers push their buffers on ``turn_finished`` themselves.
+        Concrete no-op default.
+        """
         return None
 
 
@@ -65,6 +73,15 @@ class SessionEventHub(TurnEventSink):
     registration order, sequentially (delivery order is the observable
     contract; a slow consumer delays later ones by design). One hub
     serves one bound turn.
+
+    Fan-out failure policy (shared with
+    :class:`~modex_agent.core.emitter.CompositeTurnEventSink`, the other
+    multi-consumer event sink): event delivery is observation, not turn
+    semantics. A failure in one consumer's ``handle`` / ``flush`` is
+    isolated and logged with the consumer's identity (class name) — it
+    never propagates to the emitting runtime node, never converts a
+    completed turn into an errored one, and never starves the remaining
+    consumers.
     """
 
     def __init__(
@@ -83,6 +100,10 @@ class SessionEventHub(TurnEventSink):
         self._consumers: tuple[PresentationSink, ...] = tuple(consumers)
         self._projector = DefaultTurnEventProjector(
             binding.session_id,
+            # The binding owns the envelope's agent identity — one
+            # assignment path, never a second derived one that could
+            # disagree with it.
+            agent_name=binding.agent_name,
             pool=binding.pool,
             workspace=binding.workspace,
             turn_id_factory=turn_id_factory or self._turn_id_from_binding,
@@ -112,11 +133,28 @@ class SessionEventHub(TurnEventSink):
     async def _dispatch(self, event: TurnEvent) -> None:
         for presentation in self._projector.feed(event):
             for consumer in self._consumers:
-                await consumer.handle(presentation)
+                # Failure isolation (the shared fan-out policy, see class
+                # docstring): one consumer's handler defect must not
+                # corrupt the turn outcome or starve the remaining
+                # consumers — log and continue in registration order.
+                try:
+                    await consumer.handle(presentation)
+                except Exception:
+                    logger.exception(
+                        "SessionEventHub consumer %s failed on %s event",
+                        type(consumer).__name__,
+                        presentation.kind,
+                    )
 
     async def flush(self) -> None:
         for consumer in self._consumers:
-            await consumer.flush()
+            try:
+                await consumer.flush()
+            except Exception:
+                logger.exception(
+                    "SessionEventHub consumer %s flush failed",
+                    type(consumer).__name__,
+                )
 
     def _turn_id_from_binding(self) -> str:
         """Binding turn id when present; the projector's lazy uuid otherwise."""

@@ -34,6 +34,7 @@ from modex_agent.presentation.projector import (
     TurnEventProjector,
 )
 from modex_agent.presentation.transcript import (
+    TRANSIENT_PRESENTATION_KINDS,
     JsonlTranscriptStore,
     PresentationTranscriptCodec,
     PresentationTranscriptStore,
@@ -65,6 +66,7 @@ __all__ = [
     "ToolBlock",
     "ToolCallStarted",
     "ToolResult",
+    "TRANSIENT_PRESENTATION_KINDS",
     "TranscriptCodec",
     "TranscriptStore",
     "TurnErrored",

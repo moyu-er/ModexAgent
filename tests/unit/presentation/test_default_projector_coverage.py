@@ -24,10 +24,11 @@ Anchors:
 
 from __future__ import annotations
 
-import typing
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.core.agent import AgentContext
@@ -49,14 +50,25 @@ from modex_agent.core.turn_events import (
     StopReason,
     TurnFinishedEvent,
     TurnTextEvent,
+    turn_event_kind_literals,
 )
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.presentation import (
     DefaultTurnEventProjector,
     PresentationEvent,
     PresentationTranscriptStore,
+    TRANSIENT_PRESENTATION_KINDS,
     TurnFinished,
     materialize_turns,
+)
+from modex_agent.presentation import (
+    TextDelta as PresentationTextDelta,
+)
+from modex_agent.presentation import (
+    ToolArgsDelta as PresentationToolArgsDelta,
+)
+from modex_agent.presentation import (
+    TurnStarted as PresentationTurnStarted,
 )
 from modex_agent.presentation import (
     ToolResult as PresentationToolResult,
@@ -187,11 +199,7 @@ async def _record_all_turns() -> list[TurnEvent]:
 
 def _turn_event_kinds() -> set[str]:
     """Every ``kind`` literal in the core ``TurnEvent`` union."""
-    union = typing.get_args(TurnEvent)[0]
-    kinds: set[str] = set()
-    for variant in typing.get_args(union):
-        kinds.update(typing.get_args(variant.model_fields["kind"].annotation))
-    return kinds
+    return set(turn_event_kind_literals())
 
 
 def test_turn_event_kind_dispositions_are_complete() -> None:
@@ -242,6 +250,10 @@ async def test_projector_maps_every_runtime_event_and_round_trips(
             continue
         assert produced, f"mapped runtime event produced nothing: {runtime_event}"
         for presentation in produced:
+            if presentation.kind in TRANSIENT_PRESENTATION_KINDS:
+                # Declared transient kinds are display-only — the store
+                # rejects them loudly (see the rejection test below).
+                continue
             await store.append("conv.main", presentation)
 
     reloaded = await store.load("conv.main")
@@ -278,6 +290,39 @@ async def test_projector_maps_every_runtime_event_and_round_trips(
     tool_results = [e for e in reloaded if isinstance(e, PresentationToolResult)]
     assert tool_results, "scripted turns produced tool result cards"
     assert all(e.call_id == "c1" for e in tool_results)
+
+
+# ── Declared transient kinds are rejected at the transcript boundary ────────
+
+
+async def test_transient_presentation_kinds_fail_loud_on_append(
+    tmp_path: Path,
+) -> None:
+    """``TRANSIENT_PRESENTATION_KINDS`` is a declared set, not an implicit
+    omission: the presentation transcript store raises on transient kinds
+    (naming the kind and the set) while durable kinds persist."""
+    store = PresentationTranscriptStore(tmp_path)
+    envelope = {
+        "session_id": "conv.main",
+        "agent_name": "main",
+        "turn_id": "t1",
+    }
+
+    with pytest.raises(ValueError, match="tool_args_delta"):
+        await store.append(
+            "conv.main",
+            PresentationToolArgsDelta(
+                **envelope, tool_name="bash", call_id="c1", args_fragment='{"a'
+            ),
+        )
+    with pytest.raises(ValueError, match="turn_started"):
+        await store.append("conv.main", PresentationTurnStarted(**envelope))
+
+    assert TRANSIENT_PRESENTATION_KINDS == frozenset({"tool_args_delta", "turn_started"})
+
+    await store.append("conv.main", PresentationTextDelta(**envelope, text="kept"))
+    reloaded = await store.load("conv.main")
+    assert [e.kind for e in reloaded] == ["text_delta"]
 
 
 # ── Turn-identity semantics pinned on the default projector ────────────────

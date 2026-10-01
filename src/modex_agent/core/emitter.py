@@ -21,12 +21,17 @@ longer exist.
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.turn_events import StopReason, TurnEvent, TurnFinishedEvent
+from modex_agent.core.turn_events import (
+    StopReason,
+    TurnEvent,
+    TurnFinishedEvent,
+    turn_event_kind_literals,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,12 +75,35 @@ class KindGate(BaseModel):
     ``enabled_kinds`` narrows the delivered set (``None`` = every kind);
     ``disabled_kinds`` always wins. Mirrors the semantics of the retired
     ``EmitterConfig`` on the old enum-event channel.
+
+    Construction is loud: every kind string must be a member of the
+    closed ``TurnEvent`` union's kind literals — a typo'd kind would
+    otherwise silently filter everything.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     enabled_kinds: frozenset[str] | None = None
     disabled_kinds: frozenset[str] = Field(default_factory=frozenset)
+
+    @model_validator(mode="after")
+    def _kinds_must_be_union_literals(self) -> Self:
+        valid = turn_event_kind_literals()
+        unknown_enabled = (
+            sorted(self.enabled_kinds - valid) if self.enabled_kinds else []
+        )
+        unknown_disabled = sorted(self.disabled_kinds - valid)
+        if unknown_enabled:
+            raise ValueError(
+                f"KindGate.enabled_kinds names kinds that are not in the "
+                f"TurnEvent union: {unknown_enabled} (valid kinds: {sorted(valid)})"
+            )
+        if unknown_disabled:
+            raise ValueError(
+                f"KindGate.disabled_kinds names kinds that are not in the "
+                f"TurnEvent union: {unknown_disabled} (valid kinds: {sorted(valid)})"
+            )
+        return self
 
     def is_enabled(self, kind: str) -> bool:
         """Whether an event of ``kind`` should be delivered to the sink."""
@@ -118,11 +146,17 @@ class TurnEventSink(ABC):
         raise NotImplementedError
 
     async def flush(self) -> None:
-        """Force-deliver any buffered output.
+        """Force-deliver any buffered output (consumer escape hatch).
 
-        Concrete no-op default: the interface has exactly one abstract data
-        method, so non-buffering sinks need not override. Buffering sinks
-        override to push their buffers onto the transport.
+        Contract: the PRIMARY flush boundary is the terminal event —
+        buffering sinks (:class:`BufferingSink` and its subclasses) flush
+        their residual buffers on ``turn_finished`` themselves, so a
+        well-formed turn needs no external flush. This method exists for
+        the consumer that must push partial output outside a turn's
+        lifecycle (e.g. an operator-driven drain); it has no production
+        caller on the framework's happy paths. Concrete no-op default:
+        the interface has exactly one abstract data method, so
+        non-buffering sinks need not override.
         """
         return None
 
@@ -135,6 +169,14 @@ class CompositeTurnEventSink(TurnEventSink):
     child applies its own gate. There is no silent drop path: a child that
     ignores an event kind must declare it via its own gate, not by
     omitting an override.
+
+    Fan-out failure policy (shared with
+    :class:`~modex_agent.presentation.SessionEventHub`, the other
+    multi-consumer event sink): event delivery is observation, not turn
+    semantics. A failure in one child's ``emit`` / ``flush`` is isolated
+    and logged with the child's identity (class name) — it never
+    propagates to the emitting runtime node, never converts a completed
+    turn into an errored one, and never starves the remaining children.
     """
 
     def __init__(self, children: tuple[TurnEventSink, ...], gate: KindGate | None = None) -> None:

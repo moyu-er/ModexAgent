@@ -14,6 +14,7 @@ Regression anchors for the W2 cutover:
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from modex_agent.core.emitter import (
     CompositeTurnEventSink,
@@ -139,3 +140,22 @@ class TestTurnBinding:
         resumed = first.model_copy(update={"resumed": True})
         assert resumed.turn_id == first.turn_id
         assert resumed.resumed is True
+
+
+class TestKindGateConstruction:
+    def test_typoed_enabled_kind_fails_loud(self) -> None:
+        """A typo'd kind in ``enabled_kinds`` would silently filter every
+        event — construction must name the offender and the valid set."""
+        with pytest.raises(ValidationError, match="texts"):
+            KindGate(enabled_kinds=frozenset({"texts"}))
+
+    def test_typoed_disabled_kind_fails_loud(self) -> None:
+        with pytest.raises(ValidationError, match="turn-finished"):
+            KindGate(disabled_kinds=frozenset({"turn-finished"}))
+
+    def test_valid_kinds_construct(self) -> None:
+        gate = KindGate(
+            enabled_kinds=frozenset({"text", "reasoning"}),
+            disabled_kinds=frozenset({"progress"}),
+        )
+        assert gate.enabled_kinds == frozenset({"text", "reasoning"})

@@ -1,8 +1,11 @@
 """Sequence validation for the unified turn-event stream.
 
-``TurnEventValidator`` is a small per-session state machine over the core
-``TurnEvent`` union. It checks the stream's shape — not its content —
-against the legal sequence:
+``TurnEventValidator`` is a small PER-TURN state machine over the core
+``TurnEvent`` union. One instance validates exactly one turn: a
+``turn_started`` after the terminal records a violation, and every event
+after the terminal is rejected (``_require_open`` returns ``False``), so
+a validator is never reused across turns. It checks the stream's shape —
+not its content — against the legal sequence:
 
     optional turn_started
       -> any content / tool / iteration / progress / usage / turn_errored events
@@ -15,7 +18,7 @@ Two modes:
   and any terminal before content are violations.
 - ``lenient`` (default) — a content event before ``turn_started``
   auto-starts the turn, matching the presentation projector's
-  lazy-identity reality during migration.
+  lazy-identity behavior on bridge streams that begin with content.
 
 The validator never raises: ``feed`` accumulates violations and callers
 inspect ``violations`` (empty list = legal sequence) and ``finished``.
@@ -48,7 +51,11 @@ _CONTENT_KINDS: frozenset[str] = frozenset(
 
 
 class TurnEventValidator:
-    """Accumulating sequence validator over one session's ``TurnEvent`` stream."""
+    """Accumulating sequence validator over one turn's ``TurnEvent`` stream.
+
+    Per-turn, not per-session: after the terminal ``turn_finished`` every
+    further event is a violation — construct a fresh validator per turn.
+    """
 
     def __init__(self, *, strict: bool = False) -> None:
         self._strict = strict

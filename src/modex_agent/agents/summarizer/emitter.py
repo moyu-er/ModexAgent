@@ -1,4 +1,4 @@
-"""SummarizerTrajectorySink — logs ReAct loop events and writes JSONL trace.
+"""SummarizerTrajectoryEmitter — logs ReAct loop events and writes JSONL trace.
 
 Used by ArchiveSummarizer and CoreMemoryConsolidator so their execution
 is observable even though they run silently in the background. Observes
@@ -16,6 +16,7 @@ from modex_agent.core.emitter import TurnEvent, TurnEventSink
 from modex_agent.core.turn_events import (
     IterationFinishedEvent,
     IterationStartedEvent,
+    StopReason,
     TurnErroredEvent,
     TurnFinishedEvent,
     TurnReasoningEvent,
@@ -148,12 +149,16 @@ class SummarizerTrajectoryEmitter(TurnEventSink):
                 )
 
             case TurnFinishedEvent(stop_reason=stop_reason, error=error):
+                # Both cancellation taxonomies (``CANCELLED`` from the
+                # react/external cancel paths, ``TURN_CANCELLED`` from the
+                # after-turn node) share the cancelled phase — consistent
+                # with the single-taxonomy interruption rule of ADR-0054.
                 phase = "turn_complete"
-                if stop_reason == "max_iterations":
+                if stop_reason is StopReason.MAX_ITERATIONS:
                     phase = "turn_max_iterations"
-                elif stop_reason == "error":
+                elif stop_reason is StopReason.ERROR:
                     phase = "turn_error"
-                elif stop_reason == "turn_cancelled":
+                elif stop_reason in (StopReason.CANCELLED, StopReason.TURN_CANCELLED):
                     phase = "turn_cancelled"
 
                 content_preview = (self._current_content or "")[:200]

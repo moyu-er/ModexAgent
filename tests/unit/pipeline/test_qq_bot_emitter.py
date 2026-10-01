@@ -174,13 +174,13 @@ class TestQQBotEmitter:
 
     @pytest.mark.asyncio
     async def test_minimal_gate_drops_reasoning(self, mock_adapter):
-        """The production minimal gate excludes reasoning (as before)."""
-        from bot.adapters.qq import QQEmitterConfig
+        """The production IM gate excludes reasoning (as before)."""
+        from bot.adapters.channels import im_channel_gate
 
         gated = QQBotEmitter(
             output_adapter=mock_adapter,
             session_id="test_qq_session",
-            gate=QQEmitterConfig.minimal(),
+            gate=im_channel_gate(),
         )
         await gated.emit(TurnReasoningEvent(text="hidden"))
         assert gated._reasoning_buffer == ""

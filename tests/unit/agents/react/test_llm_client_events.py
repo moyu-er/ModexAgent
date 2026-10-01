@@ -294,8 +294,8 @@ class TestStreamNativeProviderAssembly:
 
 
 class TestToolArgsDeltaEmission:
-    """ToolCallDelta → 流式 emitter 收到 TOOL_ARGS_DELTA + ToolArgsDeltaPayload;
-    折叠响应不受影响(无 ToolCallComplete 即无 tool_calls), 非流式 emitter 不收。"""
+    """ToolCallDelta → 流式 sink 收到 ToolArgsDeltaEvent;
+    折叠响应不受影响(无 ToolCallComplete 即无 tool_calls), 非流式 sink 不收。"""
 
     @staticmethod
     def _provider() -> LLMProvider:

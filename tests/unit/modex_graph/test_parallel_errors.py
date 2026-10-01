@@ -485,11 +485,11 @@ class TestReactGraphRuntimeAudit:
     docstring above and asserted here as lightweight structural checks.
 
     The audit confirms ReactGraphRuntime has NO shared mutable state on
-    ``self``: all 7 service references are set once in ``__init__`` and
+    ``self``: all 6 service references are set once in ``__init__`` and
     never mutated. All methods are read-only on ``self``. Therefore
     concurrent invocation of ``before_node`` / ``after_node`` / ``emit``
     is safe at the ReactGraphRuntime layer — safety of the underlying
-    services (HookRunner, ContentEmitter, etc.) is a separate, framework-
+    services (HookRunner, TurnStateStore, etc.) is a separate, framework-
     wide concern outside this audit's scope.
     """
 

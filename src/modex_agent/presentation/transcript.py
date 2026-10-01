@@ -254,6 +254,25 @@ class JsonlTranscriptStore[E](TranscriptStore[E]):
 
 # ── Presentation-event codec + ready-to-use store ──────────────────────────
 
+TRANSIENT_PRESENTATION_KINDS: frozenset[str] = frozenset(
+    {"tool_args_delta", "turn_started"}
+)
+"""Presentation kinds that must never be persisted (ADR-0054).
+
+This is a declared set, not an accident of any consumer's dispatch
+shape:
+
+- ``tool_args_delta`` — streamed argument warm-up, display-only
+  fragments superseded by the full-fidelity ``ToolCallStarted`` /
+  ``ToolResult`` cards; replay derives nothing from them.
+- ``turn_started`` — turn grouping rides the record identity envelope
+  (``turn_id``) alone; a persisted start adds no replayable fact.
+
+The presentation transcript store rejects appends of these kinds loudly
+so a consumer that "appends everything" fails at the boundary instead
+of silently bloating transcripts with un-replayable records.
+"""
+
 
 class PresentationTranscriptCodec(TranscriptCodec[PresentationEvent]):
     """``model_dump_json`` / discriminated-union ``validate_json`` codec."""
@@ -274,10 +293,29 @@ class PresentationTranscriptCodec(TranscriptCodec[PresentationEvent]):
 
 
 class PresentationTranscriptStore(JsonlTranscriptStore[PresentationEvent]):
-    """JSONL transcript of presentation events with turn-view reads."""
+    """JSONL transcript of presentation events with turn-view reads.
+
+    Transient kinds (``TRANSIENT_PRESENTATION_KINDS``) are rejected
+    loudly at append time — persisting them is a caller defect.
+    """
 
     def __init__(self, base_dir: Path) -> None:
         super().__init__(base_dir, PresentationTranscriptCodec())
+
+    async def append(
+        self,
+        session_id: str,
+        event: PresentationEvent,
+        *,
+        pool: str | None = None,
+    ) -> None:
+        if event.kind in TRANSIENT_PRESENTATION_KINDS:
+            raise ValueError(
+                f"transient presentation kind {event.kind!r} must not be "
+                "persisted (TRANSIENT_PRESENTATION_KINDS="
+                f"{sorted(TRANSIENT_PRESENTATION_KINDS)})"
+            )
+        await super().append(session_id, event, pool=pool)
 
     async def load_turn_views(self, session_id: str) -> list[TurnView]:
         """Materialize the session's transcript into turn views."""
@@ -513,6 +551,7 @@ __all__ = [
     "TextBlock",
     "ThinkingBlock",
     "ToolBlock",
+    "TRANSIENT_PRESENTATION_KINDS",
     "TranscriptCodec",
     "TranscriptStore",
     "TurnView",

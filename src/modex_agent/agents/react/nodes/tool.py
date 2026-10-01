@@ -92,8 +92,11 @@ class ToolNode(Node[ReActTurnState]):
         state.current_node = ReActNode.TOOL
 
         # LLMNode canonicalizes call ids before the assistant message is
-        # written; this re-check is the defensive fallback for paths that
-        # bypass LLMNode (future refactors) — it must never crash a turn.
+        # written. This pass is the SINGLE id-synthesis point: every
+        # downstream consumer (event emission, call-state construction)
+        # uses the canonicalized id verbatim — a missing id there is a
+        # defect and fails loudly (the event's min_length validation),
+        # never silently re-synthesized into a divergent identity.
         tool_calls = [
             tc if tc.call_id else tc.model_copy(update={"call_id": next_call_id()})
             for tc in tool_calls
@@ -126,9 +129,10 @@ class ToolNode(Node[ReActTurnState]):
         # A hard denial is already a result; persist it before any sibling suspends.
         call_states = [
             ToolCallState(
-                # Canonicalized above; the fallback only guards against future
-                # refactors breaking that invariant — it must never crash a turn.
-                call_id=tc.call_id or next_call_id(),
+                # Canonicalized above — used verbatim, never re-synthesized
+                # (a divergent fallback id here would desync the persisted
+                # state from the emitted tool_call event).
+                call_id=tc.call_id,
                 tool_name=tc.tool_name,
                 arguments=ToolArguments(values=tc.arguments or {}),
                 result=ToolResult(
@@ -345,6 +349,11 @@ class ToolNode(Node[ReActTurnState]):
         The per-call ordering contract is inherited from the previous
         ``for tc in tool_calls: await emitter.emit(...)`` loop — awaited
         sequentially, so consumers observe the model's call order.
+
+        ``call_id`` is the canonicalized id, used verbatim: a missing id
+        here is a defect and fails the event's ``min_length`` validation
+        loudly instead of being silently re-synthesized into an identity
+        no call state carries.
         """
         emitter = get_agent_ctx(ctx).emitter
         if emitter is None:
@@ -353,7 +362,7 @@ class ToolNode(Node[ReActTurnState]):
             await emitter.emit(
                 TurnToolCallEvent(
                     tool_name=item.tool_name,
-                    call_id=item.call_id or next_call_id(),
+                    call_id=item.call_id,
                     arguments=item.arguments or {},
                 )
             )

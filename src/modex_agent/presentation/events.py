@@ -68,6 +68,9 @@ class TurnFinished(PresentationEventBase):
 
     ``stop_reason`` is the provider-neutral terminal classification;
     ``error`` carries the failure text for ``StopReason.ERROR`` turns.
+    ``latency_ms`` is measured from turn start at the projector — on a
+    resumed turn that is the resume time (projector construction), not
+    the original turn start.
     """
 
     kind: Literal["turn_finished"] = "turn_finished"

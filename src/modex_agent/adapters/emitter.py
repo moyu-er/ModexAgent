@@ -82,10 +82,9 @@ class BufferingSink(TurnEventSink):
         super().__init__(gate)
         self.output_adapter = output_adapter
         self.session_id = session_id
-        # Duck-typed adapters may omit ``streaming_mode`` — the OutputAdapter
-        # base's PSEUDO default applies (adapter extension boundary).
-        mode = getattr(output_adapter, "streaming_mode", StreamingMode.PSEUDO)
-        self._policy = policy or DeliveryPolicy.of_streaming_mode(mode)
+        self._policy = policy or DeliveryPolicy.of_streaming_mode(
+            output_adapter.streaming_mode
+        )
         self._send_timeout = send_timeout
         self._content_buffer = ""
         self._reasoning_buffer = ""
@@ -171,7 +170,7 @@ class BufferingSink(TurnEventSink):
                 self._error_delivered = True
                 await self._safe_adapter_send(
                     OutputMessage(content=f"Error: {message}"),
-                    log_label="emit_error",
+                    log_label="turn_errored",
                 )
 
     async def _deliver_attachments(self, attachments: tuple[str, ...]) -> None:

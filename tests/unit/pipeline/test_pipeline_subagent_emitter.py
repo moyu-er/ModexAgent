@@ -8,6 +8,7 @@ Verifies that:
 from unittest.mock import MagicMock
 
 from modex_agent.adapters.emitter import BufferingSink
+from modex_agent.adapters.platform import StreamingMode
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.memory.context import ContextState
@@ -77,6 +78,10 @@ class _StubOutputAdapter:
 
     async def flush_deltas(self, session_id):
         pass
+
+    @property
+    def streaming_mode(self) -> StreamingMode:
+        return StreamingMode.NONE
 
     @property
     def supports_streaming(self):

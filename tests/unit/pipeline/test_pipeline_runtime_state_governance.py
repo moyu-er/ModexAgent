@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from modex_agent.agents.react.constants import ReActNode
+from modex_agent.adapters.platform import StreamingMode
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.runtime import ApprovalRuntime
 from modex_agent.core.emitter import AgentResult
@@ -45,6 +46,10 @@ class _OutputAdapter:
     async def send(self, message, session_id) -> None: ...
     async def send_delta(self, delta: str, session_id: str) -> None: ...
     async def flush_deltas(self, session_id: str) -> None: ...
+
+    @property
+    def streaming_mode(self) -> StreamingMode:
+        return StreamingMode.NONE
 
     @property
     def supports_streaming(self) -> bool:

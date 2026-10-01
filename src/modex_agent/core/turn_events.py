@@ -19,6 +19,7 @@ Two invariants (mirroring ``core/stream_events.py``):
 
 from __future__ import annotations
 
+import typing
 from enum import StrEnum
 from typing import Annotated, Literal
 
@@ -211,6 +212,21 @@ Append-only: adding a variant means appending it here and extending the
 consumers' declared dispositions — never a silent drop."""
 
 
+def turn_event_kind_literals() -> frozenset[str]:
+    """Every ``kind`` literal in the closed ``TurnEvent`` union.
+
+    The single introspection owner for kind-level checks — the
+    exhaustiveness anchors and ``KindGate``'s construction-time
+    validation both consume this, so a typo'd kind name fails loudly
+    instead of silently filtering everything.
+    """
+    union = typing.get_args(TurnEvent)[0]
+    kinds: set[str] = set()
+    for variant in typing.get_args(union):
+        kinds.update(typing.get_args(variant.model_fields["kind"].annotation))
+    return frozenset(kinds)
+
+
 __all__ = [
     "ApprovalRequestedEvent",
     "ApprovalResolvedEvent",
@@ -228,4 +244,5 @@ __all__ = [
     "TurnToolCallEvent",
     "TurnToolResultEvent",
     "UsageEvent",
+    "turn_event_kind_literals",
 ]
