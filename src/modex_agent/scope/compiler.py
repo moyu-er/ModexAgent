@@ -53,10 +53,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.core.tool_group import ToolGroupSpec
 from modex_agent.core.tool_manager import ToolOrigin
-from modex_agent.multi_agent.execution_strategy import strategy_name_of
-from modex_agent.plugins.abc import ComponentSlot, PluginSource
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides, ToolEntry
-from modex_agent.plugins.capability import (
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides, ToolEntry
+from modex_agent.scope.capability import (
     AgentDeclarationView,
     AgentDeclaredFields,
     Capability,
@@ -68,7 +66,8 @@ from modex_agent.plugins.capability import (
     FinalRosterView,
     TreePositionView,
 )
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry, PluginSource
+from modex_agent.scope.components import ComponentSlot
 from modex_agent.scope.defaults import (
     PositionDefaults,
     defaults_for_position,
@@ -76,7 +75,7 @@ from modex_agent.scope.defaults import (
     position_default_hooks,
 )
 from modex_agent.scope.derivation import (
-    _DEFAULT_LLM_PROVIDER,
+    DEFAULT_LLM_PROVIDER,
     _derive_agent_type,
     _expand_preset_tool_names,
     _expand_system_prompt,
@@ -84,11 +83,16 @@ from modex_agent.scope.derivation import (
     _merge_tools,
     strip_add_prefix,
 )
+from modex_agent.scope.execution_kind import strategy_name_of
 from modex_agent.scope.profile import (
     STANDARD_PROFILES,
     Profile,
     ProfileStore,
     merge_memory_declarations,
+)
+from modex_agent.scope.runtime_ownership import (
+    RuntimeOwnership,
+    resolve_strategy_ownership,
 )
 from modex_agent.scope.spec import AgentSpec, MemoryDeclaration, PoolSpec, ScopeSpec
 from modex_agent.scope.validator import EffectiveAgentConfig, _pools_of
@@ -239,7 +243,7 @@ def compile_scope(
     *,
     workspace_ctx: WorkspaceContext,
     profiles: ProfileStore = STANDARD_PROFILES,
-    default_llm_provider: str = _DEFAULT_LLM_PROVIDER,
+    default_llm_provider: str = DEFAULT_LLM_PROVIDER,
     registry: ComponentRegistry | None = None,
 ) -> ScopeCompilation:
     """Compile a validated declaration tree into per-agent artifacts.
@@ -252,10 +256,13 @@ def compile_scope(
         default_llm_provider: fallback LLM provider component name (the
             ``default`` factory).
         registry: the ComponentRegistry supplying the CAPABILITY slot for
-            the compile-time capability protocol (C0/C1/C2, SPEC §6).
-            ``None`` DISABLES capability resolution: a tree with no
-            declared capabilities compiles exactly as before, while any
-            declared capability raises loudly instead of being silently
+            the compile-time capability protocol (C0/C1/C2, SPEC §6) and
+            the EXECUTION_STRATEGY slot for the ownership derivation
+            (probe face — ADR-0052). ``None`` keeps both resolvable only
+            for the framework-bundled enum shapes: a tree with no
+            declared capabilities and no plugin strategy names compiles
+            exactly as before, while any declared capability or plugin
+            strategy reference raises loudly instead of being silently
             ignored.
 
     Returns:
@@ -329,6 +336,29 @@ def _compile_agent(
 ) -> CompiledAgent:
     is_root = agent.parent is None
     local_fields = agent.model_fields_set
+
+    # ── ownership derivation (W5 completion, ADR-0052) ───────────────────
+    # The declared strategy NAME resolves to its RuntimeOwnership through
+    # the EXECUTION_STRATEGY slot's probe face (registry first, the
+    # framework-bundled enum shapes second). An unregistered plugin name
+    # fails HERE — one compile cycle before the assembly-time slot
+    # resolution (the V13 precedent). Every ownership-keyed rule below
+    # reads this one resolution.
+    strategy_name = strategy_name_of(agent.execution_strategy)
+    ownership = resolve_strategy_ownership(strategy_name, registry)
+    if not ownership.needs_memory and (agent.memory is not None or agent.memory_system is not None):
+        raise ValueError(
+            f"pool {pool.name!r}: agent {agent.name!r} requests a memory "
+            f"surface (memory: / memory_system:) but its execution_strategy "
+            f"{strategy_name!r} declares needs_memory=False — the strategy "
+            "owns its memory; remove the memory declaration or change the "
+            "strategy's ownership"
+        )
+    # supports_approval is NOT a compile rejection: the schema deliberately
+    # ACCEPTS a root approval declaration on a supports_approval=False
+    # strategy (the friendly-form contract — the bill reports approval
+    # NOT applicable so the form never claims support it cannot deliver).
+    # The axis is consumed at the bill face via resolved ownership.
 
     # ── three-layer resolution: framework ← profile ← local ──────────────
     # The toolset preset (local declaration over the position default) names
@@ -410,7 +440,7 @@ def _compile_agent(
     )
     if registry is not None:
         effective_capabilities, capability_provenance = _effective_capabilities(
-            agent, tree_view, registry=registry
+            agent, tree_view, registry=registry, ownership=ownership
         )
         for name, override_config in effective_capabilities:
             capability = registry.resolve_capability(name)  # V13: ComponentNotFoundError
@@ -478,11 +508,14 @@ def _compile_agent(
     # Position-default hooks (SPEC §3.2 hook rows) enter the merge base
     # ahead of capability contributions and the node's declaration — the
     # hook face of the preset tool names, so ``hooks: [-name]`` vetoes a
-    # default and a declared ``+name`` dedups against it. External agents
-    # take no native hook face (the structural exclusion mirroring V12's
-    # capability exclusion), so their roster stays declaration-only.
+    # default and a declared ``+name`` dedups against it. A strategy
+    # that owns its runtime (ownership.owns_context — the external
+    # shape, third self-owning loops) takes no native hook face, so its
+    # roster stays declaration-only (the structural exclusion mirroring
+    # V12's capability exclusion — ownership-derived since the W5
+    # completion).
     position_hooks = (
-        list(position_default_hooks(is_root=is_root)) if agent.provider_kind is None else []
+        [] if ownership.owns_context else list(position_default_hooks(is_root=is_root))
     )
     hooks_input: list[str] | None = agent.hooks
     if capability_hooks or position_hooks:
@@ -555,7 +588,7 @@ def _compile_agent(
         memory_overrides=_memory_overrides(merged_memory, is_root=is_root),
         memory_system=agent.memory_system,
         memory_system_config=dict(agent.memory_system_config),
-        execution_strategy=strategy_name_of(agent.execution_strategy),
+        execution_strategy=strategy_name,
         provider_kind=(agent.provider_kind.value if agent.provider_kind is not None else None),
         mcp_servers=list(agent.mcp),
         # The `+` prefix is declaration sugar (incremental-merge face); the
@@ -684,6 +717,7 @@ def _effective_capabilities(
     tree_view: TreePositionView,
     *,
     registry: ComponentRegistry,
+    ownership: RuntimeOwnership,
 ) -> tuple[list[tuple[str, dict[str, Any]]], list[CapabilityProvenance]]:
     """C0: one agent's effective capabilities as an ordered
     ``(name, override config)`` list (SPEC §3.2).
@@ -691,9 +725,11 @@ def _effective_capabilities(
     effective = auto ∆ declared overrides — a ``False`` override removes an
     auto-applied capability; a mapping override force-enables (with config,
     replacing the default). NATIVE agents run every registry-enumerated
-    predicate against the declaration view; EXTERNAL agents skip predicates
-    entirely — a non-empty declared block is a loud error (defense in
-    depth behind phase-1 V12), never a silently-ignored declaration.
+    predicate against the declaration view; agents whose strategy owns its
+    runtime (``ownership.owns_context``) skip predicates entirely — a
+    non-empty declared block is a loud error (defense in depth behind
+    phase-1 V12, ownership-derived since the W5 completion), never a
+    silently-ignored declaration.
 
     Order: registry enumeration order (deterministic across processes —
     never set iteration); declared-but-unregistered names follow sorted at
@@ -701,7 +737,7 @@ def _effective_capabilities(
     compile cycle before slot late-binding).
     """
     overrides = agent.capabilities or {}
-    if agent.provider_kind is not None:
+    if ownership.owns_context:
         if overrides:
             raise ValueError(
                 f"pool {tree_view.pool_name!r}: external agent {agent.name!r} "

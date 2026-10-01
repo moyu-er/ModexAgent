@@ -19,10 +19,10 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict
 
-from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.core.tool_vocabulary import ToolPreset
+from modex_agent.memory.config import MemoryConfig
 from modex_agent.memory.presets import main_agent_memory, subagent_memory
 from modex_agent.scope.spec import AgentSpec
-from modex_agent.tools.presets import ToolPreset
 
 
 class MemoryPreset(StrEnum):
@@ -95,13 +95,16 @@ POSITION_DEFAULT_HOOKS: Final[tuple[str, ...]] = (
     "loop_detection",
 )
 """The SPEC §3.2 hook rows — framework hooks every NATIVE agent's roster
-carries by default (both positions; external agents are structurally
-excluded — they take no native hook face).
+carries by default (both positions). The exclusion is ownership-derived
+(W5 completion): a strategy declaring ``owns_context`` takes no native
+hook face (the compiler drops these rows from its roster — external
+agents and third self-owning loops keep a declaration-only roster), so
+the rows and the exclusion no longer key on any provider discriminator.
 
 The names enter the compiler's hook merge base exactly like preset tool
 names: ``hooks: [-name]`` vetoes one, a declared ``+name`` dedups against
 it, and every entry shows a ``position_default`` origin on the bill. The
-roster dispatch (``_dispatch_hooks``) resolves them through the HOOK-slot
+roster dispatch (``dispatch_hooks``) resolves them through the HOOK-slot
 factories, which derive their per-pool construction deps from the
 assembly context chain — the retired code-wired registration function and
 the main/sub ``native_env`` constructions died with this table.

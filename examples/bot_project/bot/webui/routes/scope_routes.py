@@ -79,9 +79,7 @@ from bot.webui.routes.scope_models import (
 from modex_agent.core.agent import ProviderKind
 from modex_agent.core.tool_group import ToolGroupSpec, ToolGroupVariant
 from modex_agent.core.tool_manager import ToolOrigin
-from modex_agent.plugins.abc import ComponentSlot
-from modex_agent.plugins.capability import Capability, ChildSummary, TreePositionView
-from modex_agent.plugins.registry import ComponentNotFoundError, ComponentRegistry
+from modex_agent.core.tool_vocabulary import ContextMode, ToolPreset
 from modex_agent.scope import (
     STANDARD_PROFILES,
     AgentSpec,
@@ -97,9 +95,13 @@ from modex_agent.scope import (
     validate_declaration,
     validate_effective_configs,
 )
+from modex_agent.scope.capability import Capability, ChildSummary, TreePositionView
 from modex_agent.scope.compiler import ScopeCompilation
+from modex_agent.scope.component_registry import ComponentNotFoundError, ComponentRegistry
+from modex_agent.scope.components import ComponentSlot
 from modex_agent.scope.defaults import POSITION_DEFAULT_HOOKS, defaults_for_position
-from modex_agent.tools.presets import ContextMode, ToolPreset
+from modex_agent.scope.execution_kind import strategy_name_of
+from modex_agent.scope.runtime_ownership import resolve_strategy_ownership
 
 if TYPE_CHECKING:
     from bot.webui.server import WebUIServer
@@ -273,7 +275,12 @@ def _field_value(
     raise KeyError(f"unknown provenance field {field!r}")
 
 
-def _agent_bill(spec: ScopeSpec, compiled: CompiledAgent) -> ScopeAgentBill:
+def _agent_bill(
+    spec: ScopeSpec,
+    compiled: CompiledAgent,
+    *,
+    registry: ComponentRegistry | None = None,
+) -> ScopeAgentBill:
     prov = compiled.provenance
     agent_spec = _find_agent(spec, prov.pool, prov.agent)
     group_anchors = {group.anchor for group in compiled.spec.tool_groups}
@@ -281,16 +288,22 @@ def _agent_bill(spec: ScopeSpec, compiled: CompiledAgent) -> ScopeAgentBill:
     # Effective memory/approval for the friendly form: from the compiled
     # position defaults (the single effective owner; an absent ``memory:``
     # block is the position default, never "missing") and the resolved
-    # approval declaration with its position eligibility. External agents
-    # have no native approval channel — approval is reported NOT APPLICABLE
-    # (enabled/eligible false) even when the schema accepts a declared
+    # approval declaration with its position eligibility. A strategy whose
+    # RuntimeOwnership declares supports_approval=False has no native
+    # approval channel — approval is reported NOT APPLICABLE
+    # (enabled/eligible false) even though the schema accepts a declared
     # block, so the friendly form never claims support it cannot deliver.
+    # Resolution cannot fail here: compilation already rejected unknown
+    # strategy names with this same registry.
     defaults = compiled.defaults
     is_external = agent_spec.provider_kind is not None
-    if is_external:
-        approval_enabled = False
-    else:
+    supports_approval = resolve_strategy_ownership(
+        strategy_name_of(agent_spec.execution_strategy), registry
+    ).supports_approval
+    if supports_approval:
         approval_enabled = agent_spec.approval.enabled if agent_spec.approval else False
+    else:
+        approval_enabled = False
     return ScopeAgentBill(
         pool=prov.pool,
         agent=prov.agent,
@@ -303,7 +316,7 @@ def _agent_bill(spec: ScopeSpec, compiled: CompiledAgent) -> ScopeAgentBill:
         ),
         approval=ScopeApprovalEffective(
             enabled=approval_enabled,
-            eligible=(not is_external) and defaults.approval_eligible,
+            eligible=supports_approval and defaults.approval_eligible,
         ),
         fields=[
             ScopeFieldBill(
@@ -721,7 +734,10 @@ async def handle_post_preview(request: web.Request) -> web.Response:
         spec, compilation = gated
         return web.json_response(
             ScopeBillResponse(
-                agents=[_agent_bill(spec, c) for c in compilation.agents]
+                agents=[
+                    _agent_bill(spec, c, registry=resources.component_registry)
+                    for c in compilation.agents
+                ]
             ).model_dump(mode="json")
         )
     finally:
@@ -820,7 +836,12 @@ async def handle_get_bill(request: web.Request) -> web.Response:
     if isinstance(compilation, web.Response):
         return compilation
     return web.json_response(
-        ScopeBillResponse(agents=[_agent_bill(spec, c) for c in compilation.agents]).model_dump(
+        ScopeBillResponse(
+            agents=[
+                _agent_bill(spec, c, registry=resources.component_registry)
+                for c in compilation.agents
+            ]
+        ).model_dump(
             mode="json"
         )
     )

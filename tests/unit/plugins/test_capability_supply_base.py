@@ -38,9 +38,9 @@ from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy,
     PoolAssemblyContext,
     StrategyAssembly,
+    StrategyComponentFactory,
 )
 from modex_agent.multi_agent.pool import AgentPool
-from modex_agent.plugins.abc import ComponentFactory, ComponentSlot, SimpleFactory
 from modex_agent.plugins.assembly.builder import AssemblyBuilder
 from modex_agent.plugins.assembly.capability_supply import (
     assemble_capability_supplies,
@@ -48,10 +48,11 @@ from modex_agent.plugins.assembly.capability_supply import (
 )
 from modex_agent.plugins.assembly.context import AssemblyContext, SupplyInfra
 from modex_agent.plugins.assembly.pipeline import AssemblyPipeline, AssemblyStage
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
 from modex_agent.plugins.assembly.stages.infra_assemble import InfraAssembleStage
 from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
-from modex_agent.plugins.capability import (
+from modex_agent.plugins.loader import PluginRegistrationContext
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides
+from modex_agent.scope.capability import (
     Capability,
     CapabilityBinding,
     CapabilitySupply,
@@ -60,8 +61,8 @@ from modex_agent.plugins.capability import (
     PoolSupplyAgentEntry,
     PoolSupplyView,
 )
-from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentFactory, ComponentSlot
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -150,7 +151,7 @@ def _make_registry(
     registry.register(
         ComponentSlot.EXECUTION_STRATEGY,
         "stub",
-        SimpleFactory(stub_strategy, _StubStrategyConfig),
+        StrategyComponentFactory(stub_strategy),
     )
     if capabilities:
         ctx = PluginRegistrationContext(registry)
@@ -582,6 +583,7 @@ class TestSubagentMaterializeThreading:
         from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
         from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
         from modex_agent.multi_agent.template import AgentTemplate
+        from modex_agent.plugins.assembly.subagent_materializer import SubagentMaterializer
         from modex_agent.plugins.defaults import DefaultPlugin
         from modex_agent.plugins.loader import (
             ComponentRegistryLoader,
@@ -636,6 +638,7 @@ class TestSubagentMaterializeThreading:
         factory.create_agent = AsyncMock(return_value=fake_instance)
 
         deps = AgentMaterializeDeps(
+            materializer=SubagentMaterializer(),
             agent_factory=factory,
             pool=pool,
             session_factory=SessionIdFactory(),

@@ -13,9 +13,9 @@ from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy,
     PoolAssemblyContext,
     StrategyAssembly,
+    StrategyComponentFactory,
 )
 from modex_agent.multi_agent.pool import AgentPool
-from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
 from modex_agent.plugins.assembly.builder import AssemblyBuilder
 from modex_agent.plugins.assembly.context import (
     AgentContext,
@@ -29,8 +29,9 @@ from modex_agent.plugins.defaults.capabilities.experience.tool_factory import Ex
 from modex_agent.plugins.defaults.communication import TaskToolFactory
 from modex_agent.plugins.defaults.tools import TodoToolFactory
 from modex_agent.plugins.loader import ComponentRegistryLoader, PluginDiscoveryConfig
-from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.spec import PoolSpec
 from modex_agent.tools.standard.todo_tool import TodoReadTool
@@ -83,7 +84,7 @@ async def _production_registry() -> ComponentRegistry:
     registry.register(
         ComponentSlot.EXECUTION_STRATEGY,
         _AUDIT_STRATEGY_NAME,
-        SimpleFactory(_AuditStrategy(), _AuditStrategyConfig),
+        StrategyComponentFactory(_AuditStrategy()),
     )
     return registry
 

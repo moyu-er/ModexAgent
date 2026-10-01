@@ -42,19 +42,19 @@ if TYPE_CHECKING:
     from modex_agent.core.emitter import AgentResult, ContentEmitter
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.tool_manager import ToolManager
+    from modex_agent.core.turn.models import TurnSnapshot
+    from modex_agent.core.turn.store import TurnStateStore
     from modex_agent.hook.runner import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.memory.context import ContextManager
+    from modex_agent.messaging.agent_messages import RouteResult
     from modex_agent.messaging.models import InputMessage
     from modex_agent.multi_agent import AgentDescriptor
-    from modex_agent.multi_agent.router import RouteResult
     from modex_agent.pipeline.approval_renderer import ApprovalRenderer
     from modex_agent.pipeline.snapshot import PoolDataSnapshot
     from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
     from modex_agent.pipeline.turn_outcome import TurnSuspension
     from modex_agent.runtime.context import RuntimeContextManager
-    from modex_agent.runtime.models import TurnSnapshot
-    from modex_agent.runtime.store import TurnStateStore
     from modex_agent.workspace import WorkspaceManager
 
 __all__ = ["TurnRunner"]
@@ -76,6 +76,21 @@ class TurnRunner(ABC):
     queries. The strategy's ``assemble()`` configures the runner fully at
     assembly time; post-construction wiring targets the runner's sub-objects
     directly (never the pipeline).
+
+    Approval extension seam (W5, documentation-level): a runner signals
+    approval support through its strategy's
+    :class:`~modex_agent.scope.runtime_ownership.RuntimeOwnership`
+    (``supports_approval`` — a root approval declaration on such a
+    strategy is a compile-time error). The react runner implements the
+    full in-turn
+    suspend/resume cycle (``ApprovalRenderer``/``ApprovalResumer`` +
+    ``GraphInterrupt`` suspension — architecture rule 13); the external
+    runner supports none and relies on the config-level provider permission
+    elimination. A FUTURE runner shape that needs a third approval
+    protocol implements it inside ``process_locked`` (raising/handling its
+    own suspension contract) plus the ``load_pending_approval`` /
+    ``terminate_pending_approval`` / ``cleanup_session`` lifecycle seams —
+    no external approval protocol exists at this seam today, by design.
     """
 
     # ── Abstract method: the locked-turn entry point ─────────────────────

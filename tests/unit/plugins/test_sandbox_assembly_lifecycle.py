@@ -11,15 +11,17 @@ from pydantic import BaseModel, ConfigDict
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.provider import LLMProvider
+from modex_agent.core.tool_vocabulary import ToolPreset
+from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.multi_agent.descriptor import AgentInstance
 from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy,
     PoolAssemblyContext,
     StrategyAssembly,
+    StrategyComponentFactory,
 )
 from modex_agent.multi_agent.pool import AgentPool
-from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
 from modex_agent.plugins.assembly.builder import AssemblyBuilder
 from modex_agent.plugins.assembly.context import (
     AssemblyContext,
@@ -33,22 +35,22 @@ from modex_agent.plugins.assembly.single_agent import (
     SingleAgentInfra,
     assemble_declared_single_agent,
 )
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
 from modex_agent.plugins.assembly.stages.agent_assemble import AgentAssembleStage
 from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.sandbox.runtime import ResolvedSandbox, SandboxRuntime
 from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
 from modex_agent.sandbox.shell_plan import resolved_binding
 from modex_agent.sandbox.types import EnforcementLevel
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides
 from modex_agent.scope.compiler import CompiledAgent, compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot, SimpleFactory
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
 from modex_agent.tools.manager import InMemoryToolManager
-from modex_agent.tools.presets import ToolPreset
 from modex_agent.tools.terminal.persistent_bash import PersistentBashTool
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider, WorkspaceScopedTool
+from modex_agent.tools.workspace_scoped import WorkspaceScopedTool
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_graph.exceptions import GraphInterrupt
@@ -430,7 +432,7 @@ async def test_pool_stage_registers_guard_rollback_owner(
     registry.register(
         ComponentSlot.EXECUTION_STRATEGY,
         "test",
-        SimpleFactory(_Strategy(root_provider), _EmptyConfig),
+        StrategyComponentFactory(_Strategy(root_provider)),
     )
     workspace = WorkspaceContext(
         target=tmp_path,
@@ -497,7 +499,7 @@ async def test_agent_stage_transfers_pool_guard_to_main_instance(
     registry.register(
         ComponentSlot.EXECUTION_STRATEGY,
         "test",
-        SimpleFactory(_Strategy(root_provider), _EmptyConfig),
+        StrategyComponentFactory(_Strategy(root_provider)),
     )
     workspace = WorkspaceContext(
         target=tmp_path,

@@ -36,9 +36,9 @@ from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy,
     PoolAssemblyContext,
     StrategyAssembly,
+    StrategyComponentFactory,
 )
 from modex_agent.multi_agent.pool import AgentPool
-from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
 from modex_agent.plugins.assembly.builder import AssemblyBuilder
 from modex_agent.plugins.assembly.context import (
     AgentContext,
@@ -46,16 +46,7 @@ from modex_agent.plugins.assembly.context import (
     PoolRuntimeDeps,
     SupplyInfra,
 )
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
 from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
-from modex_agent.plugins.capability import (
-    CapabilityBinding,
-    CapabilitySupply,
-    CompiledCapability,
-    PoolSupplyAgentEntry,
-    PoolSupplyView,
-    PromptSectionSpec,
-)
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.capabilities.experience import (
     ExperienceCapability,
@@ -72,7 +63,17 @@ from modex_agent.plugins.defaults.capabilities.experience.tool_factory import (
     ExperienceToolFactory,
 )
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides
+from modex_agent.scope.capability import (
+    CapabilityBinding,
+    CapabilitySupply,
+    CompiledCapability,
+    PoolSupplyAgentEntry,
+    PoolSupplyView,
+    PromptSectionSpec,
+)
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -109,7 +110,7 @@ def _make_registry() -> ComponentRegistry:
     registry.register(
         ComponentSlot.EXECUTION_STRATEGY,
         "stub",
-        SimpleFactory(_StubExecutionStrategy(), _StubConfig),
+        StrategyComponentFactory(_StubExecutionStrategy()),
     )
     return registry
 
@@ -119,7 +120,7 @@ def _make_spec(
     *,
     capabilities: tuple[CompiledCapability, ...] = (),
 ) -> AssemblySpec:
-    from modex_agent.plugins.abc import AgentType
+    from modex_agent.scope.components import AgentType
 
     workspace_root = Path(__file__).parent / "_ws_probe"
     return AssemblySpec(
@@ -764,7 +765,7 @@ class TestSectionByteParity:
 
 class TestAnchorPosition:
     async def test_experience_section_renders_at_capability_anchor(self, tmp_path: Path) -> None:
-        from modex_agent.memory.hooks import MemoryHookRunner
+        from modex_agent.core.memory_hooks import MemoryHookRunner
         from modex_agent.memory.system import MemorySystemContextManager
 
         mock_system = MagicMock()

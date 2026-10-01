@@ -11,7 +11,8 @@ Two phases (SPEC §7, closed-loop revision):
   (:func:`validate_declaration`): V1 acyclic, V2 connected, V3 exactly one
   root per pool tree, V4 kind hierarchy, V5 peer topology, V7 profile
   single-level references, V10 graph agent references, V11 name
-  uniqueness, V12 external-agent capability exclusion.
+  uniqueness, V12 external-agent capability exclusion (ownership-derived:
+  strategies declaring ``owns_context`` take no native component face).
 - **Phase 2 — effective values, post-derivation**
   (:func:`validate_effective_configs`): V6 ``task`` present in the
   compiler-derived effective toolset of child-carrying agents, V9 non-root
@@ -38,6 +39,9 @@ from typing import Final, assert_never
 
 from pydantic import BaseModel, ConfigDict
 
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.execution_kind import strategy_name_of
+from modex_agent.scope.runtime_ownership import resolve_strategy_ownership
 from modex_agent.scope.spec import PoolSpec, ScopeKind, ScopeSpec
 
 TASK_TOOL_NAME: Final = "task"
@@ -128,6 +132,7 @@ def validate_declaration(
     *,
     profiles: Sequence[ProfileDeclaration] = (),
     graph_agent_refs: Sequence[GraphAgentReference] = (),
+    registry: ComponentRegistry | None = None,
 ) -> list[ScopeValidationIssue]:
     """Validate declaration shape: V1-V5, V7, V10-V12 (SPEC §7 phase 1).
 
@@ -137,6 +142,11 @@ def validate_declaration(
             empty until ticket 06 builds the profile system).
         graph_agent_refs: (pool, agent) references extracted from loaded
             graph specs (V10 input; boot wiring lives in ticket 07/08).
+        registry: the boot ComponentRegistry — V12 resolves capability
+            declarations against the declaring strategy's ownership
+            through the EXECUTION_STRATEGY slot probe (plugin names
+            resolve ONLY through it; the bundled enum shapes resolve
+            without a registry).
 
     Returns:
         All issues found, in rule order (V1, V2, V3, V4, V5, V7, V10,
@@ -156,7 +166,7 @@ def validate_declaration(
     pools_by_name: dict[str, PoolSpec] = {pool.name: pool for pool in pools}
     issues.extend(_check_graph_agent_refs(pools_by_name, graph_agent_refs))
     issues.extend(_check_name_uniqueness(spec, pools))
-    issues.extend(_check_external_capability_declarations(pools))
+    issues.extend(_check_external_capability_declarations(pools, registry))
     return issues
 
 
@@ -513,23 +523,45 @@ def _check_name_uniqueness(
 
 def _check_external_capability_declarations(
     pools: Sequence[PoolSpec],
+    registry: ComponentRegistry | None,
 ) -> list[ScopeValidationIssue]:
-    """V12 — external agents cannot declare native capability overrides."""
-    return [
-        ScopeValidationIssue(
-            rule=RuleId.EXTERNAL_CAPABILITIES,
-            node=agent.name,
-            message=(
-                f"pool {pool.name!r}: external agent {agent.name!r} declares "
-                "capabilities — explicit capability declarations are invalid "
-                "for external agents because external agents take no native "
-                "component face; remove the capabilities block (V12)"
-            ),
-        )
-        for pool in pools
-        for agent in pool.agents
-        if agent.provider_kind is not None and agent.capabilities
-    ]
+    """V12 — capability declarations are invalid for self-owning strategies.
+
+    Ownership-derived (W5 completion): the rule fires when the declaring
+    agent's execution strategy declares ``owns_context`` (it owns its
+    runtime — memory, context, tools — so it takes no native component
+    face and an explicit capability declaration can never take effect).
+    Ownership resolves through ``scope.runtime_ownership.
+    resolve_strategy_ownership`` — the EXECUTION_STRATEGY slot's probe
+    face when the name is plugin-registered, the framework-bundled enum
+    shapes otherwise; resolution runs ONLY for agents that actually
+    declare capabilities, so capability-less trees validate without any
+    registry traffic. The rule id and message text are byte-pinned by
+    ``tests/unit/scope/test_w5_v12_semantics.py``.
+    """
+    issues: list[ScopeValidationIssue] = []
+    for pool in pools:
+        for agent in pool.agents:
+            if not agent.capabilities:
+                continue
+            ownership = resolve_strategy_ownership(
+                strategy_name_of(agent.execution_strategy), registry
+            )
+            if not ownership.owns_context:
+                continue
+            issues.append(
+                ScopeValidationIssue(
+                    rule=RuleId.EXTERNAL_CAPABILITIES,
+                    node=agent.name,
+                    message=(
+                        f"pool {pool.name!r}: external agent {agent.name!r} declares "
+                        "capabilities — explicit capability declarations are invalid "
+                        "for external agents because external agents take no native "
+                        "component face; remove the capabilities block (V12)"
+                    ),
+                )
+            )
+    return issues
 
 
 # ---------------------------------------------------------------------------

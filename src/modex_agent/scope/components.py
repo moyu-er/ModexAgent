@@ -1,0 +1,308 @@
+"""Plugin-unified agent assembly type hierarchy.
+
+Defines the 11-slot component factory system's foundational types (SPEC
+§4). Compile-time schema vocabulary: the scope compiler consumes these
+types directly; the plugins package keeps the runtime machinery
+(loader, bundled defaults, assembly stages) and imports downward.
+
+Design constraints:
+- ABC-based interfaces, per rule 7 (no structural interfaces).
+- Stages read ``ClassVar`` metadata (``hook_runner``, ``applies_to``)
+  — never via ``isinstance`` (rule 9).
+- ``config_model`` is a frozen Pydantic ``BaseModel`` (rule 12).
+- ``create()`` is async because ``ExecutionStrategy.assemble`` is
+  async (``execution_strategy.py``) and pipeline stages await
+  ``factory.create(...)``.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, ClassVar
+
+from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    # Forward reference: ``AssemblyContext`` and the context chain carriers
+    # are defined in ``src/modex_agent/plugins/assembly/context.py``. Using
+    # TYPE_CHECKING keeps type safety without a runtime import cycle.
+    from modex_agent.plugins.assembly.context import AgentContext, AssemblyContext
+
+
+class ComponentSlot(StrEnum):
+    """The 11 component slots in the unified agent assembly system.
+
+    Each slot names a distinct extension point that a plugin factory
+    can produce. The slot set is authoritative (SPEC §4.3) — do not
+    rename, reorder, or remove members. ``MEMORY_SYSTEM`` was added
+    via SPEC Errata-7; ``CAPABILITY`` was added via ADR-0047; further
+    additions require a new errata.
+    """
+
+    TOOL = "tool"
+    HOOK = "hook"
+    MEMORY_SYSTEM = "memory_system"
+    LLM_PROVIDER = "llm_provider"
+    SYSTEM_PROMPT_PROVIDER = "system_prompt_provider"
+    INTERCEPTOR = "interceptor"
+    COMMAND_HANDLER = "command_handler"
+    EXECUTION_STRATEGY = "execution_strategy"
+    INPUT_STAGE = "input_stage"
+    DATA_NAMESPACE = "data_namespace"
+    CAPABILITY = "capability"
+
+
+class AgentType(StrEnum):
+    """The four agent topology roles a component can target.
+
+    Stages filter hooks by reading ``HookFactory.applies_to`` (a set
+    of ``AgentType`` or ``None`` for "all types") — never via
+    ``isinstance`` (rule 9).
+    """
+
+    native_main = "native_main"
+    native_sub = "native_sub"
+    external_main = "external_main"
+    external_sub = "external_sub"
+
+
+class HookRunnerKind(StrEnum):
+    """The two hook runner backends a ``HookFactory`` can target.
+
+    Stages dispatch hooks by reading ``HookFactory.hook_runner``
+    ``ClassVar``, not via ``isinstance``. Exactly two values — adding
+    a third is prohibited by design.
+    """
+
+    react = "react"
+    memory = "memory"
+
+
+class ComponentFactory(ABC):
+    """Abstract factory for a single component slot.
+
+    Subclasses declare:
+    - ``config_model``: the frozen Pydantic ``BaseModel`` that
+      validates the config for this component. Config is validated
+      before ``create()`` is called.
+    - ``create()``: async — produces the component instance. MUST be
+      async because ``ExecutionStrategy.assemble`` is async
+      (``execution_strategy.py``) and pipeline stages
+      ``await factory.create(...)``.
+    - ``applies_to`` / ``hook_runner`` / ``priority``: hook-dispatch
+      metadata (``None`` / ``None`` / ``0`` on non-hook factories).
+      Stages read these directly
+      (rule 6 — no ``getattr``; rule 8 — declared on the base type).
+
+    Return type is ``Any`` because ``ComponentFactory`` produces
+    heterogeneous component types (Tool, Hook, etc.).
+    A typed return would require a type-erased union that the
+    slot-based dispatch does not benefit from. This is a justified
+    escape from rule 3, documented here.
+
+    The ``ctx`` parameter is the FULL-CHAIN :class:`AgentContext`
+    (SPEC §3.3, ticket 04). A subclass WIDENS it to declare which layer
+    it may read — the declared parameter type is the capability
+    boundary (override variance):
+
+    - ``ctx: PoolContext`` — pool-layer data only (todo store, terminal
+      manager, communication facilities); workspace-layer fields are a
+      type error.
+    - ``ctx: WorkspaceContext`` — path layout + workspace resource
+      handles (incl. the MCP shared handle).
+    - ``ctx: AssemblyContext`` — the legacy pre-ticket view (legal;
+      business factories keep this until their own migration tickets).
+    - ``ctx: AgentContext`` — the full chain (all layers).
+
+    Because ``AgentContext`` is a subtype of every declarable layer,
+    the resolver passes one full-chain object to every factory and
+    subtyping picks the readable surface — no runtime dispatch.
+    """
+
+    config_model: ClassVar[type[BaseModel]]
+    applies_to: ClassVar[set[AgentType] | None] = None
+    hook_runner: ClassVar[HookRunnerKind | None] = None
+    priority: ClassVar[int] = 0
+    """Hook-dispatch priority (0 on non-hook factories). Roster dispatch
+    threads it into the ``HookSpec``; ``HookRunner`` sorts by it, so
+    hooks that must run FIRST among their hook point declare negative
+    values (e.g. tree-aware continuation hooks whose reminder should
+    land before other hooks' reminders)."""
+
+    @abstractmethod
+    async def create(self, config: BaseModel, ctx: AgentContext) -> Any:
+        """Produce the component instance.
+
+        Args:
+            config: already-validated config (an instance of
+                ``config_model``). Callers run
+                ``config_model.model_validate(...)`` before calling
+                ``create()``; ``create()`` trusts the shape.
+            ctx: the full-chain assembly context (forward ref — defined
+                in ``assembly/context.py``). Subclasses widen this
+                parameter to their required layer; see the class
+                docstring for the capability-boundary contract.
+
+        Returns:
+            The component instance. Type depends on the slot.
+        """
+        ...
+
+    def probe(self) -> Any:
+        """Synchronous introspection face — opt-in per factory shape.
+
+        The default raises :class:`NotImplementedError`: probing is a
+        capability a factory declares by overriding this method (the
+        off-the-shelf :class:`SimpleFactory` / :class:`PrototypeFactory`
+        expose their wrapped product). Consumers pay no ``await`` and
+        trigger no assembly.
+
+        Slot contract (EXECUTION_STRATEGY): a strategy factory's
+        ``probe()`` MUST surface a
+        :class:`~modex_agent.scope.runtime_ownership.StrategyManifest`
+        (registered name + :class:`RuntimeOwnership`) — the compile-time
+        ownership derivation reads it; ``multi_agent.execution_strategy.
+        StrategyComponentFactory`` is the bundled implementation third
+        parties reuse.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support synchronous probing"
+        )
+
+
+class SimpleFactory(ComponentFactory):
+    """Factory returning a pre-built SINGLETON instance.
+
+    ``create()`` ignores config and ctx and returns the SAME wrapped
+    instance to every resolver — sharing is intentional singleton
+    semantics (e.g. stateless hooks, execution-strategy classes, test
+    provider injection). Because the shared instance is visible to every
+    agent/pool/workspace that resolves the name, the component must be
+    safe to share: stateless, or state whose sharing is the point.
+
+    The shared instance is exposed for introspection via :meth:`probe`.
+    For per-assembly construction instead, use :class:`PrototypeFactory`
+    — singleton-vs-prototype is the factory's private decision, and the
+    TOOL slot's framework defaults use prototype semantics (a shared
+    mutable ``Tool`` instance would leak config mutations across agents).
+
+    ``config_model`` is set per-instance (each ``SimpleFactory``
+    wraps a different component type) rather than at class definition
+    time.
+    """
+
+    def __init__(
+        self,
+        instance: Any,
+        config_model: type[BaseModel],
+        applies_to: set[AgentType] | None = None,
+        hook_runner: HookRunnerKind | None = None,
+        priority: int = 0,
+    ) -> None:
+        self._instance = instance
+        # config_model is declared as ClassVar on the parent;
+        # SimpleFactory overrides it per-instance because it wraps
+        # arbitrary components with different config schemas.
+        self.config_model = config_model  # type: ignore[misc]
+        # applies_to / hook_runner / priority: only set when wrapping hook
+        # instances. None/0 means "not a hook factory" — stages read
+        # the declared ClassVar directly (rule 6, rule 8).
+        self.applies_to = applies_to  # type: ignore[misc]
+        self.hook_runner = hook_runner  # type: ignore[misc]
+        self.priority = priority  # type: ignore[misc]
+
+    async def create(self, config: BaseModel, ctx: AssemblyContext) -> Any:  # noqa: ARG002
+        """Return the pre-built instance. Ignores config and ctx."""
+        return self._instance
+
+    def probe(self) -> Any:
+        """Return the wrapped instance for synchronous introspection.
+
+        Split-brain manifests and registration audits read the instance
+        (e.g. a Tool's LLM-facing name) without paying an ``await``.
+        """
+        return self._instance
+
+
+class PrototypeFactory(ComponentFactory):
+    """Factory constructing a FRESH instance on every ``create()``.
+
+    The builder callable receives no arguments (zero-arg construction);
+    per-assembly differentiation that needs config or the context chain
+    belongs in a dedicated :class:`ComponentFactory` subclass, not here.
+    The builder is invoked once per resolution, so every agent assembly
+    gets its own instance — no shared mutable state, no cross-agent
+    config leakage through ``register(tool, config)``.
+
+    Pair with :class:`SimpleFactory` (singleton semantics) as the two
+    off-the-shelf instantiations; dedicated factory subclasses own the
+    cases between them (differentiated construction, e.g.
+    ``ShellToolGroupFactory`` returning one per-agent shell group).
+
+    ``config_model`` is set per-instance (each ``PrototypeFactory``
+    produces a different component type) rather than at class
+    definition time.
+    """
+
+    def __init__(
+        self,
+        builder: Callable[[], Any],
+        config_model: type[BaseModel],
+    ) -> None:
+        self._builder = builder
+        # config_model is declared as ClassVar on the parent;
+        # PrototypeFactory overrides it per-instance because it produces
+        # arbitrary component types with different config schemas.
+        self.config_model = config_model  # type: ignore[misc]
+
+    async def create(self, config: BaseModel, ctx: AssemblyContext) -> Any:  # noqa: ARG002
+        """Build and return a fresh instance. Ignores config and ctx."""
+        return self._builder()
+
+    def probe(self) -> Any:
+        """Return a throwaway instance for synchronous introspection.
+
+        Builds via the same builder ``create()`` uses — a separate
+        instance, never the one an assembly receives. Manifests and
+        audits read observable attributes (e.g. a Tool's LLM-facing
+        name) from it and discard it.
+        """
+        return self._builder()
+
+
+class HookFactory(ComponentFactory):
+    """Abstract factory for hook components.
+
+    Stages read ``hook_runner`` ``ClassVar`` to dispatch to the
+    correct hook runner (react or memory) — never via ``isinstance``
+    (rule 9). ``applies_to`` filters by ``AgentType``; ``None`` means
+    "all types" (SPEC §6.7).
+
+    ``applies_to`` and ``hook_runner`` are declared on
+    :class:`ComponentFactory` as ``ClassVar[...] | None = None``.
+    ``HookFactory`` re-declares them: ``applies_to`` with the same
+    default (``None`` = all types), ``hook_runner`` without a default —
+    subclasses MUST set it (use ``ReactHookFactory`` or
+    ``MemoryHookFactory``). The type stays ``| None`` to satisfy the
+    ClassVar invariant override rule; the stage's ``ValueError``
+    fallback enforces the non-None contract at runtime. ``priority``
+    (also from :class:`ComponentFactory`) is the factory-declared
+    dispatch priority threaded into the ``HookSpec``.
+    """
+
+    applies_to: ClassVar[set[AgentType] | None] = None
+    hook_runner: ClassVar[HookRunnerKind | None]
+
+
+class ReactHookFactory(HookFactory):
+    """Hook factory targeting the ReAct hook runner."""
+
+    hook_runner: ClassVar[HookRunnerKind | None] = HookRunnerKind.react
+
+
+class MemoryHookFactory(HookFactory):
+    """Hook factory targeting the memory hook runner."""
+
+    hook_runner: ClassVar[HookRunnerKind | None] = HookRunnerKind.memory

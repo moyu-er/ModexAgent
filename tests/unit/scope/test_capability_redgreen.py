@@ -52,21 +52,21 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
+from modex_agent.core.memory_hooks import MemoryHookRunner
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.tool_manager import Tool
 from modex_agent.hook.abc import Hook
 from modex_agent.hook.runner import HookRunner
-from modex_agent.memory.hooks import MemoryHookRunner
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.multi_agent.descriptor import AgentInstance
 from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy,
     PoolAssemblyContext,
     StrategyAssembly,
+    StrategyComponentFactory,
 )
 from modex_agent.multi_agent.factory import AgentFactory
 from modex_agent.multi_agent.pool import AgentPool
-from modex_agent.plugins.abc import ComponentSlot, HookRunnerKind, SimpleFactory
 from modex_agent.plugins.assembly.builder import AssemblyBuilder
 from modex_agent.plugins.assembly.context import AssemblyContext, SupplyInfra
 from modex_agent.plugins.assembly.native_core import (
@@ -74,23 +74,8 @@ from modex_agent.plugins.assembly.native_core import (
     NativeAssemblyInputs,
     assemble_native_agent,
 )
-from modex_agent.plugins.assembly.spec import AssemblySpec, ToolEntry
 from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
-from modex_agent.plugins.capability import (
-    AgentDeclarationView,
-    Capability,
-    CapabilityBinding,
-    CapabilityContribution,
-    CapabilityError,
-    CapabilitySupply,
-    CapabilityWiring,
-    FinalRosterView,
-    PoolSupplyView,
-    PromptSectionSpec,
-    TreePositionView,
-)
 from modex_agent.plugins.loader import Plugin, PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentNotFoundError, ComponentRegistry
 from modex_agent.scope import (
     AgentSpec,
     PoolSpec,
@@ -103,6 +88,22 @@ from modex_agent.scope import (
     spec_hash,
     validate_declaration,
 )
+from modex_agent.scope.assembly_spec import AssemblySpec, ToolEntry
+from modex_agent.scope.capability import (
+    AgentDeclarationView,
+    Capability,
+    CapabilityBinding,
+    CapabilityContribution,
+    CapabilityError,
+    CapabilitySupply,
+    CapabilityWiring,
+    FinalRosterView,
+    PoolSupplyView,
+    PromptSectionSpec,
+    TreePositionView,
+)
+from modex_agent.scope.component_registry import ComponentNotFoundError, ComponentRegistry
+from modex_agent.scope.components import ComponentSlot, HookRunnerKind, SimpleFactory
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
@@ -381,10 +382,6 @@ def _agent_named(compilation: ScopeCompilation, name: str) -> Any:
 # ─── Pool-supply stage harness (T4 pattern) ─────────────────────────────────
 
 
-class _StubStrategyConfig(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
 class _StubExecutionStrategy(ExecutionStrategy):
     """Real ExecutionStrategy subclass; ``assemble_main`` swapped for AsyncMock."""
 
@@ -439,7 +436,7 @@ def _stage_registry(
     registry.register(
         ComponentSlot.EXECUTION_STRATEGY,
         "react",
-        SimpleFactory(_make_stub_strategy(), _StubStrategyConfig),
+        StrategyComponentFactory(_make_stub_strategy()),
     )
     return registry
 

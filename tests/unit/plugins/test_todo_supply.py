@@ -36,32 +36,26 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.ioc.configs.memory import ArchiveConfig, MemoryConfig
+from modex_agent.app.config import AppConfig
+from modex_agent.core.turn.todo import TodoItem, TodoStore
+from modex_agent.memory.config import ArchiveConfig, MemoryConfig
 from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy,
     PoolAssemblyContext,
     StrategyAssembly,
+    StrategyComponentFactory,
 )
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
+from modex_agent.persistence.adapters.todo_store import JsonFileTodoStore
 from modex_agent.persistence.config import PersistenceBackend
-from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
 from modex_agent.plugins.assembly.builder import AssemblyBuilder
 from modex_agent.plugins.assembly.context import (
     AgentContext,
     PoolRuntimeDeps,
     SupplyInfra,
 )
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
 from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
-from modex_agent.plugins.capability import (
-    CapabilityBinding,
-    CapabilitySupply,
-    CompiledCapability,
-    PoolSupplyAgentEntry,
-    PoolSupplyView,
-)
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.capabilities.todo import (
     TodoCapability,
@@ -74,8 +68,16 @@ from modex_agent.plugins.defaults.hooks import (
 )
 from modex_agent.plugins.defaults.tools import TodoToolFactory
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.plugins.registry import ComponentRegistry
-from modex_agent.runtime.todo import JsonFileTodoStore, TodoItem, TodoStore
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides
+from modex_agent.scope.capability import (
+    CapabilityBinding,
+    CapabilitySupply,
+    CompiledCapability,
+    PoolSupplyAgentEntry,
+    PoolSupplyView,
+)
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot
 from modex_agent.tools.standard.todo_tool import TodoReadTool
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
@@ -114,7 +116,7 @@ def _make_registry() -> ComponentRegistry:
     registry.register(
         ComponentSlot.EXECUTION_STRATEGY,
         "stub",
-        SimpleFactory(_StubExecutionStrategy(), _StubConfig),
+        StrategyComponentFactory(_StubExecutionStrategy()),
     )
     return registry
 
@@ -124,7 +126,7 @@ def _make_spec(
     *,
     capabilities: tuple[CompiledCapability, ...] = (),
 ) -> AssemblySpec:
-    from modex_agent.plugins.abc import AgentType
+    from modex_agent.scope.components import AgentType
 
     workspace_root = Path(__file__).parent / "_ws_probe"
     return AssemblySpec(
@@ -450,7 +452,7 @@ def _reorientation_ctx(
     *,
     agent_type: str,
 ) -> AgentContext:
-    from modex_agent.plugins.abc import AgentType
+    from modex_agent.scope.components import AgentType
 
     spec = MagicMock()
     spec.agent_type = AgentType(agent_type)
@@ -540,7 +542,7 @@ class TestCarrierDeath:
 
     def test_react_strategy_construction_gone(self) -> None:
         assert "build_pool_todo_store" not in self._source(
-            "examples/bot_project/bot/service/react_strategy.py"
+            "src/modex_agent/plugins/assembly/strategies/react.py"
         )
 
     def test_wiring_param_gone(self) -> None:

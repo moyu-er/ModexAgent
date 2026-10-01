@@ -32,19 +32,18 @@ from pathlib import Path
 from typing import Final
 
 from bot.service.pool.declaration_graphs import extract_graph_agent_refs
-from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
+from modex_agent.app.config import AppConfig
 from modex_agent.multi_agent.communication.peer_resolution import (
-    PeerLink,
     peer_links_from_declaration,
 )
+from modex_agent.multi_agent.pool_config.declared import DeclaredPoolBuild
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.persistence.config import PersistenceConfig
-from modex_agent.plugins.abc import AgentType, ComponentSlot
 from modex_agent.plugins.defaults.capabilities.tracing import TracingCapabilityConfig
-from modex_agent.plugins.registry import ComponentRegistry
 from modex_agent.scope.compiler import CompiledAgent, ScopeCompilation, compile_scope
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import AgentType, ComponentSlot
 from modex_agent.scope.loader import load_scope_declaration
 from modex_agent.scope.profile import STANDARD_PROFILES
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
@@ -53,6 +52,7 @@ from modex_agent.scope.validator import (
     validate_declaration,
     validate_effective_configs,
 )
+from modex_agent.trace.observability import ObservabilityConfig, TraceBackend
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -84,29 +84,6 @@ class ScopeBoot:
     compilation: ScopeCompilation
 
 
-@dataclass(frozen=True)
-class DeclaredPoolBuild:
-    """The declaration-road products one pool consumes at ``create_pool``.
-
-    ``root`` drives the main agent's assembly spec; ``subagents`` seed the
-    template registry (lazy materialization reads ``compiled_spec``);
-    ``root_children`` are the root's DIRECT children (SPEC §3.2 — the root's
-    per-agent communication target store lists them, never grandchildren);
-    ``template_registry`` is pre-seeded from the compilation.
-    ``pool`` is the declared pool (peers + agent declarations — the single
-    pool face create_pool and the strategies read, replacing the legacy
-    PoolSpec); ``peer_links`` are this pool's declared links (the env-spec
-    agent-pool map reads the peer roots' declared names).
-    """
-
-    root: CompiledAgent
-    subagents: tuple[CompiledAgent, ...]
-    root_children: tuple[CompiledAgent, ...]
-    template_registry: AgentTemplateRegistry
-    pool: PoolSpec
-    peer_links: tuple[PeerLink, ...]
-
-
 def boot_scope_declaration(
     *,
     declaration_path: Path,
@@ -132,9 +109,11 @@ def boot_scope_declaration(
             directory supplies the V10 references.
         default_llm_provider: the BIZ default LLM provider component name.
         registry: the boot ComponentRegistry, threaded into
-            ``compile_scope`` for the capability compile protocol (C0/C1/C2).
-            ``None`` disables capability resolution — a declaration with
-            capabilities then fails loudly at compile.
+            ``validate_declaration`` (V12 ownership resolution) and
+            ``compile_scope`` (capability compile protocol + the
+            execution-strategy ownership probe). ``None`` disables
+            both resolutions — a declaration with capabilities or plugin
+            strategy names then fails loudly at compile.
         observability: the deployment's global observability config —
             drives the tracing fallback (see
             :func:`boot_scope_spec`); ``None`` → the FW defaults.
@@ -188,6 +167,7 @@ def boot_scope_spec(
         spec,
         profiles=STANDARD_PROFILES.declarations(),
         graph_agent_refs=graph_refs,
+        registry=registry,
     )
     if issues:
         raise ScopeBootError(issues, phase="phase-1 (declaration shape)")

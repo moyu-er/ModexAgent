@@ -2,26 +2,30 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy,
     ExecutionStrategyRegistry,
+    MainAssembly,
     PoolAssemblyContext,
     StrategyAssembly,
+    StrategyComponentFactory,
     default_strategy_registry,
-)
-from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
-from modex_agent.plugins.registry import (
-    ComponentRegistry,
     strategy_registry_from_components,
 )
-from modex_agent.scope.spec import PoolSpec
+from modex_agent.scope.component_registry import (
+    ComponentRegistry,
+)
+from modex_agent.scope.components import ComponentSlot, SimpleFactory
+from modex_agent.scope.runtime_ownership import RuntimeOwnership, StrategyManifest
+from modex_agent.scope.spec import AgentSpec, PoolSpec
 
 
 class _EmptyConfig(BaseModel):
@@ -36,9 +40,6 @@ class _StubStrategy(ExecutionStrategy):
         return "stub"
 
     async def assemble_main(self, ctx: PoolAssemblyContext) -> StrategyAssembly:
-        raise NotImplementedError
-
-    def validate_pool_spec(self, spec: PoolSpec) -> None:
         raise NotImplementedError
 
 
@@ -62,7 +63,7 @@ def test_component_registry_derives_same_strategy_instance() -> None:
     component_registry.register(
         ComponentSlot.EXECUTION_STRATEGY,
         strategy.name,
-        SimpleFactory(strategy, _EmptyConfig),
+        StrategyComponentFactory(strategy),
     )
 
     registry = strategy_registry_from_components(component_registry)
@@ -70,7 +71,26 @@ def test_component_registry_derives_same_strategy_instance() -> None:
     assert registry.resolve(strategy.name) is strategy
 
 
-def test_component_registry_skips_simple_factory_with_non_strategy(caplog: pytest.LogCaptureFixture) -> None:
+def test_strategy_factory_probes_the_ownership_manifest() -> None:
+    """The slot's probe face: ``probe()`` surfaces the StrategyManifest —
+    the synchronous ownership contract the scope compiler reads."""
+    strategy = _StubStrategy()
+    factory = StrategyComponentFactory(strategy)
+
+    manifest = factory.probe()
+
+    assert manifest == StrategyManifest(name="stub", ownership=RuntimeOwnership())
+    assert (
+        asyncio.run(
+            factory.create(factory.config_model(), None)  # type: ignore[arg-type]
+        )
+        is strategy
+    )
+
+
+def test_component_registry_skips_non_strategy_component_factory(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     component_registry = ComponentRegistry()
     component_registry.register(
         ComponentSlot.EXECUTION_STRATEGY,
@@ -81,7 +101,7 @@ def test_component_registry_skips_simple_factory_with_non_strategy(caplog: pytes
     registry = strategy_registry_from_components(component_registry)
 
     assert registry.names() == []
-    assert "SimpleFactory wraps str" in caplog.text
+    assert "expected StrategyComponentFactory" in caplog.text
 
 
 def test_register_duplicate_name_raises_value_error() -> None:
@@ -118,11 +138,26 @@ def test_names_returns_sorted_list() -> None:
     assert reg.names() == ["alpha", "beta"]
 
 
-def test_default_capability_flags() -> None:
-    """supports_subagents and requires_main_agent_tools default to True."""
+def test_default_ownership_is_the_react_shape() -> None:
+    """The ABC's default ownership mirrors the bundled react shape."""
     strategy = _StubStrategy()
-    assert strategy.supports_subagents is True
-    assert strategy.requires_main_agent_tools is True
+    assert strategy.ownership == RuntimeOwnership(
+        needs_llm_provider=True,
+        needs_main_agent_tools=True,
+        needs_memory=True,
+        supports_approval=True,
+        supports_subagents=True,
+        owns_context=False,
+    )
+
+
+def test_ownership_is_frozen_and_closed() -> None:
+    """RuntimeOwnership is a frozen, extra-forbidden value object."""
+    ownership = RuntimeOwnership()
+    with pytest.raises(ValidationError):
+        ownership.supports_subagents = False
+    with pytest.raises(ValidationError):
+        RuntimeOwnership(bogus_flag=True)
 
 
 def _make_minimal_context() -> PoolAssemblyContext:
@@ -172,7 +207,7 @@ def test_pool_assembly_context_optional_defaults() -> None:
     assert ctx.command_processor is None
     assert ctx.control_channel is None
     assert ctx.pool_data is None
-    assert ctx.transcript_store is None
+    assert ctx.record_scope is None
     assert ctx.on_session_start is None
     assert ctx.on_session_end is None
     assert ctx.router is None
@@ -181,36 +216,61 @@ def test_pool_assembly_context_optional_defaults() -> None:
 def test_strategy_assembly_is_frozen() -> None:
     """StrategyAssembly rejects attribute mutation (frozen dataclass)."""
     assembly = StrategyAssembly(
-        agent=MagicMock(),
-        turn_runner=MagicMock(),
+        tool_manager=MagicMock(),
+        context_manager=MagicMock(),
         notification_service=MagicMock(),
-        communication_service=MagicMock(),
         target_store=MagicMock(),
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
-        assembly.agent = MagicMock()  # type: ignore[misc]
+        assembly.tool_manager = MagicMock()  # type: ignore[misc]
 
 
 def test_strategy_assembly_optional_defaults() -> None:
-    """StrategyAssembly optional fields default to None and extra_cleanup to ()."""
+    """StrategyAssembly optional fields default to None — the shared
+    contract only; per-shape products ride their typed payloads."""
     assembly = StrategyAssembly(
-        agent=MagicMock(),
-        turn_runner=MagicMock(),
+        tool_manager=MagicMock(),
+        context_manager=MagicMock(),
         notification_service=MagicMock(),
-        communication_service=MagicMock(),
         target_store=MagicMock(),
     )
-    # React-only (None for external)
-    assert assembly.tool_manager is None
-    assert "skill_resolver" not in {field.name for field in dataclasses.fields(assembly)}
-    assert assembly.mcp_manager is None
-    assert assembly.context_manager is None
-    assert assembly.dream_engine is None
-    assert assembly.dream_interval is None
-    assert assembly.command_processor is None
     assert assembly.control_channel is None
-    # External-only (None for react)
-    assert assembly.backend is None
-    assert assembly.session_map_store is None
-    # Cleanup hooks
-    assert assembly.extra_cleanup == ()
+    assert assembly.root_provider is None
+    # Per-shape products
+    assert assembly.react_products is None
+    assert assembly.runtime_constructor is None
+    assert assembly.main is None
+    # The retired transitional/dict fields are gone (W5)
+    field_names = {field.name for field in dataclasses.fields(assembly)}
+    assert "external_deps" not in field_names
+    assert "agent" not in field_names
+    assert "turn_runner" not in field_names
+    assert "extra_cleanup" not in field_names
+
+
+def test_validate_pool_spec_derives_subagent_rule_from_ownership() -> None:
+    """The base validate_pool_spec rejects subagents when ownership
+    declares supports_subagents=False (byte-identical message shape)."""
+
+    class _SoloStrategy(_StubStrategy):
+        @property
+        def ownership(self) -> RuntimeOwnership:
+            return RuntimeOwnership(supports_subagents=False)
+
+    pool = PoolSpec(
+        name="p",
+        agents=[AgentSpec(name="root"), AgentSpec(name="sub", parent="root")],
+    )
+    _StubStrategy().validate_pool_spec(pool)  # default ownership accepts
+    with pytest.raises(ValueError, match="does not support subagents"):
+        _SoloStrategy().validate_pool_spec(pool)
+
+
+def test_main_assembly_carries_descriptor_and_instance() -> None:
+    descriptor = MagicMock()
+    instance = MagicMock()
+    main = MainAssembly(descriptor=descriptor, instance=instance)
+    assembly = StrategyAssembly(main=main)
+    assert assembly.main is main
+    assert assembly.main.descriptor is descriptor
+    assert assembly.main.instance is instance

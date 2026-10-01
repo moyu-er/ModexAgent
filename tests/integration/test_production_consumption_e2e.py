@@ -16,13 +16,13 @@ _BOT_PROJECT = _REPO_ROOT / "examples" / "bot_project"
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from bot.service.pool import create_pool
+from bot.config.webui_config import build_control_origin
 from bot.service.pool.declaration import (
     boot_scope_declaration,
     declared_pool_build,
 )
-from plugins.bot_strategies import BotStrategiesPlugin
 
+from modex_agent.app.models.assembly import ModelRegistryAssembly
 from modex_agent.commands.constants import CommandAction, CommandDispatchPolicy
 from modex_agent.commands.handlers import CommandHandler
 from modex_agent.commands.models import (
@@ -31,11 +31,11 @@ from modex_agent.commands.models import (
     SlashCommandInvocation,
 )
 from modex_agent.commands.processor import SlashCommandProcessor
+from modex_agent.core.interceptor import ToolCallContext, ToolCallInterceptor, ToolCallNext
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.tool_manager import Tool, ToolResult
 from modex_agent.hook import HookRunner
 from modex_agent.hook.abc import BeforeGraphHook
-from modex_agent.interceptor.abc import ToolCallContext, ToolCallInterceptor, ToolCallNext
 from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
@@ -44,21 +44,24 @@ from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy,
     PoolAssemblyContext,
     StrategyAssembly,
+    StrategyComponentFactory,
+    strategy_registry_from_components,
 )
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_instance import PoolInstance
-from modex_agent.plugins.abc import HookRunnerKind, SimpleFactory
+from modex_agent.plugins.assembly.pool_factory import create_pool
 from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 from modex_agent.plugins.loader import (
     ComponentRegistryLoader,
     Plugin,
     PluginDiscoveryConfig,
     PluginRegistrationContext,
 )
-from modex_agent.plugins.registry import (
+from modex_agent.scope.component_registry import (
     ComponentRegistry,
-    strategy_registry_from_components,
 )
+from modex_agent.scope.components import HookRunnerKind, SimpleFactory
 from modex_agent.scope.spec import PoolSpec
 
 if TYPE_CHECKING:
@@ -204,7 +207,7 @@ class _ConsumptionProbePlugin(Plugin):
         ctx.register_hook(_CUSTOM_HOOK_NAME, hook_factory)
         ctx.register_execution_strategy(
             _CUSTOM_STRATEGY_NAME,
-            SimpleFactory(_CUSTOM_STRATEGY, _EmptyConfig),
+            StrategyComponentFactory(_CUSTOM_STRATEGY),
         )
         ctx.register_interceptor(
             _CUSTOM_INTERCEPTOR_NAME,
@@ -227,7 +230,7 @@ class _BootHarness:
         await self.broker.start()
 
     async def create(self, pool_name: str, declared: DeclaredPoolBuild) -> PoolInstance:
-        from bot.service.model_choice import ModelChoiceRegistry
+        from modex_agent.app.models.choice import ModelChoiceRegistry
 
         return await create_pool(
             pool_name=pool_name,
@@ -243,7 +246,9 @@ class _BootHarness:
             shared_hooks=[],
             shared_hook_runner=HookRunner(),
             shared_interceptor_chain=InterceptorChain(),
-            bot_model_config=None,
+            model_assembly=ModelRegistryAssembly(None),
+            default_llm_provider_name=MULTI_LLM_PROVIDER,
+            control_origin=build_control_origin(self.config_dir),
             model_choice_registry=ModelChoiceRegistry(),
             app_config=None,
             strategy_registry=self.strategy_registry,
@@ -327,14 +332,14 @@ def _coder_orchestrator(raw: dict) -> dict:
 
 def _boot_declaration(config_dir: Path, component_registry: ComponentRegistry) -> Any:
     """The real production boot: load + validate (V1-V11) + compile."""
-    from bot.service.pool.factory import _BOT_DEFAULT_LLM_PROVIDER
+    from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 
     return boot_scope_declaration(
         declaration_path=config_dir / "scopes" / "bot.yml",
         project_dir=config_dir.parent,
         data_dir=config_dir.parent / ".modex",
         graphs_dirs=(config_dir / "graphs",),
-        default_llm_provider=_BOT_DEFAULT_LLM_PROVIDER,
+        default_llm_provider=MULTI_LLM_PROVIDER,
         registry=component_registry,
     )
 
@@ -346,7 +351,6 @@ async def _component_registry() -> ComponentRegistry:
         PluginDiscoveryConfig(
             bundled_factories=(
                 DefaultPlugin(),
-                BotStrategiesPlugin(),
                 _ConsumptionProbePlugin(),
             ),
             project_plugin_paths=(),

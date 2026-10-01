@@ -38,9 +38,9 @@ from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy,
     PoolAssemblyContext,
     StrategyAssembly,
+    StrategyComponentFactory,
 )
 from modex_agent.multi_agent.pool import AgentPool
-from modex_agent.plugins.abc import ComponentSlot, SimpleFactory
 from modex_agent.plugins.assembly.builder import AssemblyBuilder
 from modex_agent.plugins.assembly.context import (
     AssemblyContext,
@@ -50,9 +50,10 @@ from modex_agent.plugins.assembly.context import (
 from modex_agent.plugins.assembly.interceptors import assemble_interceptor_chain
 from modex_agent.plugins.assembly.pipeline import AssemblyStage
 from modex_agent.plugins.assembly.resources import AssemblyResourceOwner
-from modex_agent.plugins.assembly.spec import AssemblySpec, MemoryOverrides
 from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
-from modex_agent.plugins.registry import ComponentRegistry
+from modex_agent.scope.assembly_spec import AssemblySpec, MemoryOverrides
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentSlot, SimpleFactory
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -167,7 +168,7 @@ def _make_supply() -> SupplyInfra:
 def _make_registry(stub_strategy: _StubExecutionStrategy) -> ComponentRegistry:
     """ComponentRegistry with the stub strategy registered under 'stub'."""
     registry = ComponentRegistry()
-    factory = SimpleFactory(stub_strategy, _StubStrategyConfig)
+    factory = StrategyComponentFactory(stub_strategy)
     registry.register(ComponentSlot.EXECUTION_STRATEGY, "stub", factory)
     return registry
 

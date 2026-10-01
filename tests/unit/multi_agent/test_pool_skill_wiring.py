@@ -15,11 +15,11 @@ import pytest
 from modex_agent.commands.handlers import SkillCommandHandler
 from modex_agent.commands.models import CommandContext, SlashCommandInvocation
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.messaging.agent_messages import AgentAddress
 from modex_agent.messaging.broker import AddressKind
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import AgentPool, DefaultAgentFactory
-from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.plugins.defaults.capabilities.skills.catalog import SkillCatalog
 from modex_agent.plugins.defaults.capabilities.skills.supply import build_skill_catalog
@@ -84,18 +84,19 @@ async def test_public_materialization_keeps_root_skills_out_of_vetoed_subagent(
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.provider import LLMProvider
     from modex_agent.core.session_id import SessionIdFactory
+    from modex_agent.core.tool_vocabulary import ToolPreset
     from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
     from modex_agent.multi_agent.session_tree.manager import SessionTreeManager
     from modex_agent.multi_agent.template import AgentTemplate
+    from modex_agent.plugins.assembly.subagent_materializer import SubagentMaterializer
     from modex_agent.plugins.defaults import DefaultPlugin
     from modex_agent.plugins.defaults.capabilities.skills.supply import build_skills_supply
     from modex_agent.plugins.defaults.capabilities.subagents import SubagentsSupply
     from modex_agent.plugins.loader import PluginRegistrationContext
-    from modex_agent.plugins.registry import ComponentRegistry
     from modex_agent.scope.compiler import compile_scope
+    from modex_agent.scope.component_registry import ComponentRegistry
     from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
-    from modex_agent.tools.presets import ToolPreset
     from modex_agent.workspace.context import WorkspaceContext
     from modex_agent.workspace.paths import WorkspacePaths
     from modex_agent.workspace.scope_path import ScopePath
@@ -160,6 +161,7 @@ async def test_public_materialization_keeps_root_skills_out_of_vetoed_subagent(
         control_origin="http://127.0.0.1:21800",
     )
     deps = AgentMaterializeDeps(
+        materializer=SubagentMaterializer(),
         agent_factory=factory,
         pool=pool,
         session_factory=SessionIdFactory(),
@@ -211,7 +213,8 @@ async def test_pooled_assembly_uses_one_disk_catalog_per_native_agent(
     from modex_agent.core.provider import LLMProvider
     from modex_agent.core.session_id import SessionIdFactory
     from modex_agent.core.stream_events import LLMStreamEvent
-    from modex_agent.ioc.factories.descriptors import build_session_only_memory
+    from modex_agent.core.tool_vocabulary import ToolPreset
+    from modex_agent.memory.assembly import build_session_only_memory
     from modex_agent.memory.context import ContextManager
     from modex_agent.memory.scope import MemoryAgentRole
     from modex_agent.multi_agent import SessionRetentionPolicy
@@ -220,6 +223,7 @@ async def test_pooled_assembly_uses_one_disk_catalog_per_native_agent(
         ExecutionStrategy,
         PoolAssemblyContext,
         StrategyAssembly,
+        StrategyComponentFactory,
     )
     from modex_agent.multi_agent.inbox.consumer import InboxConsumer
     from modex_agent.multi_agent.inbox.producer import InboxProducer
@@ -229,25 +233,24 @@ async def test_pooled_assembly_uses_one_disk_catalog_per_native_agent(
     from modex_agent.multi_agent.template import AgentTemplate
     from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-    from modex_agent.plugins.abc import SimpleFactory
     from modex_agent.plugins.assembly.builder import AssemblyBuilder
     from modex_agent.plugins.assembly.context import AssemblyContext, SupplyInfra
     from modex_agent.plugins.assembly.native_core import LlmDefaults, NativeAssemblyInputs
     from modex_agent.plugins.assembly.pipeline import AssemblyPipeline
-    from modex_agent.plugins.assembly.spec import AssemblySpec
     from modex_agent.plugins.assembly.stages.agent_assemble import AgentAssembleStage
     from modex_agent.plugins.assembly.stages.infra_assemble import InfraAssembleStage
     from modex_agent.plugins.assembly.stages.pool_assemble import PoolAssembleStage
     from modex_agent.plugins.assembly.stages.workspace_materialize import (
         WorkspaceMaterializeStage,
     )
+    from modex_agent.plugins.assembly.subagent_materializer import SubagentMaterializer
     from modex_agent.plugins.defaults import DefaultPlugin
     from modex_agent.plugins.defaults.capabilities.skills import require_skills_supply
     from modex_agent.plugins.loader import PluginRegistrationContext
-    from modex_agent.plugins.registry import ComponentRegistry
+    from modex_agent.scope.assembly_spec import AssemblySpec
     from modex_agent.scope.compiler import compile_scope
+    from modex_agent.scope.component_registry import ComponentRegistry
     from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
-    from modex_agent.tools.presets import ToolPreset
     from modex_agent.workspace.context import WorkspaceContext
     from modex_agent.workspace.paths import WorkspacePaths
     from modex_agent.workspace.scope_path import ScopePath
@@ -313,7 +316,7 @@ async def test_pooled_assembly_uses_one_disk_catalog_per_native_agent(
         DefaultPlugin().register(registration)
         registration.register_execution_strategy(
             "react",
-            SimpleFactory(_AssemblyStrategy(main_context), _EmptyConfig),
+            StrategyComponentFactory(_AssemblyStrategy(main_context)),
         )
 
     compilation = compile_scope(
@@ -422,6 +425,7 @@ async def test_pooled_assembly_uses_one_disk_catalog_per_native_agent(
         assert await main_catalog.resolve_command("sub-only", "") is None
 
         deps = AgentMaterializeDeps(
+            materializer=SubagentMaterializer(),
             agent_factory=factory,
             pool=pool,
             session_factory=SessionIdFactory(),

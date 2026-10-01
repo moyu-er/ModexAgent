@@ -4,11 +4,12 @@
 Enforces every removal/convergence gate of
 `.omo/plans/slot-rationalization-steps.md` section 1 (removal ledger L1-L6)
 and section 2 (convergence ledger C1-C5) for the 8-wave slot rationalization
-refactor (plugin slots 13 -> 10). Each wave proves its removal/convergence
-claims by running a `--gate` subset per commit; `--check` over all gates
-(the 16 slot-rationalization gates + the 2 capability-bundles gates below)
-is the standing full battery. Completeness is proven by script, not by
-eyeball.
+refactor (plugin slots 13 -> 10), plus the W6 slot-honesty presence gates
+(P1a-P3b). Each wave proves its removal/convergence claims by running a
+`--gate` subset per commit; `--check` over all gates (the 16
+slot-rationalization gates + the 2 capability-bundles gates + the 6 presence
+gates below) is the standing full battery. Completeness is proven by
+script, not by eyeball.
 
 Gate -> wave when it goes green (plan section 3 commit sequence):
 
@@ -16,20 +17,25 @@ Gate -> wave when it goes green (plan section 3 commit sequence):
     L3a-L3c   W1 (commits 1.1/1.2; L3b docs/ scope fully clears at W7.3)
     L4        W1.4                     L5        W5.1
     L6        W4.3                     C1a/C1b   W4.2
-    C2        W5.2
+    C2        W5.2                     P1a-P3b   W6 (slot honesty)
     G-CAP1/G-CAP2  W4 (capability-bundles todo 20)
 
 Capability-bundles gates (W4, todo 20 of
 `.omo/plans/capability-bundles-implementation.md`; SPEC §15 OQ5 + §13 W6):
 
     * G-CAP1 anchors the compile-time-slot asymmetry: CAPABILITY is the
-      ONLY slot the scope compiler may resolve (every other slot is
-      late-binding at assembly time). Inside ``src/modex_agent/scope/``
-      the sanctioned faces are ``registry.resolve_capability(name)``
-      (the typed CAPABILITY accessor) and
-      ``registry.names(ComponentSlot.CAPABILITY)`` (the C0 enumeration).
-      The pattern bans any direct ``registry.resolve(`` call (even with
-      a variable slot) and any ``ComponentSlot.<OTHER>`` member access.
+      only slot the scope compiler may RESOLVE (create/instantiate);
+      every other slot is late-binding at assembly time. Inside
+      ``src/modex_agent/scope/`` the sanctioned faces are
+      ``registry.resolve_capability(name)`` (the typed CAPABILITY
+      accessor) and ``registry.names(ComponentSlot.CAPABILITY)`` (the
+      C0 enumeration), plus — since the RuntimeOwnership completion —
+      the EXECUTION_STRATEGY ownership PROBE in
+      ``runtime_ownership.py`` (metadata-only introspection via
+      ``registry.factories``; the strategy itself is still created
+      late-binding at assembly). The pattern bans any direct
+      ``registry.resolve(`` call (even with a variable slot) and any
+      ``ComponentSlot.<OTHER>`` member access outside the allowlist.
     * G-CAP2 anchors the W6 unconditional-injection death: within the
       assembly paths (``src/modex_agent/plugins/assembly/``,
       ``multi_agent/template.py``, and the bot project's
@@ -86,10 +92,11 @@ Spec source / errata:
       previously never scanned its own allowlisted factory file, so a FOURTH
       ``BotModelProvider(`` construction under plugins/ would have passed
       unnoticed.
-    * C1b pins ``expected_allowed_hits=4`` - exactly the four justified
-      sites (model_provider.py class definition, bot_strategies.py
-      ``bot_default`` factory, core.py bot-global provider, and the eval
-      harbor entry's trial-local ``bot_default`` factory).
+    * C1b pins ``expected_allowed_hits=2`` (W4b) - exactly the two
+      justified bot-side sites (core.py bot-global provider, and the eval
+      harbor entry's trial-local ``multi`` factory); the class definition
+      and the bundled ``multi`` factory construction moved into the
+      framework with the model-universe promotion.
     * L1a pattern adds ``\\bmemory_providers\\b`` - catches bare
       ``memory_providers`` declarations that the dict-key/attribute forms
       (L1b) would miss.
@@ -171,6 +178,9 @@ class Gate:
       * With ``allowed_files``: pass iff zero hits OUTSIDE the allowed files.
         When ``expected_allowed_hits`` is set, the allowed-file hit count must
         equal it exactly (C2 single-home rule; C1b justified-sites count).
+      * ``min_hits`` set (presence gate, W6): pass iff total hits >=
+        ``min_hits`` — asserts a producer/consumer site EXISTS (slot
+        honesty); the absence gates above stay the default.
 
     Scopes are repo-relative. ``scope_dirs`` are walked recursively (matching
     ``suffixes``, excluded dir names pruned); ``scope_files`` are individual
@@ -185,6 +195,7 @@ class Gate:
     scope_files: tuple[str, ...] = ()
     allowed_files: tuple[str, ...] = ()
     expected_allowed_hits: int | None = None
+    min_hits: int | None = None
 
 
 @dataclass(frozen=True)
@@ -312,35 +323,32 @@ GATES: tuple[Gate, ...] = (
     ),
     Gate(
         gate_id="C1b",
-        pattern=r"BotModelProvider\(",
-        scope_dirs=("examples/bot_project/bot", "examples/bot_project/plugins"),
+        pattern=r"ModelSelectionProvider\(",
+        scope_dirs=("examples/bot_project/bot", "examples/bot_project/bot_plugins"),
         suffixes=(".py",),
-        wave="W4.2",
-        # Allowlist (learnings.md GATE SPEC ERRATA; amendable data):
-        # - model_provider.py: the class definition.
-        # - bot_strategies.py: the bot_default factory (the C1 single
-        #   construction path for pool assembly).
+        wave="W4.2 (W4b: model universe promoted to modex_agent.app.models; W6: plugins dir -> bot_plugins)",
+        # Allowlist (learnings.md GATE SPEC ERRATA; amendable data). W4b
+        # moved the model universe into the framework
+        # (modex_agent.app.models.provider); the class definition and the
+        # ``multi`` LLM factory construction now live OUTSIDE this gate's
+        # bot-project scope. The two remaining justified bot-side sites:
         # - core.py: _build_default_provider — the independent-legitimate
         #   bot-global provider for the memory summarizer / experience review
         #   (W0.4 verdict, plan §2.C1; its None-when-no-model.yml behavior is
-        #   deliberate). Added at W4.2 when builders.py:287 died.
-        # - eval/harbor/pool_mode.py: the eval trial's bot_default factory —
+        #   deliberate).
+        # - eval/harbor/pool_mode.py: the eval trial's ``multi`` factory —
         #   the harbor pool entry builds a private ComponentRegistry (the
         #   eval process has no production service singleton) and registers
-        #   the provider that the pool-budget decorator then wraps; the
-        #   eval-side mirror of bot_strategies.py's role, from the trial's
-        #   EntryConfig-derived model config.
-        # F2 hardening: the scope includes examples/bot_project/plugins so the
-        # gate scans its own allowlisted factory file; expected_allowed_hits=4
-        # pins the four justified sites - a FIFTH construction anywhere
-        # under the bot project (bot/ or plugins/) fails.
+        #   the provider that the pool-budget decorator then wraps.
+        # The scope still includes examples/bot_project/plugins so the gate
+        # scans its own allowlisted factory files; expected_allowed_hits=2
+        # pins the two justified sites - a THIRD construction anywhere under
+        # the bot project (bot/ or plugins/) fails.
         allowed_files=(
-            "examples/bot_project/bot/service/model_provider.py",
-            "examples/bot_project/plugins/bot_strategies.py",
             "examples/bot_project/bot/service/core.py",
             "examples/bot_project/bot/eval/harbor/pool_mode.py",
         ),
-        expected_allowed_hits=4,
+        expected_allowed_hits=2,
     ),
     # --- C2: hooks +/- incremental merge converges into SpecBuilder (W5.2) ---
     Gate(
@@ -364,13 +372,20 @@ GATES: tuple[Gate, ...] = (
         # sanctioned registry faces are `resolve_capability(name)` (the
         # typed CAPABILITY accessor — every other slot is late-binding at
         # assembly time) and `registry.names(ComponentSlot.CAPABILITY)`
-        # (the C0 enumeration, excluded by the lookahead). The two
-        # alternatives catch:
+        # (the C0 enumeration, excluded by the lookahead) — plus the
+        # EXECUTION_STRATEGY ownership probe (metadata-only, no
+        # instantiation; creation stays late-binding at assembly), which
+        # reads `registry.factories(ComponentSlot.EXECUTION_STRATEGY)`
+        # and raises `ComponentNotFoundError(name,
+        # ComponentSlot.EXECUTION_STRATEGY)` from runtime_ownership.py.
+        # The two alternatives catch:
         #   * `registry.resolve(` — ANY direct resolve call, including
         #     variable-slot indirection (`registry.resolve(slot, name)`);
         #   * `ComponentSlot.<OTHER>` — any non-CAPABILITY member access,
         #     including enumeration (`names(ComponentSlot.HOOK)`) and
         #     docstring/comment mentions (which must stay clean too).
+        allowed_files=("src/modex_agent/scope/runtime_ownership.py",),
+        expected_allowed_hits=2,
     ),
     # --- G-CAP2: assembly-path unconditional component injection is dead ---
     # --- (W4, capability-bundles todo 20 / SPEC §13 W6 + §14.8; the       ---
@@ -406,10 +421,65 @@ GATES: tuple[Gate, ...] = (
         # guards the production assembly path, not test instrumentation.
         allowed_files=(
             "src/modex_agent/plugins/assembly/native_core.py",
-            "examples/bot_project/bot/service/pool/pipeline_wiring.py",
-            "examples/bot_project/bot/service/external_strategy.py",
+            # W4a promotion: the two bot-side files moved into the framework
+            # under plugins/assembly/ (same sanctioned sites, new homes).
+            "src/modex_agent/plugins/assembly/pipeline_wiring.py",
+            "src/modex_agent/plugins/assembly/strategies/external.py",
         ),
         expected_allowed_hits=5,
+    ),
+    # --- P1-P3: slot-honesty PRESENCE gates (W6) --------------------------
+    # Each of the three W6 slots must have a real producer AND a real
+    # production consumer — the inverse of the absence gates above: pass
+    # iff at least min_hits sites exist. A slot whose producer or consumer
+    # is deleted without a successor fails here.
+    Gate(
+        gate_id="P1a",
+        pattern=r"register_memory_system\(",
+        scope_dirs=("src/modex_agent/plugins/defaults",),
+        suffixes=(".py",),
+        wave="W6 (bundled MEMORY_SYSTEM `default` producer)",
+        min_hits=1,
+    ),
+    Gate(
+        gate_id="P1b",
+        pattern=r"ComponentSlot\.MEMORY_SYSTEM",
+        scope_dirs=("src/modex_agent/plugins/assembly",),
+        suffixes=(".py",),
+        wave="W6 (native_core MEMORY_SYSTEM slot consumer)",
+        min_hits=1,
+    ),
+    Gate(
+        gate_id="P2a",
+        pattern=r"register_namespace\(",
+        scope_dirs=("src/modex_agent/plugins/defaults",),
+        suffixes=(".py",),
+        wave="W6 (bundled DATA_NAMESPACE `default` producer)",
+        min_hits=1,
+    ),
+    Gate(
+        gate_id="P2b",
+        pattern=r"ComponentSlot\.DATA_NAMESPACE",
+        scope_dirs=("src/modex_agent/plugins/assembly",),
+        suffixes=(".py",),
+        wave="W6 (graph state-schema compiler DATA_NAMESPACE consumer)",
+        min_hits=1,
+    ),
+    Gate(
+        gate_id="P3a",
+        pattern=r"register_input_stage\(",
+        scope_dirs=("examples/bot_project/bot_plugins",),
+        suffixes=(".py",),
+        wave="W6 (bot IMInputStagesPlugin INPUT_STAGE producer)",
+        min_hits=1,
+    ),
+    Gate(
+        gate_id="P3b",
+        pattern=r"ComponentSlot\.INPUT_STAGE",
+        scope_dirs=("src/modex_agent/pipeline",),
+        suffixes=(".py",),
+        wave="W6 (skeleton resolve_stage_names INPUT_STAGE consumer)",
+        min_hits=1,
     ),
 )
 
@@ -488,7 +558,9 @@ def _collect_gate(gate: Gate) -> GateReport:
     allowed = set(gate.allowed_files)
     disallowed = tuple(hit for hit in hits if hit.rel_path not in allowed)
     allowed_count = len(hits) - len(disallowed)
-    if gate.allowed_files:
+    if gate.min_hits is not None:
+        passed = len(hits) >= gate.min_hits
+    elif gate.allowed_files:
         passed = not disallowed and (
             gate.expected_allowed_hits is None or allowed_count == gate.expected_allowed_hits
         )

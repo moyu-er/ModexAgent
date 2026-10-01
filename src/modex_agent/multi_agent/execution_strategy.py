@@ -8,7 +8,11 @@ assembly, returns a fully-configured :class:`StrategyAssembly`, and is never
 touched again at runtime. Runtime state lives in the assembly's
 :class:`TurnRunner`, not in the strategy.
 
-Adding a new pool shape = implementing this ABC + registering it;
+Adding a new pool shape = implementing this ABC + registering it (through
+:class:`StrategyComponentFactory`, which surfaces the strategy's
+:class:`~modex_agent.scope.runtime_ownership.RuntimeOwnership` as the
+probeable manifest — the vocabulary lives in
+:mod:`modex_agent.scope.runtime_ownership`, imported downward);
 ``pool_builder.create_pool`` and ``AgentPipeline`` do not branch on strategy
 identity.
 
@@ -17,8 +21,9 @@ Two frozen ``@dataclass`` types carry the assembly contract:
 - :class:`PoolAssemblyContext` — input to :meth:`assemble`; ~30
   common-assembly resource fields; strategies must not mutate (frozen).
 - :class:`StrategyAssembly` — output of :meth:`assemble`; carries the
-  ``Agent``, the ``TurnRunner``, common services, react-only collaborators,
-  external-only collaborators, and ``extra_cleanup`` hooks.
+  shared pool services plus the per-shape products
+  (:class:`ReactMainProducts` / a ``runtime_constructor`` /
+  :class:`MainAssembly`).
 
 Both are runtime-object containers per rule 12 (NOT Pydantic ``BaseModel``) —
 their fields are live objects with connections and state (``Agent``,
@@ -36,78 +41,132 @@ See ADR-0025 (D1, D2) for the full decision rationale.
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, assert_never
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from modex_agent.core.agent import ExecutionStrategyKind
+from pydantic import BaseModel, ConfigDict
+
+from modex_agent.scope.component_registry import ComponentRegistry
+from modex_agent.scope.components import ComponentFactory, ComponentSlot
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from modex_agent.adapters.output import OutputAdapter
-    from modex_agent.agents.external.agent import StreamingProviderBackend
-    from modex_agent.agents.external.session_store import ExternalSessionMapStore
+    from modex_agent.app.config import AppConfig
+    from modex_agent.app.models.choice import ModelChoiceRegistry
+    from modex_agent.app.models.registry import ModelRegistry
     from modex_agent.commands.models import CommandProcessor
     from modex_agent.control.channel import InMemoryControlChannel
-    from modex_agent.core.agent import Agent
     from modex_agent.core.emitter import ContentEmitter
+    from modex_agent.core.inbox import InboxMQ
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-    from modex_agent.core.prompt import SystemPromptProvider
+    from modex_agent.core.scope import RecordScope
     from modex_agent.core.tool_manager import ToolManager
-    from modex_agent.hook.abc import HookSpec
+    from modex_agent.core.workspace_root import WorkspaceRootProvider
+    from modex_agent.hook.abc import Hook, HookSpec
     from modex_agent.hook.notification import AgentNotificationService
     from modex_agent.hook.runner import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
-    from modex_agent.ioc.configs.app import AppConfig
-    from modex_agent.memory.consolidation.dream_engine import DreamEngine
     from modex_agent.memory.context import ContextManager
+    from modex_agent.messaging.agent_messages import AgentMessageRouter
     from modex_agent.messaging.broker import MessageBroker
     from modex_agent.multi_agent.bus import AgentMessageBus
     from modex_agent.multi_agent.communication.peer_resolution import PeerLink
-    from modex_agent.multi_agent.communication.service import AgentCommunicationService
     from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
-    from modex_agent.multi_agent.inbox.server import InboxMQ
+    from modex_agent.multi_agent.factory import AgentFactory
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
     from modex_agent.multi_agent.pool import SessionRetentionPolicy
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-    from modex_agent.multi_agent.router import AgentMessageRouter
     from modex_agent.multi_agent.tools import CommunicationTargetStore
+    from modex_agent.persistence.managers import WorkspacePersistenceManager
     from modex_agent.persistence.session_registry import SessionRegistry
     from modex_agent.persistence.session_store import SessionStore
     from modex_agent.pipeline.snapshot import PoolDataSnapshot
-    from modex_agent.pipeline.turn_runner_abc import TurnRunner
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-    from modex_agent.plugins.assembly.context import AgentContext
-    from modex_agent.plugins.assembly.spec import AssemblySpec
-    from modex_agent.plugins.registry import ComponentRegistry
-    from modex_agent.scope.spec import PoolSpec
-    from modex_agent.tools.mcp.manager import MCPClientManager
+    from modex_agent.plugins.assembly.context import AgentContext, AssemblyContext
+    from modex_agent.plugins.assembly.model_assembly import PoolModelAssembly
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
-    from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
     from modex_agent.trace.cassette import CassetteRecorder
+    from modex_agent.workspace.handle import WorkspaceHandle
+    from modex_agent.workspace.resources import WorkspaceManager
     from modex_agent.workspace.scope_path import ScopePath
+
+from modex_agent.scope.assembly_spec import AssemblySpec
+from modex_agent.scope.runtime_ownership import RuntimeOwnership, StrategyManifest
+from modex_agent.scope.spec import PoolSpec
 
 __all__ = [
     "ExecutionStrategy",
     "ExecutionStrategyRegistry",
+    "MainAssembly",
     "PoolAssemblyContext",
+    "ReactMainProducts",
     "StrategyAssembly",
+    "StrategyComponentFactory",
+    "StrategyConfig",
     "SubagentAssembly",
     "default_strategy_registry",
-    "strategy_name_of",
+    "strategy_registry_from_components",
 ]
 
 
-def strategy_name_of(value: ExecutionStrategyKind | str) -> str:
-    """Return the component-registry name for an execution strategy reference."""
-    match value:
-        case ExecutionStrategyKind():
-            return value.value
-        case str() as name:
-            return name
-        case unreachable:
-            assert_never(unreachable)
+class StrategyConfig(BaseModel):
+    """Empty config schema — a pool shape's configuration lives in the
+    scope declaration (strategy name, provider kind, per-agent fields),
+    not in slot config. The frozen default ``config_model`` of
+    :class:`StrategyComponentFactory`."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class StrategyComponentFactory(ComponentFactory):
+    """EXECUTION_STRATEGY slot factory wrapping one strategy singleton.
+
+    The slot's registration face for EVERY strategy — bundled
+    (``react`` / ``external``) and third-party alike. Two products, one
+    factory:
+
+    - :meth:`create` returns the wrapped strategy instance (strategies
+      are stateless singletons — ``assemble_main`` runs once per pool at
+      build time, so one instance is shared by every resolution);
+    - :meth:`probe` surfaces the :class:`StrategyManifest` — the
+      synchronous ownership face the scope compiler and tree validator
+      read WITHOUT importing this module (the compile-visible contract,
+      ADR-0052 addendum).
+
+    Register through
+    :meth:`modex_agent.plugins.loader.PluginRegistrationContext.
+    register_execution_strategy` (or ``ComponentRegistry.register``) —
+    never wrap a strategy in :class:`~modex_agent.scope.components.
+    SimpleFactory` (its probe returns the strategy, not the manifest,
+    and fails the slot contract loudly at compile).
+    """
+
+    config_model: ClassVar[type[BaseModel]] = StrategyConfig
+
+    def __init__(self, strategy: ExecutionStrategy) -> None:
+        self._strategy = strategy
+
+    @property
+    def strategy(self) -> ExecutionStrategy:
+        """The wrapped strategy singleton (the runtime registry face)."""
+        return self._strategy
+
+    async def create(self, config: BaseModel, ctx: AssemblyContext) -> ExecutionStrategy:  # noqa: ARG002
+        """Return the wrapped strategy singleton. Ignores config and ctx."""
+        return self._strategy
+
+    def probe(self) -> StrategyManifest:
+        """Surface the strategy's manifest (name + ownership)."""
+        return StrategyManifest(
+            name=self._strategy.name,
+            ownership=self._strategy.ownership,
+        )
 
 
 class ExecutionStrategy(ABC):
@@ -119,27 +178,41 @@ class ExecutionStrategy(ABC):
     never touched again at runtime. Runtime state lives in the assembly's
     :class:`TurnRunner`.
 
+    Since W5 the runtime is a SLOT PRODUCT: the agent runtime is no
+    longer selected by a closed enum branch inside the agent factory.
+    Each strategy owns its runtime construction —
+
+    - self-owning shapes (``external``) build their agent + turn runner
+      directly and return them as :attr:`StrategyAssembly.main`;
+    - native-component shapes return :attr:`StrategyAssembly.
+      runtime_constructor` — their own loop builder plugged into the
+      shared native assembly (``assemble_native_agent``), reusing the
+      full native component resolution (tools/hooks/llm/memory/
+      capabilities) with a custom loop ("native components + custom
+      loop").
+
     Subclasses declare:
 
     - ``name``: unique registry key (e.g. ``"react"``, ``"external"``).
-    - ``supports_subagents``: whether this shape permits subagent templates
-      (default ``True``; ``external`` overrides to ``False``).
-    - ``requires_main_agent_tools``: whether the pool builder must register
-      the ``task`` communication tool on the main agent (default ``True``;
-      ``external`` overrides to ``False`` since its main agent has no tool
-      surface).
-    - ``requires_llm_provider``: whether the pool builder resolves the
-      LLM_PROVIDER slot for this pool's agents (default ``True``;
-      ``external`` overrides to ``False`` — the external CLI owns its
-      model config).
+    - ``ownership``: the frozen :class:`RuntimeOwnership` declaration
+      (default — the react-like shape: framework owns every component
+      face). The contract is enforced, not advisory: registration
+      through :class:`StrategyComponentFactory` surfaces it as the
+      probeable :class:`StrategyManifest`, and misdeclaration fails at
+      compile/boot — an unregistered strategy NAME, a memory-surface or
+      root-approval request on a strategy declaring ``needs_memory=False``
+      / ``supports_approval=False``, and (via ``owns_context``) the V12
+      capability exclusion and the position-default-hook exclusion are
+      all compile-time errors (``scope.runtime_ownership``).
     - :meth:`assemble_main`: construct all runtime components this strategy
       needs for the pool's main agent and return a
       :class:`StrategyAssembly`.
     - :meth:`assemble_sub`: assemble a per-invocation subagent of this
       strategy's shape (optional — only external shapes implement it).
     - :meth:`validate_pool_spec`: fail-fast at startup if the pool spec is
-      incompatible with this strategy (e.g. ``external`` rejects
-      subagents and requires ``provider_kind``).
+      incompatible with this strategy. The base implementation enforces
+      the ownership-derived subagent rule; subclasses override to extend
+      (e.g. ``external`` additionally requires ``provider_kind``).
     """
 
     @property
@@ -149,26 +222,10 @@ class ExecutionStrategy(ABC):
         ...
 
     @property
-    def supports_subagents(self) -> bool:
-        """Whether this strategy permits subagent templates (default ``True``)."""
-        return True
-
-    @property
-    def requires_main_agent_tools(self) -> bool:
-        """Whether the pool builder registers ``task`` on the main
-        agent (default ``True``). ``external`` overrides to ``False``
-        — its main agent has no tool surface.
-        """
-        return True
-
-    @property
-    def requires_llm_provider(self) -> bool:
-        """Whether the pool builder resolves the LLM_PROVIDER slot for
-        this pool's agents (default ``True``). ``external`` overrides to
-        ``False`` — the external CLI owns its model config, so no
-        framework provider is pre-resolved.
-        """
-        return True
+    def ownership(self) -> RuntimeOwnership:
+        """What this strategy's runtime owns (default: the react shape —
+        the framework owns every component face)."""
+        return RuntimeOwnership()
 
     @abstractmethod
     async def assemble_main(self, ctx: PoolAssemblyContext) -> StrategyAssembly:
@@ -193,8 +250,8 @@ class ExecutionStrategy(ABC):
         against the strategy registry — it may differ from the pool's main
         strategy). Only strategies with an external subagent shape implement
         this; the default raises because native react subagents are
-        constructed directly by ``AgentTemplate.materialize`` and never
-        reach a strategy.
+        constructed directly by the assembly materializer and never reach a
+        strategy.
 
         Ticket 10: the per-invocation data (``parent_session``,
         ``invocation_id``, agent identity, and the per-agent spec
@@ -207,16 +264,22 @@ class ExecutionStrategy(ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} does not support subagent assembly")
 
-    @abstractmethod
     def validate_pool_spec(self, pool: PoolSpec) -> None:
         """Fail-fast at startup if the declared pool is incompatible.
 
-        The pool is the DECLARED :class:`modex_agent.scope.spec.PoolSpec`
-        (the declaration road's single pool face). Called before
-        :meth:`assemble`; raises ``ValueError`` (or a more specific
-        subtype) on incompatibility.
+        The base implementation derives the subagent rule from
+        :attr:`ownership`: a strategy that declares
+        ``supports_subagents=False`` rejects pools with subagent
+        templates. Subclasses override to EXTEND (calling
+        ``super().validate_pool_spec(pool)`` first), never to weaken.
+
+        Raises ``ValueError`` (or a more specific subtype) on violation.
         """
-        ...
+        if not self.ownership.supports_subagents and len(pool.agents) > 1:
+            raise ValueError(
+                f"Pool {pool.name!r}: execution_strategy {self.name!r} "
+                "does not support subagents"
+            )
 
 
 @dataclass(frozen=True)
@@ -231,11 +294,18 @@ class PoolAssemblyContext:
     Runtime-object container per rule 12 — NOT Pydantic ``BaseModel``.
     Strategies must not mutate (frozen).
 
-    Bot-side-only types (``workspace_handle``, ``workspace_resolver``,
-    ``persistence``, ``bot_model_config``, ``model_choice_registry``,
-    ``transcript_store``) are typed as ``Any`` — these are bot-layer objects
-    the framework does not import; ``Any`` is the documented escape hatch at
-    the framework/bot boundary.
+    Deployment-owned objects the framework reads through typed seams
+    (W4a): ``workspace_handle`` (:class:`~modex_agent.workspace.handle.WorkspaceHandle`),
+    ``workspace_resolver`` (:class:`~modex_agent.workspace.resources.WorkspaceManager`),
+    ``persistence``
+    (:class:`~modex_agent.persistence.managers.WorkspacePersistenceManager`),
+    and ``model_assembly``
+    (:class:`~modex_agent.plugins.assembly.model_assembly.PoolModelAssembly`
+    — the pool's model-universe seam, also consumed by the bundled ``multi``
+    LLM factory). The model-universe fields (``bot_model_config``,
+    ``model_choice_registry``) are typed with the framework model-registry
+    types (W4b): ``ModelRegistry`` and ``ModelChoiceRegistry`` from
+    :mod:`modex_agent.app.models`.
     """
 
     # Required: pool identity and config
@@ -256,13 +326,18 @@ class PoolAssemblyContext:
     safety: RuntimeSafetyPolicy
     retention: SessionRetentionPolicy
 
-    registry: TurnSessionRegistry
+    registry: TurnSessionRegistry | None = None
+    """Legacy field inherited from the example build — always ``None`` on
+    every production path (``create_pool`` passes ``None``; no strategy or
+    stage reads it). Optional so hand-built contexts need not fabricate a
+    value; removal awaits a consumer that actually owns turn-session
+    state here."""
 
     peer_links: tuple[PeerLink, ...] = ()
     """The pool's declared peer links (the env-spec agent-pool map reads
     the peer roots' declared names)."""
-    workspace_handle: Any | None = None
-    workspace_resolver: Any | None = None
+    workspace_handle: WorkspaceHandle | None = None
+    workspace_resolver: WorkspaceManager | None = None
     scope_path: ScopePath | None = None
     """The pool's resolved :class:`~modex_agent.workspace.scope_path.ScopePath`
     (workspace root + pool name) — the single scope-path carrier for the
@@ -273,22 +348,53 @@ class PoolAssemblyContext:
     emitter_factory: Callable[[str], ContentEmitter[Any]] | None = None
 
     app_config: AppConfig | None = None
-    persistence: Any | None = None
+    persistence: WorkspacePersistenceManager | None = None
 
     mcp_registry: McpConnectionRegistry | None = None
 
-    shared_hooks: list[HookSpec] = field(default_factory=list)
+    shared_hooks: list[Hook] = field(default_factory=list)
     shared_hook_runner: HookRunner | None = None
     shared_interceptor_chain: InterceptorChain | None = None
 
     session_registry: SessionRegistry | None = None
     session_store: SessionStore | None = None
 
-    bot_model_config: Any | None = None
-    model_choice_registry: Any | None = None
+    bot_model_config: ModelRegistry | None = None
+    """The deployment's resolved model registry (``ModelRegistry``) - read by
+    deployment LLM factories (e.g. the per-turn choice hook's factory);
+    framework assembly reads the model universe through the injected
+    :class:`~modex_agent.plugins.assembly.model_assembly.PoolModelAssembly`
+    (``model_assembly`` below)."""
+    model_choice_registry: ModelChoiceRegistry | None = None
+    """The per-turn model-choice registry - read by deployment factories only."""
+    model_assembly: PoolModelAssembly | None = None
+    """The pool's model-universe seam - threaded by ``create_pool`` and
+    consumed by the bundled ``multi`` LLM_PROVIDER factory
+    (``selection_provider()``). ``None`` for hand-built contexts
+    (framework tests)."""
+
+    record_scope: RecordScope | None = None
+    """The pool's storage isolation scope (deployment may subclass
+    :class:`~modex_agent.core.scope.RecordScope` with business dimensions,
+    e.g. a per-pool dimension). Consumed by the promoted persistence
+    backend factories; ``None`` → a default ``RecordScope()``."""
+
+    root_system_prompt: str = ""
+    """The pool root's RESOLVED system prompt (the SYSTEM_PROMPT_PROVIDER
+    slot product, resolved once by the orchestrator). Self-owning
+    strategies that build their main runtime directly (``external``)
+    thread it onto the main descriptor; native-component strategies read
+    the provider through Stage 4 instead. Empty for hand-built contexts."""
+
+    workspace_resources: Any | None = None
+    """The workspace's materialized resource bundle (deployment ``R``) —
+    the same bundle threaded onto the assembly-context workspace layer.
+    Strategies dispatching the declared HOOK roster directly (external)
+    need it for the dispatch context chain. ``None`` for hand-built
+    contexts."""
 
     control_origin: str = ""
-    """The bot HTTP listener origin (``MODEX_CONTROL_ORIGIN`` source) —
+    """The deployment HTTP listener origin (``MODEX_CONTROL_ORIGIN`` source) —
     the env-spec templates built on the context chain (the ``native_env``
     hook factory) read it. Empty for framework/hand-built contexts (the
     env var is still emitted, just empty)."""
@@ -297,7 +403,6 @@ class PoolAssemblyContext:
     control_channel: InMemoryControlChannel | None = None
 
     pool_data: PoolDataSnapshot | None = None
-    transcript_store: Any | None = None
 
     on_session_start: Callable[[str], Awaitable[None]] | None = None
     on_session_end: Callable[[str], Awaitable[None]] | None = None
@@ -310,75 +415,91 @@ class PoolAssemblyContext:
 
 
 @dataclass(frozen=True)
+class ReactMainProducts:
+    """React-only main-assembly side products (W5).
+
+    Owned by :class:`~modex_agent.plugins.assembly.strategies.react.
+    ReactExecutionStrategy`; consumed only by the react wiring points
+    (Stage 4's provider wrap + ``wire_main_pipeline``'s cassette flush
+    hook). Runtime-object container per rule 12 — NOT Pydantic.
+    """
+
+    cassette_recorder: CassetteRecorder | None = None
+    component_hook_specs: tuple[HookSpec, ...] = ()
+
+
+@dataclass(frozen=True)
+class MainAssembly:
+    """A strategy-built MAIN runtime (W5) — symmetric with SubagentAssembly.
+
+    Self-owning strategies (``external``, third-party loop shapes) build
+    their agent + turn runner + pipeline directly in
+    :meth:`ExecutionStrategy.assemble_main` and return them here; the
+    orchestrator (``create_pool``) registers the pair into the pool.
+    Runtime-object container per rule 12 — NOT Pydantic.
+    """
+
+    descriptor: AgentDescriptor
+    instance: AgentInstance
+
+
+@dataclass(frozen=True)
 class StrategyAssembly:
     """Output of :meth:`ExecutionStrategy.assemble_main` — runtime-object container.
 
-    Carries everything the pool builder and pipeline need from the strategy:
-    the ``Agent``, the :class:`TurnRunner`, common services, react-only
-    collaborators (``None`` for external), external-only collaborators
-    (``None`` for react), and ``extra_cleanup`` hooks.
+    Carries what the pool builder and pipeline need from the strategy:
+    the shared pool services and, per shape, the strategy-specific
+    products — ``react_products`` (react-only side products),
+    ``runtime_constructor`` (a native-component custom loop), or ``main``
+    (a strategy-built self-owning runtime). See the field docs for which
+    strategies fill which field.
 
-    Runtime-object container per rule 12 — NOT Pydantic ``BaseModel``. ``None``
-    fields are strategy-specific; consumers gate on
-    ``strategy.requires_main_agent_tools`` rather than ``is None`` checks.
-
-    Transitional (tickets 3-4): ``agent``, ``turn_runner``,
-    ``notification_service``, ``communication_service``, ``target_store`` may
-    all be ``None``. React fills ``agent``/``turn_runner`` ``None`` in ticket 3
-    (the agent instance + turn_runner are created downstream by the factory +
-    pipeline); ticket 5 makes react fill ``turn_runner`` once the pipeline
-    accepts a runner parameter. The common-service trio
-    (``notification_service``/``communication_service``/``target_store``) is
-    built by ``pool_builder`` for both strategies in tickets 3-4; ticket 5/6
-    may move them into ``assemble()`` and make them required again.
-
-    The react-only side-product fields ``cassette_recorder`` and
-    ``root_provider`` are also transitional: ``ReactExecutionStrategy.
-    assemble_main()`` fills them so ``pool_builder`` can finish
-    post-assembly wiring (cassette flush hook, approval root) without
-    re-running the build helpers. Ticket 6 moves the helpers into the
-    strategy and these fields leave the assembly contract. (The historical
-    todo-store side product died with the todo capability's supply face —
-    ``TodoCapability.supply`` owns the store's construction.)
-
-    The external-only transitional field ``external_deps`` carries the
-    deps dict that ``ExternalAwareFactory`` reads to build an
-    ``ExternalAgent``. ``ExternalExecutionStrategy.assemble_main()``
-    fills it; ``None`` for react. Ticket 6 eliminates this field when
-    strategies build agents directly (the factory dispatch branch is deleted
-    and the strategy owns agent construction).
+    Runtime-object container per rule 12 — NOT Pydantic ``BaseModel``.
+    ``None`` fields are strategy-specific; consumers gate on the
+    strategy's :attr:`~ExecutionStrategy.ownership` rather than
+    ``is None`` checks.
     """
 
-    # Transitional: see class docstring.
-    agent: Agent[Any] | None = None
-    turn_runner: TurnRunner | None = None
-    notification_service: AgentNotificationService | None = None
-    communication_service: AgentCommunicationService | None = None
-    target_store: CommunicationTargetStore | None = None
-
-    system_prompt_provider: SystemPromptProvider | None = None
     tool_manager: ToolManager | None = None
-    mcp_manager: MCPClientManager | None = None
+    """The main agent's base tool manager (react builds the empty base;
+    self-owning shapes leave ``None`` — the fallback manager applies)."""
+
     context_manager: ContextManager | None = None
-    dream_engine: DreamEngine | None = None
-    dream_interval: float | None = None
-    command_processor: CommandProcessor | None = None
+    """The main agent's context manager (react resolves it from pool data
+    or its fallback; shapes declaring ``owns_context`` leave ``None``)."""
+
+    notification_service: AgentNotificationService | None = None
+    """Pool notification service override; the orchestrator's supplied
+    service wins (``PoolAssembleStage``)."""
+
+    target_store: CommunicationTargetStore | None = None
+    """Pool binding store (``PoolAssembleStage`` propagates it into
+    ``PoolRuntimeDeps``)."""
+
     control_channel: InMemoryControlChannel | None = None
+    """Pool control channel (``PoolAssembleStage`` propagates it into
+    ``PoolRuntimeDeps``)."""
 
-    backend: StreamingProviderBackend | None = None
-    session_map_store: ExternalSessionMapStore | None = None
-
-    # Transitional react-only side products (see class docstring). Filled by
-    # ``ReactExecutionStrategy.assemble_main()``; ``None`` for external.
-    cassette_recorder: CassetteRecorder | None = None
     root_provider: WorkspaceRootProvider | None = None
-    component_hook_specs: tuple[HookSpec, ...] = ()
+    """The pool's workspace-root provider — consumed by the SHARED
+    machinery (``PoolAssembleStage`` enriches ``PoolRuntimeDeps`` for
+    every strategy; the sandbox guard + approval classifier read it)."""
 
-    # Transitional external-only deps dict (see class docstring). Filled by
-    # ``ExternalExecutionStrategy.assemble_main()``; ``None`` for react.
-    external_deps: dict[str, Any] | None = None
+    react_products: ReactMainProducts | None = None
+    """React-only side products (cassette recorder, component hook
+    specs). ``None`` for non-react shapes."""
 
-    extra_cleanup: tuple[Callable[[], Awaitable[None]], ...] = ()
+    runtime_constructor: AgentFactory | None = None
+    """A third-party native-component strategy's own loop builder (W5).
+    When set, Stage 4 threads this constructor into
+    ``assemble_native_agent`` instead of the default react factory —
+    "native components + custom loop". ``None`` for react (the default
+    react factory applies) and for self-owning shapes (no Stage 4)."""
+
+    main: MainAssembly | None = None
+    """A strategy-built main runtime (external / self-owning shapes).
+    ``None`` for native-component shapes whose main is constructed by
+    Stage 4 (react)."""
 
 
 @dataclass(frozen=True)
@@ -432,3 +553,30 @@ def default_strategy_registry() -> ExecutionStrategyRegistry:
     derive their registry from ``ComponentRegistry`` instead.
     """
     return ExecutionStrategyRegistry()
+
+
+def strategy_registry_from_components(
+    registry: ComponentRegistry,
+) -> ExecutionStrategyRegistry:
+    """Derive the runtime strategy registry from the slot registrations.
+
+    Every registration is a :class:`StrategyComponentFactory` (the slot's
+    one factory face — its probe surfaces the manifest, its create
+    returns the strategy); a non-conforming registration is skipped with
+    a warning instead of entering the runtime registry.
+    """
+    strategy_registry = ExecutionStrategyRegistry()
+    factories = registry.factories(ComponentSlot.EXECUTION_STRATEGY)
+    for name, factory in factories.items():
+        # Extension boundary: strategy registration accepts heterogeneous
+        # plugin factories; the slot contract is StrategyComponentFactory.
+        if not isinstance(factory, StrategyComponentFactory):
+            logger.warning(
+                "Skipping execution strategy component %r: expected "
+                "StrategyComponentFactory, got %s",
+                name,
+                type(factory).__name__,
+            )
+            continue
+        strategy_registry.register(factory.strategy)
+    return strategy_registry
