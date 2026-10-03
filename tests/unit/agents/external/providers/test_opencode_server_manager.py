@@ -24,9 +24,7 @@ from modex_agent.agents.external.providers.opencode.server_manager import (
     OpenCodeServerManager,
     _atexit_cleanup,
 )
-from modex_agent.agents.external.transports import (
-    OpenCodeTransport,
-)
+from modex_agent.agents.external.transports.cli_transport import OpenCodeTransport
 
 _PatchResult = tuple[AsyncMock, AsyncMock, list[AsyncMock], AsyncMock, AsyncMock]
 

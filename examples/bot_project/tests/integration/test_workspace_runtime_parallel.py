@@ -505,7 +505,7 @@ async def test_create_workspace_full_chain_no_restart(
         assert spec.workspace is not None
         assert spec.workspace.name == "alpha"
         assert spec.workspace.persistence is not None
-        assert spec.workspace.persistence.backend.value == "file"
+        assert spec.workspace.persistence.backend == "file"
         # The hosted pools are the primary declaration's, copied verbatim
         # (model-level equality — no field lost in the YAML round trip).
         primary = load_scope_declaration(tmp_path / "config" / "scopes" / "bot.yml")

@@ -19,12 +19,12 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
-from modex_agent.agents.external.transports import OpenCodeTransport
 from modex_agent.agents.external.transports.abc import (
     ChildTurnEventCallbackFactory,
     ExternalTransport,
     TurnEventCallback,
 )
+from modex_agent.agents.external.transports.cli_transport import OpenCodeTransport
 from modex_agent.agents.external.types import BackendResult, BackendStatus, ExecOptions
 from modex_agent.core.agent import ProviderKind
 from modex_agent.plugins.assembly.strategies.external import ExternalExecutionStrategy

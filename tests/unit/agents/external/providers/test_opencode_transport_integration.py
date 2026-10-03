@@ -22,7 +22,7 @@ import pytest
 
 pytest.importorskip("aiohttp", reason="aiohttp not installed")
 
-from modex_agent.agents.external.transports import OpenCodeTransport
+from modex_agent.agents.external.transports.cli_transport import OpenCodeTransport
 from modex_agent.agents.external.types import BackendStatus, ExecOptions
 from modex_agent.core.turn_events import (
     TurnEvent,

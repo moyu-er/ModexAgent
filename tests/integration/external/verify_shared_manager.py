@@ -40,7 +40,7 @@ from pathlib import Path
 from modex_agent.agents.external.providers.opencode.server_manager import (
     OpenCodeServerManager,
 )
-from modex_agent.agents.external.transports import OpenCodeTransport
+from modex_agent.agents.external.transports.cli_transport import OpenCodeTransport
 from modex_agent.agents.external.types import ExecOptions
 from modex_agent.core.turn_events import TurnEvent, TurnTextEvent
 

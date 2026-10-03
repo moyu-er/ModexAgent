@@ -37,7 +37,6 @@ from .session_store import LocalFileExternalSessionMapStore
 from .transports import (
     ChildTurnEventCallbackFactory,
     ExternalTransport,
-    OpenCodeTransport,
     ScriptedProgramme,
     ScriptedStep,
     ScriptedTransport,
@@ -54,9 +53,11 @@ from .types import (
 )
 
 __all__ = [
-    # Transport seam (access forms)
+    # Transport seam (access forms). The real CLI transport
+    # (OpenCodeTransport, transports.cli_transport) is NOT re-exported:
+    # its provider stack needs aiohttp, which base installs (the
+    # conformance environment) do not carry — import it from its module.
     "ExternalTransport",
-    "OpenCodeTransport",
     "ScriptedTransport",
     "ScriptedProgramme",
     "ScriptedStep",

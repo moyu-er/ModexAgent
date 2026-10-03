@@ -39,9 +39,9 @@ from modex_agent.agents.external.providers.opencode.session_state import (
 )
 from modex_agent.agents.external.providers.opencode.v2_client import OpencodeV2Error
 from modex_agent.agents.external.transports import (
-    OpenCodeTransport,
     StaleSessionError,
 )
+from modex_agent.agents.external.transports.cli_transport import OpenCodeTransport
 from modex_agent.agents.external.types import BackendStatus, ExecOptions
 from modex_agent.core.turn_events import TurnEvent, TurnTextEvent
 

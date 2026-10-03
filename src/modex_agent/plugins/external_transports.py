@@ -55,7 +55,7 @@ def external_transport_registry() -> BackendRegistry[ExternalTransport]:
     """
     global _registry
     if _registry is None:
-        from modex_agent.agents.external.transports import OpenCodeTransport
+        from modex_agent.agents.external.transports.cli_transport import OpenCodeTransport
 
         registry = BackendRegistry[ExternalTransport](family="external transport")
         registry.register(OPENCODE_TRANSPORT_KIND, OpenCodeTransport)

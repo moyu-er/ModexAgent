@@ -151,40 +151,84 @@ _CAPABILITY_PREFIXES = (
 )
 
 
-async def test_mini_project_boot_loads_no_undeclared_feature_modules(
+#: Boot probe executed in a FRESH interpreter. ``sys.modules`` is
+#: process-global, and CI runs this file in the same pytest process as
+#: ``tests/unit/`` (whose approval/sandbox tests legitimately import
+#: bundle implementation) — the anchor must observe an unpolluted boot.
+_BOOT_PROBE_SCRIPT = """\
+import asyncio
+import importlib.util
+import sys
+from pathlib import Path
+
+project = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("mini_anchor_main", project / "main.py")
+mod = importlib.util.module_from_spec(spec)
+sys.modules["mini_anchor_main"] = mod
+spec.loader.exec_module(mod)
+
+
+async def _run() -> None:
+    service = mod.build_service(project_dir=project)
+    await service.initialize()
+    try:
+        await service.turn("anchor probe", session="anchor")
+        for name in sorted(sys.modules):
+            if name.startswith(__CAPABILITY_PREFIXES__):
+                print("MODULE:" + name)
+    finally:
+        await service.stop()
+
+
+asyncio.run(_run())
+"""
+
+
+def test_mini_project_boot_loads_no_undeclared_feature_modules(
     tmp_path: Path,
 ) -> None:
     """Architecture anchor: undeclared feature ⇒ no feature implementation loaded.
 
     mini_project declares NEITHER approval NOR a sandbox. After booting it
-    exactly the way ``main.py`` does and driving one scripted turn, the set
-    of loaded ``...capabilities.approval`` / ``...capabilities.sandbox``
-    modules must be EXACTLY ``_BOOT_CAPABILITY_ALLOWLIST`` — what
-    DefaultPlugin registration itself costs, plus the tools layer's shared
-    tool-effect table. Any new leak (a lazily-imported guard, classifier,
-    resumer, renderer, or UI reaching an undeclared boot) fails here with
-    the full diff, instead of silently re-coupling every deployment to
-    features it never declared.
+    exactly the way ``main.py`` does (in a fresh interpreter) and driving
+    one scripted turn, the set of loaded ``...capabilities.approval`` /
+    ``...capabilities.sandbox`` modules must be EXACTLY
+    ``_BOOT_CAPABILITY_ALLOWLIST`` — what DefaultPlugin registration itself
+    costs, plus the tools layer's shared tool-effect table. Any new leak (a
+    lazily-imported guard, classifier, resumer, renderer, or UI reaching an
+    undeclared boot) fails here with the full diff, instead of silently
+    re-coupling every deployment to features it never declared.
     """
+    import subprocess
+
     project = tmp_path / "mini_project"
     shutil.copytree(
         MINI_PROJECT_DIR,
         project,
         ignore=shutil.ignore_patterns("tests", "__pycache__", DATA_DIR_NAME),
     )
+    script = tmp_path / "boot_probe.py"
+    script.write_text(
+        _BOOT_PROBE_SCRIPT.replace("__CAPABILITY_PREFIXES__", repr(_CAPABILITY_PREFIXES)),
+        encoding="utf-8",
+    )
 
-    main = _load_main_module(project)
-    service = main.build_service(project_dir=project)
-    await service.initialize()
-    try:
-        await service.turn("anchor probe", session="anchor")
-        loaded = {
-            name
-            for name in sys.modules
-            if name.startswith(_CAPABILITY_PREFIXES)
-        }
-    finally:
-        await service.stop()
+    result = subprocess.run(
+        [sys.executable, str(script), str(project)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert result.returncode == 0, (
+        "boot probe failed:\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    loaded = {
+        line.removeprefix("MODULE:")
+        for line in result.stdout.splitlines()
+        if line.startswith("MODULE:")
+    }
 
     allowlist = set(_BOOT_CAPABILITY_ALLOWLIST)
     assert loaded == allowlist, (
