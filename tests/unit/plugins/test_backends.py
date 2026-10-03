@@ -25,7 +25,8 @@ from modex_agent.app.service import AppService
 from modex_agent.control.channel import ControlChannel, InMemoryControlChannel
 from modex_agent.messaging.broker import MessageBroker
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-from modex_agent.plugins.backends import BackendRegistry, BrokerFactory, ControlChannelFactory
+from modex_agent.core.backend_registry import BackendRegistry
+from modex_agent.plugins.backends import BrokerFactory, ControlChannelFactory
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.defaults.backends import (
     IN_MEMORY_BACKEND_NAME,

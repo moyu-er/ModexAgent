@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict
 
 from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.core.llm_request import ReasoningEffort
-from modex_agent.providers.llm_config import InterfaceFormat
+from modex_agent.providers.protocol_engines import ANTHROPIC_FORMAT
 
 ModelSource = Literal["cli", "env", "model-default"]
 
@@ -71,11 +71,7 @@ def _load_yml_defaults(path: Path) -> tuple[_YmlModelDefaults | None, str | None
         return None, f"model.yml unusable: {error}"
     if not llm.api_key and not llm.base_url:
         return None, f"model.yml default has no api_key/base_url: {path}"
-    prefix = (
-        "anthropic"
-        if llm.interface_format is InterfaceFormat.ANTHROPIC
-        else "openai"
-    )
+    prefix = "anthropic" if llm.interface_format == ANTHROPIC_FORMAT else "openai"
     return (
         _YmlModelDefaults(
             model=f"{prefix}/{llm.model}",

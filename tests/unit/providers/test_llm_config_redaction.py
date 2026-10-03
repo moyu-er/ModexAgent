@@ -13,7 +13,8 @@ repr contains the type name ``Modality``, which includes the letter ``y``.
 
 from __future__ import annotations
 
-from modex_agent.providers.llm_config import InterfaceFormat, LLMConfig
+from modex_agent.providers.llm_config import LLMConfig
+from modex_agent.providers.protocol_engines import OPENAI_RESPONSE_FORMAT
 from modex_agent.providers.model_config import GlobalModelConfig
 
 _SECRET_KEY = "sk-secret-redacted-probe"
@@ -64,12 +65,12 @@ class TestLLMConfigNewFields:
 
 
 class TestOpenAIResponseFormat:
-    def test_enum_value_exists(self) -> None:
-        assert InterfaceFormat.OPENAI_RESPONSE.value == "openai_response"
+    def test_format_name_value(self) -> None:
+        assert OPENAI_RESPONSE_FORMAT == "openai_response"
 
     def test_llm_config_accepts_openai_response(self) -> None:
-        cfg = LLMConfig(interface_format=InterfaceFormat.OPENAI_RESPONSE)
-        assert cfg.interface_format is InterfaceFormat.OPENAI_RESPONSE
+        cfg = LLMConfig(interface_format=OPENAI_RESPONSE_FORMAT)
+        assert cfg.interface_format == OPENAI_RESPONSE_FORMAT
 
 
 class TestGlobalModelConfigPassthrough:

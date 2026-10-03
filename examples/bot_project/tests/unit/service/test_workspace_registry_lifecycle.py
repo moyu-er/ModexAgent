@@ -11,13 +11,13 @@ from bot.workspace.wiring import WorkspaceStack
 from modex_agent.app.config import AppConfig
 from modex_agent.app.roots import AppAssemblyRoots
 from modex_agent.control.channel import ControlChannel
+from modex_agent.core.backend_registry import BackendRegistry
 from modex_agent.core.stores import PoolRoutingStore
 from modex_agent.messaging.broker import MessageBroker
 from modex_agent.persistence.managers import (
     RegistryPersistenceManager,
     WorkspacePersistenceManager,
 )
-from modex_agent.plugins.backends import BackendRegistry
 from modex_agent.plugins.loader import ChannelAdapterRegistry
 from modex_agent.workspace.paths import RESERVED_GLOBAL_DIR, WORKSPACE_STATE_DB
 

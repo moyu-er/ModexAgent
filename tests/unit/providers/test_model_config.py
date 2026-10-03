@@ -6,8 +6,8 @@ import tempfile
 from pathlib import Path
 
 from modex_agent.app.config import AppConfig
-from modex_agent.providers.llm_config import InterfaceFormat
 from modex_agent.providers.model_config import GlobalModelConfig
+from modex_agent.providers.protocol_engines import OPENAI_COMPATIBLE_FORMAT
 
 
 class TestGlobalModelConfig:
@@ -24,7 +24,7 @@ class TestGlobalModelConfig:
         assert d["model"] == "openai/foo"
         assert d["api_key"] == "sk-xxx"
         assert d["capabilities"] == ["text", "image"]
-        assert d["interface_format"] == InterfaceFormat.OPENAI_COMPATIBLE
+        assert d["interface_format"] == OPENAI_COMPATIBLE_FORMAT
 
     def test_capabilities_default_is_text_only(self) -> None:
         assert GlobalModelConfig().to_llm_dict()["capabilities"] == ["text"]
@@ -64,7 +64,7 @@ class TestGlobalModelInjection:
             assert cfg.model.base_url == "https://api.example.com/v1"
             assert cfg.model.api_key == "sk-global"
             assert "image" in cfg.model.capabilities
-            assert cfg.model.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
+            assert cfg.model.interface_format == OPENAI_COMPATIBLE_FORMAT
 
     def test_pool_llm_block_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as t:

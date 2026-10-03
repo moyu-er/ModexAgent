@@ -12,12 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from modex_agent.app.config_domain import Secret
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.llm_request import ReasoningEffort
-from modex_agent.providers.llm_config import (
-    InterfaceFormat,
-    LLMConfig,
-    Modality,
-    ModelCapabilities,
-)
+from modex_agent.providers.llm_config import LLMConfig, Modality, ModelCapabilities
+from modex_agent.providers.protocol_engines import OPENAI_COMPATIBLE_FORMAT
 
 # Tokens reserved for the input (prompt+history) when synthesize_llm_config
 # clamps the output budget (PRD per-model-context-compaction §4.2):
@@ -65,7 +61,7 @@ class ProviderCfg(BaseModel):
     key: str
     name: str
     base_url: str = ""
-    interface_format: InterfaceFormat = InterfaceFormat.OPENAI_COMPATIBLE
+    interface_format: str = OPENAI_COMPATIBLE_FORMAT
     api_key: Annotated[str, Secret()]
     headers: dict[str, str] = Field(default_factory=dict)
     # Defaults to False: third-party Responses endpoints widely reject

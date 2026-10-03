@@ -4,12 +4,13 @@
 # providers
 
 ## Purpose
-LLM provider subsystem — a single system: the direct-HTTP event-stream subsystem `http/` (ADR-0046 — `HTTPStreamProvider` + three protocol engines), the ONLY provider implementation. The provider ABC lives in `core/provider.py` (`LLMProvider` event-stream ABC + `CallbackStreamProvider` callback adapter base); `create_llm_provider` routes every `InterfaceFormat` here. The legacy SDK providers and their `shared/` streaming utilities were removed (2026-08-26 cleanup).
+LLM provider subsystem — a single system: the direct-HTTP event-stream subsystem `http/` (ADR-0046 — `HTTPStreamProvider` + three bundled protocol engines), the ONLY provider implementation. The provider ABC lives in `core/provider.py` (`LLMProvider` event-stream ABC + `CallbackStreamProvider` callback adapter base); `create_llm_provider` routes every `interface_format` name here through the process-level protocol-engine registry. The legacy SDK providers and their `shared/` streaming utilities were removed (2026-08-26 cleanup).
 
 ## Key Files
 | File | Description |
 |------|-------------|
 | `__init__.py` | Re-exports `HTTPStreamProvider` — the public provider class |
+| `protocol_engines.py` | Protocol-engine registry — the `interface_format` name resolution face (`protocol_engine_registry()`); the three bundled wire protocols seed it at first access, plugins register further engines through `PluginRegistrationContext.register_protocol_engine` |
 
 ## Subdirectories
 | Directory | Purpose |
@@ -26,7 +27,7 @@ LLM provider subsystem — a single system: the direct-HTTP event-stream subsyst
 | `http/formats/anthropic.py` | Anthropic Messages API engine — event+data SSE, thinking-block replay with signature, `x-api-key` auth, explicit prompt-cache breakpoints (system block + final block of the last two non-system messages, ephemeral); tool media embeds natively as image blocks inside the `tool_result` block; unresolved `media://` refs ERROR+skip (permanent wire guard) |
 
 ## For AI Agents
-- `http/` (ADR-0046) is the sole provider subsystem: `create_llm_provider` routes all three `interface_format` values to `HTTPStreamProvider` wired with the matching protocol engine — there is no other provider implementation
+- `http/` (ADR-0046) is the sole provider subsystem: `create_llm_provider` resolves the `interface_format` name in the protocol-engine registry (`protocol_engines.py`, the closed-set authority) and routes it to `HTTPStreamProvider` wired with that engine — there is no other provider implementation, and an unknown name fails loudly listing the registered names
 - Consumers depend only on the `LLMProvider` ABC (`core/provider.py`) — event-stream implementations subclass `LLMProvider` (abstract `stream()`); response-level implementations (cassette record/replay, delegation proxies, scripted test providers) subclass `CallbackStreamProvider`
 - `HTTPStreamProvider` accepts `list[ChatMessage]` (not `list[dict]`) per B6 LLM-message convergence — engines lower `ChatMessage` to wire dicts by explicit construction in `build_body`
 - `HTTPStreamProvider` carries zero wire-format knowledge — provider owns transport, `LLMProtocol` engine owns translation; new wire formats are new engine files, never edits to the provider

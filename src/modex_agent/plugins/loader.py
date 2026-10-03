@@ -12,12 +12,14 @@ service-level registration faces —
 adapters) plus the backend families
 :meth:`PluginRegistrationContext.register_broker` /
 :meth:`PluginRegistrationContext.register_control_channel` /
-:meth:`PluginRegistrationContext.register_persistence_backend`. All of them
-resolve once per service boot from config, not compiled into assembly
-specs, so they land in dedicated service-level registries
-(:class:`ChannelAdapterRegistry` and
-:class:`~modex_agent.plugins.backends.BackendRegistry`) instead of a
-``ComponentSlot``.
+:meth:`PluginRegistrationContext.register_persistence_backend` /
+:meth:`PluginRegistrationContext.register_protocol_engine` /
+:meth:`PluginRegistrationContext.register_external_transport`. All of them
+resolve once per service boot from config (or per provider/pool
+construction), not compiled into assembly specs, so they land in
+dedicated service-level registries (:class:`ChannelAdapterRegistry` and
+:class:`~modex_agent.core.backend_registry.BackendRegistry`) instead of
+a ``ComponentSlot``.
 
 Packaging contract (W6 — the directory layout is NOT the API):
 
@@ -57,12 +59,17 @@ from typing import Any, ClassVar, cast
 from pydantic import BaseModel
 
 from modex_agent.adapters.output import OutputAdapter
+from modex_agent.agents.external.transports.abc import ExternalTransport
 from modex_agent.control.channel import ControlChannel
+from modex_agent.core.backend_registry import BackendRegistry
 from modex_agent.core.emitter import TurnBinding, TurnEventSink
 from modex_agent.messaging.broker import MessageBroker
 from modex_agent.pipeline.adapters import InputAdapter
-from modex_agent.plugins.backends import BackendRegistry, BrokerFactory, ControlChannelFactory
+from modex_agent.plugins.backends import BrokerFactory, ControlChannelFactory
+from modex_agent.plugins.external_transports import ExternalTransportFactory
 from modex_agent.plugins.persistence_backends import PersistenceBackendBundle
+from modex_agent.providers.http.protocol import LLMProtocol
+from modex_agent.providers.protocol_engines import ProtocolEngineFactory
 from modex_agent.scope.capability import Capability
 from modex_agent.scope.component_registry import ComponentRegistry, PluginSource
 from modex_agent.scope.components import ComponentFactory, ComponentSlot
@@ -218,6 +225,8 @@ class PluginRegistrationContext:
         brokers: BackendRegistry[MessageBroker] | None = None,
         control_channels: BackendRegistry[ControlChannel] | None = None,
         persistence_backends: BackendRegistry[PersistenceBackendBundle] | None = None,
+        protocol_engines: BackendRegistry[LLMProtocol] | None = None,
+        external_transports: BackendRegistry[ExternalTransport] | None = None,
     ) -> None:
         self._registry = registry
         self._source: PluginSource | None = source
@@ -225,6 +234,8 @@ class PluginRegistrationContext:
         self._brokers = brokers
         self._control_channels = control_channels
         self._persistence_backends = persistence_backends
+        self._protocol_engines = protocol_engines
+        self._external_transports = external_transports
         # CAPABILITY entries are capability instances, not factories
         # (SPEC §4) — the one slot whose buffered object is not a
         # ComponentFactory.
@@ -233,6 +244,8 @@ class PluginRegistrationContext:
         self._broker_buffer: list[tuple[str, BrokerFactory]] = []
         self._control_channel_buffer: list[tuple[str, ControlChannelFactory]] = []
         self._persistence_backend_buffer: list[tuple[str, type[PersistenceBackendBundle]]] = []
+        self._protocol_engine_buffer: list[tuple[str, ProtocolEngineFactory]] = []
+        self._external_transport_buffer: list[tuple[str, ExternalTransportFactory]] = []
 
     def _add(
         self, slot: ComponentSlot, name: str, component: ComponentFactory | Capability
@@ -341,6 +354,38 @@ class PluginRegistrationContext:
         """
         self._persistence_backend_buffer.append((name, bundle))
 
+    def register_protocol_engine(self, name: str, factory: ProtocolEngineFactory) -> None:
+        """Register a protocol-engine constructor under *name*.
+
+        A protocol engine is NOT a compile-time component slot:
+        ``LLMConfig.interface_format`` names it and
+        :func:`modex_agent.providers.factory.create_llm_provider` resolves
+        the name once per provider construction through the process-level
+        ``BackendRegistry[LLMProtocol]``
+        (:func:`modex_agent.providers.protocol_engines.protocol_engine_registry`)
+        attached to this context. Without one the entry is buffered and
+        dropped at flush with a warning naming the plugin — same drop
+        semantics as :meth:`register_broker`.
+        """
+        self._protocol_engine_buffer.append((name, factory))
+
+    def register_external_transport(
+        self, kind: str, factory: ExternalTransportFactory
+    ) -> None:
+        """Register an external-transport constructor under *kind*.
+
+        A transport is NOT a compile-time component slot: the external
+        pool's declared ``provider_kind`` names it and
+        ``ExternalExecutionStrategy._build_external_backend`` resolves the
+        kind at pool assembly through the process-level
+        ``BackendRegistry[ExternalTransport]``
+        (:func:`modex_agent.plugins.external_transports.external_transport_registry`)
+        attached to this context. Without one the entry is buffered and
+        dropped at flush with a warning naming the plugin — same drop
+        semantics as :meth:`register_broker`.
+        """
+        self._external_transport_buffer.append((kind, factory))
+
     def pending_channel_adapters(self) -> tuple[str, ...]:
         """Channel-adapter names buffered but not yet flushed.
 
@@ -368,6 +413,18 @@ class PluginRegistrationContext:
         loader's read face for the drop warning — mirrors
         :meth:`pending_channel_adapters`)."""
         return tuple(name for name, _bundle in self._persistence_backend_buffer)
+
+    def pending_protocol_engines(self) -> tuple[str, ...]:
+        """Protocol-engine names buffered but not yet flushed (the
+        loader's read face for the drop warning — mirrors
+        :meth:`pending_channel_adapters`)."""
+        return tuple(name for name, _factory in self._protocol_engine_buffer)
+
+    def pending_external_transports(self) -> tuple[str, ...]:
+        """External-transport kinds buffered but not yet flushed (the
+        loader's read face for the drop warning — mirrors
+        :meth:`pending_channel_adapters`)."""
+        return tuple(kind for kind, _factory in self._external_transport_buffer)
 
     # ---- context manager protocol ----
 
@@ -413,6 +470,10 @@ class PluginRegistrationContext:
         self._control_channel_buffer = []
         persistence_backend_buffer = self._persistence_backend_buffer
         self._persistence_backend_buffer = []
+        protocol_engine_buffer = self._protocol_engine_buffer
+        self._protocol_engine_buffer = []
+        external_transport_buffer = self._external_transport_buffer
+        self._external_transport_buffer = []
         if channel_buffer and self._channel_adapters is not None:
             for name, channel_factory in channel_buffer:
                 self._channel_adapters.register(name, channel_factory)
@@ -425,6 +486,12 @@ class PluginRegistrationContext:
         if persistence_backend_buffer and self._persistence_backends is not None:
             for name, bundle in persistence_backend_buffer:
                 self._persistence_backends.register(name, bundle)
+        if protocol_engine_buffer and self._protocol_engines is not None:
+            for name, engine_factory in protocol_engine_buffer:
+                self._protocol_engines.register(name, engine_factory)
+        if external_transport_buffer and self._external_transports is not None:
+            for kind, transport_factory in external_transport_buffer:
+                self._external_transports.register(kind, transport_factory)
         if not buffer:
             return
 
@@ -531,6 +598,16 @@ class PluginDiscoveryConfig:
     ``channel_adapters``; the app-service boot attaches the process-level
     registry so plugin bundles reach the assembly factories' resolution
     road."""
+    protocol_engines: BackendRegistry[LLMProtocol] | None = None
+    """Landing registry for plugin protocol-engine registrations. Same
+    drop-with-warning-when-absent semantics as ``channel_adapters``; the
+    app-service boot attaches the process-level registry so plugin
+    engines reach ``create_llm_provider``'s resolution road."""
+    external_transports: BackendRegistry[ExternalTransport] | None = None
+    """Landing registry for plugin external-transport registrations. Same
+    drop-with-warning-when-absent semantics as ``channel_adapters``; the
+    app-service boot attaches the process-level registry so plugin
+    transports reach the external strategy's resolution road."""
 
 
 #: Default per-user plugin directory — enabled by default by the
@@ -590,6 +667,8 @@ class ComponentRegistryLoader:
                 brokers=discovery.brokers,
                 control_channels=discovery.control_channels,
                 persistence_backends=discovery.persistence_backends,
+                protocol_engines=discovery.protocol_engines,
+                external_transports=discovery.external_transports,
             )
 
         # 2. Project directories
@@ -600,6 +679,8 @@ class ComponentRegistryLoader:
                 brokers=discovery.brokers,
                 control_channels=discovery.control_channels,
                 persistence_backends=discovery.persistence_backends,
+                protocol_engines=discovery.protocol_engines,
+                external_transports=discovery.external_transports,
             )
 
         # 3. User directory (optional)
@@ -610,6 +691,8 @@ class ComponentRegistryLoader:
                 brokers=discovery.brokers,
                 control_channels=discovery.control_channels,
                 persistence_backends=discovery.persistence_backends,
+                protocol_engines=discovery.protocol_engines,
+                external_transports=discovery.external_transports,
             )
 
         # 4. Entry points (PyPI)
@@ -629,6 +712,8 @@ class ComponentRegistryLoader:
                 brokers=discovery.brokers,
                 control_channels=discovery.control_channels,
                 persistence_backends=discovery.persistence_backends,
+                protocol_engines=discovery.protocol_engines,
+                external_transports=discovery.external_transports,
             )
 
     # ---- internal helpers ----
@@ -644,6 +729,8 @@ class ComponentRegistryLoader:
         brokers: BackendRegistry[MessageBroker] | None = None,
         control_channels: BackendRegistry[ControlChannel] | None = None,
         persistence_backends: BackendRegistry[PersistenceBackendBundle] | None = None,
+        protocol_engines: BackendRegistry[LLMProtocol] | None = None,
+        external_transports: BackendRegistry[ExternalTransport] | None = None,
     ) -> None:
         """Register one plugin instance.
 
@@ -655,11 +742,12 @@ class ComponentRegistryLoader:
         fixed at boot instead of being silently shadowed.
 
         Service-level registrations (channel adapters, broker,
-        control-channel and persistence-backend backends) land in their
-        registries when the load carries them; without one they are
-        dropped with a WARNING naming the plugin and the dropped names
-        (the generic load path's only service-level face — service-level
-        boots attach registries).
+        control-channel, persistence-backend, protocol-engine and
+        external-transport backends) land in their registries when the
+        load carries them; without one they are dropped with a WARNING
+        naming the plugin and the dropped names (the generic load path's
+        only service-level face — service-level boots attach
+        registries).
         """
         ctx = PluginRegistrationContext(
             registry,
@@ -668,6 +756,8 @@ class ComponentRegistryLoader:
             brokers=brokers,
             control_channels=control_channels,
             persistence_backends=persistence_backends,
+            protocol_engines=protocol_engines,
+            external_transports=external_transports,
         )
         try:
             plugin.register(ctx)
@@ -729,6 +819,32 @@ class ComponentRegistryLoader:
                     source,
                     list(dropped),
                 )
+        if protocol_engines is None:
+            dropped = ctx.pending_protocol_engines()
+            if dropped:
+                logger.warning(
+                    "Plugin %s from %s registered protocol engines "
+                    "%s but the load carries no protocol-engine "
+                    "BackendRegistry — dropping them (attach a registry "
+                    "via PluginDiscoveryConfig.protocol_engines to "
+                    "keep them)",
+                    type(plugin).__name__,
+                    source,
+                    list(dropped),
+                )
+        if external_transports is None:
+            dropped = ctx.pending_external_transports()
+            if dropped:
+                logger.warning(
+                    "Plugin %s from %s registered external transports "
+                    "%s but the load carries no external-transport "
+                    "BackendRegistry — dropping them (attach a registry "
+                    "via PluginDiscoveryConfig.external_transports to "
+                    "keep them)",
+                    type(plugin).__name__,
+                    source,
+                    list(dropped),
+                )
         ctx.flush()
 
     @classmethod
@@ -742,6 +858,8 @@ class ComponentRegistryLoader:
         brokers: BackendRegistry[MessageBroker] | None = None,
         control_channels: BackendRegistry[ControlChannel] | None = None,
         persistence_backends: BackendRegistry[PersistenceBackendBundle] | None = None,
+        protocol_engines: BackendRegistry[LLMProtocol] | None = None,
+        external_transports: BackendRegistry[ExternalTransport] | None = None,
     ) -> None:
         """Scan *directory* for .py files, import Plugin subclasses.
 
@@ -785,6 +903,8 @@ class ComponentRegistryLoader:
                     brokers=brokers,
                     control_channels=control_channels,
                     persistence_backends=persistence_backends,
+                    protocol_engines=protocol_engines,
+                    external_transports=external_transports,
                 )
 
     @classmethod

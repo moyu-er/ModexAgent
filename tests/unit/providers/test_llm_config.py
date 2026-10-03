@@ -6,7 +6,8 @@ from modex_agent.providers.factory import create_llm_provider
 from modex_agent.providers.http.formats.anthropic import AnthropicProtocol
 from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
 from modex_agent.providers.http.provider import HTTPStreamProvider
-from modex_agent.providers.llm_config import InterfaceFormat, LLMConfig, Modality, ModelCapabilities
+from modex_agent.providers.llm_config import LLMConfig, Modality, ModelCapabilities
+from modex_agent.providers.protocol_engines import ANTHROPIC_FORMAT, OPENAI_COMPATIBLE_FORMAT
 
 
 class TestLLMConfig:
@@ -48,15 +49,14 @@ class TestLLMConfig:
 
     def test_default_interface_format_is_openai_compatible(self) -> None:
         cfg = LLMConfig()
-        assert cfg.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
+        assert cfg.interface_format == OPENAI_COMPATIBLE_FORMAT
 
-    def test_interface_format_accepts_enum(self) -> None:
-        cfg = LLMConfig(interface_format=InterfaceFormat.ANTHROPIC)
-        assert cfg.interface_format == InterfaceFormat.ANTHROPIC
-
-    def test_interface_format_rejects_invalid_string(self) -> None:
-        with pytest.raises(ValueError):
-            LLMConfig(interface_format="invalid")  # type: ignore[arg-type]
+    def test_interface_format_accepts_any_name(self) -> None:
+        # The field is a plain name; the protocol-engine registry is the
+        # closed-set authority (an unknown name fails loudly at
+        # create_llm_provider — covered in test_protocol_engines.py).
+        cfg = LLMConfig(interface_format=ANTHROPIC_FORMAT)
+        assert cfg.interface_format == ANTHROPIC_FORMAT
 
     def test_reasoning_effort_enum_value(self) -> None:
         cfg = LLMConfig(reasoning_effort=ReasoningEffort.MEDIUM)
@@ -74,7 +74,7 @@ class TestCreateLLMProvider:
             api_key="sk-test",
             base_url="https://api.example.com",
             reasoning_effort=ReasoningEffort.HIGH,
-            interface_format=InterfaceFormat.OPENAI_COMPATIBLE,
+            interface_format=OPENAI_COMPATIBLE_FORMAT,
         )
         provider = create_llm_provider(cfg)
         assert isinstance(provider, HTTPStreamProvider)
@@ -88,7 +88,7 @@ class TestCreateLLMProvider:
             api_key="sk-test",
             base_url="https://api.example.com",
             reasoning_effort=ReasoningEffort.MEDIUM,
-            interface_format=InterfaceFormat.ANTHROPIC,
+            interface_format=ANTHROPIC_FORMAT,
         )
         provider = create_llm_provider(cfg)
         assert isinstance(provider, HTTPStreamProvider)
@@ -103,7 +103,7 @@ class TestCreateLLMProvider:
             model="openai/gpt-4o",
             api_key="sk-test",
             base_url="https://api.example.com",
-            interface_format=InterfaceFormat.OPENAI_COMPATIBLE,
+            interface_format=OPENAI_COMPATIBLE_FORMAT,
         )
         provider = create_llm_provider(cfg)
         assert isinstance(provider, HTTPStreamProvider)
@@ -117,7 +117,7 @@ class TestCreateLLMProvider:
             model="anthropic/claude-3-5-sonnet",
             api_key="sk-test",
             base_url="https://api.example.com",
-            interface_format=InterfaceFormat.ANTHROPIC,
+            interface_format=ANTHROPIC_FORMAT,
         )
         provider = create_llm_provider(cfg)
         assert isinstance(provider, HTTPStreamProvider)
@@ -130,7 +130,7 @@ class TestCreateLLMProvider:
             api_key="sk-test",
             base_url="https://api.example.com",
             top_p=0.9,
-            interface_format=InterfaceFormat.OPENAI_COMPATIBLE,
+            interface_format=OPENAI_COMPATIBLE_FORMAT,
         )
         provider = create_llm_provider(cfg)
         assert isinstance(provider, HTTPStreamProvider)
@@ -142,7 +142,7 @@ class TestCreateLLMProvider:
             api_key="sk-test",
             base_url="https://api.example.com",
             top_p=0.9,
-            interface_format=InterfaceFormat.ANTHROPIC,
+            interface_format=ANTHROPIC_FORMAT,
         )
         provider = create_llm_provider(cfg)
         assert isinstance(provider, HTTPStreamProvider)

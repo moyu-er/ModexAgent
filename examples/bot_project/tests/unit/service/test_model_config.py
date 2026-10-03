@@ -8,7 +8,8 @@ import pytest
 from pydantic import ValidationError
 
 from modex_agent.core.llm_request import ReasoningEffort
-from modex_agent.providers.llm_config import InterfaceFormat, LLMConfig, Modality
+from modex_agent.providers.llm_config import LLMConfig, Modality
+from modex_agent.providers.protocol_engines import OPENAI_COMPATIBLE_FORMAT
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
@@ -51,7 +52,7 @@ def test_parse_providers_and_models(tmp_path: Path) -> None:
     assert {m.name for m in mm.models} == {"M3", "M2"}
     assert mm.models[0].capabilities == [Modality.TEXT, Modality.IMAGE]
     assert mm.base_url == "https://api.minimaxi.com/v1"
-    assert mm.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
+    assert mm.interface_format == OPENAI_COMPATIBLE_FORMAT
 
 
 def test_resolve_by_name(tmp_path: Path) -> None:
@@ -60,7 +61,7 @@ def test_resolve_by_name(tmp_path: Path) -> None:
     assert isinstance(r, ResolvedModel)
     assert r.model.model == "MiniMax-M3"
     assert r.provider.api_key == "k1"
-    assert r.provider.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
+    assert r.provider.interface_format == OPENAI_COMPATIBLE_FORMAT
     assert r.capabilities.supports(Modality.IMAGE)
 
 
@@ -78,7 +79,7 @@ def test_synthesize_llm_config(tmp_path: Path) -> None:
     llm = cfg.synthesize_llm_config()
     assert isinstance(llm, LLMConfig)
     assert llm.model == "MiniMax-M3"
-    assert llm.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
+    assert llm.interface_format == OPENAI_COMPATIBLE_FORMAT
     assert llm.api_key == "k1"
     assert llm.base_url == "https://api.minimaxi.com/v1"
     assert llm.temperature == 0.6
@@ -230,7 +231,7 @@ def test_openai_prefixed_model_loads_verbatim(tmp_path: Path) -> None:
     llm = cfg.synthesize_llm_config(resolved)
     # interface_format stays the explicit provider value — never inferred
     # from the model prefix.
-    assert llm.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
+    assert llm.interface_format == OPENAI_COMPATIBLE_FORMAT
     real = create_llm_provider(llm)
     assert isinstance(real, HTTPStreamProvider)
     assert isinstance(real._protocol, OpenAICompatProtocol)
@@ -283,7 +284,7 @@ def test_legacy_openai_prefix_loads_verbatim_with_default_format(tmp_path: Path)
     llm = cfg.synthesize_llm_config()
     # No prefix stripping, no interface_format inference from the prefix —
     # the default format applies and the model name passes through verbatim.
-    assert llm.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
+    assert llm.interface_format == OPENAI_COMPATIBLE_FORMAT
     assert llm.model == "openai/MiniMax-M3"
 
 
@@ -314,10 +315,10 @@ def test_legacy_anthropic_prefix_loads_verbatim_without_inference(tmp_path: Path
     assert resolved is not None
     # No inference: interface_format stays the default (OPENAI_COMPATIBLE),
     # the prefixed model name loads verbatim, no error is raised.
-    assert resolved.provider.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
+    assert resolved.provider.interface_format == OPENAI_COMPATIBLE_FORMAT
     assert resolved.model.model == "anthropic/claude-3"
     llm = cfg.synthesize_llm_config(resolved)
-    assert llm.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
+    assert llm.interface_format == OPENAI_COMPATIBLE_FORMAT
     real = create_llm_provider(llm)
     assert isinstance(real, HTTPStreamProvider)
     assert isinstance(real._protocol, OpenAICompatProtocol)

@@ -29,9 +29,9 @@ from __future__ import annotations
 import logging
 
 import aiohttp
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
-from modex_agent.providers.llm_config import InterfaceFormat
+from modex_agent.providers.protocol_engines import ANTHROPIC_FORMAT, protocol_engine_registry
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +84,24 @@ class FetchModelsReq(BaseModel):
     provider_key: str | None = None
     base_url: str | None = None
     api_key: str | None = None
-    interface_format: InterfaceFormat | None = None
+    interface_format: str | None = None
     models_url: str | None = None
+
+    @field_validator("interface_format")
+    @classmethod
+    def _known_interface_format(cls, value: str | None) -> str | None:
+        """Reject unknown format names at the wire boundary (422), with the
+        protocol-engine registry as the closed-set authority — the registry
+        lists the registered names (bundled + plugin-registered) in the
+        error."""
+        if value is None:
+            return value
+        registered = protocol_engine_registry().names()
+        if value not in registered:
+            raise ValueError(
+                f"unknown interface_format {value!r} — registered: {list(registered)}"
+            )
+        return value
 
 
 class ModelFetchError(Exception):
@@ -163,10 +179,10 @@ def build_models_url_candidates(
 
 def _build_headers(
     api_key: str,
-    interface_format: InterfaceFormat,
+    interface_format: str,
 ) -> dict[str, str]:
     """Build auth headers based on the provider's interface format."""
-    if interface_format == InterfaceFormat.ANTHROPIC:
+    if interface_format == ANTHROPIC_FORMAT:
         return {
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
@@ -207,7 +223,7 @@ async def fetch_provider_models(
     session: aiohttp.ClientSession,
     base_url: str,
     api_key: str,
-    interface_format: InterfaceFormat,
+    interface_format: str,
     models_url_override: str | None = None,
 ) -> list[FetchedModel]:
     """Fetch the list of available models from a provider.

@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from bot.eval.harbor.entry import EntryConfig, TaskResultArtifact, UsageArtifact
 from modex_agent.app.models.registry import ModelCfg, ModelRegistry, ProviderCfg
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.providers.llm_config import InterfaceFormat
+from modex_agent.providers.protocol_engines import ANTHROPIC_FORMAT, OPENAI_COMPATIBLE_FORMAT
 from modex_agent.scope.components import ComponentFactory
 from modex_agent.trace.pricing import PriceBook, load_pricebook
 from modex_agent.trace.store import SpanModel
@@ -99,9 +99,7 @@ def build_model_config(config: EntryConfig) -> ModelRegistry:
     if not separator:
         provider_key, model_name = "harbor", config.model
     interface_format = (
-        InterfaceFormat.ANTHROPIC
-        if provider_key == "anthropic"
-        else InterfaceFormat.OPENAI_COMPATIBLE
+        ANTHROPIC_FORMAT if provider_key == "anthropic" else OPENAI_COMPATIBLE_FORMAT
     )
     return ModelRegistry(
         default_provider=provider_key,

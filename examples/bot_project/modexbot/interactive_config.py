@@ -10,7 +10,7 @@ import questionary
 from rich.console import Console
 from rich.table import Table
 
-from modex_agent.providers.llm_config import InterfaceFormat
+from modex_agent.providers.protocol_engines import ANTHROPIC_FORMAT, OPENAI_COMPATIBLE_FORMAT
 from modexbot.config_model import (
     load_models_section,
     save_models_section,
@@ -44,10 +44,10 @@ def _add_provider(p: Path, section: dict[str, Any]) -> None:
     interface_format = questionary.select(
         "interface format:",
         choices=[
-            questionary.Choice("OpenAI Compatible", InterfaceFormat.OPENAI_COMPATIBLE.value),
-            questionary.Choice("Anthropic", InterfaceFormat.ANTHROPIC.value),
+            questionary.Choice("OpenAI Compatible", OPENAI_COMPATIBLE_FORMAT),
+            questionary.Choice("Anthropic", ANTHROPIC_FORMAT),
         ],
-        default=InterfaceFormat.OPENAI_COMPATIBLE.value,
+        default=OPENAI_COMPATIBLE_FORMAT,
         instruction=f"({_SELECT_HINT})",
     ).ask()
     if not (key and name and base_url and api_key and interface_format):

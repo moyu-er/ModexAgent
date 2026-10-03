@@ -1,4 +1,5 @@
-"""Factory routing tests — every InterfaceFormat lands on HTTPStreamProvider.
+"""Factory routing tests — every interface_format name lands on
+HTTPStreamProvider with the engine the registry resolves.
 
 Covers the T19 wiring contract: three-format engine dispatch, verbatim
 model-name passthrough (no prefix processing — user ruling 2026-08-26),
@@ -17,23 +18,30 @@ from modex_agent.providers.http.formats.anthropic import AnthropicProtocol
 from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
 from modex_agent.providers.http.formats.openai_responses import OpenAIResponsesProtocol
 from modex_agent.providers.http.provider import HTTPStreamProvider
-from modex_agent.providers.llm_config import InterfaceFormat, LLMConfig
+from modex_agent.providers.llm_config import LLMConfig
 from modex_agent.providers.model_config import GlobalModelConfig
+from modex_agent.providers.protocol_engines import (
+    ANTHROPIC_FORMAT,
+    OPENAI_COMPATIBLE_FORMAT,
+    OPENAI_RESPONSE_FORMAT,
+)
 
 _BASE = "https://api.example.com/v1"
+
+_BUNDLED_FORMATS = (OPENAI_COMPATIBLE_FORMAT, OPENAI_RESPONSE_FORMAT, ANTHROPIC_FORMAT)
 
 
 class TestThreeFormatRouting:
     @pytest.mark.parametrize(
         ("fmt", "engine_type"),
         [
-            (InterfaceFormat.OPENAI_COMPATIBLE, OpenAICompatProtocol),
-            (InterfaceFormat.OPENAI_RESPONSE, OpenAIResponsesProtocol),
-            (InterfaceFormat.ANTHROPIC, AnthropicProtocol),
+            (OPENAI_COMPATIBLE_FORMAT, OpenAICompatProtocol),
+            (OPENAI_RESPONSE_FORMAT, OpenAIResponsesProtocol),
+            (ANTHROPIC_FORMAT, AnthropicProtocol),
         ],
     )
     def test_each_format_builds_provider_with_matching_engine(
-        self, fmt: InterfaceFormat, engine_type: type
+        self, fmt: str, engine_type: type
     ) -> None:
         provider = create_llm_provider(
             LLMConfig(model="m", api_key="sk-test", base_url=_BASE, interface_format=fmt)
@@ -60,7 +68,7 @@ class TestModelPassthrough:
                 model="anthropic/claude-x",
                 api_key="sk-test",
                 base_url=_BASE,
-                interface_format=InterfaceFormat.ANTHROPIC,
+                interface_format=ANTHROPIC_FORMAT,
             )
         )
         assert isinstance(provider, HTTPStreamProvider)
@@ -76,31 +84,31 @@ class TestUrlResolution:
         ("fmt", "base_url", "expected_url"),
         [
             (
-                InterfaceFormat.OPENAI_COMPATIBLE,
+                OPENAI_COMPATIBLE_FORMAT,
                 "https://api.example.com/v1",
                 "https://api.example.com/v1/chat/completions",
             ),
             (
-                InterfaceFormat.OPENAI_RESPONSE,
+                OPENAI_RESPONSE_FORMAT,
                 "https://api.example.com/v1",
                 "https://api.example.com/v1/responses",
             ),
             # anthropic: base already ending in /v1 joins to {base}/messages
             (
-                InterfaceFormat.ANTHROPIC,
+                ANTHROPIC_FORMAT,
                 "https://api.anthropic.com/v1",
                 "https://api.anthropic.com/v1/messages",
             ),
             # anthropic: bare base gets the /v1 segment appended
             (
-                InterfaceFormat.ANTHROPIC,
+                ANTHROPIC_FORMAT,
                 "https://api.anthropic.com",
                 "https://api.anthropic.com/v1/messages",
             ),
         ],
     )
     def test_default_join_per_format(
-        self, fmt: InterfaceFormat, base_url: str, expected_url: str
+        self, fmt: str, base_url: str, expected_url: str
     ) -> None:
         provider = create_llm_provider(
             LLMConfig(model="m", api_key="sk-test", base_url=base_url, interface_format=fmt)
@@ -108,10 +116,8 @@ class TestUrlResolution:
         assert isinstance(provider, HTTPStreamProvider)
         assert provider._url == expected_url
 
-    @pytest.mark.parametrize("fmt", list(InterfaceFormat))
-    def test_endpoint_url_override_used_verbatim(
-        self, fmt: InterfaceFormat
-    ) -> None:
+    @pytest.mark.parametrize("fmt", _BUNDLED_FORMATS)
+    def test_endpoint_url_override_used_verbatim(self, fmt: str) -> None:
         provider = create_llm_provider(
             LLMConfig(
                 model="m",
@@ -175,13 +181,13 @@ class TestApiKeyEnvFallback:
     @pytest.mark.parametrize(
         ("fmt", "env_name"),
         [
-            (InterfaceFormat.OPENAI_COMPATIBLE, "OPENAI_API_KEY"),
-            (InterfaceFormat.OPENAI_RESPONSE, "OPENAI_API_KEY"),
-            (InterfaceFormat.ANTHROPIC, "ANTHROPIC_API_KEY"),
+            (OPENAI_COMPATIBLE_FORMAT, "OPENAI_API_KEY"),
+            (OPENAI_RESPONSE_FORMAT, "OPENAI_API_KEY"),
+            (ANTHROPIC_FORMAT, "ANTHROPIC_API_KEY"),
         ],
     )
     def test_empty_api_key_falls_back_to_engine_env_var(
-        self, fmt: InterfaceFormat, env_name: str, monkeypatch: pytest.MonkeyPatch
+        self, fmt: str, env_name: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv(env_name, raising=False)
         monkeypatch.setenv(env_name, "env-key")
@@ -193,12 +199,12 @@ class TestApiKeyEnvFallback:
     @pytest.mark.parametrize(
         ("fmt", "env_name"),
         [
-            (InterfaceFormat.OPENAI_COMPATIBLE, "OPENAI_API_KEY"),
-            (InterfaceFormat.ANTHROPIC, "ANTHROPIC_API_KEY"),
+            (OPENAI_COMPATIBLE_FORMAT, "OPENAI_API_KEY"),
+            (ANTHROPIC_FORMAT, "ANTHROPIC_API_KEY"),
         ],
     )
     def test_empty_api_key_without_env_var_is_none(
-        self, fmt: InterfaceFormat, env_name: str, monkeypatch: pytest.MonkeyPatch
+        self, fmt: str, env_name: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv(env_name, raising=False)
         provider = create_llm_provider(

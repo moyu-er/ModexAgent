@@ -77,7 +77,12 @@ from modex_agent.providers.http.formats.anthropic import AnthropicProtocol
 from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
 from modex_agent.providers.http.formats.openai_responses import OpenAIResponsesProtocol
 from modex_agent.providers.http.provider import HTTPStreamProvider
-from modex_agent.providers.llm_config import InterfaceFormat, LLMConfig
+from modex_agent.providers.llm_config import LLMConfig
+from modex_agent.providers.protocol_engines import (
+    ANTHROPIC_FORMAT,
+    OPENAI_COMPATIBLE_FORMAT,
+    OPENAI_RESPONSE_FORMAT,
+)
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.manager import InMemoryToolManager
 
@@ -112,7 +117,7 @@ def _event_sse(*pairs: tuple[str, dict[str, Any]]) -> bytes:
 class _FormatCase:
     """Per-format bundle: factory routing, canned full stream, replay expectations."""
 
-    fmt: InterfaceFormat
+    fmt: str
     engine: type
     stream: bytes
     call_id: str
@@ -285,7 +290,7 @@ def _anthropic_full_stream() -> bytes:
 
 _ALL_CASES = [
     _FormatCase(
-        InterfaceFormat.OPENAI_COMPATIBLE,
+        OPENAI_COMPATIBLE_FORMAT,
         OpenAICompatProtocol,
         _compat_full_stream(),
         "call_a",
@@ -293,7 +298,7 @@ _ALL_CASES = [
         None,
     ),
     _FormatCase(
-        InterfaceFormat.OPENAI_RESPONSE,
+        OPENAI_RESPONSE_FORMAT,
         OpenAIResponsesProtocol,
         _responses_full_stream(),
         "call_a",
@@ -301,7 +306,7 @@ _ALL_CASES = [
         "rs_1",
     ),
     _FormatCase(
-        InterfaceFormat.ANTHROPIC,
+        ANTHROPIC_FORMAT,
         AnthropicProtocol,
         _anthropic_full_stream(),
         "toolu_A",
@@ -309,10 +314,10 @@ _ALL_CASES = [
         None,
     ),
 ]
-_CASE_IDS = [case.fmt.value for case in _ALL_CASES]
+_CASE_IDS = [case.fmt for case in _ALL_CASES]
 
 
-def _config(fmt: InterfaceFormat, **overrides: Any) -> LLMConfig:
+def _config(fmt: str, **overrides: Any) -> LLMConfig:
     defaults: dict[str, Any] = {
         "model": "test-model",
         "api_key": "test-key",
@@ -419,7 +424,7 @@ async def test_anthropic_thinking_signature_replayed_in_second_round_request(
         ),
         ("message_stop", {}),
     )
-    provider, requests = await e2e_provider(_config(InterfaceFormat.ANTHROPIC), round1_stream)
+    provider, requests = await e2e_provider(_config(ANTHROPIC_FORMAT), round1_stream)
 
     first = await provider.chat_stream(messages=[ChatMessage(role=MessageRole.USER, content="q")])
     assert first.content == "Answer"
@@ -646,7 +651,8 @@ async def test_tool_media_placement_after_injection_across_formats(
     assert len(requests) == 1
     body = json.loads(requests[0].content)
     match case.fmt:
-        case InterfaceFormat.ANTHROPIC:
+        # Literal patterns: a bare name would be a capture pattern.
+        case "anthropic":
             # The image rides natively inside the tool_result block.
             tool_result = body["messages"][-1]["content"][0]
             assert tool_result["type"] == "tool_result"
@@ -659,7 +665,7 @@ async def test_tool_media_placement_after_injection_across_formats(
                 "type": "image",
                 "source": {"type": "base64", "media_type": "image/png", "data": _PNG_B64},
             }
-        case InterfaceFormat.OPENAI_COMPATIBLE:
+        case "openai_compatible":
             # Exactly one follow-up user message: attribution line + image_url.
             follow_ups = [
                 m
@@ -674,7 +680,7 @@ async def test_tool_media_placement_after_injection_across_formats(
             assert "call-x" in texts[0]["text"]
             assert len(images) == 1
             assert images[0]["image_url"] == {"url": _PNG_DATA_URL}
-        case InterfaceFormat.OPENAI_RESPONSE:
+        case "openai_response":
             # The image rides natively in the paired function_call_output.
             outputs = [item for item in body["input"] if item.get("type") == "function_call_output"]
             assert len(outputs) == 1

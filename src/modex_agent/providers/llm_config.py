@@ -2,22 +2,13 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
 from modex_agent.core.llm_request import ReasoningEffort
+from modex_agent.providers.protocol_engines import OPENAI_COMPATIBLE_FORMAT
 
-__all__ = ["InterfaceFormat", "LLMConfig", "Modality", "ModelCapabilities", "ModelInfo"]
-
-
-class InterfaceFormat(StrEnum):
-    """Wire protocol used by an LLM provider configuration."""
-
-    OPENAI_COMPATIBLE = "openai_compatible"
-    OPENAI_RESPONSE = "openai_response"
-    ANTHROPIC = "anthropic"
+__all__ = ["LLMConfig", "Modality", "ModelCapabilities", "ModelInfo"]
 
 
 class LLMConfig(BaseModel):
@@ -37,7 +28,11 @@ class LLMConfig(BaseModel):
     max_output_tokens: int = 80000
     capabilities: ModelCapabilities = Field(default_factory=ModelCapabilities)
     reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
-    interface_format: InterfaceFormat = InterfaceFormat.OPENAI_COMPATIBLE
+    interface_format: str = OPENAI_COMPATIBLE_FORMAT
+    """Wire protocol name — resolved through the protocol-engine registry
+    (:func:`modex_agent.providers.protocol_engines.protocol_engine_registry`),
+    the closed-set authority; an unknown name fails loudly at provider
+    creation listing the registered names."""
     headers: dict[str, str] = Field(default_factory=dict, repr=False)
     responses_store: bool = Field(
         default=False,

@@ -3,15 +3,16 @@ deleted ``ioc/factories/llm.py``; providers is the owning domain — the
 factory consumes ``LLMConfig``/``SafetyConfig`` and produces the one
 direct-HTTP provider implementation).
 
-Routes every ``interface_format`` onto the single direct-HTTP provider
-(ADR-0046): :class:`HTTPStreamProvider` with the matching protocol engine:
+Routes every ``interface_format`` name onto the single direct-HTTP
+provider (ADR-0046): :class:`HTTPStreamProvider` with the protocol engine
+the name resolves to in the process-level registry
+(:func:`modex_agent.providers.protocol_engines.protocol_engine_registry`)
+— the bundled ``openai_compatible`` / ``openai_response`` / ``anthropic``
+engines plus whatever a plugin registered under a new name. An unknown
+name raises the registry's loud error listing the registered names.
 
-- ``openai_compatible`` → :class:`OpenAICompatProtocol` (chat completions wire)
-- ``openai_response``   → :class:`OpenAIResponsesProtocol` (responses wire)
-- ``anthropic``         → :class:`AnthropicProtocol` (messages wire)
-
-This factory is the single ``InterfaceFormat`` branch point — the provider
-itself carries zero format knowledge. Model names pass through VERBATIM
+The factory carries zero per-format knowledge beyond that resolve — the
+provider itself carries none at all. Model names pass through VERBATIM
 (user ruling 2026-08-26): no routing-prefix processing anywhere in the call
 path — a stale ``openai/`` or ``anthropic/`` prefix simply reaches the API
 as part of the model name. The factory also resolves the final request URL
@@ -33,12 +34,9 @@ from modex_agent.core.llm_struct import (
     TurnTimeoutPolicy,
 )
 from modex_agent.core.provider import LLMProvider
-from modex_agent.providers.http.formats.anthropic import AnthropicProtocol
-from modex_agent.providers.http.formats.openai_compat import OpenAICompatProtocol
-from modex_agent.providers.http.formats.openai_responses import OpenAIResponsesProtocol
-from modex_agent.providers.http.protocol import LLMProtocol
 from modex_agent.providers.http.provider import HTTPStreamProvider
-from modex_agent.providers.llm_config import InterfaceFormat, LLMConfig
+from modex_agent.providers.llm_config import LLMConfig
+from modex_agent.providers.protocol_engines import protocol_engine_registry
 from modex_agent.providers.safety_config import SafetyConfig
 
 logger = logging.getLogger(__name__)
@@ -50,16 +48,17 @@ def create_llm_provider(
 ) -> LLMProvider:
     """Create an LLMProvider from config.
 
-    All three ``interface_format`` values route to
-    :class:`HTTPStreamProvider`, each wired with its protocol engine —
-    the factory is the only ``InterfaceFormat`` branch point. ``config.model``
-    passes through VERBATIM (no prefix stripping, no validation — a stale
-    prefix reaches the API as part of the model name; user ruling
-    2026-08-26). The request URL is resolved here: ``endpoint_url``
-    verbatim when set, else the engine's ``url()`` join on the normalized
-    ``base_url``. ``parse_think_tags`` stays at the engine default (True):
-    ``LLMConfig`` has no such field, so the framework path always parses
-    think tags.
+    Every ``interface_format`` name routes to
+    :class:`HTTPStreamProvider`, wired with the engine the name resolves
+    to in the protocol-engine registry (an unknown name raises the
+    registry's error listing the registered names).
+    ``config.model`` passes through VERBATIM (no prefix stripping, no
+    validation — a stale prefix reaches the API as part of the model
+    name; user ruling 2026-08-26). The request URL is resolved here:
+    ``endpoint_url`` verbatim when set, else the engine's ``url()`` join
+    on the normalized ``base_url``. ``parse_think_tags`` stays at the
+    engine default (True): ``LLMConfig`` has no such field, so the
+    framework path always parses think tags.
 
     Args:
         config: LLM configuration.
@@ -91,14 +90,7 @@ def create_llm_provider(
     model = config.model
     base_url = config.base_url.strip().rstrip("/") if config.base_url else ""
 
-    protocol: LLMProtocol
-    match config.interface_format:
-        case InterfaceFormat.OPENAI_COMPATIBLE:
-            protocol = OpenAICompatProtocol()
-        case InterfaceFormat.OPENAI_RESPONSE:
-            protocol = OpenAIResponsesProtocol()
-        case InterfaceFormat.ANTHROPIC:
-            protocol = AnthropicProtocol()
+    protocol = protocol_engine_registry().resolve(config.interface_format)
 
     # endpoint_url (non-empty) is the complete URL used verbatim, bypassing
     # the engine's url() join (non-standard gateway override).
@@ -106,7 +98,7 @@ def create_llm_provider(
 
     logger.info(
         "create_llm_provider: interface_format=%s model=%s url=%s",
-        config.interface_format.value,
+        config.interface_format,
         model,
         url,
     )

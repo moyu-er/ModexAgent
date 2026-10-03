@@ -37,7 +37,7 @@ from modex_agent.agents.external.child_discovery import (
     ExternalChildSessionDiscoverySink,
 )
 from modex_agent.agents.external.cli_resolver import resolve_modexctl_bin_dir
-from modex_agent.agents.external.transports import ExternalTransport, OpenCodeTransport
+from modex_agent.agents.external.transports import ExternalTransport
 from modex_agent.agents.external.types import (
     ExternalEnvSpec,
 )
@@ -70,6 +70,7 @@ from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.persistence.session_registry import SessionRegistry
 from modex_agent.plugins.assembly.backend_factory import build_external_session_map_store
 from modex_agent.plugins.assembly.context import AgentContext
+from modex_agent.plugins.external_transports import external_transport_registry
 from modex_agent.scope.execution_kind import strategy_name_of
 from modex_agent.scope.runtime_ownership import BUNDLED_EXTERNAL_OWNERSHIP, RuntimeOwnership
 from modex_agent.scope.spec import PoolSpec
@@ -267,11 +268,18 @@ class ExternalExecutionStrategy(ExecutionStrategyABC):
     def _provider_executable_for(kind: ProviderKind) -> str:
         return kind.value
 
-    def _build_external_backend(self, kind: ProviderKind) -> ExternalTransport:
-        """Build the provider's transport (the ``backend`` the provider seam wraps)."""
-        if kind != ProviderKind.OPENCODE:
-            raise ValueError(f"Unsupported provider_kind: {kind!r}")
-        return OpenCodeTransport()
+    def _build_external_backend(self, kind: str) -> ExternalTransport:
+        """Build the provider's transport (the ``backend`` the provider seam
+        wraps) — registry-resolved by provider-kind name.
+
+        The process-level external-transport registry
+        (:func:`modex_agent.plugins.external_transports.external_transport_registry`)
+        is the closed-set authority: the bundled ``opencode`` transport
+        seeds it, plugins register further kinds, and an unknown kind
+        raises the registry's error listing the registered kinds at this
+        same assembly point.
+        """
+        return external_transport_registry().resolve(kind)
 
     # ── Assemble ─────────────────────────────────────────────────────────
 
@@ -417,7 +425,7 @@ class ExternalExecutionStrategy(ExecutionStrategyABC):
             descriptor,
             provider=None,
             backend_provider=PoolScopedBackendProvider(
-                self._build_external_backend(provider_kind)
+                self._build_external_backend(provider_kind.value)
             ),
             session_store=session_store,
             provider_kind=provider_kind,
@@ -536,7 +544,7 @@ class ExternalExecutionStrategy(ExecutionStrategyABC):
 
         provider_kind = ProviderKind(spec.provider_kind) if spec.provider_kind else ProviderKind.OPENCODE
         backend_provider = PoolScopedBackendProvider(
-            self._build_external_backend(provider_kind)
+            self._build_external_backend(provider_kind.value)
         )
 
         child_sink, child_emitter_factory = _build_child_discovery_collaborators(

@@ -28,7 +28,7 @@ from pydantic import ValidationError
 from bot.service.config_controller import FieldValidationError
 from bot.webui.model_fetch import FetchModelsReq, ModelFetchError
 from modex_agent.app.models.registry import ProviderCfg
-from modex_agent.providers.llm_config import InterfaceFormat
+from modex_agent.providers.protocol_engines import OPENAI_COMPATIBLE_FORMAT
 
 if TYPE_CHECKING:
     from bot.webui.server import WebUIServer
@@ -176,7 +176,7 @@ async def handle_fetch_provider_models(request: web.Request) -> web.Response:
     interface_format = (
         req.interface_format
         or (saved.interface_format if saved else None)
-        or InterfaceFormat.OPENAI_COMPATIBLE
+        or OPENAI_COMPATIBLE_FORMAT
     )
     models_url = (
         req.models_url

@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from modex_agent.providers.llm_config import InterfaceFormat
+from modex_agent.providers.protocol_engines import OPENAI_COMPATIBLE_FORMAT
 
 
 class GlobalModelConfig(BaseModel):
@@ -31,7 +31,7 @@ class GlobalModelConfig(BaseModel):
     capabilities: list[str] = Field(default_factory=lambda: ["text"])
     temperature: float = 0.7
     max_output_tokens: int = 80000
-    interface_format: InterfaceFormat = InterfaceFormat.OPENAI_COMPATIBLE
+    interface_format: str = OPENAI_COMPATIBLE_FORMAT
     headers: dict[str, str] = Field(default_factory=dict)
     responses_store: bool = False
     endpoint_url: str = ""

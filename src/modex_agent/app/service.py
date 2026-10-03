@@ -35,15 +35,17 @@ from typing import TYPE_CHECKING, Any
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.app.roots import AppAssemblyRoots
 from modex_agent.control.channel import ControlChannel
+from modex_agent.core.backend_registry import BackendRegistry
 from modex_agent.core.emitter import TurnEventSinkFactory
 from modex_agent.messaging.broker import MessageBroker
 from modex_agent.pipeline.adapters import InputAdapter
-from modex_agent.plugins.backends import BackendRegistry
+from modex_agent.plugins.external_transports import external_transport_registry
 from modex_agent.plugins.loader import ChannelAdapterRegistry
 from modex_agent.plugins.persistence_backends import (
     persistence_backend_registry,
     resolve_persistence_backend,
 )
+from modex_agent.providers.protocol_engines import protocol_engine_registry
 from modex_agent.scope.component_registry import ComponentRegistry
 
 if TYPE_CHECKING:
@@ -207,10 +209,13 @@ class AppService(ABC):
                 channel_adapters=self._channel_adapter_registry,
                 brokers=self._broker_registry,
                 control_channels=self._control_channel_registry,
-                # The process-level registry the assembly factories resolve
-                # through — plugin persistence bundles must land where every
-                # resolution road reads.
+                # The process-level registries the assembly factories resolve
+                # through — plugin persistence bundles, protocol engines and
+                # external transports must land where every resolution road
+                # reads.
                 persistence_backends=persistence_backend_registry(),
+                protocol_engines=protocol_engine_registry(),
+                external_transports=external_transport_registry(),
             ),
         )
         logger.info("Component registry: %s", self.roots.plugins_dir)

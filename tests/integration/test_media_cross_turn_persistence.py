@@ -58,7 +58,8 @@ from modex_agent.persistence.adapters.kv_store import SqliteKVStore
 from modex_agent.persistence.adapters.message_store import SqliteMessageStore
 from modex_agent.providers.factory import create_llm_provider
 from modex_agent.providers.http.provider import HTTPStreamProvider
-from modex_agent.providers.llm_config import InterfaceFormat, LLMConfig
+from modex_agent.providers.llm_config import LLMConfig
+from modex_agent.providers.protocol_engines import ANTHROPIC_FORMAT
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.tools.standard.file_tool import ReadFileTool
@@ -248,7 +249,7 @@ async def test_media_ref_survives_turn_boundary_into_anthropic_body(tmp_path: Pa
                 model="test-model",
                 api_key="test-key",
                 base_url="https://api.example.com/v1",
-                interface_format=InterfaceFormat.ANTHROPIC,
+                interface_format=ANTHROPIC_FORMAT,
             )
         )
         assert isinstance(provider, HTTPStreamProvider)

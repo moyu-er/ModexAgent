@@ -15,7 +15,7 @@ from bot.eval.harbor.model_source import (
 from bot.eval.harbor.pool_mode_types import build_model_config
 
 from modex_agent.core.llm_request import ReasoningEffort
-from modex_agent.providers.llm_config import InterfaceFormat
+from modex_agent.providers.protocol_engines import ANTHROPIC_FORMAT, OPENAI_COMPATIBLE_FORMAT
 
 _MODEL_ENV_NAMES = (
     "LLM_MODEL",
@@ -142,19 +142,19 @@ def test_resolution_anthropic_default_prefixes_model_and_round_trips(
         }
     )
     config = build_model_config(entry)
-    assert config.providers[0].interface_format is InterfaceFormat.ANTHROPIC
+    assert config.providers[0].interface_format == ANTHROPIC_FORMAT
 
 
 @pytest.mark.parametrize(
     ("model_string", "expected_format"),
     [
-        ("openai/yml-model", InterfaceFormat.OPENAI_COMPATIBLE),
-        ("harbor/yml-model", InterfaceFormat.OPENAI_COMPATIBLE),
+        ("openai/yml-model", OPENAI_COMPATIBLE_FORMAT),
+        ("harbor/yml-model", OPENAI_COMPATIBLE_FORMAT),
     ],
 )
 def test_build_model_config_keeps_openai_compatible_for_other_prefixes(
     model_string: str,
-    expected_format: InterfaceFormat,
+    expected_format: str,
 ) -> None:
     entry = EntryConfig.from_environment(
         {"LLM_MODEL": model_string, "MODEX_MEMORY_NS": "ns"}
@@ -162,7 +162,7 @@ def test_build_model_config_keeps_openai_compatible_for_other_prefixes(
 
     config = build_model_config(entry)
 
-    assert config.providers[0].interface_format is expected_format
+    assert config.providers[0].interface_format == expected_format
 
 
 def test_resolution_placeholder_default_without_cli_or_env_raises(

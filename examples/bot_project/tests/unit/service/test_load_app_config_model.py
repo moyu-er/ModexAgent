@@ -10,7 +10,7 @@ from bot.service.core import BotService
 
 from modex_agent.app.config import AppConfig
 from modex_agent.app.models.registry import ModelRegistry
-from modex_agent.providers.llm_config import InterfaceFormat
+from modex_agent.providers.protocol_engines import OPENAI_COMPATIBLE_FORMAT
 
 
 def _write_config(tmp_path: Path) -> Path:
@@ -54,7 +54,7 @@ def test_load_app_config_injects_bot_model_config(tmp_path: Path) -> None:
     assert resolved.model.model == "openai/m1"
     assert resolved.provider.api_key == "KEY"
     assert resolved.provider.base_url == "https://u/v"
-    assert resolved.provider.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
+    assert resolved.provider.interface_format == OPENAI_COMPATIBLE_FORMAT
 
 
 def test_pre_supplied_app_config_still_applies_bot_model_config(tmp_path: Path) -> None:
@@ -71,5 +71,5 @@ def test_pre_supplied_app_config_still_applies_bot_model_config(tmp_path: Path) 
     assert svc._bot_model_config.default_resolved().model.model == "openai/m1"
     assert (
         svc._bot_model_config.default_resolved().provider.interface_format
-        == InterfaceFormat.OPENAI_COMPATIBLE
+        == OPENAI_COMPATIBLE_FORMAT
     )

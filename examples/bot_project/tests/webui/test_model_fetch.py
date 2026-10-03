@@ -28,7 +28,10 @@ from bot.webui.model_fetch import (  # noqa: E402
 from bot.webui.server import WebUIServer  # noqa: E402
 
 from modex_agent.app.models.registry import ModelCfg, ModelRegistry, ProviderCfg  # noqa: E402
-from modex_agent.providers.llm_config import InterfaceFormat  # noqa: E402
+from modex_agent.providers.protocol_engines import (  # noqa: E402
+    ANTHROPIC_FORMAT,
+    OPENAI_COMPATIBLE_FORMAT,
+)
 
 # ── URL candidate construction ──────────────────────────────────────────────
 
@@ -132,11 +135,11 @@ class TestStripCompatSuffix:
 
 class TestBuildHeaders:
     def test_openai_uses_bearer(self) -> None:
-        headers = _build_headers("sk-test", InterfaceFormat.OPENAI_COMPATIBLE)
+        headers = _build_headers("sk-test", OPENAI_COMPATIBLE_FORMAT)
         assert headers == {"Authorization": "Bearer sk-test"}
 
     def test_anthropic_uses_x_api_key_and_version(self) -> None:
-        headers = _build_headers("sk-ant", InterfaceFormat.ANTHROPIC)
+        headers = _build_headers("sk-ant", ANTHROPIC_FORMAT)
         assert headers == {
             "x-api-key": "sk-ant",
             "anthropic-version": "2023-06-01",
@@ -205,7 +208,7 @@ class TestFetchProviderModels:
         session = MagicMock()
         session.get = MagicMock(return_value=_mock_response(200, {"data": [{"id": "m1"}]}))
         models = await fetch_provider_models(
-            session, "https://api.x.com", "key", InterfaceFormat.OPENAI_COMPATIBLE
+            session, "https://api.x.com", "key", OPENAI_COMPATIBLE_FORMAT
         )
         assert len(models) == 1
         assert models[0].id == "m1"
@@ -215,14 +218,14 @@ class TestFetchProviderModels:
         session = MagicMock()
         with pytest.raises(ModelFetchError, match="API key is required"):
             await fetch_provider_models(
-                session, "https://api.x.com", "", InterfaceFormat.OPENAI_COMPATIBLE
+                session, "https://api.x.com", "", OPENAI_COMPATIBLE_FORMAT
             )
 
     @pytest.mark.asyncio
     async def test_missing_base_url_raises(self) -> None:
         session = MagicMock()
         with pytest.raises(ModelFetchError, match="Base URL is required"):
-            await fetch_provider_models(session, "", "key", InterfaceFormat.OPENAI_COMPATIBLE)
+            await fetch_provider_models(session, "", "key", OPENAI_COMPATIBLE_FORMAT)
 
     @pytest.mark.asyncio
     async def test_404_falls_back_to_next_candidate(self) -> None:
@@ -231,7 +234,7 @@ class TestFetchProviderModels:
             side_effect=[_mock_response(404), _mock_response(200, {"data": [{"id": "m1"}]})]
         )
         models = await fetch_provider_models(
-            session, "https://api.x.com/v4", "key", InterfaceFormat.OPENAI_COMPATIBLE
+            session, "https://api.x.com/v4", "key", OPENAI_COMPATIBLE_FORMAT
         )
         assert len(models) == 1
         assert session.get.call_count == 2
@@ -242,7 +245,7 @@ class TestFetchProviderModels:
         session.get = MagicMock(return_value=_mock_response(404))
         with pytest.raises(ModelFetchError, match="All candidates failed"):
             await fetch_provider_models(
-                session, "https://api.x.com/v4", "key", InterfaceFormat.OPENAI_COMPATIBLE
+                session, "https://api.x.com/v4", "key", OPENAI_COMPATIBLE_FORMAT
             )
 
     @pytest.mark.asyncio
@@ -251,7 +254,7 @@ class TestFetchProviderModels:
         session.get = MagicMock(return_value=_mock_response(401))
         with pytest.raises(ModelFetchError, match="authentication failed"):
             await fetch_provider_models(
-                session, "https://api.x.com/v4", "key", InterfaceFormat.OPENAI_COMPATIBLE
+                session, "https://api.x.com/v4", "key", OPENAI_COMPATIBLE_FORMAT
             )
 
     @pytest.mark.asyncio
@@ -262,7 +265,7 @@ class TestFetchProviderModels:
             session,
             "https://api.x.com",
             "key",
-            InterfaceFormat.OPENAI_COMPATIBLE,
+            OPENAI_COMPATIBLE_FORMAT,
             models_url_override="https://custom/models",
         )
         session.get.assert_called_once_with(
@@ -275,7 +278,7 @@ class TestFetchProviderModels:
         session = MagicMock()
         session.get = MagicMock(return_value=_mock_response(200, {"data": [{"id": "claude"}]}))
         await fetch_provider_models(
-            session, "https://api.anthropic.com", "sk-ant", InterfaceFormat.ANTHROPIC
+            session, "https://api.anthropic.com", "sk-ant", ANTHROPIC_FORMAT
         )
         session.get.assert_called_once_with(
             "https://api.anthropic.com/v1/models",
