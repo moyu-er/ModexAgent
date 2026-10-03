@@ -67,12 +67,12 @@ async def build_pool_data(
     from modex_agent.core.turn.enums import AgentKind
     from modex_agent.memory.injection import FullInjectionPolicy
     from modex_agent.memory.injection.archive import ArchiveInjectionConfig
-    from modex_agent.persistence.config import PersistenceBackend
     from modex_agent.plugins.assembly.backend_factory import (
         build_memory_registry,
         build_turn_state_store,
     )
     from modex_agent.plugins.assembly.memory_factory import create_memory
+    from modex_agent.plugins.persistence_backends import SQLITE_BACKEND_NAME
 
     memory_cfg = assembly_deps.memory
     if memory_cfg is None:
@@ -110,7 +110,7 @@ async def build_pool_data(
     if (
         app_config is not None
         and persistence is not None
-        and app_config.persistence.backend is PersistenceBackend.SQLITE
+        and app_config.persistence.backend == SQLITE_BACKEND_NAME
     ):
         from modex_agent.persistence.coordinator import SqliteDecisionCoordinator
 

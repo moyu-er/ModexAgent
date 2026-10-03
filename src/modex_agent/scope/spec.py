@@ -33,7 +33,6 @@ from modex_agent.core.tool_vocabulary import (
     ContextMode,
     ToolPreset,
 )
-from modex_agent.persistence.config import PersistenceBackend
 
 ExecutionStrategyName = ExecutionStrategyKind | str
 """Execution-strategy reference — an :class:`ExecutionStrategyKind` member
@@ -373,13 +372,16 @@ class WorkspacePersistenceSpec(BaseModel):
     """Workspace memory-backend selection (SPEC §3.1 — 资源选择).
 
     Ticket 14: the workspace layer's ``persistence.backend`` selects the
-    memory/runtime-state backend for the workspace's data (the same
-    ``PersistenceBackend`` axis the service-level domain config drives).
+    memory/runtime-state backend for the workspace's data (the same axis
+    the service-level domain config drives). The value is a
+    persistence-backend NAME — the backend registry owns the closed set
+    (the framework bundles ``"file"`` and ``"sqlite"``), so a declaration
+    may name any bundle a plugin registered.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    backend: PersistenceBackend
+    backend: str
 
 
 class WorkspacePathsSpec(BaseModel):

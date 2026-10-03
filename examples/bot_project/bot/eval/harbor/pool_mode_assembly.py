@@ -55,7 +55,6 @@ from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import WorkspacePersistenceManager
 from modex_agent.persistence.session_registry import InMemorySessionRegistry
 from modex_agent.persistence.session_store import SessionStore
@@ -63,6 +62,7 @@ from modex_agent.plugins.assembly.backend_factory import build_session_store
 from modex_agent.plugins.assembly.context import AssemblyContext
 from modex_agent.plugins.assembly.pool_factory import resolve_declared_root_prompt
 from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER, MultiLLMProviderConfig
+from modex_agent.plugins.persistence_backends import SQLITE_BACKEND_NAME
 from modex_agent.scope import AgentOverlay, PoolOverlay, apply_scope_overlay
 from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.components import ComponentSlot
@@ -222,7 +222,7 @@ async def build_eval_pool_assembly(
     # this manager; execute_pool_entry's finally closes it after the pools
     # stop, WAL-checkpointing <job>/agent/pool-data/state.db for inspection.
     persistence: WorkspacePersistenceManager | None = None
-    if app_config.persistence.backend is PersistenceBackend.SQLITE:
+    if app_config.persistence.backend == SQLITE_BACKEND_NAME:
         persistence = WorkspacePersistenceManager(workspace.paths.state_db)
         await persistence.open()
     # Everything after persistence.open() until the return is covered: a

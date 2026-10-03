@@ -28,7 +28,6 @@ from bot.workspace.wiring.resources import _build_resources, _stop_resources
 from modex_agent.app.config import AppConfig
 from modex_agent.app.roots import AppAssemblyRoots
 from modex_agent.core.stores import PoolRoutingStore
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import WorkspacePersistenceManager
 from modex_agent.plugins.defaults.prompt import FilePromptProviderFactory
 from modex_agent.scope.component_registry import ComponentRegistry
@@ -372,7 +371,7 @@ async def test_declaration_backend_overrides_service_config(tmp_path: Path) -> N
     resolved = apply_workspace_resource_selection(
         app_config, load_scope_declaration_opt(home / "config" / "scopes" / "bot.yml")
     )
-    assert resolved.persistence.backend is PersistenceBackend.FILE
+    assert resolved.persistence.backend == "file"
     service._app_config = resolved
 
     resources, _ = await _build_home_resources(service)

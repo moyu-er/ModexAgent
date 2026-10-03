@@ -18,7 +18,7 @@ from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.multi_agent.execution_strategy import PoolAssemblyContext
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxMQ
 from modex_agent.persistence.adapters.inbox_mq import SqliteInboxMQ
-from modex_agent.persistence.config import PersistenceBackend, PersistenceConfig
+from modex_agent.persistence.config import PersistenceConfig
 from modex_agent.persistence.managers.workspace import WorkspacePersistenceManager
 from modex_agent.plugins.assembly.backend_factory import build_inbox
 from modex_agent.plugins.assembly.strategies.external import (
@@ -45,7 +45,7 @@ def test_build_inbox_uses_pool_record_scope_for_sqlite(tmp_path: Path) -> None:
 
 
 def test_build_inbox_keeps_file_backend(tmp_path: Path) -> None:
-    config = AppConfig(persistence=PersistenceConfig(backend=PersistenceBackend.FILE))
+    config = AppConfig(persistence=PersistenceConfig(backend="file"))
 
     inbox = build_inbox(
         config,

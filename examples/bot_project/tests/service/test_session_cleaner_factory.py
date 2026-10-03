@@ -5,7 +5,6 @@ from bot.scope import BotRecordScope
 from bot.service.session_cleaner_factory import SessionCleanerFactory
 
 from modex_agent.core.scope import RecordScope
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import WorkspacePersistenceManager
 from modex_agent.persistence.session_artifacts import SessionScopeMismatchError
 from modex_agent.workspace.paths import WorkspacePaths
@@ -29,7 +28,7 @@ async def _seed_session(
 async def test_file_backend_cleanup_stays_file_only(tmp_path: Path) -> None:
     paths = _paths_for(tmp_path)
     factory = SessionCleanerFactory(
-        backend=PersistenceBackend.FILE,
+        backend="file",
         persistence_resolver=lambda _root: None,
     )
 
@@ -47,7 +46,7 @@ async def test_file_backend_cleanup_stays_file_only(tmp_path: Path) -> None:
 async def test_sqlite_discovery_does_not_create_missing_database(tmp_path: Path) -> None:
     paths = _paths_for(tmp_path)
     factory = SessionCleanerFactory(
-        backend=PersistenceBackend.SQLITE,
+        backend="sqlite",
         persistence_resolver=lambda _root: None,
     )
 
@@ -72,7 +71,7 @@ async def test_sqlite_cleanup_borrows_live_manager_without_closing(
         scope = BotRecordScope(pool="main", session_id="borrowed.main")
         await _seed_session(manager, scope)
         factory = SessionCleanerFactory(
-            backend=PersistenceBackend.SQLITE,
+            backend="sqlite",
             persistence_resolver=lambda root: manager if root == paths.root else None,
         )
 
@@ -112,7 +111,7 @@ async def test_sqlite_discovery_transiently_opens_existing_database(
     monkeypatch.setattr(WorkspacePersistenceManager, "open", _record_open)
     monkeypatch.setattr(WorkspacePersistenceManager, "close", _record_close)
     factory = SessionCleanerFactory(
-        backend=PersistenceBackend.SQLITE,
+        backend="sqlite",
         persistence_resolver=lambda _root: None,
     )
 
@@ -145,7 +144,7 @@ async def test_sqlite_discovery_excludes_live_session_scope(tmp_path: Path) -> N
     await _seed_session(setup_manager, scope)
     await setup_manager.close()
     factory = SessionCleanerFactory(
-        backend=PersistenceBackend.SQLITE,
+        backend="sqlite",
         persistence_resolver=lambda _root: None,
     )
 
@@ -176,7 +175,7 @@ async def test_transient_manager_closes_when_cleanup_raises(
 
     monkeypatch.setattr(WorkspacePersistenceManager, "close", _record_close)
     factory = SessionCleanerFactory(
-        backend=PersistenceBackend.SQLITE,
+        backend="sqlite",
         persistence_resolver=lambda _root: None,
     )
 
@@ -214,7 +213,7 @@ async def test_transient_manager_closes_when_open_raises(
     monkeypatch.setattr(WorkspacePersistenceManager, "open", _fail_after_open)
     monkeypatch.setattr(WorkspacePersistenceManager, "close", _record_close)
     factory = SessionCleanerFactory(
-        backend=PersistenceBackend.SQLITE,
+        backend="sqlite",
         persistence_resolver=lambda _root: None,
     )
 

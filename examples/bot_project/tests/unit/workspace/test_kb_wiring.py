@@ -10,7 +10,6 @@ from bot.workspace.wiring.resources import _build_resources, _stop_resources
 from modex_agent.app.config import AppConfig
 from modex_agent.app.roots import AppAssemblyRoots
 from modex_agent.core.stores import PoolRoutingStore
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.workspace.context import WorkspaceContext
 
 
@@ -40,7 +39,7 @@ def _service(home: Path, app_config: AppConfig) -> MagicMock:
 
 async def _build_empty_workspace(
     tmp_path: Path,
-    backend: PersistenceBackend,
+    backend: str,
 ) -> PoolWorkspaceResources:
     home = tmp_path / "home"
     target = tmp_path / "workspace"
@@ -68,7 +67,7 @@ def test_pool_workspace_resources_declares_kb_provider_field() -> None:
 
 async def test_kb_provider_is_built_for_sqlite_workspace(tmp_path: Path) -> None:
     # Given / When
-    resources = await _build_empty_workspace(tmp_path, PersistenceBackend.SQLITE)
+    resources = await _build_empty_workspace(tmp_path, "sqlite")
 
     # Then
     try:
@@ -79,7 +78,7 @@ async def test_kb_provider_is_built_for_sqlite_workspace(tmp_path: Path) -> None
 
 async def test_kb_provider_is_none_for_file_workspace(tmp_path: Path) -> None:
     # Given / When
-    resources = await _build_empty_workspace(tmp_path, PersistenceBackend.FILE)
+    resources = await _build_empty_workspace(tmp_path, "file")
 
     # Then
     try:
@@ -92,7 +91,7 @@ async def test_kb_provider_is_built_after_workspace_transcript_store(
     tmp_path: Path,
 ) -> None:
     # Given / When
-    resources = await _build_empty_workspace(tmp_path, PersistenceBackend.SQLITE)
+    resources = await _build_empty_workspace(tmp_path, "sqlite")
 
     # Then
     try:

@@ -261,7 +261,6 @@ def test_sweep_discovers_and_cleans_db_only_orphan_scope(tmp_path: Path) -> None
 def test_sweep_recovers_db_only_orphan_from_existing_database(tmp_path: Path) -> None:
     from bot.service.session_cleaner_factory import SessionCleanerFactory
 
-    from modex_agent.persistence.config import PersistenceBackend
     from modex_agent.persistence.managers import WorkspacePersistenceManager
 
     paths = _paths_for(tmp_path)
@@ -286,7 +285,7 @@ def test_sweep_recovers_db_only_orphan_from_existing_database(tmp_path: Path) ->
             data_dir_name=".modex",
             config=SessionGcConfig(max_workers=1),
             cleaner_factory=SessionCleanerFactory(
-                backend=PersistenceBackend.SQLITE,
+                backend="sqlite",
                 persistence_resolver=lambda _root: None,
             ),
         )
@@ -858,7 +857,6 @@ def test_sqlite_delete_session_tree_removes_sessions_row_synchronously(tmp_path)
 
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.persistence.adapters.session_store import SqliteSessionStore
-    from modex_agent.persistence.config import PersistenceBackend
     from modex_agent.persistence.managers import WorkspacePersistenceManager
 
     paths = _paths_for(tmp_path)
@@ -889,7 +887,7 @@ def test_sqlite_delete_session_tree_removes_sessions_row_synchronously(tmp_path)
             data_dir_name=".modex",
             config=SessionGcConfig(max_workers=1),
             cleaner_factory=SessionCleanerFactory(
-                backend=PersistenceBackend.SQLITE,
+                backend="sqlite",
                 persistence_resolver=lambda _root: None,
             ),
             session_store_resolver=_session_store_resolver,
@@ -915,7 +913,6 @@ def test_sqlite_delete_session_tree_removes_transcript_events(tmp_path) -> None:
     from bot.service.session_cleaner_factory import SessionCleanerFactory
 
     from modex_agent.persistence.adapters.session_store import SqliteSessionStore
-    from modex_agent.persistence.config import PersistenceBackend
     from modex_agent.persistence.managers import WorkspacePersistenceManager
 
     paths = _paths_for(tmp_path)
@@ -974,7 +971,7 @@ def test_sqlite_delete_session_tree_removes_transcript_events(tmp_path) -> None:
             data_dir_name=".modex",
             config=SessionGcConfig(max_workers=1),
             cleaner_factory=SessionCleanerFactory(
-                backend=PersistenceBackend.SQLITE,
+                backend="sqlite",
                 persistence_resolver=lambda _root: None,
             ),
             transcript_store=_FakeTranscriptStore(),  # type: ignore[arg-type]

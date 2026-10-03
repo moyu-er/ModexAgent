@@ -363,7 +363,7 @@ async def test_build_pool_data_file_backend_has_no_decision_coordinator(
     from modex_agent.app.config import AppConfig
     from modex_agent.memory.config import MemoryConfig
     from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-    from modex_agent.persistence.config import PersistenceBackend, PersistenceConfig
+    from modex_agent.persistence.config import PersistenceConfig
     from modex_agent.scope.spec import AgentSpec
 
     target = tmp_path / "ws"
@@ -379,7 +379,7 @@ async def test_build_pool_data_file_backend_has_no_decision_coordinator(
         PoolAssemblyDeps(memory=MemoryConfig()),
         "",
         app_config=AppConfig(
-            persistence=PersistenceConfig(backend=PersistenceBackend.FILE),
+            persistence=PersistenceConfig(backend="file"),
         ),
     )
 

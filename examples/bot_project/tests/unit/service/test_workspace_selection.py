@@ -21,7 +21,6 @@ from bot.service.pool.declaration import (
 )
 
 from modex_agent.app.config import AppConfig
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.scope.component_registry import ComponentRegistry
@@ -65,9 +64,9 @@ class TestApplyWorkspaceResourceSelection:
         resolved = apply_workspace_resource_selection(app_config, spec)
 
         assert resolved is not app_config
-        assert resolved.persistence.backend is PersistenceBackend.FILE
+        assert resolved.persistence.backend == "file"
         # The service-level view is untouched (no hidden mutation).
-        assert app_config.persistence.backend is PersistenceBackend.SQLITE
+        assert app_config.persistence.backend == "sqlite"
 
     def test_declared_paths_override_service_config(self, tmp_path: Path) -> None:
         path = _write_declaration(
@@ -94,7 +93,7 @@ class TestApplyWorkspaceResourceSelection:
         resolved = apply_workspace_resource_selection(app_config, spec)
 
         assert resolved is app_config
-        assert resolved.persistence.backend is PersistenceBackend.FILE
+        assert resolved.persistence.backend == "file"
         assert resolved.paths.data_dir_name == ".keep"
 
     def test_pool_as_root_and_absent_declarations_change_nothing(

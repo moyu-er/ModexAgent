@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import assert_never
 
 from bot.persistence.migration import BotWorkspaceMigrationRunner
 from bot.webui.sqlite_transcript_store import SqliteTranscriptStore
 from bot.webui.transcript_store import ResilientTranscriptStore, TranscriptStore
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.connection import ConnectionManager
+from modex_agent.plugins.persistence_backends import FILE_BACKEND_NAME, SQLITE_BACKEND_NAME
 
 TranscriptStoreResolver = Callable[[Path], Awaitable[TranscriptStore]]
 
@@ -29,14 +28,15 @@ async def build_database_transcript_store(
 
 
 def build_transcript_store_resolver(
-    backend: PersistenceBackend,
+    backend: str,
     database_resolver: TranscriptStoreResolver,
 ) -> TranscriptStoreResolver | None:
     """Select transcript persistence without leaking providers into callers."""
-    match backend:
-        case PersistenceBackend.FILE:
-            return None
-        case PersistenceBackend.SQLITE:
-            return database_resolver
-        case unreachable:
-            assert_never(unreachable)
+    if backend == FILE_BACKEND_NAME:
+        return None
+    if backend == SQLITE_BACKEND_NAME:
+        return database_resolver
+    raise ValueError(
+        f"unknown persistence backend {backend!r} for transcript selection "
+        f"(expected {FILE_BACKEND_NAME!r} or {SQLITE_BACKEND_NAME!r})"
+    )

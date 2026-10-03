@@ -203,15 +203,16 @@ def _validate_creation_request(
             f"{dynamic_workspace_root(service._project_dir, name)}"
         )
     if backend is not None:
-        from modex_agent.persistence.config import PersistenceBackend
+        from modex_agent.plugins.persistence_backends import (
+            persistence_backend_registry,
+        )
 
-        try:
-            PersistenceBackend(backend)
-        except ValueError as exc:
+        names = persistence_backend_registry().names()
+        if backend not in names:
             raise WorkspaceCreationError(
                 f"unknown persistence backend {backend!r} "
-                f"(expected one of {[b.value for b in PersistenceBackend]})"
-            ) from exc
+                f"(expected one of {list(names)})"
+            )
 
 
 async def create_workspace(

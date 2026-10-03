@@ -21,7 +21,7 @@ import pytest
 from pydantic import ValidationError
 
 from modex_agent.core.scope import RecordScope
-from modex_agent.persistence.config import PersistenceBackend, PersistenceConfig
+from modex_agent.persistence.config import PersistenceConfig
 from modex_agent.persistence.managers.registry import RegistryPersistenceManager
 from modex_agent.persistence.managers.workspace import WorkspacePersistenceManager
 
@@ -39,23 +39,23 @@ class _PoolScopedRecordScope(RecordScope):
 class TestPersistenceConfig:
     def test_default_backend_is_sqlite(self) -> None:
         cfg = PersistenceConfig()
-        assert cfg.backend is PersistenceBackend.SQLITE
+        assert cfg.backend == "sqlite"
 
     def test_file_backend(self) -> None:
-        cfg = PersistenceConfig(backend=PersistenceBackend.FILE)
-        assert cfg.backend is PersistenceBackend.FILE
+        cfg = PersistenceConfig(backend="file")
+        assert cfg.backend == "file"
 
     def test_frozen(self) -> None:
         cfg = PersistenceConfig()
         with pytest.raises(ValidationError):
-            cfg.backend = PersistenceBackend.FILE  # type: ignore[misc]
+            cfg.backend = "file"  # type: ignore[misc]
 
     def test_from_string(self) -> None:
         cfg = PersistenceConfig.model_validate({"backend": "file"})
-        assert cfg.backend is PersistenceBackend.FILE
+        assert cfg.backend == "file"
 
         cfg2 = PersistenceConfig.model_validate({"backend": "sqlite"})
-        assert cfg2.backend is PersistenceBackend.SQLITE
+        assert cfg2.backend == "sqlite"
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +235,7 @@ class TestAppConfigPersistence:
 
         cfg = AppConfig()
         assert cfg.persistence is not None
-        assert cfg.persistence.backend is PersistenceBackend.SQLITE
+        assert cfg.persistence.backend == "sqlite"
 
     def test_app_config_persistence_from_yaml_data(self) -> None:
         from modex_agent.app.config import AppConfig
@@ -243,10 +243,10 @@ class TestAppConfigPersistence:
         cfg = AppConfig.model_validate(
             {"persistence": {"backend": "file"}}
         )
-        assert cfg.persistence.backend is PersistenceBackend.FILE
+        assert cfg.persistence.backend == "file"
 
     def test_app_config_persistence_defaults_to_sqlite(self) -> None:
         from modex_agent.app.config import AppConfig
 
         cfg = AppConfig.model_validate({})
-        assert cfg.persistence.backend is PersistenceBackend.SQLITE
+        assert cfg.persistence.backend == "sqlite"

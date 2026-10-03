@@ -48,7 +48,6 @@ from modex_agent.multi_agent.execution_strategy import (
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.persistence.adapters.todo_store import JsonFileTodoStore
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.plugins.assembly.builder import AssemblyBuilder
 from modex_agent.plugins.assembly.context import (
     AgentContext,
@@ -249,7 +248,7 @@ class TestConstructionParity:
             _view(
                 data_dir=Path("/tmp/d"),
                 persistence=persistence,
-                persistence_backend=PersistenceBackend.SQLITE.value,
+                persistence_backend="sqlite",
             )
         )
 
@@ -263,7 +262,7 @@ class TestConstructionParity:
             _view(
                 data_dir=tmp_path,
                 persistence=None,
-                persistence_backend=PersistenceBackend.SQLITE.value,
+                persistence_backend="sqlite",
             )
         )
 
@@ -274,7 +273,7 @@ class TestConstructionParity:
             _view(
                 data_dir=tmp_path,
                 persistence=MagicMock(),
-                persistence_backend=PersistenceBackend.FILE.value,
+                persistence_backend="file",
             )
         )
 
@@ -595,7 +594,7 @@ class TestWebuiPanelRead:
         from bot.webui.workspace_providers import resolve_runtime_stores
 
         app_config = AppConfig.model_validate(
-            {"persistence": {"backend": PersistenceBackend.FILE.value}}
+            {"persistence": {"backend": "file"}}
         )
 
         stores = await resolve_runtime_stores(

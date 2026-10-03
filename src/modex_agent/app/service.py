@@ -40,6 +40,10 @@ from modex_agent.messaging.broker import MessageBroker
 from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.plugins.backends import BackendRegistry
 from modex_agent.plugins.loader import ChannelAdapterRegistry
+from modex_agent.plugins.persistence_backends import (
+    persistence_backend_registry,
+    resolve_persistence_backend,
+)
 from modex_agent.scope.component_registry import ComponentRegistry
 
 if TYPE_CHECKING:
@@ -203,6 +207,10 @@ class AppService(ABC):
                 channel_adapters=self._channel_adapter_registry,
                 brokers=self._broker_registry,
                 control_channels=self._control_channel_registry,
+                # The process-level registry the assembly factories resolve
+                # through — plugin persistence bundles must land where every
+                # resolution road reads.
+                persistence_backends=persistence_backend_registry(),
             ),
         )
         logger.info("Component registry: %s", self.roots.plugins_dir)
@@ -211,23 +219,25 @@ class AppService(ABC):
     async def _open_shared_persistence(self, app_config: AppConfig) -> None:
         """Open the registry DB BEFORE workspace materialization (the
         registry store is ready when workspaces start using it), then the
-        home workspace DB. No-op on the FILE backend."""
-        from modex_agent.persistence.config import PersistenceBackend
-        from modex_agent.persistence.managers import (
-            RegistryPersistenceManager,
-            WorkspacePersistenceManager,
+        home workspace DB. The configured persistence-backend bundle owns
+        the opening pair — backends that open no DB (the bundled ``file``)
+        return ``None`` managers."""
+        bundle = resolve_persistence_backend(app_config)
+        registry_db_path = self.roots.registry_db_path(app_config.paths.data_dir_name)
+        registry_manager: RegistryPersistenceManager | None = (
+            bundle.open_registry_manager(registry_db_path)
         )
+        if registry_manager is not None:
+            await registry_manager.open()
+            self._registry_persistence = registry_manager
 
-        if app_config.persistence.backend is PersistenceBackend.SQLITE:
-            registry_db_path = self.roots.registry_db_path(
-                app_config.paths.data_dir_name
-            )
-            self._registry_persistence = RegistryPersistenceManager(registry_db_path)
-            await self._registry_persistence.open()
-
-            home_db_path = self.roots.home_db_path(app_config.paths.data_dir_name)
-            self._home_persistence = WorkspacePersistenceManager(home_db_path)
-            await self._home_persistence.open()
+        home_db_path = self.roots.home_db_path(app_config.paths.data_dir_name)
+        home_manager: WorkspacePersistenceManager | None = bundle.open_workspace_manager(
+            home_db_path
+        )
+        if home_manager is not None:
+            await home_manager.open()
+            self._home_persistence = home_manager
 
     async def _build_pool_session_store(self, app_config: AppConfig) -> PoolRoutingStore:
         """The shared session→pool routing store (service-wide singleton)."""

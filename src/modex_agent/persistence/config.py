@@ -1,41 +1,35 @@
 """Persistence backend configuration (T26).
 
-Defines the :class:`PersistenceBackend` enum and :class:`PersistenceConfig`
-Pydantic model that drive IOC factory selection between the legacy file-based
-stores and the new SQLite-backed adapters (T16-T25).
-
-When ``backend == PersistenceBackend.SQLITE`` the bot IOC factories construct
-SQLite adapters bound to the workspace's
-:class:`~modex_agent.persistence.managers.WorkspacePersistenceManager`
-(per-workspace DB) and the service-level
-:class:`~modex_agent.persistence.managers.RegistryPersistenceManager`
-(global registry DB). When ``backend == PersistenceBackend.FILE`` the
-existing file-based implementations are used unchanged.
+Defines the :class:`PersistenceConfig` Pydantic model that drives the
+selection between the file-based stores and the SQLite-backed adapters
+(T16-T25): ``backend`` names a persistence-backend bundle in the
+plugin-populated registry
+(:mod:`modex_agent.plugins.persistence_backends`), which owns the
+closed set of valid names — the framework bundles ``"file"`` and
+``"sqlite"``.
 """
 
 from __future__ import annotations
 
-from enum import StrEnum
-
 from pydantic import BaseModel, ConfigDict
-
-
-class PersistenceBackend(StrEnum):
-    """Storage backend selector for runtime state and memory stores."""
-
-    FILE = "file"
-    SQLITE = "sqlite"
 
 
 class PersistenceConfig(BaseModel):
     """Persistence layer configuration.
 
-    The default backend is :attr:`PersistenceBackend.SQLITE` so that new
-    deployments get the SQLite persistence layer out of the box. Existing
-    deployments can opt out by setting ``persistence.backend: file`` in
-    ``bot_config.yml``.
+    ``backend`` is the NAME of a persistence-backend bundle registered in
+    the persistence-backend registry
+    (:func:`modex_agent.plugins.persistence_backends.persistence_backend_registry`)
+    — the registry is the closed-set authority, so a third-party plugin
+    adds a backend by registering a bundle, not by editing this config
+    schema. The framework bundles ``"file"`` (the file-based stores) and
+    ``"sqlite"`` (the hybrid SQLite+file layer).
+
+    The default backend is ``"sqlite"`` so that new deployments get the
+    SQLite persistence layer out of the box. Existing deployments can opt
+    out by setting ``persistence.backend: file`` in ``bot_config.yml``.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    backend: PersistenceBackend = PersistenceBackend.SQLITE
+    backend: str = "sqlite"

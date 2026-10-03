@@ -11,7 +11,6 @@ from bot.webui.transcript_store import TranscriptStore
 from modex_agent.app.config import AppConfig
 from modex_agent.persistence.adapters.file_session_store import LocalFileSessionStore
 from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
-from modex_agent.persistence.config import PersistenceBackend
 
 
 async def test_sqlite_access_returns_materialized_workspace_store(tmp_path: Path) -> None:
@@ -48,7 +47,7 @@ async def test_file_transcript_backend_does_not_resolve_database() -> None:
     connection_resolver = AsyncMock()
 
     resolver = build_transcript_store_resolver(
-        PersistenceBackend.FILE,
+        "file",
         connection_resolver,
     )
 
@@ -62,7 +61,7 @@ async def test_database_transcript_resolver_accepts_provider_neutral_adapter(
     alternate_adapter = AsyncMock(spec=TranscriptStore)
     database_resolver = AsyncMock(return_value=alternate_adapter)
     resolver = build_transcript_store_resolver(
-        PersistenceBackend.SQLITE,
+        "sqlite",
         database_resolver,
     )
     assert resolver is not None

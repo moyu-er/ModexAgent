@@ -1,9 +1,11 @@
-"""Tests for the session-tree store IOC factory."""
+"""Tests for the session-tree store factory (W2b: registry resolution road)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import MagicMock
+
+import pytest
 
 from modex_agent.core.scope import RecordScope
 from modex_agent.multi_agent.session_tree import (
@@ -17,7 +19,6 @@ from modex_agent.multi_agent.session_tree import (
     SqliteTreeNodeStore,
     TreeNodeStore,
 )
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.plugins.assembly.session_tree_factory import build_session_tree_stores
 
 
@@ -45,7 +46,7 @@ class TestBuildSessionTreeStores:
     def test_sqlite_backend_returns_sqlite_stores(self, tmp_path: Path) -> None:
         """SQLITE backend with persistence manager returns Sqlite implementations."""
         app_config = MagicMock()
-        app_config.persistence.backend = PersistenceBackend.SQLITE
+        app_config.persistence.backend = "sqlite"
         persistence = MagicMock()
         persistence.connection = MagicMock()
 
@@ -58,17 +59,18 @@ class TestBuildSessionTreeStores:
         assert isinstance(node, SqliteTreeNodeStore)
         assert isinstance(track, SqliteMessageTrackStore)
 
-    def test_sqlite_backend_without_persistence_falls_back_to_file(
+    def test_sqlite_backend_without_manager_falls_back_to_file(
         self, tmp_path: Path
     ) -> None:
-        """SQLITE backend but no persistence manager → file backend fallback."""
+        """SQLITE backend but no persistence manager → the file stores
+        (the historical manager-presence selection semantics: harnesses
+        and partial boots that never opened a manager keep the file
+        outcome they always had)."""
         app_config = MagicMock()
-        app_config.persistence.backend = PersistenceBackend.SQLITE
+        app_config.persistence.backend = "sqlite"
 
         scope = RecordScope()
-        tree, node, track = build_session_tree_stores(
-            app_config, None, tmp_path, scope
-        )
+        tree, node, track = build_session_tree_stores(app_config, None, tmp_path, scope)
 
         assert isinstance(tree, LocalFileSessionTreeStore)
         assert isinstance(node, LocalFileTreeNodeStore)
@@ -77,7 +79,7 @@ class TestBuildSessionTreeStores:
     def test_file_backend_config_selects_file(self, tmp_path: Path) -> None:
         """FILE backend with a persistence manager still uses file impls."""
         app_config = MagicMock()
-        app_config.persistence.backend = PersistenceBackend.FILE
+        app_config.persistence.backend = "file"
         persistence = MagicMock()
 
         scope = RecordScope()

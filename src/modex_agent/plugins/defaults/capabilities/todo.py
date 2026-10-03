@@ -38,7 +38,7 @@ from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.turn.todo import TodoStore
 from modex_agent.persistence.adapters.todo_store import JsonFileTodoStore
-from modex_agent.persistence.config import PersistenceBackend
+from modex_agent.plugins.persistence_backends import SQLITE_BACKEND_NAME
 from modex_agent.scope.capability import (
     Capability,
     CapabilityBinding,
@@ -213,7 +213,7 @@ class TodoCapability(Capability):
             )
         if (
             view.persistence is not None
-            and view.persistence_backend == PersistenceBackend.SQLITE.value
+            and view.persistence_backend == SQLITE_BACKEND_NAME
         ):
             from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
 

@@ -4,17 +4,16 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from types import TracebackType
-from typing import assert_never
 
 from bot.service.session_gc import SessionCleanerOperations
 from modex_agent.core.scope import RecordScope
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import WorkspacePersistenceManager
 from modex_agent.persistence.session_artifacts import (
     DefaultSessionArtifactCleaner,
     SessionArtifactCleaner,
     SessionCleanupResult,
 )
+from modex_agent.plugins.persistence_backends import FILE_BACKEND_NAME, SQLITE_BACKEND_NAME
 from modex_agent.workspace.paths import WorkspacePaths
 
 
@@ -52,7 +51,7 @@ class SessionCleanerFactory(SessionCleanerOperations):
     def __init__(
         self,
         *,
-        backend: PersistenceBackend,
+        backend: str,
         persistence_resolver: Callable[[Path], WorkspacePersistenceManager | None],
     ) -> None:
         self._backend = backend
@@ -92,27 +91,28 @@ class SessionCleanerFactory(SessionCleanerOperations):
         self,
         paths: WorkspacePaths,
     ) -> AbstractAsyncContextManager[SessionArtifactCleaner]:
-        match self._backend:
-            case PersistenceBackend.FILE:
-                return _CleanerAcquisition(DefaultSessionArtifactCleaner(paths=paths))
-            case PersistenceBackend.SQLITE:
-                manager = self._persistence_resolver(paths.root)
-                if manager is not None:
-                    return _CleanerAcquisition(
-                        DefaultSessionArtifactCleaner(
-                            paths=paths,
-                            database_cleaner=manager.create_session_database_cleaner(),
-                        )
-                    )
-                if not paths.state_db.exists():
-                    return _CleanerAcquisition(DefaultSessionArtifactCleaner(paths=paths))
-                transient_manager = WorkspacePersistenceManager(paths.state_db)
+        if self._backend == FILE_BACKEND_NAME:
+            return _CleanerAcquisition(DefaultSessionArtifactCleaner(paths=paths))
+        if self._backend == SQLITE_BACKEND_NAME:
+            manager = self._persistence_resolver(paths.root)
+            if manager is not None:
                 return _CleanerAcquisition(
                     DefaultSessionArtifactCleaner(
                         paths=paths,
-                        database_cleaner=transient_manager.create_session_database_cleaner(),
-                    ),
-                    transient_manager,
+                        database_cleaner=manager.create_session_database_cleaner(),
+                    )
                 )
-            case unreachable:
-                assert_never(unreachable)
+            if not paths.state_db.exists():
+                return _CleanerAcquisition(DefaultSessionArtifactCleaner(paths=paths))
+            transient_manager = WorkspacePersistenceManager(paths.state_db)
+            return _CleanerAcquisition(
+                DefaultSessionArtifactCleaner(
+                    paths=paths,
+                    database_cleaner=transient_manager.create_session_database_cleaner(),
+                ),
+                transient_manager,
+            )
+        raise ValueError(
+            f"unknown persistence backend {self._backend!r} for session "
+            f"cleanup (expected {FILE_BACKEND_NAME!r} or {SQLITE_BACKEND_NAME!r})"
+        )

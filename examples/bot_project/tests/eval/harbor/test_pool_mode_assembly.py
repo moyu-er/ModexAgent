@@ -31,7 +31,6 @@ from modex_agent.core.turn.models import JsonValue
 from modex_agent.hook.builtin import CurrentTimeInjectionHook
 from modex_agent.memory.registry import HybridMemoryStoreRegistry
 from modex_agent.memory.scope import MemoryContext, MemoryLayerName, SessionScope
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import WorkspacePersistenceManager
 from modex_agent.plugins.assembly.backend_factory import build_memory_registry
 from modex_agent.plugins.assembly.context import AssemblyContext
@@ -582,7 +581,7 @@ async def test_pool_assembly_wires_hybrid_sqlite_memory(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_eval_memory_registry_lifecycle_flushes_sqlite_db(tmp_path: Path) -> None:
     app_config = pool_mode_module._load_eval_app_config(_BOT_PROJECT, _environment(tmp_path))
-    assert app_config.persistence.backend is PersistenceBackend.SQLITE
+    assert app_config.persistence.backend == "sqlite"
 
     data_root = tmp_path / "pool-data"
     persistence = WorkspacePersistenceManager(data_root / "state.db")

@@ -368,7 +368,7 @@ def apply_workspace_resource_selection(
         return app_config
     ws = scope_spec.workspace
     updates: dict[str, PersistenceConfig | object] = {}
-    if ws.persistence is not None and ws.persistence.backend is not app_config.persistence.backend:
+    if ws.persistence is not None and ws.persistence.backend != app_config.persistence.backend:
         updates["persistence"] = PersistenceConfig(backend=ws.persistence.backend)
     if ws.paths is not None and ws.paths.data_dir_name != app_config.paths.data_dir_name:
         updates["paths"] = app_config.paths.model_copy(

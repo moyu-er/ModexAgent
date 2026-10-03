@@ -15,9 +15,9 @@ from typing import TYPE_CHECKING, Any
 from bot.webui.types import RuntimeStores
 from modex_agent.app.config import AppConfig
 from modex_agent.persistence.adapters.pool_session_store import WorkspacePoolSessionStore
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.session_store import SessionStore
 from modex_agent.plugins.defaults.capabilities.todo import TodoSupply
+from modex_agent.plugins.persistence_backends import FILE_BACKEND_NAME
 
 if TYPE_CHECKING:
     from bot.webui.transcript_store import TranscriptStore
@@ -69,7 +69,7 @@ async def session_store_for_index(
     SQLITE backend: materializes the workspace and returns its
     ``session_index_store``.
     """
-    if app_config.persistence.backend is PersistenceBackend.FILE:
+    if app_config.persistence.backend == FILE_BACKEND_NAME:
         assert data_dir_name is not None
         assert pool_resolver is not None
         return WorkspacePoolSessionStore(
@@ -114,7 +114,7 @@ async def resolve_runtime_stores(
     falls back to the FILE-mode store (an empty read — no agent ever
     writes todos there; the dark-supply death, SPEC P5).
     """
-    if app_config is None or app_config.persistence.backend is PersistenceBackend.FILE:
+    if app_config is None or app_config.persistence.backend == FILE_BACKEND_NAME:
         return RuntimeStores()
     # Materialize the workspace on demand (same pattern as
     # session_store_for_index) so the resolver works even before the

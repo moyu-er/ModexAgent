@@ -107,7 +107,7 @@ def _capability_supply_view(
         data_dir=pool_assembly_ctx.data_dir,
         runtime_dir=pool_data.runtime_dir if pool_data is not None else None,
         persistence_backend=(
-            app_config.persistence.backend.value if app_config is not None else None
+            app_config.persistence.backend if app_config is not None else None
         ),
         persistence=pool_assembly_ctx.persistence,
         default_llm_provider=infra.default_llm_provider,

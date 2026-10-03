@@ -59,12 +59,12 @@ from modex_agent.multi_agent.communication.peer_resolution import (
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_router import PoolRouter, agent_pool_ownership
 from modex_agent.multi_agent.session_tree.pool_index import SessionPoolIndex
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.plugins.assembly.pool_factory import (
     resolve_declared_root_prompt,
 )
 from modex_agent.plugins.defaults.capabilities.approval.ui import IMUserInterface
 from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
+from modex_agent.plugins.persistence_backends import SQLITE_BACKEND_NAME
 from modex_agent.tools.overflow.cleaner import OverflowCleaner
 from modex_agent.tools.overflow.handler import ToolResultOverflowHandler
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
@@ -240,13 +240,16 @@ async def _assemble_resources(
         pool_names,
     )
 
-    # T26: open the workspace SQLite DB when backend is SQLITE. The
+    # T26: open the workspace SQLite DB when the sqlite backend is
+    # selected (name comparison — this wiring reuses the sqlite-specific
+    # service home DB / workspace manager pair). The
     # ConnectionManager is shared by all SQLite adapters in this workspace;
     # it closes at evict time (after producers/pools/broker stop) in
-    # _stop_resources. FILE backend leaves persistence=None.
+    # _stop_resources. Other backends leave persistence=None (the bundle
+    # builds their stores).
     persistence: WorkspacePersistenceManager | None = None
     owns_persistence = False
-    if app_config is not None and app_config.persistence.backend is PersistenceBackend.SQLITE:
+    if app_config is not None and app_config.persistence.backend == SQLITE_BACKEND_NAME:
         from modex_agent.persistence.managers import WorkspacePersistenceManager
 
         # Home workspace reuses the service-opened home DB. The comparison

@@ -11,7 +11,8 @@ service-level registration faces —
 :meth:`PluginRegistrationContext.register_channel_adapter` (channel
 adapters) plus the backend families
 :meth:`PluginRegistrationContext.register_broker` /
-:meth:`PluginRegistrationContext.register_control_channel`. All of them
+:meth:`PluginRegistrationContext.register_control_channel` /
+:meth:`PluginRegistrationContext.register_persistence_backend`. All of them
 resolve once per service boot from config, not compiled into assembly
 specs, so they land in dedicated service-level registries
 (:class:`ChannelAdapterRegistry` and
@@ -61,6 +62,7 @@ from modex_agent.core.emitter import TurnBinding, TurnEventSink
 from modex_agent.messaging.broker import MessageBroker
 from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.plugins.backends import BackendRegistry, BrokerFactory, ControlChannelFactory
+from modex_agent.plugins.persistence_backends import PersistenceBackendBundle
 from modex_agent.scope.capability import Capability
 from modex_agent.scope.component_registry import ComponentRegistry, PluginSource
 from modex_agent.scope.components import ComponentFactory, ComponentSlot
@@ -215,12 +217,14 @@ class PluginRegistrationContext:
         channel_adapters: ChannelAdapterRegistry | None = None,
         brokers: BackendRegistry[MessageBroker] | None = None,
         control_channels: BackendRegistry[ControlChannel] | None = None,
+        persistence_backends: BackendRegistry[PersistenceBackendBundle] | None = None,
     ) -> None:
         self._registry = registry
         self._source: PluginSource | None = source
         self._channel_adapters = channel_adapters
         self._brokers = brokers
         self._control_channels = control_channels
+        self._persistence_backends = persistence_backends
         # CAPABILITY entries are capability instances, not factories
         # (SPEC §4) — the one slot whose buffered object is not a
         # ComponentFactory.
@@ -228,6 +232,7 @@ class PluginRegistrationContext:
         self._channel_buffer: list[tuple[str, ChannelAdapterFactory]] = []
         self._broker_buffer: list[tuple[str, BrokerFactory]] = []
         self._control_channel_buffer: list[tuple[str, ControlChannelFactory]] = []
+        self._persistence_backend_buffer: list[tuple[str, type[PersistenceBackendBundle]]] = []
 
     def _add(
         self, slot: ComponentSlot, name: str, component: ComponentFactory | Capability
@@ -319,6 +324,23 @@ class PluginRegistrationContext:
         """
         self._control_channel_buffer.append((name, factory))
 
+    def register_persistence_backend(
+        self, name: str, bundle: type[PersistenceBackendBundle]
+    ) -> None:
+        """Register a persistence-backend bundle class under *name*.
+
+        The bundle is the constructor for every persistence-backed store
+        family (``PersistenceBackendBundle``); ``persistence.backend``
+        names it at boot and the assembly factories resolve it through the
+        ``BackendRegistry[PersistenceBackendBundle]`` attached to this
+        context — the app-service boot attaches the process-level registry
+        (:func:`~modex_agent.plugins.persistence_backends.persistence_backend_registry`)
+        so plugin bundles reach every resolution road. Without one the
+        entry is buffered and dropped at flush with a warning naming the
+        plugin — same drop semantics as :meth:`register_broker`.
+        """
+        self._persistence_backend_buffer.append((name, bundle))
+
     def pending_channel_adapters(self) -> tuple[str, ...]:
         """Channel-adapter names buffered but not yet flushed.
 
@@ -340,6 +362,12 @@ class PluginRegistrationContext:
         loader's read face for the drop warning — mirrors
         :meth:`pending_channel_adapters`)."""
         return tuple(name for name, _factory in self._control_channel_buffer)
+
+    def pending_persistence_backends(self) -> tuple[str, ...]:
+        """Persistence-backend names buffered but not yet flushed (the
+        loader's read face for the drop warning — mirrors
+        :meth:`pending_channel_adapters`)."""
+        return tuple(name for name, _bundle in self._persistence_backend_buffer)
 
     # ---- context manager protocol ----
 
@@ -383,6 +411,8 @@ class PluginRegistrationContext:
         self._broker_buffer = []
         control_channel_buffer = self._control_channel_buffer
         self._control_channel_buffer = []
+        persistence_backend_buffer = self._persistence_backend_buffer
+        self._persistence_backend_buffer = []
         if channel_buffer and self._channel_adapters is not None:
             for name, channel_factory in channel_buffer:
                 self._channel_adapters.register(name, channel_factory)
@@ -392,6 +422,9 @@ class PluginRegistrationContext:
         if control_channel_buffer and self._control_channels is not None:
             for name, control_channel_factory in control_channel_buffer:
                 self._control_channels.register(name, control_channel_factory)
+        if persistence_backend_buffer and self._persistence_backends is not None:
+            for name, bundle in persistence_backend_buffer:
+                self._persistence_backends.register(name, bundle)
         if not buffer:
             return
 
@@ -492,6 +525,12 @@ class PluginDiscoveryConfig:
     control_channels: BackendRegistry[ControlChannel] | None = None
     """Landing registry for plugin control-channel backend registrations.
     Same drop-with-warning-when-absent semantics as ``channel_adapters``."""
+    persistence_backends: BackendRegistry[PersistenceBackendBundle] | None = None
+    """Landing registry for plugin persistence-backend bundle
+    registrations. Same drop-with-warning-when-absent semantics as
+    ``channel_adapters``; the app-service boot attaches the process-level
+    registry so plugin bundles reach the assembly factories' resolution
+    road."""
 
 
 #: Default per-user plugin directory — enabled by default by the
@@ -550,6 +589,7 @@ class ComponentRegistryLoader:
                 channel_adapters=discovery.channel_adapters,
                 brokers=discovery.brokers,
                 control_channels=discovery.control_channels,
+                persistence_backends=discovery.persistence_backends,
             )
 
         # 2. Project directories
@@ -559,6 +599,7 @@ class ComponentRegistryLoader:
                 channel_adapters=discovery.channel_adapters,
                 brokers=discovery.brokers,
                 control_channels=discovery.control_channels,
+                persistence_backends=discovery.persistence_backends,
             )
 
         # 3. User directory (optional)
@@ -568,6 +609,7 @@ class ComponentRegistryLoader:
                 channel_adapters=discovery.channel_adapters,
                 brokers=discovery.brokers,
                 control_channels=discovery.control_channels,
+                persistence_backends=discovery.persistence_backends,
             )
 
         # 4. Entry points (PyPI)
@@ -586,6 +628,7 @@ class ComponentRegistryLoader:
                 channel_adapters=discovery.channel_adapters,
                 brokers=discovery.brokers,
                 control_channels=discovery.control_channels,
+                persistence_backends=discovery.persistence_backends,
             )
 
     # ---- internal helpers ----
@@ -600,6 +643,7 @@ class ComponentRegistryLoader:
         channel_adapters: ChannelAdapterRegistry | None = None,
         brokers: BackendRegistry[MessageBroker] | None = None,
         control_channels: BackendRegistry[ControlChannel] | None = None,
+        persistence_backends: BackendRegistry[PersistenceBackendBundle] | None = None,
     ) -> None:
         """Register one plugin instance.
 
@@ -610,11 +654,12 @@ class ComponentRegistryLoader:
         ``ValueError`` out of :meth:`load` so the conflicting source is
         fixed at boot instead of being silently shadowed.
 
-        Service-level registrations (channel adapters, broker and
-        control-channel backends) land in their registries when the load
-        carries them; without one they are dropped with a WARNING naming
-        the plugin and the dropped names (the generic load path's only
-        service-level face — service-level boots attach registries).
+        Service-level registrations (channel adapters, broker,
+        control-channel and persistence-backend backends) land in their
+        registries when the load carries them; without one they are
+        dropped with a WARNING naming the plugin and the dropped names
+        (the generic load path's only service-level face — service-level
+        boots attach registries).
         """
         ctx = PluginRegistrationContext(
             registry,
@@ -622,6 +667,7 @@ class ComponentRegistryLoader:
             channel_adapters=channel_adapters,
             brokers=brokers,
             control_channels=control_channels,
+            persistence_backends=persistence_backends,
         )
         try:
             plugin.register(ctx)
@@ -670,6 +716,19 @@ class ComponentRegistryLoader:
                     source,
                     list(dropped),
                 )
+        if persistence_backends is None:
+            dropped = ctx.pending_persistence_backends()
+            if dropped:
+                logger.warning(
+                    "Plugin %s from %s registered persistence backends "
+                    "%s but the load carries no persistence-backend "
+                    "BackendRegistry — dropping them (attach a registry "
+                    "via PluginDiscoveryConfig.persistence_backends to "
+                    "keep them)",
+                    type(plugin).__name__,
+                    source,
+                    list(dropped),
+                )
         ctx.flush()
 
     @classmethod
@@ -682,6 +741,7 @@ class ComponentRegistryLoader:
         channel_adapters: ChannelAdapterRegistry | None = None,
         brokers: BackendRegistry[MessageBroker] | None = None,
         control_channels: BackendRegistry[ControlChannel] | None = None,
+        persistence_backends: BackendRegistry[PersistenceBackendBundle] | None = None,
     ) -> None:
         """Scan *directory* for .py files, import Plugin subclasses.
 
@@ -724,6 +784,7 @@ class ComponentRegistryLoader:
                     channel_adapters=channel_adapters,
                     brokers=brokers,
                     control_channels=control_channels,
+                    persistence_backends=persistence_backends,
                 )
 
     @classmethod

@@ -23,7 +23,6 @@ from bot.workspace.dispatch import WorkspaceMessageDispatcher
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.messaging.models import InputMessage
 from modex_agent.persistence.adapters.session_store import SqliteSessionStore
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.managers import WorkspacePersistenceManager
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.registry import ScopeRegistry
@@ -52,7 +51,7 @@ async def test_ws_sqlite_send_persists_user_before_enqueue(tmp_path: Path) -> No
         return await build_database_transcript_store(connection)
 
     transcript_resolver = build_transcript_store_resolver(
-        PersistenceBackend.SQLITE,
+        "sqlite",
         resolve_transcript,
     )
     assert transcript_resolver is not None
@@ -155,7 +154,7 @@ async def test_ws_sqlite_send_reaches_workspace_dispatcher(tmp_path: Path) -> No
         return await build_database_transcript_store(connection)
 
     transcript_resolver = build_transcript_store_resolver(
-        PersistenceBackend.SQLITE,
+        "sqlite",
         resolve_transcript,
     )
     assert transcript_resolver is not None

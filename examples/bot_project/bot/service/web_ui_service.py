@@ -39,13 +39,13 @@ from modex_agent.adapters.output import OutputAdapter
 from modex_agent.app.config import AppConfig
 from modex_agent.core.emitter import TurnBinding, TurnEventSink, TurnEventSinkFactory
 from modex_agent.core.media import MediaConfig
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.persistence.session_store import SessionStore
 from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.plugins.loader import (
     ChannelAdapterRegistry,
     PluginRegistrationContext,
 )
+from modex_agent.plugins.persistence_backends import FILE_BACKEND_NAME
 from modex_agent.scope.component_registry import PluginSource
 
 if TYPE_CHECKING:
@@ -447,7 +447,7 @@ class WebUIService(BotService):
         """
         app_config = self._app_config
         assert app_config is not None
-        if app_config.persistence.backend is PersistenceBackend.FILE:
+        if app_config.persistence.backend == FILE_BACKEND_NAME:
             return await session_store_for_index(
                 app_config=app_config,
                 workspace_stack=self.workspace_stack,

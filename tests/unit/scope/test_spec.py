@@ -13,7 +13,6 @@ import pytest
 from pydantic import ValidationError
 
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
-from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.scope import (
     AgentSpec,
     MemoryDeclaration,
@@ -143,11 +142,13 @@ class TestWorkspaceResourceSelectionFace:
     def test_persistence_backend_selection(self) -> None:
         ws = WorkspaceSpec(
             name="w",
-            persistence=WorkspacePersistenceSpec(backend=PersistenceBackend.SQLITE),
+            persistence=WorkspacePersistenceSpec(backend="sqlite"),
         )
-        assert ws.persistence.backend is PersistenceBackend.SQLITE
-        with pytest.raises(ValidationError):
-            WorkspacePersistenceSpec(backend="bogus")
+        assert ws.persistence.backend == "sqlite"
+        # The closed-set authority is the persistence-backend registry (a
+        # plugin may register any name) — the declaration face carries the
+        # name through and resolution fails loudly on unknown ones.
+        assert WorkspacePersistenceSpec(backend="bogus").backend == "bogus"
 
     def test_paths_selection(self) -> None:
         ws = WorkspaceSpec(name="w", paths=WorkspacePathsSpec(data_dir_name=".data"))
