@@ -84,5 +84,6 @@ ADRs document significant architectural decisions, including the context driving
 | 0052 | Runtime as an EXECUTION_STRATEGY slot product and framework-runnable defaults |
 | 0053 | Neutral presentation event projection layer (vocabulary, projector, hub, console, transcript contract) |
 | 0054 | Unified turn-event stream (one closed runtime union for both execution planes) |
+| 0055 | Whole-framework pluggability: core boundary and registration faces |
 
 <!-- MANUAL -->

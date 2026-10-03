@@ -260,6 +260,25 @@ Notes for authors:
 - Because directory-discovered files load under synthetic names, DO NOT rely on import-identity between a directly-imported plugin module and the registry-resolved factory — construct configs from the factory's own `config_model` (the registry is the single identity source; see the boot-regression note in `modex_agent/pipeline/input/skeleton.py`).
 - Relative imports between plugin files in one directory work (the synthetic parent package anchors the directory's `__path__`); imports of your deployment's own packages (e.g. `bot.*`) resolve through the normal import system as before.
 
+## 9a. Service-level backend registration (non-compile-time components)
+
+Besides the 11 compile-time slots and capabilities, some components resolve once per boot (or per pool) from config rather than per-agent rosters — infrastructure backends. They register through the same `PluginRegistrationContext`, landing in `BackendRegistry` families (`core/backend_registry.py`; name → factory, idempotent per factory, loud on name conflicts and unknown names):
+
+| Face | Registers | Bundled defaults | Selected by |
+|---|---|---|---|
+| `register_channel_adapter` | a channel's input/output adapters + emitter factory | — (deployment-owned) | the channel config |
+| `register_broker` | a `MessageBroker` backend | `in-memory` | `AppConfig.broker_backend` |
+| `register_control_channel` | a `ControlChannel` backend | `in-memory` | `AppConfig.control_channel_backend` |
+| `register_persistence_backend` | a `PersistenceBackendBundle` (one constructor per store family + the manager-opening hooks) | `file`, `sqlite` | `persistence.backend` |
+| `register_protocol_engine` | an LLM wire-protocol engine | the three interface-format names | `interface_format` |
+| `register_external_transport` | an `ExternalTransport` for a coding-agent kind | `opencode` | `provider_kind` |
+
+Notes for authors:
+
+- Backends take no config at the factory signature (`Callable[[], T]`); close over configuration at your registration site.
+- The persistence backend is a **bundle**, not per-store registrations: one name selects the whole coherent store set (inbox, turn-state, session, routing, external map, memory registry, workspace registry, approval audit, session-tree) plus manager opening — implement all members; the sqlite bundle shows the shape (including the manager-absent file fallback the historical semantics require).
+- Selection names are plain strings; the registry is the closed-set authority, so an unknown name fails loudly at first resolution listing the registered options.
+
 ## 10. Quick reference
 
 | You write | The framework does |

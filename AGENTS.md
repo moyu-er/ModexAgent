@@ -98,7 +98,7 @@ Detailed rules in `rules/type-safety.md` and `rules/architecture.md`. Read befor
 
 ## Documentation
 
-ADRs in `docs/adr/` (ADR-0001~0054), design docs in `docs/design/`. See `docs/AGENTS.md` for the index. Read relevant ADRs before significant architectural changes. The settled ownership record for core-ownership convergence and the Experience/Skills capability migration is ADR-0047; the package layering tree and its mechanical gate are recorded in ADR-0051, and the runtime-slot / framework-runnable-defaults decisions in ADR-0052.
+ADRs in `docs/adr/` (ADR-0001~0055), design docs in `docs/design/`. See `docs/AGENTS.md` for the index. Read relevant ADRs before significant architectural changes. The settled ownership record for core-ownership convergence and the Experience/Skills capability migration is ADR-0047; the package layering tree and its mechanical gate are recorded in ADR-0051, and the runtime-slot / framework-runnable-defaults decisions in ADR-0052.
 
 **ADR governance:** living documents, not append-only logs. Merge refinements in place. No parallel versions. Consolidate, don't proliferate. New ADRs only for genuinely new decisions.
 
