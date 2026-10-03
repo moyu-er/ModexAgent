@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -151,7 +151,7 @@ async def _make_hook(
     provider: _ScriptedProvider,
     *,
     session: SessionInfo,
-    user_input: Callable[[str], str | None] | None = None,
+    user_input: Callable[[str], Awaitable[str | None] | str | None] | None = None,
 ) -> tuple[Any, SessionTitleOps, InMemorySessionRegistry, _ScriptedProviderSource]:
     """Build the REAL hook through the REAL factory + naming-task owner.
 
@@ -278,6 +278,54 @@ def _agent_context_for(session: SessionInfo) -> Any:
         session=session,
         identity=TurnIdentity(agent_id=session.agent_name, session=session, turn_id="t1"),
     )
+
+
+
+@pytest.mark.asyncio
+async def test_real_transcript_reader_names_session(tmp_path: Path) -> None:
+    """End-to-end over the real transcript-reader composition.
+
+    The reader here is the production wiring's shape — store.load plus
+    the record-vocabulary extraction — over a real store holding the
+    current-generation user record (the persist stage's shape). The
+    injected-reader tests above cannot see a reader/record generation
+    mismatch; this one pinned the silent no-title regression.
+    """
+    from bot.webui.transcript_store import (
+        JSONLTranscriptStore,
+        UserMessageRecord,
+        earliest_user_content,
+    )
+
+    sid = "abc123.main"
+    store = JSONLTranscriptStore(tmp_path)
+    await store.append(
+        sid,
+        UserMessageRecord(
+            session_id=sid,
+            agent_name="main",
+            timestamp_ms=1,
+            content="帮我规划杭州三天的行程",
+        ),
+    )
+
+    async def _production_reader(session_id: str) -> str | None:
+        records = await store.load(session_id)
+        return earliest_user_content(records)
+
+    # the reader actually extracts the persisted user content
+    assert await _production_reader(sid) == "帮我规划杭州三天的行程"
+
+    session = _main_session()
+    provider = _ScriptedProvider(["杭州旅行规划"])
+    hook, ops, registry, source = await _make_hook(
+        tmp_path, provider, session=session, user_input=_production_reader
+    )
+    ctx = _agent_context_for(session)
+    await _dispatch_finally(hook, ctx, AgentResult(stop_reason=StopReason.COMPLETED))
+    await settle_titles(hook)
+    assert await ops.read_title(sid) == "杭州旅行规划"
+    assert len(provider.calls) == 1
 
 
 @pytest.mark.asyncio

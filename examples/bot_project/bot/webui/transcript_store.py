@@ -55,6 +55,7 @@ from modex_agent.presentation import (
 )
 from modex_agent.presentation import (
     PresentationEvent,
+    PresentationEventBase,
     TextDelta,
     ThinkingDelta,
     ToolCallStarted,
@@ -169,6 +170,23 @@ def _legacy_segment_id() -> str:
     adjacent same-kind blocks that the legacy transcript kept apart.
     """
     return f"_legacy_{uuid.uuid4().hex[:8]}"
+
+
+def earliest_user_content(records: Sequence[TranscriptRecord]) -> str | None:
+    """The first persisted user message's raw content, ``None`` when absent.
+
+    The session-title naming task's reader contract over loaded records:
+    whitespace-only contents are skipped and the raw text is returned
+    unstripped (the caller normalizes/truncates). Records arrive from
+    ``TranscriptStore.load``, whose generation-detecting codec already
+    adapts legacy files onto this vocabulary — matching the record class
+    alone covers every on-disk generation.
+    """
+    for record in records:
+        match record:
+            case UserMessageRecord(content=content) if content.strip():
+                return content
+    return None
 
 
 def adapt_legacy_records(event: ServerEvent) -> list[TranscriptRecord]:
@@ -368,6 +386,17 @@ class TranscriptRecordCodec(TranscriptCodec[TranscriptRecord]):
     _legacy: ServerEventTranscriptCodec = ServerEventTranscriptCodec()
 
     def dump(self, record: TranscriptRecord) -> str:
+        # Loud contract check: a wrong-generation object (e.g. a wire
+        # ``ServerEvent`` from before the record cutover) would otherwise
+        # die five frames deep in ``model_dump_json`` — or worse, ride a
+        # duck-typed path silently. The store accepts exactly the record
+        # union; converters for other shapes live at their own seams.
+        if not isinstance(record, UserMessageRecord | AttachmentCarrier | PresentationEventBase):
+            raise TypeError(
+                f"transcript records must be UserMessageRecord, "
+                f"AttachmentCarrier, or a PresentationEvent — got "
+                f"{type(record).__name__}; wire events never persist"
+            )
         return record.model_dump_json()
 
     def parse(self, line: str) -> list[TranscriptRecord]:

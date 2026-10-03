@@ -12,8 +12,10 @@ from bot.webui.transcript_store import (
     JSONLTranscriptStore,
     ResilientTranscriptStore,
     TranscriptRecord,
+    TranscriptRecordCodec,
     TranscriptStore,
     UserMessageRecord,
+    earliest_user_content,
 )
 
 from modex_agent.core.turn_events import StopReason
@@ -728,3 +730,91 @@ async def test_workspace_store_append_is_resilient(
     # Must NOT raise — proving the resilient wrapper sits in the write path.
     with bind_workspace_root(tmp_path):
         await store.append("conv.main", _msg("conv.main", "hi"))
+
+
+# ── Earliest-user-content extraction (the session-title reader) ────────────
+
+
+async def test_earliest_user_content_current_generation(tmp_path: Path) -> None:
+    """The naming-task reader extracts the first non-empty user record.
+
+    Regression anchor for the record-vocabulary cutover: the reader must
+    match the durable ``UserMessageRecord`` — the production reader
+    matched the retired wire class and silently returned ``None`` for
+    every newly written session, so no title was ever named.
+    """
+    store = JSONLTranscriptStore(tmp_path)
+    sid = "conv1.main"
+    await store.append(
+        sid,
+        TextDelta(
+            session_id=sid, agent_name="main", turn_id="t1",
+            timestamp_ms=1, text="assistant text",
+        ),
+    )
+    await store.append(
+        sid,
+        UserMessageRecord(
+            session_id=sid, agent_name="main", timestamp_ms=2, content="   ",
+        ),
+    )
+    await store.append(
+        sid,
+        UserMessageRecord(
+            session_id=sid,
+            agent_name="main",
+            timestamp_ms=3,
+            content="帮我安排明天的日程",
+        ),
+    )
+    records = await store.load(sid)
+    assert earliest_user_content(records) == "帮我安排明天的日程"
+
+
+async def test_earliest_user_content_legacy_generation(tmp_path: Path) -> None:
+    """Legacy on-disk user_message lines adapt and read identically."""
+    store = JSONLTranscriptStore(tmp_path)
+    legacy = {
+        "event": "user_message",
+        "session_id": "conv1.main",
+        "agent_name": "main",
+        "timestamp": 1718234567000,
+        "content": "legacy request",
+    }
+    (tmp_path / "conv1.main.jsonl").write_text(
+        json.dumps(legacy) + "\n", encoding="utf-8"
+    )
+    records = await store.load("conv1.main")
+    assert earliest_user_content(records) == "legacy request"
+
+
+async def test_earliest_user_content_absent(tmp_path: Path) -> None:
+    """No user record (or only empty ones) reads as ``None``."""
+    store = JSONLTranscriptStore(tmp_path)
+    sid = "conv1.main"
+    await store.append(
+        sid,
+        ToolCallStarted(
+            session_id=sid, agent_name="main", turn_id="t1", timestamp_ms=1,
+            tool_name="read", call_id="c1", arguments={},
+        ),
+    )
+    records = await store.load(sid)
+    assert earliest_user_content(records) is None
+    assert earliest_user_content([]) is None
+
+
+def test_codec_dump_rejects_non_record_objects() -> None:
+    """The store's write contract fails loud on wrong-shape objects.
+
+    A wrong-generation object (a wire event, a bare namespace) hitting
+    the write path used to die five frames deep in ``model_dump_json``
+    — a contract error at the store boundary names the record union and
+    the actual type instead.
+    """
+    import types
+
+    codec = TranscriptRecordCodec()
+    with pytest.raises(TypeError, match="wire events never persist"):
+        codec.dump(types.SimpleNamespace(kind="user_message"))  # type: ignore[arg-type]
+

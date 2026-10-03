@@ -10,10 +10,14 @@ Text/reasoning events are delivered or buffered according to the
   one message per model segment).
 - TURN — buffer, flush on ``TurnFinishedEvent`` (no streaming support).
 
-Terminal events close the turn: ``TurnFinishedEvent`` flushes any residual
-buffer, delivers attachments, and clears state; ``TurnErroredEvent`` sends
-the error message. Reasoning accumulates into the flush message's metadata,
-preserving the historical buffering semantics.
+Terminal events close the turn through one template: ``_handle_turn_finished``
+runs the error render (``_render_turn_error``, once per turn), the terminal
+flush seam (``_flush_on_terminal``), attachments delivery, and the subclass
+hook (``_on_turn_finished``) before resetting per-turn state. Subclasses with
+their own buffer shape customize those seams — never a second copy of the
+sequence. ``TurnErroredEvent`` renders through the same once-per-turn helper.
+Reasoning accumulates into the flush message's metadata, preserving the
+historical buffering semantics.
 """
 
 from __future__ import annotations
@@ -67,7 +71,9 @@ class BufferingSink(TurnEventSink):
     Business channels subclass this and add their own projections (logs,
     transcripts, wire frames) by overriding ``_dispatch`` extensions; the
     base owns content buffering, flush boundaries, attachments delivery,
-    and the error path.
+    and the terminal sequence (``_handle_turn_finished`` template with
+    the ``_flush_on_terminal`` / ``_on_turn_finished`` /
+    ``_reset_turn_state`` seams).
     """
 
     def __init__(
@@ -145,33 +151,63 @@ class BufferingSink(TurnEventSink):
             case IterationFinishedEvent():
                 if self._policy is DeliveryPolicy.SEGMENT:
                     await self._flush_buffers()
-            case TurnFinishedEvent(stop_reason=stop_reason, error=error, attachments=attachments):
-                # Ordering preserved from the retired emitter channels: the
-                # error message (when the mid-flight path did not already
-                # deliver one), then the residual text flush, then
-                # attachments.
-                if (
-                    stop_reason is StopReason.ERROR
-                    and error
-                    and not self._error_delivered
-                ):
-                    self._error_delivered = True
-                    await self._safe_adapter_send(
-                        OutputMessage(content=f"Error: {error}"),
-                        log_label="turn_finished_error",
-                    )
-                if not self.is_true_streaming:
-                    await self._flush_buffers()
-                await self._deliver_attachments(attachments)
-                self._content_buffer = ""
-                self._reasoning_buffer = ""
-                self._error_delivered = False
+            case TurnFinishedEvent():
+                await self._handle_turn_finished(event)
             case TurnErroredEvent(message=message):
-                self._error_delivered = True
-                await self._safe_adapter_send(
-                    OutputMessage(content=f"Error: {message}"),
-                    log_label="turn_errored",
-                )
+                await self._render_turn_error(message)
+
+    async def _render_turn_error(self, message: str) -> None:
+        """Deliver the user-facing error render once per turn.
+
+        THE single owner of the error render for both terminal paths —
+        the mid-flight ``TurnErroredEvent`` and the terminal
+        ``TurnFinishedEvent`` carrying ``StopReason.ERROR``: whichever
+        fires first renders, the other is suppressed by the once flag.
+        """
+        if self._error_delivered:
+            return
+        self._error_delivered = True
+        await self._safe_adapter_send(
+            OutputMessage(content=f"Error: {message}"), log_label="turn_errored"
+        )
+
+    async def _handle_turn_finished(self, event: TurnFinishedEvent) -> None:
+        """Terminal template: error render, terminal flush, attachments, hook.
+
+        Ordering preserved from the retired emitter channels: the error
+        message (when the mid-flight path did not already deliver one),
+        then the buffered delivery, then attachments, then the subclass
+        hook. Subclasses customize the sequence by overriding the three
+        seams — never by re-implementing this method.
+        """
+        try:
+            if event.stop_reason is StopReason.ERROR and event.error:
+                await self._render_turn_error(event.error)
+            await self._flush_on_terminal()
+            await self._deliver_attachments(event.attachments)
+            await self._on_turn_finished(event)
+        finally:
+            await self._reset_turn_state()
+
+    async def _flush_on_terminal(self) -> None:
+        """Terminal flush seam (deliberately distinct from ``flush()``).
+
+        Flushes the buffered content unless the policy already streamed
+        every delta. Subclasses with their own buffer shape (segment
+        accumulators) override this to flush that shape instead — the
+        public ``flush()`` stays the consumer escape hatch.
+        """
+        if not self.is_true_streaming:
+            await self._flush_buffers()
+
+    async def _on_turn_finished(self, event: TurnFinishedEvent) -> None:
+        """Subclass hook after the terminal sequence (base: no-op)."""
+
+    async def _reset_turn_state(self) -> None:
+        """Clear per-turn buffers and the error once-flag (base shape)."""
+        self._content_buffer = ""
+        self._reasoning_buffer = ""
+        self._error_delivered = False
 
     async def _deliver_attachments(self, attachments: tuple[str, ...]) -> None:
         """Forward turn attachments (sent explicitly, even in streaming mode)."""

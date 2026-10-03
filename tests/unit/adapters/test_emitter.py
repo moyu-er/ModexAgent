@@ -12,6 +12,7 @@ and the _safe_adapter_send timeout path.
 """
 
 import asyncio
+import contextlib
 
 from modex_agent.adapters.emitter import BufferingSink, DeliveryPolicy
 from modex_agent.adapters.output import OutputAdapter
@@ -21,6 +22,7 @@ from modex_agent.core.turn_events import (
     IterationFinishedEvent,
     StopReason,
     TurnErroredEvent,
+    TurnFinishedEvent,
     TurnReasoningEvent,
     TurnTextEvent,
     TurnToolCallEvent,
@@ -320,6 +322,110 @@ class TestGapCases:
         # Flush goes through _safe_adapter_send; timeout must return, not hang.
         await asyncio.wait_for(emitter.emit(_iteration_end()), timeout=2.0)
         # Buffers are NOT cleared on timeout (flush failed) — but no exception raised.
+
+
+
+class TestTerminalTemplate:
+    """The _handle_turn_finished template drives every seam in order.
+
+    A subclass overriding the seams must observe exactly one sequence
+    per terminal: error render first, then the flush seam (with its
+    adapter sends), then attachments, then the hook — with reset always
+    running, even when a seam raises.
+    """
+
+    class _SeamSpy(BufferingSink):
+        def __init__(
+            self,
+            adapter: RecordingOutputAdapter,
+            *,
+            fail_flush: bool = False,
+            real_flush: bool = False,
+        ) -> None:
+            super().__init__(adapter, "spy")
+            self.calls: list[str] = []
+            self._fail_flush = fail_flush
+            self._real_flush = real_flush
+
+        async def _render_turn_error(self, message: str) -> None:
+            self.calls.append("error")
+            await super()._render_turn_error(message)
+
+        async def _flush_on_terminal(self) -> None:
+            self.calls.append(f"flush@{len(self.output_adapter.sends)}")
+            if self._fail_flush:
+                raise RuntimeError("boom")
+            if self._real_flush:
+                await super()._flush_on_terminal()
+
+        async def _on_turn_finished(self, event: TurnFinishedEvent) -> None:
+            # Record how many adapter sends happened BEFORE the hook, so
+            # the attachment delivery's position is observable from the
+            # call log alone.
+            self.calls.append(f"hook@{len(self.output_adapter.sends)}")
+
+        async def _reset_turn_state(self) -> None:
+            self.calls.append("reset")
+            await super()._reset_turn_state()
+
+    async def test_template_pins_full_terminal_order(self):
+        """error render -> flush seam -> attachments -> hook -> reset.
+
+        The send log pins every adjacency: the error message precedes
+        the flushed body, the attachment follows the flush, and the hook
+        observes all three sends. A re-sequenced template fails on the
+        call log OR the contents list.
+        """
+        adapter = RecordingOutputAdapter(StreamingMode.PSEUDO)
+        spy = self._SeamSpy(adapter, real_flush=True)
+        await spy.emit(TurnTextEvent(text="body"))
+        await spy.emit(
+            turn_finished_event(
+                AgentResult(
+                    content="body",
+                    stop_reason=StopReason.ERROR,
+                    error="bad",
+                    attachments=["f.png"],
+                )
+            )
+        )
+        assert spy.calls == ["error", "flush@1", "hook@3", "reset"]
+        contents = [m.content for m, _ in adapter.sends]
+        assert contents == ["Error: bad", "body", ""]
+        assert list(adapter.sends[-1][0].attachments) == ["f.png"]
+
+    async def test_mid_flight_error_suppresses_terminal_render(self):
+        """The once flag routes both terminal paths through one helper."""
+        adapter = RecordingOutputAdapter(StreamingMode.PSEUDO)
+        spy = self._SeamSpy(adapter)
+        await spy.emit(TurnErroredEvent(message="mid-flight"))
+        await spy.emit(
+            turn_finished_event(
+                AgentResult(content="x", stop_reason=StopReason.ERROR, error="late")
+            )
+        )
+        # The terminal path ATTEMPTS the render (second "error" marker)
+        # but the once flag suppresses its send — one user-facing render.
+        assert spy.calls == ["error", "error", "flush@1", "hook@1", "reset"]
+        assert [m.content for m, _ in adapter.sends] == ["Error: mid-flight"]
+
+    async def test_two_mid_flight_errors_render_once(self):
+        """Declared delta: the plain-sink mid-flight path honors the flag."""
+        adapter = RecordingOutputAdapter(StreamingMode.PSEUDO)
+        spy = self._SeamSpy(adapter)
+        await spy.emit(TurnErroredEvent(message="first"))
+        await spy.emit(TurnErroredEvent(message="second"))
+        assert [m.content for m, _ in adapter.sends] == ["Error: first"]
+
+    async def test_template_reset_runs_when_seam_raises(self):
+        adapter = RecordingOutputAdapter(StreamingMode.PSEUDO)
+        spy = self._SeamSpy(adapter, fail_flush=True)
+        with contextlib.suppress(RuntimeError):
+            await spy.emit(turn_finished_event(AgentResult(content="x")))
+        assert spy.calls == ["flush@0", "reset"]
+        # the once-flag was reset: a later mid-flight error renders again
+        await spy.emit(TurnErroredEvent(message="after"))
+        assert [m.content for m, _ in adapter.sends] == ["Error: after"]
 
 
 class TestKindGate:

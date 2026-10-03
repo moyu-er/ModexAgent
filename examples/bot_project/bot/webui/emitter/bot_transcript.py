@@ -31,8 +31,9 @@ order:
    full-fidelity forwarding).
 
 The bot keeps only bot-specific work: the ServerEvent wire projection,
-the transcript record codec, and the terminal channel composition (error
-render / attachments via the output adapter) stay on this class.
+the transcript record codec, and the terminal seams the base
+``BufferingSink`` template calls (segment flush, hub forwarding, bot
+turn-state reset) — one terminal mechanism for every sink.
 Projections receive full-fidelity facts (full tool args, full result,
 ``seq``, ``part_id``) — display truncation is each projection's own
 concern.
@@ -53,11 +54,9 @@ from modex_agent.core.llm_struct import TokenUsage
 from modex_agent.core.session_id import agent_of
 from modex_agent.core.turn_events import (
     IterationFinishedEvent,
-    StopReason,
     TurnEvent,
     TurnFinishedEvent,
 )
-from modex_agent.messaging.models import OutputMessage
 from modex_agent.presentation import (
     ApprovalRequested,
     ApprovalResolved,
@@ -162,9 +161,6 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
         self._segment_kinds: dict[str, str] = {}
         self._segment_order: list[str] = []
         self._segment_heads: dict[str, TextDelta | ThinkingDelta] = {}
-        # Per-turn flag: a mid-flight turn_errored already carried the
-        # user-facing error message, so the terminal render is suppressed.
-        self._error_delivered = False
 
     # ------------------------------------------------------------------
     # Projection contract (subclass sink formats)
@@ -414,9 +410,8 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
                     await self._persist(event)
             case TurnErrored(message=message):
                 # Mid-flight terminal: the error render goes through the
-                # SAME once-per-turn helper the terminal branch uses, so
-                # the render and its flag never drift between the two
-                # terminal paths this emitter owns.
+                # SHARED base helper (``_render_turn_error``) both terminal
+                # paths use, so the render and its once flag never drift.
                 await self._render_turn_error(message)
             case TurnFinished():
                 # Terminal record — stop classification + latency. An idle
@@ -438,6 +433,9 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
     async def _dispatch(self, event: TurnEvent) -> None:
         match event:
             case TurnFinishedEvent():
+                # The inherited base template runs the terminal sequence
+                # (error render -> segment flush -> attachments -> hub
+                # forwarding) through this class's seam overrides.
                 await self._handle_turn_finished(event)
             case IterationFinishedEvent():
                 # Segment boundary: the retired emit_stream_end flush now
@@ -448,49 +446,39 @@ class BotTranscriptEmitter(BufferingSink, PresentationSink, ABC):
             case _:
                 await self._event_hub.emit(event)
 
-    async def _render_turn_error(self, message: str) -> None:
-        """Deliver the user-facing error render once per turn.
+    # ------------------------------------------------------------------
+    # Terminal seams (the base BufferingSink template calls these)
+    # ------------------------------------------------------------------
 
-        THE single owner of the error render for both terminal paths this
-        emitter owns — the mid-flight tap (``TurnErrored``) and the
-        terminal branch (``TurnFinished`` with ``StopReason.ERROR``):
-        whichever fires first renders, the other is suppressed by the
-        once flag. Sends through the inherited adapter-safe send (the
-        same protected method the base ``BufferingSink._dispatch`` renders
-        through).
+    async def _flush_on_terminal(self) -> None:
+        """Terminal flush seam: persist the accumulated segments.
+
+        This emitter buffers by segment (not the base content buffers),
+        and every policy flushes segments at terminal so the final text
+        is never lost — matching the pre-template behavior.
         """
-        if self._error_delivered:
-            return
-        self._error_delivered = True
-        await self._safe_adapter_send(
-            OutputMessage(content=f"Error: {message}"), log_label="emit_error"
-        )
+        await self._flush_active_segment()
 
-    async def _handle_turn_finished(self, event: TurnFinishedEvent) -> None:
-        """Terminal branch: error render, segment flush, attachments, projection.
+    async def _on_turn_finished(self, event: TurnFinishedEvent) -> None:
+        """Terminal hook: record + project the terminal card.
 
-        Ordering preserved from the retired emitter channels: the error
-        message (when the mid-flight path did not already deliver one),
-        then the segment flush (while the turn identity is still active),
-        then attachments (the inherited base delivery), then the terminal
-        projection — delegating the event to the hub projects it and fans
-        the TurnFinished card out to the consumers (the projection bridge
-        renders the terminal frame last). The event is forwarded VERBATIM,
-        never reconstructed field-by-field, so future fields survive.
+        Delegating the event to the hub projects it and fans the
+        ``TurnFinished`` card out to the consumers (the projection bridge
+        renders the terminal frame last) — after the flush, so the
+        terminal record closes the turn's persisted segments. The event
+        is forwarded VERBATIM, never reconstructed field-by-field, so
+        future fields survive.
         """
-        try:
-            if event.stop_reason is StopReason.ERROR and event.error:
-                await self._render_turn_error(event.error)
-            await self._flush_active_segment()
-            await self._deliver_attachments(event.attachments)
-            await self._event_hub.emit(event)
-        finally:
-            await self._clear_partial()
-            self._segments = {}
-            self._segment_kinds = {}
-            self._segment_order = []
-            self._segment_heads = {}
-            self._error_delivered = False
+        await self._event_hub.emit(event)
+
+    async def _reset_turn_state(self) -> None:
+        """Clear the bot turn shapes, then the base buffers and once-flag."""
+        await self._clear_partial()
+        self._segments = {}
+        self._segment_kinds = {}
+        self._segment_order = []
+        self._segment_heads = {}
+        await super()._reset_turn_state()
 
     # ------------------------------------------------------------------
     # Internal helpers

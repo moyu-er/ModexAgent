@@ -349,17 +349,17 @@ async def _assemble_resources(
         store = service._transcript_store
         if store is None:
             return None
-        from bot.webui.events import UserMessageEvent
+        from bot.webui.transcript_store import earliest_user_content
 
         try:
-            events = await store.load(session_id, sessions_dir=ctx.paths.sessions_dir)
+            records = await store.load(session_id, sessions_dir=ctx.paths.sessions_dir)
         except Exception:
             logger.debug("session_title transcript load failed", exc_info=True)
             return None
-        for event in events:
-            if isinstance(event, UserMessageEvent) and event.content.strip():
-                return event.content
-        return None
+        # The record-vocabulary extraction (covers every on-disk
+        # generation — the load codec adapts legacy lines) is owned and
+        # tested beside the record types; never re-match wire classes here.
+        return earliest_user_content(records)
 
     title_naming = SessionTitleNamingTask(
         ops=title_ops,
