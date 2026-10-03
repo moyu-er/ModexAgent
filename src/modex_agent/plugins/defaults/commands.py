@@ -1,20 +1,18 @@
-"""Default COMMAND_HANDLER factories — 6 built-in slash commands.
+"""Default COMMAND_HANDLER factories — 3 built-in environment commands.
 
-Registers factories for /cd, /stop, /pool, /approve, /deny, /continue
-(SPEC §6.7). Each factory creates the appropriate CommandHandler
-instance.
+Registers factories for /cd, /stop, /pool (SPEC §6.7). Each factory
+creates the appropriate CommandHandler instance.
 
-The 4 handlers with existing implementations reuse them directly:
-- /approve, /deny → ApprovalCommandHandler (handles both names)
-- /continue → ContinueCommandHandler
-- /stop → ControlCommandHandler
-
-The 2 IM-only environment commands (/cd, /pool) get new handlers. In the
-current system these are intercepted by input pipeline stages
-(EnvironmentControlStage) before reaching the command processor. The
-COMMAND_HANDLER factories provide handlers for the unified assembly
-system; the actual workspace/pool switching is wired by the input
-pipeline stages (INPUT_STAGE slot).
+- /stop → ControlCommandHandler (the existing implementation, reused).
+- The approval commands (/approve, /deny, /continue) register with the
+  approval capability bundle (``capabilities/approval/commands.py``,
+  W1-B2) — they are approval-channel vocabulary.
+- The 2 IM-only environment commands (/cd, /pool) get handlers here. In
+  the current system these are intercepted by input pipeline stages
+  (EnvironmentControlStage) before reaching the command processor. The
+  COMMAND_HANDLER factories provide handlers for the unified assembly
+  system; the actual workspace/pool switching is wired by the input
+  pipeline stages (INPUT_STAGE slot).
 """
 
 from __future__ import annotations
@@ -28,9 +26,7 @@ from modex_agent.commands.constants import (
     CommandDispatchPolicy,
 )
 from modex_agent.commands.handlers import (
-    ApprovalCommandHandler,
     CommandHandler,
-    ContinueCommandHandler,
     ControlCommandHandler,
 )
 from modex_agent.commands.models import CommandHandlingResult
@@ -153,45 +149,8 @@ class PoolCommandHandlerFactory(ComponentFactory):
 
     config_model = _EmptyCommandConfig
 
-    async def create(self, config: BaseModel, ctx: AssemblyContext) -> Any:  # noqa: ARG002
+    async def create(self, config: BaseModel, ctx: Any) -> Any:  # noqa: ARG002
         return PoolCommandHandler()
-
-
-class ApproveCommandHandlerFactory(ComponentFactory):
-    """Factory for the /approve command handler.
-
-    Creates an ApprovalCommandHandler which handles both /approve and
-    /deny. Registered under the ``approve`` name so the roster can
-    reference it.
-    """
-
-    config_model = _EmptyCommandConfig
-
-    async def create(self, config: BaseModel, ctx: AssemblyContext) -> Any:  # noqa: ARG002
-        return ApprovalCommandHandler()
-
-
-class DenyCommandHandlerFactory(ComponentFactory):
-    """Factory for the /deny command handler.
-
-    Creates an ApprovalCommandHandler (same handler as /approve — it
-    handles both names). Registered under the ``deny`` name so the roster
-    can reference it independently.
-    """
-
-    config_model = _EmptyCommandConfig
-
-    async def create(self, config: BaseModel, ctx: AssemblyContext) -> Any:  # noqa: ARG002
-        return ApprovalCommandHandler()
-
-
-class ContinueCommandHandlerFactory(ComponentFactory):
-    """Factory for the /continue command handler."""
-
-    config_model = _EmptyCommandConfig
-
-    async def create(self, config: BaseModel, ctx: AssemblyContext) -> Any:  # noqa: ARG002
-        return ContinueCommandHandler()
 
 
 # ---------------------------------------------------------------------------
@@ -200,10 +159,7 @@ class ContinueCommandHandlerFactory(ComponentFactory):
 
 
 def register_default_commands(ctx: PluginRegistrationContext) -> None:
-    """Register all 6 default COMMAND_HANDLER factories into *ctx*."""
+    """Register the 3 default environment COMMAND_HANDLER factories into *ctx*."""
     ctx.register_command("cd", CdCommandHandlerFactory())
     ctx.register_command("stop", StopCommandHandlerFactory())
     ctx.register_command("pool", PoolCommandHandlerFactory())
-    ctx.register_command("approve", ApproveCommandHandlerFactory())
-    ctx.register_command("deny", DenyCommandHandlerFactory())
-    ctx.register_command("continue", ContinueCommandHandlerFactory())

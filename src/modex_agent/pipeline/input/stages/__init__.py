@@ -4,10 +4,11 @@ Channel/workspace-specific stages (environment control, session control,
 workspace resolve, skill parse, model choice, enqueue) and the per-stage
 handler tables stay in the deployment's input-pipeline package; the stages
 here consume only the framework :class:`~modex_agent.pipeline.input.context.InputContext`
-contract plus injected deployment callbacks.
+contract plus injected deployment callbacks. The approval onramp stage is
+approval vocabulary — it lives in the approval capability bundle
+(``plugins/defaults/capabilities/approval/stage.py``).
 """
 
-from modex_agent.pipeline.input.stages.approval import ApprovalStage
 from modex_agent.pipeline.input.stages.attachment_ingest import AttachmentIngestStage
 from modex_agent.pipeline.input.stages.command import (
     CommandContext,
@@ -35,7 +36,6 @@ from modex_agent.pipeline.input.stages.unsupported_command import (
 )
 
 __all__ = [
-    "ApprovalStage",
     "AttachmentIngestStage",
     "ChannelRecorder",
     "CommandContext",

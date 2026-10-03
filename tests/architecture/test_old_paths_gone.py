@@ -146,6 +146,16 @@ FORBIDDEN_MODULE_PATHS: tuple[str, ...] = (
     # capability package (plugins/defaults/capabilities/skills/); the old
     # core package is deleted with no shim.
     "core/skills",
+    # W1-B2 (approval capability bundle): the ENTIRE approval feature
+    # slice moved into ``plugins/defaults/capabilities/approval/`` — the
+    # approval package, the pipeline's approval resumer/renderer/stage,
+    # and the assembly gate factory are deleted with no shims; every old
+    # import site was converged to the bundle in the same batch.
+    "approval",
+    "pipeline/approval_resumer.py",
+    "pipeline/approval_renderer.py",
+    "pipeline/input/stages/approval.py",
+    "plugins/assembly/approval_factory.py",
     # D2 OLD-AUTHORITY: skill assignment is disk-owned; the generic IOC
     # config module no longer supplies roots or allow-lists.
     "ioc/configs/skills.py",
@@ -256,9 +266,10 @@ FORBIDDEN_IDENTIFIERS: tuple[str, ...] = (
 
 # Symbols relocated from core files that remain live. These checks are scoped
 # to the old owner so the canonical definitions in their new owners stay valid.
+# (The W1-B2 approval entries for the deleted ``approval/__init__.py`` /
+# ``approval/types.py`` died with their files — the package is in
+# FORBIDDEN_MODULE_PATHS above.)
 FORBIDDEN_OLD_OWNER_BINDINGS: dict[str, tuple[str, ...]] = {
-    "approval/__init__.py": ("ApprovalAction",),
-    "approval/types.py": ("ApprovalAction",),
     "core/history.py": ("ListMessageHistory",),
     "core/message_utils.py": ("ToolNudgeVerdict", "scan_tool_usage_in_turn"),
     "core/scope.py": (

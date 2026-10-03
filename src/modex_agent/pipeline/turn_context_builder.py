@@ -56,7 +56,6 @@ if TYPE_CHECKING:
     from modex_graph.context import GraphContext
 
 from modex_agent.adapters.emitter import BufferingSink
-from modex_agent.approval.response import parse_input_command
 from modex_agent.commands.models import CommandContext
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.media import Attachment, MediaStore
@@ -279,6 +278,13 @@ class TurnContextBuilder:
                 approval_id=decision.approval_id,
             )
         if self._command_processor is None:
+            # The approval command parser is approval-channel vocabulary —
+            # imported at the use site so the turn-context builder carries no
+            # approval dependency when no command-free fallback runs.
+            from modex_agent.plugins.defaults.capabilities.approval.response import (
+                parse_input_command,
+            )
+
             parsed_command = parse_input_command(input_msg.content or "")
             approval_action = parsed_command.approval_action if parsed_command is not None else None
             return TurnRequest(

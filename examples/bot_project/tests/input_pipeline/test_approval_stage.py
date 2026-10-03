@@ -7,8 +7,8 @@ from bot.input_pipeline.context import BotInputContext
 
 from modex_agent.messaging.models import ApprovalAction, ApprovalDecisionInput
 from modex_agent.pipeline.input.envelope import CommandStatus, UserInputEnvelope
-from modex_agent.pipeline.input.stages.approval import ApprovalStage
 from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
+from modex_agent.plugins.defaults.capabilities.approval.stage import ApprovalStage
 
 
 def _ctx() -> BotInputContext:

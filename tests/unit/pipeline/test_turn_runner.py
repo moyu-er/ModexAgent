@@ -21,8 +21,8 @@ from modex_agent.core.tool_manager import Tool
 from modex_agent.core.turn.models import TurnSnapshot
 from modex_agent.memory.context import ContextState, InMemoryContextManager
 from modex_agent.messaging.models import ApprovalAction, InputMessage
-from modex_agent.pipeline.approval_renderer import ApprovalRenderer
-from modex_agent.pipeline.approval_resumer import ApprovalResumer
+from modex_agent.plugins.defaults.capabilities.approval.renderer import ApprovalRenderer
+from modex_agent.plugins.defaults.capabilities.approval.resumer import ApprovalResumer
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry

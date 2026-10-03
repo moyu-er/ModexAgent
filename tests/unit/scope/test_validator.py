@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modex_agent.approval.config import ApprovalConfig
 from modex_agent.scope import (
     AgentSpec,
     EffectiveAgentConfig,
@@ -484,7 +483,7 @@ class TestV9NonRootApproval:
                 _pool(
                     "p",
                     [
-                        AgentSpec(name="root", approval=ApprovalConfig(enabled=True)),
+                        AgentSpec(name="root", approval={"enabled": True}),
                         AgentSpec(name="sub", parent="root"),
                     ],
                 )
@@ -504,7 +503,7 @@ class TestV9NonRootApproval:
                     [
                         AgentSpec(name="root"),
                         AgentSpec(
-                            name="sub", parent="root", approval=ApprovalConfig()
+                            name="sub", parent="root", approval={"enabled": False}
                         ),
                     ],
                 )

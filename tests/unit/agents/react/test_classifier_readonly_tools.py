@@ -1,9 +1,9 @@
 """Tests: unconfigured tools are always NORMAL; configured tools check paths."""
 from pathlib import Path
 
-from modex_agent.approval.argument_matcher import ArgumentMatcher
-from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
-from modex_agent.approval.runtime import TieredToolApprovalClassifier
+from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import ArgumentMatcher
+from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig, ToolApprovalConfig
+from modex_agent.plugins.defaults.capabilities.approval.runtime import TieredToolApprovalClassifier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo

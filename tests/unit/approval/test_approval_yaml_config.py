@@ -1,4 +1,4 @@
-from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
+from modex_agent.plugins.defaults.capabilities.approval.config import ApprovalConfig, ToolApprovalEntry
 
 
 class TestApprovalConfig:

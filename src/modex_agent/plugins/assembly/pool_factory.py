@@ -125,7 +125,6 @@ if TYPE_CHECKING:
     from modex_agent.app.config import AppConfig
     from modex_agent.app.models.choice import ModelChoiceRegistry
     from modex_agent.app.models.registry import ModelRegistry
-    from modex_agent.approval.ui import ApprovalUserInterface
     from modex_agent.commands.skill import SkillResolver
     from modex_agent.core.media import MediaStore
     from modex_agent.core.prompt import SystemPromptProvider
@@ -143,6 +142,9 @@ if TYPE_CHECKING:
     )
     from modex_agent.multi_agent.session_tree.session_binding import SessionBindingStore
     from modex_agent.plugins.assembly.builder import AssembledAgent, AssemblyBuilder
+    from modex_agent.plugins.defaults.capabilities.approval.ui import (
+        ApprovalUserInterface,
+    )
     from modex_agent.scope.assembly_spec import AssemblySpec
     from modex_agent.scope.spec import WorkspaceSpec
     from modex_agent.tools.mcp.registry import McpConnectionRegistry

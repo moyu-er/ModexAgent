@@ -52,6 +52,7 @@ async def test_create_pool_shares_audit_sink_with_native_materialization(tmp_pat
     instance = None
     try:
         audit = SqliteApprovalAuditStore(manager, BotRecordScope(pool="audited"))
+        component_registry = await load_bot_test_registry()
         declaration = _POOL_DECLARATION.format(pool_name="audited") + """\
       hooks: [-native_env]
       approval:
@@ -64,7 +65,11 @@ async def test_create_pool_shares_audit_sink_with_native_materialization(tmp_pat
             instance = await create_pool(
                 pool_name="audited",
                 declared=build_declared(
-                    declaration, project_dir=tmp_path, data_dir=tmp_path / "data", pool_name="audited",
+                    declaration,
+                    project_dir=tmp_path,
+                    data_dir=tmp_path / "data",
+                    pool_name="audited",
+                    registry=component_registry,
                 ),
                 assembly_deps=PoolAssemblyDeps(), project_dir=tmp_path, data_dir=tmp_path / "data",
                 workspace_registry=object(), workspace_resources=object(),
@@ -75,7 +80,7 @@ async def test_create_pool_shares_audit_sink_with_native_materialization(tmp_pat
                 model_assembly=ModelRegistryAssembly(None),
                 default_llm_provider_name=MULTI_LLM_PROVIDER,
                 control_origin=build_control_origin(tmp_path / "config"),
-                component_registry=await load_bot_test_registry(),
+                component_registry=component_registry,
             )
         build_audit.assert_called_once()
         deps = instance.pool.materialize_deps

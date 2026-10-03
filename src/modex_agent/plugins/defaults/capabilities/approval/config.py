@@ -81,6 +81,11 @@ class ToolApprovalEntry(BaseModel):
         always win. Default [] = behavior unchanged.
     """
 
+    # Same strictness as the runtime face (rule 12): the raw declaration
+    # is validated through this model at compile time, so unknown keys
+    # fail loudly there instead of being silently dropped.
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
     allowed_paths: list[str] = []
     allow_patterns: list[str] = []
 
@@ -95,6 +100,8 @@ class ApprovalConfig(BaseModel):
     with an empty tools map. Disabled approval leaves guard denials active
     without prompts; native subagents have no human approval channel.
     """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     enabled: bool = False
     tools: dict[str, ToolApprovalEntry] = Field(default_factory=dict)

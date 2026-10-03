@@ -185,7 +185,6 @@ class TestValidatorUnaffected:
     def test_phase2_v9_still_refuses_non_root_approval(self, tmp_path: Path) -> None:
         # sandbox on a non-root agent must NOT trip V9 (it is not an
         # approval declaration), and V9 itself still fires for approval.
-        from modex_agent.approval.config import ApprovalConfig
         from modex_agent.plugins.defaults import DefaultPlugin
         from modex_agent.plugins.loader import PluginRegistrationContext
         from modex_agent.scope.component_registry import ComponentRegistry
@@ -204,7 +203,7 @@ class TestValidatorUnaffected:
                     exclusive=ExclusiveConfig(writable_roots=[Path("/srv/shared")])
                 ),
             ),
-            AgentSpec(name="bad", parent="root", approval=ApprovalConfig(enabled=True)),
+            AgentSpec(name="bad", parent="root", approval={"enabled": True}),
         )
         compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(tmp_path), registry=registry)
         issues = validate_effective_configs(spec, [a.effective for a in compilation.agents])

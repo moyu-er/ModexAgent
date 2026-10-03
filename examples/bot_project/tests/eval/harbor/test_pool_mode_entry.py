@@ -342,7 +342,7 @@ async def test_pool_entry_disables_approval_without_mutating_checked_in_spec(
     disk_coder = next(pool for pool in pools if pool.name == "coder")
     disk_root = disk_coder.root_agent
     assert disk_root.approval is not None
-    assert disk_root.approval.enabled is True
+    assert disk_root.approval["enabled"] is True
 
 
 @pytest.mark.asyncio

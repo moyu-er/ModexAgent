@@ -36,7 +36,6 @@ async def handle_get_approvals(request: web.Request) -> web.Response:
         ReActRuntimeStateCodec,
         ReActSnapshotPolicy,
     )
-    from modex_agent.approval.views import view_from_request
     from modex_agent.core.turn.approval_types import ApprovalDecision
     from modex_agent.core.turn.codec import RuntimeStateCodecRegistry
     from modex_agent.core.turn.enums import (
@@ -45,6 +44,7 @@ async def handle_get_approvals(request: web.Request) -> web.Response:
         TurnPhase,
     )
     from modex_agent.core.turn.models import StateQueryScope
+    from modex_agent.plugins.defaults.capabilities.approval.views import view_from_request
     from modex_agent.runtime.store import JsonFileTurnStateStore
 
 

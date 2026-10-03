@@ -15,8 +15,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from modex_agent.approval.views import ApprovalRequestView
 from modex_agent.core.emitter import AgentResult
+from modex_agent.core.turn.models import ApprovalRequestState
 
 
 class TurnOutcomeKind(StrEnum):
@@ -41,8 +41,10 @@ class TurnSuspension(BaseModel):
     turn_uuid: str | None = Field(
         description="Turn uuid minted for the suspended turn, when known.",
     )
-    requests: list[ApprovalRequestView] = Field(
-        description="The pending approval batch views, owner-serialized.",
+    requests: list[ApprovalRequestState] = Field(
+        description="The pending approval batch as persisted request states "
+        "(tool_call_id/tool_name/tier/arguments/approval_id); the wire DTO "
+        "face is derived by the approval bundle's ``view_from_request``.",
     )
 
     @property

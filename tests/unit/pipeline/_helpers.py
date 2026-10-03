@@ -16,8 +16,8 @@ from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.tool_manager import ToolManager
 from modex_agent.memory.context import ContextManager, InMemoryContextManager
 from modex_agent.pipeline.adapters import InputAdapter
-from modex_agent.pipeline.approval_renderer import ApprovalRenderer
-from modex_agent.pipeline.approval_resumer import ApprovalResumer
+from modex_agent.plugins.defaults.capabilities.approval.renderer import ApprovalRenderer
+from modex_agent.plugins.defaults.capabilities.approval.resumer import ApprovalResumer
 from modex_agent.pipeline.busy_input import BusyInputMode
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
@@ -92,7 +92,7 @@ def _make_react_pipeline(
         turn_store=turn_store,
         registry=registry,
     )
-    approval_resumer = ApprovalResumer(
+    approval_state_machine = ApprovalResumer(
         agent=agent,
         turn_store=turn_store,
         user_interface=user_interface,
@@ -111,7 +111,7 @@ def _make_react_pipeline(
         turn_store=turn_store,
         registry=registry,
         builder=builder,
-        resumer=approval_resumer,
+        resumer=approval_state_machine,
         approval=approval,
         workspace_manager=workspace_manager,
         pool_name=pool_name,

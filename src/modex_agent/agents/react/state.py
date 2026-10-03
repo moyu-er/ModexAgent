@@ -262,8 +262,8 @@ class ReActSnapshotPolicy(SnapshotPolicy):
         Thin wrapper around ``ReActTurnState.from_checkpoint()`` — the OLD
         60-line manual field-by-field reconstruction is replaced by Pydantic
         ``model_validate``. Kept as a static method for backward compatibility
-        with call sites in ``pipeline/approval_resumer.py``,
-        ``pipeline/approval_renderer.py``, and tests.
+        with call sites in the approval capability bundle's ``resumer.py`` /
+        ``renderer.py``, and tests.
         """
         return ReActTurnState.from_checkpoint(dict(snapshot.state_payload)).approval
 

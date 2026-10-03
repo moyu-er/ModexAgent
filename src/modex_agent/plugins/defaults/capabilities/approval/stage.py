@@ -12,12 +12,22 @@ Both channels converge on ``metadata[APPROVAL_DECISION]`` -> S8 lifts it onto
 
 from __future__ import annotations
 
-from modex_agent.approval.response import parse_approval_action
+from pydantic import BaseModel, ConfigDict
+
 from modex_agent.messaging.models import ApprovalDecisionInput
 from modex_agent.pipeline.input.context import InputContext
 from modex_agent.pipeline.input.envelope import CommandStatus, UserInputEnvelope
 from modex_agent.pipeline.input.stage import Continue, InputStage, StageResult
 from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
+from modex_agent.plugins.defaults.capabilities.approval.response import (
+    parse_approval_action,
+)
+
+
+class ApprovalStageConfig(BaseModel):
+    """Empty config — the approval stage takes no construction-time config."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
 
 class ApprovalStage(InputStage):

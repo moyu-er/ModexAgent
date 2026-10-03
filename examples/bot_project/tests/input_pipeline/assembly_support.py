@@ -6,6 +6,9 @@ from typing import Final
 from bot_plugins.im_input_stages import IMInputStagesPlugin
 
 from modex_agent.plugins.assembly.context import AssemblyContext
+from modex_agent.plugins.defaults.capabilities.approval import (
+    register_approval_feature,
+)
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.workspace.context import WorkspaceContext
@@ -13,6 +16,10 @@ from modex_agent.workspace.context import WorkspaceContext
 TEST_COMPONENT_REGISTRY: Final = ComponentRegistry()
 with PluginRegistrationContext(TEST_COMPONENT_REGISTRY) as registration:
     IMInputStagesPlugin().register(registration)
+    # The approval onramp stage is a framework default since W1-B2 — the
+    # production registry gets it from DefaultPlugin; this fixture registers
+    # the bundle's entries directly (the bot plugin no longer carries them).
+    register_approval_feature(registration)
 
 TEST_ASSEMBLY_CTX: Final = AssemblyContext(
     registry=TEST_COMPONENT_REGISTRY,

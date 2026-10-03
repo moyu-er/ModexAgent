@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modex_agent.approval.views import ApprovalRequestView, view_from_request
+from modex_agent.plugins.defaults.capabilities.approval.views import ApprovalRequestView, view_from_request
 from modex_agent.core.turn.approval_types import ApprovalTier
 from modex_agent.core.turn.models import ApprovalRequestState, ToolArguments
 

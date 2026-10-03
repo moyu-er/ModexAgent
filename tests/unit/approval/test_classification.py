@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.approval.config import AgentApprovalConfig
-from modex_agent.approval.runtime import (
+from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig
+from modex_agent.plugins.defaults.capabilities.approval.runtime import (
     ApprovalClassifier,
     TieredToolApprovalClassifier,
 )
@@ -53,7 +53,7 @@ def _tiered() -> TieredToolApprovalClassifier:
 
 
 def _guard_classifier():  # type: ignore[no-untyped-def]
-    from modex_agent.approval.security import SecurityClassifier
+    from modex_agent.plugins.defaults.capabilities.approval.security import SecurityClassifier
     from modex_agent.sandbox.decision import SecurityDecisionService
     from modex_agent.sandbox.settings import (
         GuardSettings,
@@ -189,7 +189,7 @@ class TestSecurityClassifierReturnsClassification:
         assert clean.reason is None
 
     def test_deny_message_builder_shapes_reason(self) -> None:
-        from modex_agent.approval.security import SecurityClassifier
+        from modex_agent.plugins.defaults.capabilities.approval.security import SecurityClassifier
         from modex_agent.sandbox.decision import SecurityDecisionService
         from modex_agent.sandbox.settings import (
             GuardSettings,

@@ -174,7 +174,9 @@ def wire_main_pipeline(
     if approval is not None:
         approval.user_interface = im_ui
 
-    from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
+    from modex_agent.plugins.defaults.capabilities.approval.factory import (
+        build_approval_runtime,
+    )
     from modex_agent.runtime.services import AgentRuntimeServices
 
     sandbox_settings = _declared_sandbox_settings(main_spec)
@@ -203,7 +205,9 @@ def wire_main_pipeline(
         # shutdown). Built from the SAME declared settings/root provider
         # as the composite above — one declaration, one decision service
         # shape.
-        from modex_agent.approval.security import guard_only_runtime
+        from modex_agent.plugins.defaults.capabilities.approval.security import (
+            guard_only_runtime,
+        )
         from modex_agent.sandbox.decision import SecurityDecisionService
 
         if root_provider is None:

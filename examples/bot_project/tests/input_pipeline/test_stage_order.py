@@ -25,6 +25,9 @@ from modex_agent.pipeline.input.skeleton import (
 )
 from modex_agent.pipeline.input.stage import InputStage, StageResult
 from modex_agent.plugins.assembly.context import AssemblyContext
+from modex_agent.plugins.defaults.capabilities.approval import (
+    register_approval_feature,
+)
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.components import ComponentFactory
@@ -56,6 +59,9 @@ def _registry_with_custom_stage() -> ComponentRegistry:
     registry = ComponentRegistry()
     with PluginRegistrationContext(registry) as registration:
         IMInputStagesPlugin().register(registration)
+        # The approval onramp is an FW default since W1-B2 (the bot plugin
+        # no longer carries it).
+        register_approval_feature(registration)
         registration.register_input_stage(
             _CUSTOM_STAGE_NAME, _ProbeStageFactory()
         )
@@ -82,6 +88,7 @@ async def test_unconfigured_order_is_the_code_defined_skeleton(tmp_path) -> None
     registry = ComponentRegistry()
     with PluginRegistrationContext(registry) as registration:
         IMInputStagesPlugin().register(registration)
+        register_approval_feature(registration)
 
     pipe = await build_im_pipeline(
         registry=registry,

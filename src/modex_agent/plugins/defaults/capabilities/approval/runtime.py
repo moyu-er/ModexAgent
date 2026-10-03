@@ -17,13 +17,13 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from modex_agent.approval.argument_matcher import ArgumentMatcher
-from modex_agent.approval.config import AgentApprovalConfig
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.message import ToolCall
 from modex_agent.core.tool_gate import ToolGate
 from modex_agent.core.turn.approval_types import ApprovalTier, ToolClassification
 from modex_agent.core.turn.enums import ApprovalDenyPolicy
+from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import ArgumentMatcher
+from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig
 
 
 class ApprovalClassifier(ABC):

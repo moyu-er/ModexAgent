@@ -6,7 +6,7 @@ import logging
 import pytest
 
 from modex_agent.adapters.output import OutputAdapter
-from modex_agent.approval.ui import IMUserInterface
+from modex_agent.plugins.defaults.capabilities.approval.ui import IMUserInterface
 from modex_agent.messaging.models import OutputMessage
 
 
@@ -45,7 +45,7 @@ class TestRenderMessage:
             output_adapter=output,
         )
 
-        with caplog.at_level(logging.ERROR, logger="modex_agent.approval.ui"):
+        with caplog.at_level(logging.ERROR, logger="modex_agent.plugins.defaults.capabilities.approval.ui"):
             msg_id = await ui.render_message("s1", "approval prompt")
 
         assert msg_id  # still returns a msg_id even on failure
@@ -61,7 +61,7 @@ class TestRenderMessage:
             output_adapter=output,
         )
 
-        with caplog.at_level(logging.ERROR, logger="modex_agent.approval.ui"):
+        with caplog.at_level(logging.ERROR, logger="modex_agent.plugins.defaults.capabilities.approval.ui"):
             msg_id = await ui.render_message("s1", "hello")
 
         assert len(output.sent) == 1

@@ -49,7 +49,7 @@ from modex_agent.core.turn.models import (
 from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.messaging.models import ApprovalAction
-from modex_agent.pipeline.approval_resumer import ApprovalResumer
+from modex_agent.plugins.defaults.capabilities.approval.resumer import ApprovalResumer
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.sandbox.decision import GuardCategory, SecurityDecisionService
 from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
@@ -459,13 +459,13 @@ class TestEndToEndWhiteApproval:
     async def test_classify_card_approve_execute_loop(self) -> None:
         """PRD 验收标准 2: outside-envelope path → DANGEROUS card →
         /approve → the guard that would deny now executes."""
-        from modex_agent.approval.argument_matcher import ArgumentMatcher
-        from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
-        from modex_agent.approval.runtime import (
+        from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import ArgumentMatcher
+        from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig, ToolApprovalConfig
+        from modex_agent.plugins.defaults.capabilities.approval.runtime import (
             ApprovalRuntime,
             TieredToolApprovalClassifier,
         )
-        from modex_agent.approval.security import SecurityClassifier
+        from modex_agent.plugins.defaults.capabilities.approval.security import SecurityClassifier
 
         classifier = SecurityClassifier(
             decision=_service(_FixedRoot(WS)),

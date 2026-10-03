@@ -39,8 +39,6 @@ from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.react.state import ReActSnapshotPolicy
-from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
-from modex_agent.approval.ui import IMUserInterface
 from modex_agent.core.emitter import TurnBinding
 from modex_agent.core.llm_struct import LLMResponse
 from modex_agent.core.message import ToolCall
@@ -57,7 +55,8 @@ from modex_agent.messaging.models import (
     OutputMessage,
 )
 from modex_agent.pipeline.pipeline import AgentPipeline
-from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
+from modex_agent.plugins.defaults.capabilities.approval.factory import build_approval_runtime
+from modex_agent.plugins.defaults.capabilities.approval.ui import IMUserInterface
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager
@@ -81,12 +80,12 @@ def _make_react_pipeline(
 ):
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.memory.context import InMemoryContextManager
-    from modex_agent.pipeline.approval_renderer import ApprovalRenderer
-    from modex_agent.pipeline.approval_resumer import ApprovalResumer
     from modex_agent.pipeline.pipeline import AgentPipeline
     from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
     from modex_agent.pipeline.turn_runner import ReActTurnRunner
     from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+    from modex_agent.plugins.defaults.capabilities.approval.renderer import ApprovalRenderer
+    from modex_agent.plugins.defaults.capabilities.approval.resumer import ApprovalResumer
     if sanitizer is None:
         from modex_agent.utils.sanitizer import ContentSanitizer
         sanitizer = ContentSanitizer.sanitize
@@ -114,7 +113,7 @@ def _make_react_pipeline(
         turn_store=turn_store,
         registry=registry,
     )
-    approval_resumer = ApprovalResumer(agent=agent, turn_store=turn_store, user_interface=user_interface)
+    approval_state_machine = ApprovalResumer(agent=agent, turn_store=turn_store, user_interface=user_interface)
     approval = ApprovalRenderer(agent=agent, user_interface=user_interface)
     turn_runner = ReActTurnRunner(
         agent=agent,
@@ -126,7 +125,7 @@ def _make_react_pipeline(
         turn_store=turn_store,
         registry=registry,
         builder=builder,
-        resumer=approval_resumer,
+        resumer=approval_state_machine,
         approval=approval,
         workspace_manager=None,
         pool_name=None,
@@ -279,7 +278,7 @@ def _build_pipeline_with_webui_emitter(
     tool_manager.register(_WriteTool(recorded))
 
     approval_runtime = build_approval_runtime(
-        ApprovalConfig(enabled=True, tools={"write": ToolApprovalEntry(allowed_paths=["./*"])}),
+        {"enabled": True, "tools": {"write": {"allowed_paths": ["./*"]}}},
         project_root=tmp_path,
     )
     turn_store = turn_store if turn_store is not None else InMemoryTurnStateStore()
@@ -662,7 +661,7 @@ async def test_deny_all_on_batch_seals_all_pending_requests(tmp_path: Path) -> N
     tool_manager.register(_WriteTool(recorded))
 
     approval_runtime = build_approval_runtime(
-        ApprovalConfig(enabled=True, tools={"write": ToolApprovalEntry(allowed_paths=["./*"])}),
+        {"enabled": True, "tools": {"write": {"allowed_paths": ["./*"]}}},
         project_root=tmp_path,
     )
     turn_store = InMemoryTurnStateStore()

@@ -46,7 +46,6 @@ from modex_agent.app.models.assembly import ModelRegistryAssembly
 from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.app.roots import AppAssemblyRoots
 from modex_agent.app.service import AppService
-from modex_agent.approval.ui import IMUserInterface
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.emitter import TurnBinding, TurnEventSink, TurnEventSinkFactory
 from modex_agent.core.llm_struct import (
@@ -97,6 +96,9 @@ from modex_agent.workspace.paths import WorkspacePaths
 
 if TYPE_CHECKING:
     from modex_agent.persistence.managers import WorkspacePersistenceManager
+    from modex_agent.plugins.defaults.capabilities.approval.ui import (
+        ApprovalUserInterface,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,13 @@ _MAIN_AGENT_TYPES = frozenset({AgentType.native_main, AgentType.external_main})
 #: pre-filled (non-None) bundle and skips registry materialization — the
 #: documented deadlock guard in ``WorkspaceMaterializeStage``.
 _SUPPLIED_WORKSPACE_RESOURCES: Final[object] = object()
+
+
+def _im_user_interface(output_adapter: OutputAdapter) -> ApprovalUserInterface:
+    """The IM approval UI — constructed lazily (approval bundle import)."""
+    from modex_agent.plugins.defaults.capabilities.approval.ui import IMUserInterface
+
+    return IMUserInterface(output_adapter=output_adapter)
 
 
 class NullTurnEventSink(TurnEventSink):
@@ -488,7 +497,10 @@ class RunnableAppService(AppService):
                     output_adapter=self.output_adapter,
                     safety=_safety_policy_of(app_config),
                     retention=_retention_of(app_config),
-                    im_ui=IMUserInterface(output_adapter=self.output_adapter),
+                    # The IM approval UI is approval-channel vocabulary — built
+                    # lazily here so importing the runnable app pulls no approval
+                    # implementation until a pool actually boots.
+                    im_ui=_im_user_interface(self.output_adapter),
                     shared_hooks=[],
                     shared_hook_runner=HookRunner(),
                     shared_interceptor_chain=InterceptorChain(),

@@ -329,7 +329,6 @@ PACKAGE_LEVELS: dict[str, int] = {
     # + default projector only — it consumes core/messaging/utils-level
     # types, never agent strategies.
     "presentation": 1,
-    "approval": 2,
     "persistence": 2,
     "memory": 2,
     "sandbox": 2,
@@ -394,9 +393,25 @@ def test_package_levels_table_covers_every_package() -> None:
 # the materializer seam (AgentMaterializer ABC owned by multi_agent, the
 # native implementation injected by the plugins assembly wiring) replaced
 # template.py's direct plugins.assembly imports, and the skills capability
-# NAME sank to scope/capability.py. The ledger is EMPTY; new debt fails
-# the gate.
-EXPECTED_LAYERING_OFFENDERS: set[tuple[str, str]] = set()
+# NAME sank to scope/capability.py.
+#
+# W1-B2 (approval capability bundle): the approval vertical slice moved
+# into ``plugins/defaults/capabilities/approval/``. Its below-bundle
+# consumers reach the bundle's implementation modules through LAZY
+# function-body imports at their use sites — the capability-bundle
+# import-light contract (the framework import graph only loads bundle
+# implementation modules when approval is actually in play). The five
+# pinned edges below are exactly that lazy set; the ADR-0051 port-seam
+# resolution (ABC below + injection from above, as AgentMaterializer did
+# for materialization) removes them and empties this ledger again. Any
+# OTHER upward edge remains new debt and fails the gate.
+EXPECTED_LAYERING_OFFENDERS: set[tuple[str, str]] = {
+    ("multi_agent/factory.py", "modex_agent.plugins.defaults.capabilities.approval.renderer"),
+    ("multi_agent/factory.py", "modex_agent.plugins.defaults.capabilities.approval.resumer"),
+    ("multi_agent/template.py", "modex_agent.plugins.defaults.capabilities.approval.security"),
+    ("pipeline/turn_context_builder.py", "modex_agent.plugins.defaults.capabilities.approval.response"),
+    ("pipeline/turn_runner.py", "modex_agent.plugins.defaults.capabilities.approval.views"),
+}
 
 def test_no_upward_or_same_level_runtime_imports() -> None:
     """Layering tree gate: runtime imports point strictly downward only."""

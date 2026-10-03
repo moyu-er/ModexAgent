@@ -50,10 +50,12 @@ if TYPE_CHECKING:
     from modex_agent.messaging.agent_messages import RouteResult
     from modex_agent.messaging.models import InputMessage
     from modex_agent.multi_agent import AgentDescriptor
-    from modex_agent.pipeline.approval_renderer import ApprovalRenderer
     from modex_agent.pipeline.snapshot import PoolDataSnapshot
     from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
     from modex_agent.pipeline.turn_outcome import TurnSuspension
+    from modex_agent.plugins.defaults.capabilities.approval.renderer import (
+        ApprovalRenderer,
+    )
     from modex_agent.runtime.context import RuntimeContextManager
     from modex_agent.workspace import WorkspaceManager
 

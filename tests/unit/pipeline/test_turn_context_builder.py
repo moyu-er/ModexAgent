@@ -17,8 +17,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.adapters.output import OutputAdapter
-from modex_agent.approval.config import AgentApprovalConfig
-from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
+from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig
+from modex_agent.plugins.defaults.capabilities.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.commands.constants import CommandAction, CommandDispatchPolicy, CommandParseStatus
 from modex_agent.commands.models import (
     CommandHandlingResult,

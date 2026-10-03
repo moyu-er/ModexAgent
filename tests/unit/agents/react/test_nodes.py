@@ -525,7 +525,7 @@ class TestToolNode:
         tc1 = ToolCall(tool_name="t1", arguments={}, call_id="c1")
         tc2 = ToolCall(tool_name="t2", arguments={}, call_id="c2")
 
-        from modex_agent.approval.runtime import ApprovalRuntime
+        from modex_agent.plugins.defaults.capabilities.approval.runtime import ApprovalRuntime
         from modex_agent.core.turn.enums import ApprovalDenyPolicy
 
         runtime = make_runtime()
@@ -560,7 +560,7 @@ class TestToolNode:
 
         tc = ToolCall(tool_name="write", arguments={"path": "/tmp/x"}, call_id="c1")
 
-        from modex_agent.approval.runtime import ApprovalRuntime
+        from modex_agent.plugins.defaults.capabilities.approval.runtime import ApprovalRuntime
         from modex_agent.core.turn.enums import ApprovalDenyPolicy
 
         runtime = make_runtime()
@@ -602,7 +602,7 @@ class TestToolNode:
         tc1 = ToolCall(tool_name="t1", arguments={}, call_id="c1")
         tc2 = ToolCall(tool_name="t2", arguments={}, call_id="c2")
 
-        from modex_agent.approval.runtime import ApprovalRuntime
+        from modex_agent.plugins.defaults.capabilities.approval.runtime import ApprovalRuntime
 
         runtime = make_runtime()
         runtime.state.iteration = 1

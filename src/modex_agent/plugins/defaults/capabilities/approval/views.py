@@ -70,10 +70,11 @@ def view_from_request(
     )
 
 
-# ── Rendering (moved from pipeline/approval_renderer.py, W3b) ────────────────
+# ── Rendering (relocated into the approval slice, W3b) ──────────────────────
 # The IM text/structured-message presentation of a view is approval-channel
 # vocabulary: approval/ui.py needs it, and approval must not import the
-# pipeline. The renderer SERVICE (ApprovalRenderer) stays in the pipeline.
+# pipeline. The renderer SERVICE (ApprovalRenderer) lives in this bundle's
+# renderer.py (W1-B2).
 
 
 def _format_arguments(args: ToolArguments | Mapping[str, object] | None) -> str:

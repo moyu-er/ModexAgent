@@ -7,7 +7,6 @@ import pytest
 from bot.service.pool.declaration import boot_scope_spec
 from bot_plugins.bot_hooks import SEND_FILE_TO_USER_TOOL_NAME
 
-from modex_agent.approval.config import ApprovalConfig
 from modex_agent.core.tool_vocabulary import (
     ToolPreset,
 )
@@ -79,7 +78,7 @@ def _scope_spec() -> ScopeSpec:
                                 core_enabled=True,
                                 session=SessionMemoryOverride(max_context_tokens=32000),
                             ),
-                            approval=ApprovalConfig(enabled=True),
+                            approval={"enabled": True},
                         ),
                         AgentSpec(name="child-a", parent="root-a"),
                     ],

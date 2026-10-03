@@ -14,7 +14,6 @@ from modex_agent.acp.types import (
     AcpPromptInput,
     PermissionPrompt,
 )
-from modex_agent.approval.views import ApprovalRequestView
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo, agent_of
@@ -29,6 +28,7 @@ from modex_agent.multi_agent.session_tree.request_scope import (
 )
 from modex_agent.pipeline.input.envelope import UserInputEnvelope
 from modex_agent.pipeline.input.stages.resolve_pool import RoutingMeta
+from modex_agent.plugins.defaults.capabilities.approval.views import ApprovalRequestView
 from modex_agent.presentation import TextDelta
 
 if TYPE_CHECKING:

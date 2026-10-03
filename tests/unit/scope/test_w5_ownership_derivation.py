@@ -29,8 +29,11 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.approval.config import ApprovalConfig
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
+from modex_agent.plugins.defaults.capabilities.approval import (
+    register_approval_feature,
+)
+from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.scope.compiler import compile_scope
 from modex_agent.scope.component_registry import (
     ComponentNotFoundError,
@@ -181,13 +184,22 @@ def test_root_approval_on_approvalless_strategy_is_accepted(tmp_path: Path) -> N
             name="root",
             execution_strategy=ExecutionStrategyKind.EXTERNAL,
             provider_kind=ProviderKind.OPENCODE,
-            approval=ApprovalConfig(enabled=True),
+            approval={"enabled": True},
         )
     )
 
-    compilation = compile_scope(spec, workspace_ctx=_workspace_ctx(tmp_path))
+    registry = ComponentRegistry()
+    registration = PluginRegistrationContext(registry)
+    register_approval_feature(registration)
+    registration.flush()
+    compilation = compile_scope(
+        spec, workspace_ctx=_workspace_ctx(tmp_path), registry=registry
+    )
     agent = compilation.agents[0]
     assert agent.defaults.approval_eligible is True  # position default kept
+    # The external branch takes no native component face: the approval
+    # declaration compiles to no capabilities block (not applicable).
+    assert agent.spec.capabilities == ()
 
 
 # ── T-D: V12 derives from owns_context (probe face, custom strategy) ───────

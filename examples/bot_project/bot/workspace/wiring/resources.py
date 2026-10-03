@@ -42,7 +42,6 @@ from modex_agent.agents.react.hooks.knowledge_hook import KnowledgeHook
 from modex_agent.app.models.assembly import ModelRegistryAssembly
 from modex_agent.app.models.choice import ModelChoiceRegistry
 from modex_agent.app.models.provider import PinnedModelProvider
-from modex_agent.approval.ui import IMUserInterface
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
 from modex_agent.hook.builtin import CurrentTimeInjectionHook
@@ -64,6 +63,7 @@ from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.plugins.assembly.pool_factory import (
     resolve_declared_root_prompt,
 )
+from modex_agent.plugins.defaults.capabilities.approval.ui import IMUserInterface
 from modex_agent.plugins.defaults.llm import MULTI_LLM_PROVIDER
 from modex_agent.tools.overflow.cleaner import OverflowCleaner
 from modex_agent.tools.overflow.handler import ToolResultOverflowHandler

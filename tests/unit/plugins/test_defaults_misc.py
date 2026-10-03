@@ -109,20 +109,24 @@ class TestRegisterDefaultInterceptors:
 
 
 class TestRegisterDefaultCommands:
-    def test_registers_all_6_command_factories(self):
+    """The defaults group carries the 3 environment commands; the approval
+    commands (approve/deny/continue) register with the approval capability
+    bundle (W1-B2) — together the DefaultPlugin still fills all 6 names."""
+
+    def test_registers_the_3_environment_command_factories(self):
         from modex_agent.plugins.defaults.commands import register_default_commands
 
         ctx = _make_ctx()
         register_default_commands(ctx)
         registry = _flush(ctx)
 
-        for name in ("cd", "stop", "pool", "approve", "deny", "continue"):
+        for name in ("cd", "stop", "pool"):
             factory = registry.resolve(ComponentSlot.COMMAND_HANDLER, name)
             assert isinstance(factory, ComponentFactory), f"{name} not registered"
 
     async def test_approve_factory_creates_approval_handler(self):
         from modex_agent.commands.handlers import ApprovalCommandHandler
-        from modex_agent.plugins.defaults.commands import (
+        from modex_agent.plugins.defaults.capabilities.approval.commands import (
             ApproveCommandHandlerFactory,
         )
 
@@ -134,7 +138,7 @@ class TestRegisterDefaultCommands:
 
     async def test_deny_factory_creates_approval_handler(self):
         from modex_agent.commands.handlers import ApprovalCommandHandler
-        from modex_agent.plugins.defaults.commands import (
+        from modex_agent.plugins.defaults.capabilities.approval.commands import (
             DenyCommandHandlerFactory,
         )
 
@@ -146,7 +150,7 @@ class TestRegisterDefaultCommands:
 
     async def test_continue_factory_creates_continue_handler(self):
         from modex_agent.commands.handlers import ContinueCommandHandler
-        from modex_agent.plugins.defaults.commands import (
+        from modex_agent.plugins.defaults.capabilities.approval.commands import (
             ContinueCommandHandlerFactory,
         )
 

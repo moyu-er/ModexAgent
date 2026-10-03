@@ -27,8 +27,6 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.app.models.registry import ModelRegistry
-from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
-from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.core.agent import AgentCommKind, ExecutionStrategyKind
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
@@ -38,8 +36,6 @@ from modex_agent.core.turn.approval_types import ApprovalDecision
 from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.memory.context import ContextState, InMemoryContextManager
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.pipeline.approval_renderer import ApprovalRenderer
-from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_context_config import (
@@ -55,6 +51,16 @@ from modex_agent.pipeline.turn_context_config import (
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.plugins.assembly.pipeline_wiring import wire_main_pipeline
+from modex_agent.plugins.defaults.capabilities.approval.config import (
+    ApprovalConfig,
+    ToolApprovalEntry,
+)
+from modex_agent.plugins.defaults.capabilities.approval.renderer import ApprovalRenderer
+from modex_agent.plugins.defaults.capabilities.approval.resumer import ApprovalResumer
+from modex_agent.plugins.defaults.capabilities.approval.runtime import (
+    ApprovalRuntime,
+    TieredToolApprovalClassifier,
+)
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.sandbox.settings import (
     ExclusiveConfig,
@@ -188,7 +194,10 @@ def _make_pipeline() -> AgentPipeline:
 
 
 def _make_main_spec(*, approval: ApprovalConfig | None) -> AgentSpec:
-    return AgentSpec(name="main", approval=approval)
+    return AgentSpec(
+        name="main",
+        approval=approval.model_dump() if approval is not None else None,
+    )
 
 
 def _wire(

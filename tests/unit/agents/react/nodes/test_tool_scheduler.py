@@ -15,7 +15,7 @@ from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.tool_dedup import ToolCallDeduplicator
 from modex_agent.agents.react.tool_executor import ToolExecutor
-from modex_agent.approval.runtime import ApprovalClassifier, ApprovalRuntime
+from modex_agent.plugins.defaults.capabilities.approval.runtime import ApprovalClassifier, ApprovalRuntime
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import TurnEvent, TurnEventSink

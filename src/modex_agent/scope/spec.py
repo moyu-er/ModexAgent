@@ -26,7 +26,6 @@ from pydantic import (
     model_validator,
 )
 
-from modex_agent.approval.config import ApprovalConfig
 from modex_agent.core.agent import ExecutionStrategyKind, ProviderKind
 from modex_agent.core.tool_vocabulary import (
     DEFAULT_FORK_MAX_MESSAGES,
@@ -196,9 +195,17 @@ class AgentSpec(BaseModel):
     merging is compiler territory)."""
     # Open extension payload (rule 14): per-hook config keyed by hook name.
     hook_configs: dict[str, dict[str, Any]] | None = None
-    approval: ApprovalConfig | None = None
-    """Approval config — meaningful only on the root (non-root eligibility
-    is refused by position defaults and rejected by V9 in ticket 03)."""
+    # Open extension payload (rule 14): the RAW approval declaration — the
+    # same open capability-config face as the ``capabilities:`` override map.
+    # The schema holds the raw shape; the approval capability's config model
+    # (``ApprovalConfig`` in the approval capability bundle) validates and
+    # interprets it at compile/assembly time.
+    approval: dict[str, Any] | None = None
+    """Approval declaration (same YAML shape as before) — meaningful only on
+    the root (non-root eligibility is refused by position defaults and
+    rejected by V9 in ticket 03). Translated by the compiler into the
+    ``approval`` capability override; declaring both this field and
+    ``capabilities: {approval: ...}`` is a compile-time conflict."""
     mcp: list[str] = Field(default_factory=list)
     execution_strategy: ExecutionStrategyName = ExecutionStrategyKind.REACT
     provider_kind: ProviderKind | None = None

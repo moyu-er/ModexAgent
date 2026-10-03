@@ -27,7 +27,7 @@ from modex_agent.agents.react.state import (
     ReActSnapshotPolicy,
     ReActTurnState,
 )
-from modex_agent.approval.views import ApprovalRequestView
+from modex_agent.plugins.defaults.capabilities.approval.views import ApprovalRequestView
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import TurnEvent, TurnEventSink
 from modex_agent.core.session_id import SessionInfo
@@ -54,7 +54,7 @@ from modex_agent.core.turn.store import TurnStateStore
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.messaging.models import ApprovalAction
 from modex_agent.persistence.adapters.approval_audit_store import ApprovalAuditEntry
-from modex_agent.pipeline.approval_resumer import ApprovalResumer
+from modex_agent.plugins.defaults.capabilities.approval.resumer import ApprovalResumer
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager

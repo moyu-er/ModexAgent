@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modex_agent.approval.views import (
+from modex_agent.plugins.defaults.capabilities.approval.views import (
     ApprovalRequestView,
     approval_output_message,
     format_approval_prompt,

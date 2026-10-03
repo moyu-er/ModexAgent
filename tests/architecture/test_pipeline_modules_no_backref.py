@@ -13,7 +13,6 @@ import pytest
 _SUB_MODULES = [
     "turn_runner.py",
     "turn_context_builder.py",
-    "approval_resumer.py",
     "turn_session_registry.py",
     "dream_scanner.py",
 ]

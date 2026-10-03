@@ -8,7 +8,6 @@ from types import ModuleType
 
 import modex_agent
 import modex_agent.agents.react as react
-import modex_agent.approval as approval
 import modex_agent.memory as memory
 import modex_agent.messaging as messaging
 import modex_agent.persistence as persistence
@@ -47,16 +46,6 @@ EXPECTED_MEMORY_ALL = [
     "ArchiveMemoryConfig",
     "CoreMemoryConfig",
     "PrunedManager",
-]
-
-EXPECTED_APPROVAL_ALL = [
-    "AgentApprovalConfig",
-    "ApprovalDecision",
-    "ApprovalStatus",
-    "ApprovalTier",
-    "ApprovalUserInterface",
-    "IMUserInterface",
-    "ToolApprovalConfig",
 ]
 
 EXPECTED_REACT_ALL = [
@@ -177,7 +166,6 @@ EXPECTED_TOP_LEVEL_ALL = [
 
 FACADE_CONTRACTS: tuple[tuple[str, ModuleType, list[str]], ...] = (
     ("memory", memory, EXPECTED_MEMORY_ALL),
-    ("approval", approval, EXPECTED_APPROVAL_ALL),
     ("agents.react", react, EXPECTED_REACT_ALL),
     ("persistence", persistence, EXPECTED_PERSISTENCE_ALL),
     ("persistence.adapters", persistence_adapters, EXPECTED_PERSISTENCE_ADAPTERS_ALL),
@@ -235,7 +223,6 @@ def test_e1_facade_exports_are_importable() -> None:
 
 def test_compatibility_exports_are_absent_from_old_facades() -> None:
     assert not hasattr(memory, "MemorySystemABC")
-    assert not hasattr(approval, "ApprovalAction")
     assert not hasattr(persistence, "LocalFileSessionStore")
     assert not hasattr(persistence_adapters, "SessionRegistry")
     assert not hasattr(persistence_adapters, "SessionStore")

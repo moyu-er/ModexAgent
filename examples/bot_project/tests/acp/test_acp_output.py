@@ -37,9 +37,6 @@ from bot.acp.emitter import (
 from bot.webui.transcript_store import TranscriptStore
 
 from modex_agent.agents.react.agent import ReActAgent
-from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
-from modex_agent.approval.ui import IMUserInterface
-from modex_agent.approval.views import ApprovalRequestView, approval_output_message
 from modex_agent.core.llm_struct import LLMResponse, RuntimeSafetyPolicy
 from modex_agent.core.message import ToolCall
 from modex_agent.core.provider import CallbackStreamProvider
@@ -47,13 +44,18 @@ from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.tool_manager import Tool
 from modex_agent.memory.context import InMemoryContextManager
 from modex_agent.messaging.models import InputMessage, OutputMessage, OutputMessageType
-from modex_agent.pipeline.approval_renderer import ApprovalRenderer
-from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
+from modex_agent.plugins.defaults.capabilities.approval.factory import build_approval_runtime
+from modex_agent.plugins.defaults.capabilities.approval.renderer import ApprovalRenderer
+from modex_agent.plugins.defaults.capabilities.approval.resumer import ApprovalResumer
+from modex_agent.plugins.defaults.capabilities.approval.ui import IMUserInterface
+from modex_agent.plugins.defaults.capabilities.approval.views import (
+    ApprovalRequestView,
+    approval_output_message,
+)
 from modex_agent.presentation import (
     PresentationEvent,
     TextDelta,
@@ -399,12 +401,9 @@ def _build_pipeline(
     registry = TurnSessionRegistry()
     ui = IMUserInterface(output_adapter=output)
     runtime_services = AgentRuntimeServices(
-        approval=(
+        tool_gate=(
             build_approval_runtime(
-                ApprovalConfig(
-                    enabled=True,
-                    tools={"write": ToolApprovalEntry(allowed_paths=["./*"])},
-                ),
+                {"enabled": True, "tools": {"write": {"allowed_paths": ["./*"]}}},
                 project_root=tmp_path,
             )
             if approval_gated

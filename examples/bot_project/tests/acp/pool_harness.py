@@ -9,8 +9,6 @@ from bot.input_pipeline.context import BotInputContext
 from bot.webui.transcript_store import JSONLTranscriptStore
 
 from modex_agent.agents.react.agent import ReActAgent
-from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
-from modex_agent.approval.ui import IMUserInterface
 from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.provider import LLMProvider
@@ -38,13 +36,14 @@ from modex_agent.multi_agent.session_tree.store_node import InMemoryTreeNodeStor
 from modex_agent.multi_agent.session_tree.store_track import InMemoryMessageTrackStore
 from modex_agent.multi_agent.session_tree.store_tree import InMemorySessionTreeStore
 from modex_agent.persistence.session_registry import InMemorySessionRegistry
-from modex_agent.pipeline.approval_renderer import ApprovalRenderer
-from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
+from modex_agent.plugins.defaults.capabilities.approval.factory import build_approval_runtime
+from modex_agent.plugins.defaults.capabilities.approval.renderer import ApprovalRenderer
+from modex_agent.plugins.defaults.capabilities.approval.resumer import ApprovalResumer
+from modex_agent.plugins.defaults.capabilities.approval.ui import IMUserInterface
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager
@@ -94,8 +93,8 @@ def _build_pipeline(
     registry = TurnSessionRegistry()
     safety = RuntimeSafetyPolicy()
     ui = IMUserInterface(output_adapter=output)
-    services = AgentRuntimeServices(turn_store=turn_store, approval=build_approval_runtime(
-        ApprovalConfig(enabled=True, tools={"write": ToolApprovalEntry(allowed_paths=["./allowed/*"])}),
+    services = AgentRuntimeServices(turn_store=turn_store, tool_gate=build_approval_runtime(
+        {"enabled": True, "tools": {"write": {"allowed_paths": ["./allowed/*"]}}},
         project_root=root,
     ) if approval else None)
     builder = TurnContextBuilder(
@@ -170,10 +169,17 @@ async def build_runtime(root: Path, provider: LLMProvider, *, approval: bool,
     runtime._test_pool = pool
     runtime._broker = broker
     routing = PoolSessionStore(root / "routes")
-    components = ComponentRegistry()
+    from modex_agent.plugins.defaults.capabilities.approval import (
+        register_approval_feature,
+    )
     from modex_agent.plugins.loader import PluginRegistrationContext
+
+    components = ComponentRegistry()
     with PluginRegistrationContext(components) as registration:
         IMInputStagesPlugin().register(registration)
+        # The approval onramp is an FW default since W1-B2 (the bot plugin
+        # no longer carries it).
+        register_approval_feature(registration)
     from modex_agent.workspace.context import WorkspaceContext
     workspace = WorkspaceContext.from_target(root, data_dir_name=".modex", home=root)
     runtime.preparation = await build_acp_pipeline(registry=components, ctx=AssemblyContext(registry=components, workspace_ctx=workspace), skill_registry=PoolSkillResolverRegistry(lambda ws, name: None))

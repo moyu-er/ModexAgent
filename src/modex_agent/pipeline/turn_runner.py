@@ -34,7 +34,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from modex_agent.approval.ui import ApprovalUserInterface
     from modex_agent.core.agent import Agent
     from modex_agent.core.emitter import TurnEventSink, TurnEventSinkFactory
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
@@ -45,22 +44,24 @@ if TYPE_CHECKING:
     from modex_agent.messaging.models import InputMessage
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.pipeline.turn_context_config import TurnContextDescriptor
+    from modex_agent.plugins.defaults.capabilities.approval.renderer import (
+        ApprovalRenderer,
+    )
+    from modex_agent.plugins.defaults.capabilities.approval.resumer import (
+        ApprovalResumer,
+    )
+    from modex_agent.plugins.defaults.capabilities.approval.ui import (
+        ApprovalUserInterface,
+    )
     from modex_agent.workspace import WorkspaceManager
 
-from modex_agent.approval.views import (
-    ApprovalRequestView,
-    format_approval_prompt,
-    view_from_request,
-)
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.turn.dispatch import renew_dispatch_deadline
 from modex_agent.core.turn.enums import TurnCustomKey
-from modex_agent.core.turn.models import TurnSnapshot
+from modex_agent.core.turn.models import ApprovalRequestState, TurnSnapshot
 from modex_agent.core.turn_events import ApprovalRequestedEvent
 from modex_agent.messaging.models import ApprovalAction
-from modex_agent.pipeline.approval_renderer import ApprovalRenderer
-from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_outcome import TurnSuspension
@@ -335,19 +336,24 @@ class ReActTurnRunner(TurnRunner):
                 # ToolNode suspended for approval — snapshot persisted via TurnStateStore
                 # Send approval prompts to user via UI
                 requests = interrupt_exc.value
-                suspension_requests: list[ApprovalRequestView] = []
+                suspension_requests: list[ApprovalRequestState] = []
                 if isinstance(requests, list):
                     turn_uuid = self._registry.get_turn_uuid(session_id)
-                    suspension_requests = [
-                        view_from_request(req, turn_uuid=turn_uuid) for req in requests
-                    ]
+                    suspension_requests = list(requests)
                     # Observation event: exactly one approval_requested per
                     # suspension, carrying the prompted request (the first
                     # pending one) — the same view the channel prompt renders.
                     # The suspension does NOT terminate the turn: no
                     # turn_finished is emitted between requested and resolved.
+                    from modex_agent.plugins.defaults.capabilities.approval.views import (
+                        format_approval_prompt,
+                        view_from_request,
+                    )
+
                     if suspension_requests:
-                        prompted = suspension_requests[0]
+                        prompted = view_from_request(
+                            suspension_requests[0], turn_uuid=turn_uuid
+                        )
                         await emitter.emit(
                             ApprovalRequestedEvent(
                                 tool_name=prompted.tool_name,

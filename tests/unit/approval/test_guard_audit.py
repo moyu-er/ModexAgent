@@ -24,9 +24,9 @@ from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.agents.react.tool_executor import ToolExecutor
-from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
-from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
-from modex_agent.approval.security import SecurityClassifier
+from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig, ToolApprovalConfig
+from modex_agent.plugins.defaults.capabilities.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
+from modex_agent.plugins.defaults.capabilities.approval.security import SecurityClassifier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult, TurnEvent, TurnEventSink
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall

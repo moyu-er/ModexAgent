@@ -2,7 +2,7 @@
 
 Moved to the approval package (W3b, formerly
 ``sandbox/security_classifier.py``): the classifier IS an
-:class:`~modex_agent.approval.runtime.ApprovalClassifier`, so its home is
+:class:`~modex_agent.plugins.defaults.capabilities.approval.runtime.ApprovalClassifier`, so its home is
 approval. The sandbox decision service it consults is constructor-injected;
 the assembly entry points that build it construct that service themselves
 (all callers live above both packages).
@@ -26,7 +26,7 @@ The mapping is fixed; hard findings cannot be configured as approvable:
   The immutable classification carries its reason and audit fact; there
   is no mutable last-denial side channel.
 - ``CLEAN`` → ``inner.classify(...)`` verbatim: the existing
-  :class:`~modex_agent.approval.runtime.TieredToolApprovalClassifier`
+  :class:`~modex_agent.plugins.defaults.capabilities.approval.runtime.TieredToolApprovalClassifier`
   applies per-tool prompt exemptions without expanding the guard envelope.
 
 Tool dispatch rides the typed tool-effect seam
@@ -44,7 +44,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from modex_agent.approval.runtime import ApprovalClassifier, ApprovalRuntime
 from modex_agent.core.guard import (
     APPROVABLE_CATEGORIES,
     GuardCategory,
@@ -56,6 +55,10 @@ from modex_agent.core.turn.approval_types import (
     ClassificationSource,
     GuardAuditFact,
     ToolClassification,
+)
+from modex_agent.plugins.defaults.capabilities.approval.runtime import (
+    ApprovalClassifier,
+    ApprovalRuntime,
 )
 
 if TYPE_CHECKING:
@@ -174,8 +177,10 @@ def guard_only_runtime(
     The inner tiered classifier is all-NORMAL (``enabled=False``): every
     tier decision comes from the guard layer.
     """
-    from modex_agent.approval.config import AgentApprovalConfig
-    from modex_agent.approval.runtime import TieredToolApprovalClassifier
+    from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig
+    from modex_agent.plugins.defaults.capabilities.approval.runtime import (
+        TieredToolApprovalClassifier,
+    )
 
     return ApprovalRuntime(
         classifier=SecurityClassifier(

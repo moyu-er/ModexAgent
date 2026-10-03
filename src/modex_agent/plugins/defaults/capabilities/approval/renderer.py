@@ -1,4 +1,8 @@
-"""Approval rendering helpers for turn-state based approval flow."""
+"""Approval rendering helpers for turn-state based approval flow.
+
+Moved into the approval capability bundle (W1-B2, formerly a pipeline
+module). Behaviour identical.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +18,7 @@ from modex_agent.core.turn.models import TurnSnapshot
 from modex_agent.messaging.models import ApprovalAction, InputMessage
 
 if TYPE_CHECKING:
-    from modex_agent.approval.ui import ApprovalUserInterface
+    from modex_agent.plugins.defaults.capabilities.approval.ui import ApprovalUserInterface
 
 logger = logging.getLogger(__name__)
 

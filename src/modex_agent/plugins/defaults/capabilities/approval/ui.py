@@ -12,7 +12,7 @@ from modex_agent.messaging.models import OutputMessage
 
 if TYPE_CHECKING:
     from modex_agent.adapters.output import OutputAdapter
-    from modex_agent.approval.views import ApprovalRequestView
+    from modex_agent.plugins.defaults.capabilities.approval.views import ApprovalRequestView
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ class IMUserInterface(ApprovalUserInterface):
         return msg_id
 
     async def render_approval_prompt(self, session_id: str, view: ApprovalRequestView) -> None:
-        from modex_agent.approval.views import approval_output_message
+        from modex_agent.plugins.defaults.capabilities.approval.views import approval_output_message
 
         try:
             await self._output.send(approval_output_message(view), session_id)

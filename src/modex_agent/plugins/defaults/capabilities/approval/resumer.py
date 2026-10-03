@@ -5,7 +5,8 @@ turn-execution half (run the resumed turn, delete the snapshot, drain buffered
 messages) is driven by the caller, so this module has NO dependency on turn
 execution — a single-direction edge.
 
-Extracted from the pipeline's approval-resume methods. Behaviour identical.
+Extracted from the pipeline's approval-resume methods (moved to the
+approval capability bundle in W1-B2). Behaviour identical.
 """
 from __future__ import annotations
 
@@ -14,7 +15,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
-from modex_agent.approval.views import view_from_request
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import TurnEventSink
 from modex_agent.core.turn.approval_decision import (
@@ -34,13 +34,14 @@ from modex_agent.hook.abc import HookPayload, HookPoint
 from modex_agent.messaging.models import ApprovalAction
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_outcome import TurnSuspension
+from modex_agent.plugins.defaults.capabilities.approval.views import view_from_request
 from modex_agent.sandbox.decision import approval_anchor
 from modex_agent.workspace.runtime import resolve_workspace_root
 
 if TYPE_CHECKING:
-    from modex_agent.approval.ui import ApprovalUserInterface
     from modex_agent.core.agent import Agent
     from modex_agent.core.turn.store import TurnStateStore
+    from modex_agent.plugins.defaults.capabilities.approval.ui import ApprovalUserInterface
 
 logger = logging.getLogger(__name__)
 
@@ -121,10 +122,13 @@ class ApprovalResumer:
 
     @staticmethod
     def pending_suspension(snapshot: TurnSnapshot) -> TurnSuspension | None:
-        """Build the still-pending approval view from its persisted snapshot.
+        """Build the still-pending suspension from its persisted snapshot.
 
         The snapshot is the authority after the original turn leaves the live
-        registry. Legacy snapshots may omit ``TURN_UUID``; that remains a
+        registry. ``TurnSuspension.requests`` carries the persisted request
+        STATES (still filtered to PENDING); the wire-DTO face is derived by
+        the bundle's ``view_from_request`` at the channels that need it.
+        Legacy snapshots may omit ``TURN_UUID``; that remains a
         valid optional identity rather than making suspension reconstruction
         fail.
         """
@@ -135,7 +139,7 @@ class ApprovalResumer:
         raw_turn_uuid = state.custom.get(TurnCustomKey.TURN_UUID)
         turn_uuid = raw_turn_uuid if isinstance(raw_turn_uuid, str) else None
         requests = [
-            view_from_request(req, turn_uuid=turn_uuid)
+            req
             for req in approval.requests
             if approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
             is ApprovalDecision.PENDING
@@ -332,7 +336,9 @@ class ApprovalResumer:
             if self._user_interface is not None and suspension is not None:
                 await self._user_interface.render_approval_prompt(
                     session_id,
-                    suspension.requests[0],
+                    view_from_request(
+                        suspension.requests[0], turn_uuid=suspension.turn_uuid
+                    ),
                 )
             return None
 

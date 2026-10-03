@@ -35,6 +35,9 @@ from modex_agent.pipeline.input.context import InputContext
 from modex_agent.pipeline.input.envelope import UserInputEnvelope
 from modex_agent.pipeline.input.stage import Continue, InputStage, StageResult
 from modex_agent.plugins.assembly.context import AssemblyContext
+from modex_agent.plugins.defaults.capabilities.approval import (
+    register_approval_feature,
+)
 from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.components import SimpleFactory
@@ -64,6 +67,9 @@ def _replacement_stage_registry() -> ComponentRegistry:
     registry = ComponentRegistry()
     with PluginRegistrationContext(registry) as registration:
         IMInputStagesPlugin().register(registration)
+        # The approval onramp is an FW default since W1-B2 (the bot plugin
+        # no longer carries it).
+        register_approval_feature(registration)
     with PluginRegistrationContext(registry) as registration:
         registration.register_input_stage(
             "replacement_envelope",

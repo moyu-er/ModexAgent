@@ -301,7 +301,17 @@ def _agent_bill(
         strategy_name_of(agent_spec.execution_strategy), registry
     ).supports_approval
     if supports_approval:
-        approval_enabled = agent_spec.approval.enabled if agent_spec.approval else False
+        # The declaration's raw ``approval:`` mapping is validated through
+        # the bundle's config model here (the schema holds the raw face).
+        from modex_agent.plugins.defaults.capabilities.approval.config import (
+            ApprovalConfig,
+        )
+
+        approval_enabled = (
+            ApprovalConfig.model_validate(agent_spec.approval).enabled
+            if agent_spec.approval is not None
+            else False
+        )
     else:
         approval_enabled = False
     return ScopeAgentBill(

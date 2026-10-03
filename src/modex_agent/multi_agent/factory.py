@@ -193,10 +193,14 @@ class DefaultAgentFactory(AgentFactory):
         safety: Any,
         subagent_governance: Any,
     ) -> TurnRunner:
-        from modex_agent.pipeline.approval_renderer import ApprovalRenderer
-        from modex_agent.pipeline.approval_resumer import ApprovalResumer
         from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
         from modex_agent.pipeline.turn_runner import ReActTurnRunner
+        from modex_agent.plugins.defaults.capabilities.approval.renderer import (
+            ApprovalRenderer,
+        )
+        from modex_agent.plugins.defaults.capabilities.approval.resumer import (
+            ApprovalResumer,
+        )
         from modex_agent.runtime.services import AgentRuntimeServices
         from modex_agent.utils.sanitizer import ContentSanitizer
 
@@ -230,7 +234,7 @@ class DefaultAgentFactory(AgentFactory):
             turn_store=turn_store,
             registry=registry,
         )
-        approval_resumer = ApprovalResumer(
+        approval_state_machine = ApprovalResumer(
             agent=agent,
             turn_store=turn_store,
             user_interface=None,
@@ -249,7 +253,7 @@ class DefaultAgentFactory(AgentFactory):
             turn_store=turn_store,
             registry=registry,
             builder=turn_context_builder,
-            resumer=approval_resumer,
+            resumer=approval_state_machine,
             approval=approval,
             workspace_manager=None,
             pool_name=None,

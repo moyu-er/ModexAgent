@@ -1,7 +1,7 @@
 """Tests for ArgumentMatcher path resolution and matching."""
 from pathlib import Path
 
-from modex_agent.approval.argument_matcher import ArgumentMatcher
+from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import ArgumentMatcher
 
 
 class TestResolvePath:

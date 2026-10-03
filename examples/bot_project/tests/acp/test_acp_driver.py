@@ -139,7 +139,7 @@ async def test_redrawn_root_approval_view_prompts_once(make_handle) -> None:
     The suspension render and a partial-batch re-prompt can both deliver the
     same pending view; the driver's tasks owner collapses the duplicate.
     """
-    from modex_agent.approval.views import ApprovalRequestView
+    from modex_agent.plugins.defaults.capabilities.approval.views import ApprovalRequestView
 
     provider = _Provider([
         LLMResponse(content="", tool_calls=[ToolCall(tool_name="write", call_id="write-2", arguments={"path": "outside.txt"})]),
@@ -207,7 +207,7 @@ async def test_same_batch_second_tool_view_not_swallowed_while_first_card_pendin
     approval silently dropped. The identity must distinguish
     (source, approval_id, tool_call_id).
     """
-    from modex_agent.approval.views import ApprovalRequestView
+    from modex_agent.plugins.defaults.capabilities.approval.views import ApprovalRequestView
 
     provider = _Provider([
         LLMResponse(content="", tool_calls=[
@@ -440,7 +440,7 @@ async def test_prompt_finalizer_unregisters_before_gathering_permissions(make_ha
     listener presence — unregistered means AcpApprovalRouteError, never a
     spawned task.
     """
-    from modex_agent.approval.views import ApprovalRequestView
+    from modex_agent.plugins.defaults.capabilities.approval.views import ApprovalRequestView
 
     provider = _Provider([
         LLMResponse(content="", tool_calls=[ToolCall(tool_name="write", call_id="fin-w", arguments={"path": "outside.txt"})]),

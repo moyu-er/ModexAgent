@@ -380,8 +380,14 @@ def _compile_agent(
 
     tools_list, tools_layer = _layered(agent.tools, profile_tools)
     # No profile face: the override map is purely local, and an empty
-    # outer block is equivalent to absence (SPEC §5.1).
-    capabilities_layer = ProvenanceLayer.LOCAL if agent.capabilities else ProvenanceLayer.FRAMEWORK
+    # outer block is equivalent to absence (SPEC §5.1). The ``approval:``
+    # field is the raw face of the same declaration, so it layers LOCAL
+    # with the override map.
+    capabilities_layer = (
+        ProvenanceLayer.LOCAL
+        if (agent.capabilities or agent.approval is not None)
+        else ProvenanceLayer.FRAMEWORK
+    )
     eager, eager_layer = _layered(agent.eager, profile_eager)
     max_steps, max_steps_layer = _layered(
         agent.max_steps if "max_steps" in local_fields else None,
@@ -680,12 +686,19 @@ def _profile_name(bound: Profile | None, layer: ProvenanceLayer) -> str | None:
 
 
 def _declares_capabilities(spec: ScopeSpec) -> bool:
-    """Whether ANY agent in the tree declares a non-empty capabilities block.
+    """Whether ANY agent in the tree declares a non-empty capabilities block
+    or the ``approval:`` field (its raw declaration face).
 
     An empty override map is equivalent to absence (SPEC §5.1), so only a
-    non-empty block counts as a declaration.
+    non-empty block counts as a declaration; the ``approval:`` field
+    translates into the ``approval`` capability override at compile time,
+    so it carries the same registry requirement.
     """
-    return any(agent.capabilities for pool in _pools_of(spec) for agent in pool.agents)
+    return any(
+        agent.capabilities or agent.approval is not None
+        for pool in _pools_of(spec)
+        for agent in pool.agents
+    )
 
 
 def _child_summaries(pool: PoolSpec, child_names: list[str]) -> tuple[ChildSummary, ...]:
@@ -746,6 +759,21 @@ def _effective_capabilities(
                 "defense in depth behind the phase-1 validator)"
             )
         return [], []
+    if agent.approval is not None:
+        # The ``approval:`` field is the raw face of the SAME declaration the
+        # ``capabilities:`` override map spells as ``approval: {...}`` — one
+        # face only. A non-root presence was already rejected by V9; an
+        # external agent returns above, keeping the historical "accepted
+        # but not applicable" friendly-form contract.
+        if "approval" in overrides:
+            raise ValueError(
+                f"pool {tree_view.pool_name!r}: agent {agent.name!r} declares "
+                "approval on BOTH faces — the `approval:` field and "
+                "`capabilities: {approval: ...}`; declare one face only "
+                "(remove the `approval:` block or the `approval` "
+                "capabilities entry)"
+            )
+        overrides = {**overrides, "approval": agent.approval}
     view = AgentDeclarationView(
         pool_name=tree_view.pool_name,
         agent_name=tree_view.agent_name,

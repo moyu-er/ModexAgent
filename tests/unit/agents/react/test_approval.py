@@ -1,9 +1,9 @@
 """Tests for ApprovalRuntime, ApprovalClassifier, TieredToolApprovalClassifier."""
 from pathlib import Path
 
-from modex_agent.approval.argument_matcher import ArgumentMatcher
-from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
-from modex_agent.approval.runtime import (
+from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import ArgumentMatcher
+from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig, ToolApprovalConfig
+from modex_agent.plugins.defaults.capabilities.approval.runtime import (
     ApprovalRuntime,
     TieredToolApprovalClassifier,
 )

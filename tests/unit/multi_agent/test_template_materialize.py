@@ -948,8 +948,8 @@ async def test_materialize_lands_delegation_snapshot_and_guard_only_gate():
     """PRD #5 anchor: materialization installs the frozen delegation
     snapshot and the guard-only (escalate=False) tool gate — a
     subagent never owns a card channel."""
-    from modex_agent.approval.runtime import ApprovalRuntime
-    from modex_agent.approval.security import SecurityClassifier
+    from modex_agent.plugins.defaults.capabilities.approval.runtime import ApprovalRuntime
+    from modex_agent.plugins.defaults.capabilities.approval.security import SecurityClassifier
     from modex_agent.sandbox.delegation import DelegationSnapshot
 
     deps, factory = await _make_deps()

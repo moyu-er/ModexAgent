@@ -195,8 +195,10 @@ class AgentTemplate:
         """Report real capabilities; install checks only where the runner executes them."""
         from dataclasses import replace as _replace
 
-        from modex_agent.approval.security import guard_only_runtime
         from modex_agent.core.agent import ExecutionStrategyKind
+        from modex_agent.plugins.defaults.capabilities.approval.security import (
+            guard_only_runtime,
+        )
         from modex_agent.runtime.services import AgentRuntimeServices
         from modex_agent.sandbox.decision import SecurityDecisionService
         from modex_agent.sandbox.delegation import (

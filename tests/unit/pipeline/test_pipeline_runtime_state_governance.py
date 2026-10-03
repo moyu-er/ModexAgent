@@ -7,7 +7,7 @@ import pytest
 from modex_agent.agents.react.constants import ReActNode
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
-from modex_agent.approval.runtime import ApprovalRuntime
+from modex_agent.plugins.defaults.capabilities.approval.runtime import ApprovalRuntime
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
@@ -402,9 +402,10 @@ async def test_partial_decision_preserves_snapshot_turn_uuid_in_suspension() -> 
 
     assert outcome.suspension is not None
     assert outcome.suspension.turn_uuid == expected_turn_uuid
-    assert [req.turn_uuid for req in outcome.suspension.requests] == [
-        expected_turn_uuid
-    ]
+    # The suspension carries the turn uuid; the pending request states carry
+    # their owner-minted identities (the wire DTO derives turn_uuid from the
+    # suspension, not per-request).
+    assert [req.approval_id for req in outcome.suspension.requests] == ["ap2"]
 
 
 @pytest.mark.asyncio

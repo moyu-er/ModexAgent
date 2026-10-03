@@ -8,12 +8,13 @@ calls) and asserts the EXACT name set registered into each of the 11
 ``ComponentSlot`` values.
 
 Design decision — 1 slot is EMPTY by FW design:
-- ``INPUT_STAGE`` — empty. Input pipeline stages (``/cd``, ``/pool``,
-  ``/stop`` interception, skill parsing) are IM/WebUI business wiring from
+- ``INPUT_STAGE`` — the approval onramp (``approval``) only (W1-B2).
+  The remaining input pipeline stages (``/cd``, ``/pool``, ``/stop``
+  interception, skill parsing) are IM/WebUI business wiring from
   ``examples/bot_project/bot/input_pipeline/``, registered by the bot's
   ``IMInputStagesPlugin`` — NOT framework defaults.
 
-The other 10 slots are populated:
+All 11 slots are populated:
 - ``EXECUTION_STRATEGY`` (W4a): the bundled ``react`` / ``external`` shapes.
 - ``MEMORY_SYSTEM`` (W6): the bundled ``default`` framework memory system
   (``plugins/defaults/context_manager.py``).
@@ -21,8 +22,8 @@ The other 10 slots are populated:
   (``plugins/defaults/namespaces.py``).
 
 ``CAPABILITY`` holds the FW-bundled capability packages (``aci``,
-``ast_grep``, ``experience``, ``subagents``, ``todo``; ADR-0047 — grows
-one package per migration wave).
+``ast_grep``, ``approval``, ``experience``, ``subagents``, ``todo``;
+ADR-0047 — grows one package per migration wave).
 """
 
 from __future__ import annotations
@@ -242,11 +243,15 @@ class TestPerSlotNameSets:
 
     async def test_capability_slot_has_bundled_packages(self) -> None:
         """CAPABILITY carries the FW-bundled capability packages — ``aci``,
-        ``ast_grep``, ``experience``, ``shell``, ``subagents``, ``todo`` and
-        ``tracing`` (ADR-0047; grows one package per migration wave)."""
+        ``ast_grep``, ``approval``, ``experience``, ``shell``, ``subagents``,
+        ``todo`` and ``tracing`` (ADR-0047; grows one package per migration
+        wave)."""
         registry = await _load_default_plugin()
         actual = _slot_names(registry, ComponentSlot.CAPABILITY)
-        assert actual == {"aci", "ast_grep", "experience", "shell", "skills", "subagents", "todo", "tracing"}, (
+        assert actual == {
+            "aci", "ast_grep", "approval", "experience", "shell",
+            "skills", "subagents", "todo", "tracing",
+        }, (
             f"CAPABILITY drift: {actual}"
         )
 
@@ -269,16 +274,18 @@ class TestPerSlotNameSets:
         )
 
     async def test_input_stage_slot_is_empty(self) -> None:
-        """INPUT_STAGE is empty — stages come from the bot IM/WebUI pipeline.
-
-        Input pipeline stages (environment control, session control, skill
-        parsing, etc.) are business wiring in
-        ``examples/bot_project/bot/input_pipeline/``, registered by the
-        bot's ``IMInputStagesPlugin`` — NOT framework defaults.
+        """INPUT_STAGE carries the approval onramp (``approval``) — the
+        only framework-default input stage (W1-B2: the approval capability
+        bundle registers the IM /approve · /deny onramp under the name the
+        skeletons already use). The remaining stages are business wiring
+        in ``examples/bot_project/bot/input_pipeline/``, registered by the
+        bot's ``IMInputStagesPlugin``.
         """
         registry = await _load_default_plugin()
         actual = _slot_names(registry, ComponentSlot.INPUT_STAGE)
-        assert actual == set(), f"INPUT_STAGE must be empty (bot IM plugin territory), got {actual}"
+        assert actual == {"approval"}, (
+            f"INPUT_STAGE drift (only the approval onramp is an FW default): {actual}"
+        )
 
     async def test_memory_system_slot_has_bundled_default(self) -> None:
         """MEMORY_SYSTEM carries the bundled ``default`` factory (W6) — the
@@ -305,32 +312,24 @@ class TestPerSlotNameSets:
 
 
 class TestAllSlotsAccounted:
-    """The 10 populated + 1 empty slots cover all 11 ComponentSlot values.
+    """All 11 slots are populated (INPUT_STAGE joined with the approval
+    onramp in W1-B2).
 
-    This is a structural assertion: every slot is either populated with a
-    known name set or explicitly empty by design. No slot is left
-    unaccounted.
+    This is a structural assertion: every slot is populated with a known
+    name set. No slot is left unaccounted.
     """
 
-    async def test_populated_slots_count_is_10(self) -> None:
+    async def test_populated_slots_count_is_11(self) -> None:
         registry = await _load_default_plugin()
         populated = {slot for slot in ComponentSlot if _slot_names(registry, slot)}
-        assert len(populated) == 10, (
-            f"Expected 10 populated slots, got {len(populated)}: {[s.value for s in populated]}"
+        assert len(populated) == 11, (
+            f"Expected 11 populated slots, got {len(populated)}: {[s.value for s in populated]}"
         )
 
-    async def test_empty_slots_are_exactly_the_1_designated(self) -> None:
+    async def test_no_slot_is_empty(self) -> None:
         registry = await _load_default_plugin()
         empty = {slot for slot in ComponentSlot if not _slot_names(registry, slot)}
-        expected_empty = {
-            ComponentSlot.INPUT_STAGE,
-        }
-        assert empty == expected_empty, (
-            f"Empty slots drift: unexpected_empty="
-            f"{[s.value for s in empty - expected_empty]}, "
-            f"unexpected_populated="
-            f"{[s.value for s in expected_empty - empty]}"
-        )
+        assert empty == set(), f"Empty slots drift: {[s.value for s in empty]}"
 
     async def test_every_slot_resolves_without_error_for_populated_names(
         self,
@@ -349,7 +348,10 @@ class TestAllSlotsAccounted:
             (ComponentSlot.COMMAND_HANDLER, _EXPECTED_COMMAND_NAMES),
             (
                 ComponentSlot.CAPABILITY,
-                frozenset({"aci", "ast_grep", "experience", "skills", "subagents", "todo", "tracing"}),
+                frozenset({
+                    "aci", "ast_grep", "approval", "experience", "skills",
+                    "subagents", "todo", "tracing",
+                }),
             ),
         ]
         for slot, names in checks:

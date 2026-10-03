@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
-from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn.approval_types import ApprovalDecision, ApprovalTier
 from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
+from modex_agent.plugins.defaults.capabilities.approval.factory import (
+    build_approval_runtime,
+)
+from modex_agent.plugins.defaults.capabilities.approval.runtime import (
+    ApprovalRuntime,
+    TieredToolApprovalClassifier,
+)
 from modex_agent.sandbox.settings import (
     ExclusiveConfig,
     SandboxBackend,
@@ -23,12 +28,12 @@ from modex_agent.tools.manager import InMemoryToolManager
 
 
 def test_returns_none_when_config_disabled():
-    cfg = ApprovalConfig(enabled=False, tools={"write_file": ToolApprovalEntry(allowed_paths=["./*"])})
+    cfg = {"enabled": False, "tools": {"write_file": {"allowed_paths": ["./*"]}}}
     assert build_approval_runtime(cfg, project_root=Path("/proj")) is None
 
 
 def test_returns_none_when_no_tools():
-    cfg = ApprovalConfig(enabled=True, tools={})
+    cfg = {"enabled": True, "tools": {}}
     assert build_approval_runtime(cfg, project_root=Path("/proj")) is None
 
 
@@ -36,14 +41,21 @@ def test_returns_none_when_config_none():
     assert build_approval_runtime(None) is None
 
 
+def test_rejects_unknown_declaration_keys_loudly():
+    with pytest.raises(Exception, match="bogus"):
+        build_approval_runtime(
+            {"enabled": True, "bogus": True}, project_root=Path("/proj")
+        )
+
+
 def test_builds_runtime_with_path_tier_classifier():
-    cfg = ApprovalConfig(
-        enabled=True,
-        tools={
-            "write_file": ToolApprovalEntry(allowed_paths=["./*"]),
-            "edit_file": ToolApprovalEntry(allowed_paths=["./*"]),
+    cfg = {
+        "enabled": True,
+        "tools": {
+            "write_file": {"allowed_paths": ["./*"]},
+            "edit_file": {"allowed_paths": ["./*"]},
         },
-    )
+    }
     rt = build_approval_runtime(cfg, project_root=Path("/proj"))
     assert isinstance(rt, ApprovalRuntime)
     assert isinstance(rt.classifier, TieredToolApprovalClassifier)
@@ -57,10 +69,7 @@ def test_builds_runtime_with_path_tier_classifier():
 
 @pytest.mark.parametrize("sandbox", [None, SandboxSettings()])
 def test_path_tiering_classifies_in_project_normal_and_outside_dangerous(sandbox):
-    cfg = ApprovalConfig(
-        enabled=True,
-        tools={"write_file": ToolApprovalEntry(allowed_paths=["./*"])},
-    )
+    cfg = {"enabled": True, "tools": {"write_file": {"allowed_paths": ["./*"]}}}
     rt = build_approval_runtime(cfg, project_root=Path("/proj"), sandbox=sandbox)
     assert rt is not None
     classifier = rt.classifier
@@ -81,14 +90,14 @@ def test_path_tiering_classifies_in_project_normal_and_outside_dangerous(sandbox
     ("cfg", "active_outside", "dormant_outside", "inside_decision"),
     [
         (None, ApprovalDecision.DENIED, None, ApprovalDecision.ALLOWED),
-        (ApprovalConfig(enabled=False), ApprovalDecision.DENIED, None, ApprovalDecision.ALLOWED),
-        (ApprovalConfig(enabled=True), ApprovalDecision.PENDING, None, ApprovalDecision.ALLOWED),
+        ({"enabled": False}, ApprovalDecision.DENIED, None, ApprovalDecision.ALLOWED),
+        ({"enabled": True}, ApprovalDecision.PENDING, None, ApprovalDecision.ALLOWED),
         (
-            ApprovalConfig(enabled=True, tools={"write": ToolApprovalEntry(allowed_paths=["./*"])}),
+            {"enabled": True, "tools": {"write": {"allowed_paths": ["./*"]}}},
             ApprovalDecision.PENDING, ApprovalDecision.PENDING, ApprovalDecision.ALLOWED,
         ),
         (
-            ApprovalConfig(enabled=True, tools={"write": ToolApprovalEntry(allowed_paths=[])}),
+            {"enabled": True, "tools": {"write": {"allowed_paths": []}}},
             ApprovalDecision.PENDING, ApprovalDecision.PENDING, ApprovalDecision.PENDING,
         ),
     ],
@@ -97,7 +106,7 @@ def test_path_tiering_classifies_in_project_normal_and_outside_dangerous(sandbox
 def test_factory_approval_channel_matrix(
     tmp_path: Path,
     backend: SandboxBackend | None,
-    cfg: ApprovalConfig | None,
+    cfg: dict[str, Any] | None,
     active_outside: ApprovalDecision,
     dormant_outside: ApprovalDecision | None,
     inside_decision: ApprovalDecision,

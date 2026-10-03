@@ -12,24 +12,25 @@ envelope).
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from modex_agent.approval.config import (
+from modex_agent.plugins.defaults.capabilities.approval.config import (
     AgentApprovalConfig,
     ApprovalConfig,
     ToolApprovalConfig,
     ToolApprovalEntry,
 )
-from modex_agent.approval.runtime import TieredToolApprovalClassifier
-from modex_agent.approval.security import SecurityClassifier
+from modex_agent.plugins.defaults.capabilities.approval.runtime import TieredToolApprovalClassifier
+from modex_agent.plugins.defaults.capabilities.approval.security import SecurityClassifier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn.approval_types import ApprovalTier
 from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
+from modex_agent.plugins.defaults.capabilities.approval.factory import build_approval_runtime
 from modex_agent.sandbox.approval_envelope import validate_approval_envelope
 from modex_agent.sandbox.decision import SecurityDecisionService
 from modex_agent.sandbox.settings import (
@@ -212,7 +213,7 @@ class TestCleanFallback:
         )
         # The inner matcher is optional in the dataclass; give it the real
         # ArgumentMatcher through the factory path for pattern resolution.
-        from modex_agent.approval.argument_matcher import ArgumentMatcher
+        from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import ArgumentMatcher
 
         inner.argument_matcher = ArgumentMatcher(root_provider=_FixedRoot(WS))
         classifier = _classifier(inner=inner)
@@ -223,7 +224,7 @@ class TestCleanFallback:
         inner = _inner(
             tools={"write": ToolApprovalConfig(allowed_paths=["./*"])}
         )
-        from modex_agent.approval.argument_matcher import ArgumentMatcher
+        from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import ArgumentMatcher
 
         inner.argument_matcher = ArgumentMatcher(root_provider=_FixedRoot(WS))
         classifier = _classifier(inner=inner)
@@ -257,11 +258,12 @@ class TestCleanFallback:
 
 
 class TestBuildApprovalRuntimeComposite:
-    def _cfg(self) -> ApprovalConfig:
-        return ApprovalConfig(
-            enabled=True,
-            tools={"write": ToolApprovalEntry(allowed_paths=["./*"])},
-        )
+    def _cfg(self) -> dict[str, Any]:
+        # The raw ``approval:`` declaration face the factory validates at entry.
+        return {
+            "enabled": True,
+            "tools": {"write": {"allowed_paths": ["./*"]}},
+        }
 
     def test_no_sandbox_returns_plain_tiered_classifier(self) -> None:
         rt = build_approval_runtime(self._cfg(), project_root=Path(str(WS)))
@@ -395,20 +397,20 @@ class TestContainmentValidation:
     def test_factory_assembly_raises_on_outside_allowed_paths(self) -> None:
         with pytest.raises(ValueError, match="envelope"):
             build_approval_runtime(
-                ApprovalConfig(
-                    enabled=True,
-                    tools={"write": ToolApprovalEntry(allowed_paths=["/etc/**"])},
-                ),
+                {
+                    "enabled": True,
+                    "tools": {"write": {"allowed_paths": ["/etc/**"]}},
+                },
                 root_provider=_FixedRoot(WS),
                 sandbox=_settings(),
             )
 
     def test_factory_assembly_no_raise_inside(self) -> None:
         rt = build_approval_runtime(
-            ApprovalConfig(
-                enabled=True,
-                tools={"write": ToolApprovalEntry(allowed_paths=["./*"])},
-            ),
+            {
+                "enabled": True,
+                "tools": {"write": {"allowed_paths": ["./*"]}},
+            },
             root_provider=_FixedRoot(WS),
             sandbox=_settings(),
         )
@@ -457,7 +459,7 @@ class TestGuardOnlyRuntime:
     """The converge helper builds the escalate-off composite every caller shares."""
 
     def _rt(self, builder=None):  # type: ignore[no-untyped-def]
-        from modex_agent.approval.security import guard_only_runtime
+        from modex_agent.plugins.defaults.capabilities.approval.security import guard_only_runtime
 
         decision = SecurityDecisionService(
             settings=_settings(), workspace_root_provider=_FixedRoot(WS)

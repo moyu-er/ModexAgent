@@ -1,10 +1,13 @@
 """Bot input pipeline stages as ``INPUT_STAGE`` component factories.
 
-The framework-owned generic stages (resolve-pool, set-channel, approval,
+The framework-owned generic stages (resolve-pool, set-channel,
 attachment ingest, command dispatch, unsupported-command, persist) are
-imported from :mod:`modex_agent.pipeline.input.stages`; the bot supplies
-the deployment callbacks (channel recorder, transcript writer) and keeps
-its channel/workspace-specific stages here and under
+imported from :mod:`modex_agent.pipeline.input.stages`; the approval
+onramp stage registers with the approval capability bundle
+(``modex_agent.plugins.defaults.capabilities.approval`` — a framework
+default since W1-B2, so this plugin no longer registers it); the bot
+supplies the deployment callbacks (channel recorder, transcript writer)
+and keeps its channel/workspace-specific stages here and under
 ``bot/input_pipeline/stages/``.
 """
 
@@ -29,7 +32,6 @@ from pydantic import BaseModel, ConfigDict
 
 from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.pipeline.input.skeleton import InputStageName
-from modex_agent.pipeline.input.stages.approval import ApprovalStage
 from modex_agent.pipeline.input.stages.attachment_ingest import AttachmentIngestStage
 from modex_agent.pipeline.input.stages.command import CommandDispatchStage
 from modex_agent.pipeline.input.stages.persist_user_message import (
@@ -150,10 +152,6 @@ class IMInputStagesPlugin(Plugin):
         ctx.register_input_stage(
             InputStageName.ATTACHMENT_INGEST,
             SimpleFactory(AttachmentIngestStage(), _EmptyStageConfig),
-        )
-        ctx.register_input_stage(
-            InputStageName.APPROVAL,
-            SimpleFactory(ApprovalStage(), _EmptyStageConfig),
         )
         ctx.register_input_stage(InputStageName.SKILL_PARSE, SkillParseStageFactory())
         ctx.register_input_stage(

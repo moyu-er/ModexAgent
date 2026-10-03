@@ -30,6 +30,9 @@ def register_default_capabilities(ctx: PluginRegistrationContext) -> None:
     components through their one registration entries.
     """
     from modex_agent.plugins.defaults.capabilities.aci import AciCapability
+    from modex_agent.plugins.defaults.capabilities.approval import (
+        register_approval_feature,
+    )
     from modex_agent.plugins.defaults.capabilities.ast_grep import AstGrepCapability
     from modex_agent.plugins.defaults.capabilities.experience import (
         register_experience_feature,
@@ -45,6 +48,7 @@ def register_default_capabilities(ctx: PluginRegistrationContext) -> None:
 
     ctx.register_capability("aci", AciCapability())
     ctx.register_capability("ast_grep", AstGrepCapability())
+    register_approval_feature(ctx)
     register_experience_feature(ctx)
     register_skills_feature(ctx)
     ctx.register_capability(SHELL_CAPABILITY_NAME, ShellCapability())

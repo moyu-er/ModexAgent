@@ -6,7 +6,7 @@ import asyncio
 
 from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
-from modex_agent.approval.response import parse_input_command
+from modex_agent.plugins.defaults.capabilities.approval.response import parse_input_command
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn.approval_types import ApprovalDecision, ApprovalTier
 from modex_agent.core.turn.enums import AgentKind, ApprovalSubjectType, SnapshotReason, TurnPhase
@@ -17,7 +17,7 @@ from modex_agent.core.turn.models import (
     TurnIdentity,
 )
 from modex_agent.messaging.models import ApprovalAction, InputMessage
-from modex_agent.pipeline.approval_renderer import ApprovalRenderer
+from modex_agent.plugins.defaults.capabilities.approval.renderer import ApprovalRenderer
 
 
 def _snapshot_with_requests(*, count: int = 1):

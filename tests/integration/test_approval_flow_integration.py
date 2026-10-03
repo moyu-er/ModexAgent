@@ -28,8 +28,8 @@ import pytest
 
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.agents.react.agent import ReActAgent
-from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
-from modex_agent.approval.ui import IMUserInterface
+from modex_agent.plugins.defaults.capabilities.approval.config import ApprovalConfig, ToolApprovalEntry
+from modex_agent.plugins.defaults.capabilities.approval.ui import IMUserInterface
 from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.core.emitter import TurnBinding, TurnEvent, TurnEventSink
 from modex_agent.core.llm_struct import LLMResponse
@@ -48,7 +48,7 @@ from modex_agent.messaging.models import (
     OutputMessage,
 )
 from modex_agent.pipeline.pipeline import AgentPipeline
-from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
+from modex_agent.plugins.defaults.capabilities.approval.factory import build_approval_runtime
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
 from modex_agent.tools.manager import InMemoryToolManager
@@ -536,10 +536,10 @@ async def test_default_off_no_suspend_even_for_dangerous_path(tmp_path: Path) ->
         allowed_paths=["./*"],
     )
 
-    # Sanity: the factory returned None, so runtime_services has no approval.
+    # Sanity: the factory returned None, so runtime_services has no gate.
     _rs = pipeline._turn_runner._builder._runtime_services  # type: ignore[attr-defined]
     assert _rs is not None
-    assert _rs.approval is None, "build_approval_runtime must return None when enabled=False"
+    assert _rs.tool_gate is None, "build_approval_runtime must return None when enabled=False"
 
     session = SessionInfo.from_str("s1.main")
     result = await pipeline._process_message(

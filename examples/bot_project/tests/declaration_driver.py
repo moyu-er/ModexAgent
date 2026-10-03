@@ -82,12 +82,18 @@ def build_declared(
     project_dir: Path,
     data_dir: Path,
     pool_name: str = "default",
+    registry: ComponentRegistry | None = None,
 ) -> DeclaredPoolBuild:
     """Boot the declaration and partition ``pool_name``'s products.
 
     A convenience for the overwhelmingly common single-pool test shape.
+    ``registry`` threads the CAPABILITY-slot registry into the compile —
+    required when the declaration carries ``capabilities:`` blocks or the
+    ``approval:`` field (its raw declaration face).
     """
-    boot = boot_from_yaml(declaration_yaml, project_dir=project_dir, data_dir=data_dir)
+    boot = boot_from_yaml(
+        declaration_yaml, project_dir=project_dir, data_dir=data_dir, registry=registry
+    )
     return declared_pool_build(boot, pool_name)
 
 

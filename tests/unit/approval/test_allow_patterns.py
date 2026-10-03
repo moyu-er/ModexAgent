@@ -15,13 +15,13 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.approval.config import (
+from modex_agent.plugins.defaults.capabilities.approval.config import (
     AgentApprovalConfig,
     ApprovalConfig,
     ToolApprovalConfig,
     ToolApprovalEntry,
 )
-from modex_agent.approval.runtime import (
+from modex_agent.plugins.defaults.capabilities.approval.runtime import (
     TieredToolApprovalClassifier,
     command_matches_allow_patterns,
 )
@@ -31,7 +31,7 @@ from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn.approval_types import ApprovalTier
 from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.memory.history import ListMessageHistory
-from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
+from modex_agent.plugins.defaults.capabilities.approval.factory import build_approval_runtime
 from modex_agent.tools.manager import InMemoryToolManager
 
 WS = Path("/ws/project")
@@ -127,7 +127,7 @@ class TestClassifierAllowPatterns:
     def test_allow_patterns_do_not_affect_path_tools(self) -> None:
         # The matcher only reads the ``command`` argument; a write tool
         # without one never hits the whitelist (path rules still apply).
-        from modex_agent.approval.argument_matcher import ArgumentMatcher
+        from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import ArgumentMatcher
 
         classifier = TieredToolApprovalClassifier(
             config=AgentApprovalConfig(
@@ -154,10 +154,10 @@ class TestDenyAlwaysWins:
         )
 
         return build_approval_runtime(
-            ApprovalConfig(
-                enabled=True,
-                tools={"bash": ToolApprovalEntry(allowed_paths=[], allow_patterns=patterns)},
-            ),
+            {
+                "enabled": True,
+                "tools": {"bash": {"allowed_paths": [], "allow_patterns": patterns}},
+            },
             root_provider=_FixedRoot(WS),
             sandbox=SandboxSettings.model_validate(
                 {
@@ -227,10 +227,10 @@ class TestDeclarationChain:
 
     def test_factory_forwards_allow_patterns_to_classifier(self) -> None:
         rt = build_approval_runtime(
-            ApprovalConfig(
-                enabled=True,
-                tools={"bash": ToolApprovalEntry(allowed_paths=[], allow_patterns=["git .*"])},
-            ),
+            {
+                "enabled": True,
+                "tools": {"bash": {"allowed_paths": [], "allow_patterns": ["git .*"]}},
+            },
             project_root=WS,
         )
         assert rt is not None

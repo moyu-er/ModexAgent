@@ -6,7 +6,7 @@ import pytest
 
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
-from modex_agent.approval.runtime import ApprovalRuntime
+from modex_agent.plugins.defaults.capabilities.approval.runtime import ApprovalRuntime
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import TurnEvent, TurnEventSink
 from modex_agent.core.llm_struct import LLMResponse

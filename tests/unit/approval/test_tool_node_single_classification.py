@@ -25,7 +25,7 @@ from modex_agent.agents.react.state import (
     ReActTurnState,
 )
 from modex_agent.agents.react.tool_executor import ToolExecutor
-from modex_agent.approval.runtime import ApprovalClassifier, ApprovalRuntime
+from modex_agent.plugins.defaults.capabilities.approval.runtime import ApprovalClassifier, ApprovalRuntime
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import TurnEvent, TurnEventSink
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
@@ -54,7 +54,7 @@ from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.approval_audit_store import SqliteApprovalAuditStore
 from modex_agent.persistence.adapters.turn_state_store import SqliteTurnStateStore
 from modex_agent.persistence.coordinator import SqliteDecisionCoordinator
-from modex_agent.pipeline.approval_resumer import ApprovalResumer
+from modex_agent.plugins.defaults.capabilities.approval.resumer import ApprovalResumer
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
@@ -127,9 +127,9 @@ class _RecordingAuditStore(ApprovalAuditStore):
 
 
 def _guard_classifier(*, escalate: bool) -> ApprovalClassifier:
-    from modex_agent.approval.config import AgentApprovalConfig
-    from modex_agent.approval.runtime import TieredToolApprovalClassifier
-    from modex_agent.approval.security import SecurityClassifier
+    from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig
+    from modex_agent.plugins.defaults.capabilities.approval.runtime import TieredToolApprovalClassifier
+    from modex_agent.plugins.defaults.capabilities.approval.security import SecurityClassifier
     from modex_agent.sandbox.decision import SecurityDecisionService
     from modex_agent.sandbox.settings import (
         GuardSettings,
@@ -247,8 +247,8 @@ def _clean_call() -> ToolCall:
 class TestSingleClassification:
     @pytest.mark.parametrize("configured", [False, True])
     async def test_approval_off_factory_denies_without_pending(self, configured: bool) -> None:
-        from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
-        from modex_agent.plugins.assembly.approval_factory import build_approval_runtime
+        from modex_agent.plugins.defaults.capabilities.approval.config import ApprovalConfig, ToolApprovalEntry
+        from modex_agent.plugins.defaults.capabilities.approval.factory import build_approval_runtime
         from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
 
         class Root(WorkspaceRootProvider):
@@ -256,7 +256,7 @@ class TestSingleClassification:
                 return WS
 
         runtime = build_approval_runtime(
-            ApprovalConfig(enabled=False, tools={"bash": ToolApprovalEntry(allowed_paths=["./*"])})
+            {"enabled": False, "tools": {"bash": {"allowed_paths": ["./*"]}}}
             if configured
             else None,
             sandbox=SandboxSettings(backend=SandboxBackend.HOST),
@@ -405,8 +405,8 @@ class TestSingleClassification:
         assert len(audit.entries) == 2
 
     async def test_one_classify_call_per_tool(self) -> None:
-        from modex_agent.approval.config import AgentApprovalConfig
-        from modex_agent.approval.runtime import TieredToolApprovalClassifier
+        from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig
+        from modex_agent.plugins.defaults.capabilities.approval.runtime import TieredToolApprovalClassifier
 
         counting = _CountingClassifier(
             TieredToolApprovalClassifier(config=AgentApprovalConfig(enabled=False))

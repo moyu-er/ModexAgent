@@ -10,9 +10,9 @@ from bot.webui.events import SessionMeta
 from bot.webui.transcript_store import TranscriptStore
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.approval.views import ApprovalRequestView
 from modex_agent.core.session_id import agent_of
 from modex_agent.messaging.models import OutputMessage, OutputMessageType
+from modex_agent.plugins.defaults.capabilities.approval.views import ApprovalRequestView
 from modex_agent.presentation import (
     PresentationEvent,
     TextDelta,
