@@ -283,7 +283,7 @@ def _build_pipeline_with_webui_emitter(
         project_root=tmp_path,
     )
     turn_store = turn_store if turn_store is not None else InMemoryTurnStateStore()
-    runtime_services = AgentRuntimeServices(approval=approval_runtime, turn_store=turn_store)
+    runtime_services = AgentRuntimeServices(tool_gate=approval_runtime, turn_store=turn_store)
 
     recording_output = _RecordingOutputAdapter()
 
@@ -666,7 +666,7 @@ async def test_deny_all_on_batch_seals_all_pending_requests(tmp_path: Path) -> N
         project_root=tmp_path,
     )
     turn_store = InMemoryTurnStateStore()
-    runtime_services = AgentRuntimeServices(approval=approval_runtime, turn_store=turn_store)
+    runtime_services = AgentRuntimeServices(tool_gate=approval_runtime, turn_store=turn_store)
 
     recording_output = _RecordingOutputAdapter()
     ws_input = WebSocketInputAdapter()

@@ -944,9 +944,9 @@ def _classify_ctx() -> AgentContext:
 
 
 @pytest.mark.asyncio
-async def test_materialize_lands_delegation_snapshot_and_guard_only_approval():
+async def test_materialize_lands_delegation_snapshot_and_guard_only_gate():
     """PRD #5 anchor: materialization installs the frozen delegation
-    snapshot and the guard-only (escalate=False) approval runtime — a
+    snapshot and the guard-only (escalate=False) tool gate — a
     subagent never owns a card channel."""
     from modex_agent.approval.runtime import ApprovalRuntime
     from modex_agent.approval.security import SecurityClassifier
@@ -966,11 +966,11 @@ async def test_materialize_lands_delegation_snapshot_and_guard_only_approval():
     assert snapshot.depth == 1  # main(0) -> scout(1)
     assert snapshot.source == "delegation"
 
-    approval = services.approval
+    approval = services.tool_gate
     assert isinstance(approval, ApprovalRuntime)
     assert isinstance(approval.classifier, SecurityClassifier)
     assert approval.classifier.escalate_enabled is False
-    assert services.guard_only_approval is approval
+    assert services.guard_only_gate is approval
 
 
 @pytest.mark.asyncio
@@ -988,7 +988,7 @@ async def test_materialize_subagent_write_boundary_classification():
         parent_session=parent, invocation_id="inv1", deps=deps
     )
     services = _wired_services(instance)
-    approval = services.approval
+    approval = services.tool_gate
     assert approval is not None
     classifier = approval.classifier
     ctx = _classify_ctx()
@@ -1035,7 +1035,7 @@ async def test_materialize_declared_roots_extend_the_write_envelope():
     assert snapshot is not None
     assert Path("/ws/shared").resolve() in snapshot.envelope
 
-    approval = services.approval
+    approval = services.tool_gate
     assert approval is not None
     shared = ToolCall(
         tool_name="write", arguments={"path": "/ws/shared/lib.ts"}, call_id="c1"
@@ -1133,7 +1133,7 @@ async def test_materialize_pool_full_access_inherits_to_subagent():
     # Inheritance: the undeclared subagent carries the caller's full face.
     assert snapshot.settings.exclusive.write_surface is WriteSurface.FULL
 
-    approval = services.approval
+    approval = services.tool_gate
     assert approval is not None
     ctx = _classify_ctx()
     from modex_agent.core.message import ToolCall
@@ -1157,7 +1157,7 @@ async def test_materialize_pool_full_access_inherits_to_subagent():
     assert snapshot2 is not None
     assert snapshot2.settings.exclusive.write_surface is WriteSurface.WORKSPACE
     assert snapshot2.backend == "host"
-    approval2 = services2.approval
+    approval2 = services2.tool_gate
     assert approval2 is not None
     assert approval2.classifier.classify(inside, ctx).tier is ApprovalTier.NORMAL
     assert approval2.classifier.classify(outside, ctx).tier is ApprovalTier.HARDLINE

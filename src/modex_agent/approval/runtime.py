@@ -1,6 +1,8 @@
 """ApprovalRuntime — typed approval service for tool execution.
 
-Approval classification (``ApprovalClassifier``) is a policy service;
+``ApprovalRuntime`` implements the core :class:`~modex_agent.core.tool_gate.ToolGate`
+seam: it is the approval package's tool-gating service, delegating
+classification to a composed ``ApprovalClassifier`` policy service.
 ``ApprovalTransaction`` inside ``ReActTurnState`` owns the state.
 ``ApprovalDenyPolicy`` defines turn-cancel behaviour for denied approvals.
 
@@ -19,6 +21,7 @@ from modex_agent.approval.argument_matcher import ArgumentMatcher
 from modex_agent.approval.config import AgentApprovalConfig
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.message import ToolCall
+from modex_agent.core.tool_gate import ToolGate
 from modex_agent.core.turn.approval_types import ApprovalTier, ToolClassification
 from modex_agent.core.turn.enums import ApprovalDenyPolicy
 
@@ -107,15 +110,22 @@ class TieredToolApprovalClassifier(ApprovalClassifier):
 
 
 @dataclass
-class ApprovalRuntime:
+class ApprovalRuntime(ToolGate):
     """Approval policy service — classification + deny behaviour.
 
-    ``ApprovalTransaction`` inside ``ReActTurnState`` owns state and persistence;
-    this service only classifies tools and defines denial behaviour.
+    Implements the core ``ToolGate`` seam: runtime services and the ReAct
+    tool node depend on the ABC, not this package.
+    ``ApprovalTransaction`` inside ``ReActTurnState`` owns state and
+    persistence; this service only classifies tools and defines denial
+    behaviour.
     """
 
     classifier: ApprovalClassifier
-    # EXTENSION POINT: override per-agent to CANCEL_TURN if the ReAct loop
-    # should terminate after any denied tool (user /deny or unrelated input).
-    # Default TOOL_RESULT_ONLY keeps the loop running so the agent can respond.
+    # EXTENSION POINT (overrides ``ToolGate.default_deny_policy``):
+    # override per-agent to CANCEL_TURN if the ReAct loop should terminate
+    # after any denied tool (user /deny or unrelated input). Default
+    # TOOL_RESULT_ONLY keeps the loop running so the agent can respond.
     default_deny_policy: ApprovalDenyPolicy = ApprovalDenyPolicy.TOOL_RESULT_ONLY
+
+    def classify(self, tool_call: ToolCall, ctx: AgentContext) -> ToolClassification:
+        return self.classifier.classify(tool_call, ctx)

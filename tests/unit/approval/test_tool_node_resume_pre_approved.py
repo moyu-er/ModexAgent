@@ -95,7 +95,7 @@ def _make_ctx(store, executed, default_deny_policy=ApprovalDenyPolicy.TOOL_RESUL
     ctx.identity = identity
     ctx.runtime = AgentRuntime(
         services=AgentRuntimeServices(
-            approval=ApprovalRuntime(classifier=_AlwaysDangerousClassifier(), default_deny_policy=default_deny_policy),
+            tool_gate=ApprovalRuntime(classifier=_AlwaysDangerousClassifier(), default_deny_policy=default_deny_policy),
             turn_store=store,
         ),
         state=state,

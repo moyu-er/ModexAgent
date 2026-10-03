@@ -271,13 +271,13 @@ def test_approval_swaps_to_guard_only_composite_when_present() -> None:
     desc = make_graph_descriptor(graph_instance_id=1)
     ctx = make_runtime_context()
     guard_only = object()
-    ctx.runtime.services.guard_only_approval = guard_only  # type: ignore[assignment]
+    ctx.runtime.services.guard_only_gate = guard_only  # type: ignore[assignment]
     sentinel_approval = object()
-    ctx.runtime.services.approval = sentinel_approval  # type: ignore[assignment]
+    ctx.runtime.services.tool_gate = sentinel_approval  # type: ignore[assignment]
 
     configurator.configure(ctx, desc)
 
-    assert ctx.runtime.services.approval is guard_only
+    assert ctx.runtime.services.tool_gate is guard_only
 
 
 def test_approval_clears_runtime_approval_when_no_guard_layer() -> None:
@@ -287,11 +287,11 @@ def test_approval_clears_runtime_approval_when_no_guard_layer() -> None:
     desc = make_graph_descriptor(graph_instance_id=1)
     ctx = make_runtime_context()
     sentinel_approval = object()
-    ctx.runtime.services.approval = sentinel_approval  # type: ignore[assignment]
+    ctx.runtime.services.tool_gate = sentinel_approval  # type: ignore[assignment]
 
     configurator.configure(ctx, desc)
 
-    assert ctx.runtime.services.approval is None
+    assert ctx.runtime.services.tool_gate is None
 
 
 def test_approval_skips_when_runtime_none() -> None:

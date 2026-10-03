@@ -190,18 +190,19 @@ def wire_main_pipeline(
         "model_info": model_info,
     }
     if approval_runtime is not None:
-        services_kwargs["approval"] = approval_runtime
+        services_kwargs["tool_gate"] = approval_runtime
         if approval_audit_store is not None:
             # Guard decisions ride the unified audit timeline (Ticket 06);
             # the sink is wired only when the guard composite exists, so
             # plain deployments write nothing extra.
             services_kwargs["approval_audit"] = approval_audit_store
     if sandbox_settings is not None:
-        # Graph turns swap approval for the escalate-off guard composite
-        # (unified-security Ticket 05b: never set None — the guard HARDLINE
-        # verdicts must survive the graph's arbitration shutdown). Built
-        # from the SAME declared settings/root provider as the composite
-        # above — one declaration, one decision service shape.
+        # Graph turns swap tool_gate for the escalate-off guard composite
+        # (guard_only_gate; unified-security Ticket 05b: never set None —
+        # the guard HARDLINE verdicts must survive the graph's arbitration
+        # shutdown). Built from the SAME declared settings/root provider
+        # as the composite above — one declaration, one decision service
+        # shape.
         from modex_agent.approval.security import guard_only_runtime
         from modex_agent.sandbox.decision import SecurityDecisionService
 
@@ -214,7 +215,7 @@ def wire_main_pipeline(
                 "requires root_provider (the guard composite anchors its "
                 "HARDLINE verdicts to the active workspace root)"
             )
-        services_kwargs["guard_only_approval"] = guard_only_runtime(
+        services_kwargs["guard_only_gate"] = guard_only_runtime(
             decision=SecurityDecisionService(
                 settings=sandbox_settings, workspace_root_provider=root_provider
             )

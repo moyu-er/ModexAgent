@@ -194,7 +194,7 @@ def test_pipeline_copies_runtime_services_template_into_each_turn() -> None:
     turn_store = InMemoryTurnStateStore()
     approval = ApprovalRuntime(classifier=_DangerousClassifier())
     runtime_services = AgentRuntimeServices(
-        approval=approval,
+        tool_gate=approval,
         turn_store=turn_store,
     )
     pipeline = _pipeline(
@@ -210,7 +210,7 @@ def test_pipeline_copies_runtime_services_template_into_each_turn() -> None:
     )
 
     assert agent_context.runtime is not None
-    assert agent_context.runtime.approval is approval
+    assert agent_context.runtime.tool_gate is approval
     assert agent_context.runtime.turn_store is turn_store
     assert agent_context.runtime.state is not runtime_services
 

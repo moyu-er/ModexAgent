@@ -328,7 +328,7 @@ def _build_pipeline(
     )
 
     runtime_services = AgentRuntimeServices(
-        approval=approval_runtime,
+        tool_gate=approval_runtime,
         turn_store=turn_store,
     )
     pipeline = _make_react_pipeline(

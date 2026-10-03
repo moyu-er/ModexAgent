@@ -17,8 +17,6 @@ from modex_agent.core.turn.approval_decision import ApprovalAuditEntry
 from modex_agent.core.turn.approval_types import (
     ApprovalAuditDecision,
     ApprovalAuditSource,
-    ApprovalDecision,
-    ApprovalTier,
     ToolClassification,
 )
 
@@ -28,21 +26,6 @@ if TYPE_CHECKING:
     from modex_graph.context import GraphContext
 
 logger = logging.getLogger(__name__)
-
-
-def decision_of(classification: ToolClassification) -> ApprovalDecision:
-    """Map one classification outcome to its pre-execution approval decision."""
-    match classification.tier:
-        case ApprovalTier.NORMAL:
-            return ApprovalDecision.ALLOWED
-        case ApprovalTier.HARDLINE:
-            return ApprovalDecision.DENIED
-        case ApprovalTier.DANGEROUS | ApprovalTier.SENSITIVE:
-            return ApprovalDecision.PENDING
-
-
-def decisions_of(classifications: list[ToolClassification]) -> list[ApprovalDecision]:
-    return [decision_of(classification) for classification in classifications]
 
 
 async def record_guard_audit(

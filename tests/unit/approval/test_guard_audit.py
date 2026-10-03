@@ -186,7 +186,7 @@ async def _run_tool_node(
     tool_calls: list[ToolCall],
 ) -> ReActGraphContext:
     services = AgentRuntimeServices(
-        approval=ApprovalRuntime(classifier=classifier),
+        tool_gate=ApprovalRuntime(classifier=classifier),
         approval_audit=audit_store,
     )
     ctx = _make_graph_ctx(services, tool_calls)
@@ -316,7 +316,7 @@ class TestPlainDeploymentUnchanged:
         self, audit_store: _RecordingAuditStore
     ) -> None:
         services = AgentRuntimeServices(
-            approval=ApprovalRuntime(classifier=_guard_classifier(escalate=True)),
+            tool_gate=ApprovalRuntime(classifier=_guard_classifier(escalate=True)),
             approval_audit=None,
         )
         tc = _deny_rule_call()

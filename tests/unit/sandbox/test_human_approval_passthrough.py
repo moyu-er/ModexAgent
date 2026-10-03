@@ -480,7 +480,7 @@ class TestEndToEndWhiteApproval:
         )
         classify_ctx = _agent_ctx(_turn_state())
         assert classify_ctx.runtime is not None
-        classify_ctx.runtime.services.approval = ApprovalRuntime(classifier=classifier)
+        classify_ctx.runtime.services.tool_gate = ApprovalRuntime(classifier=classifier)
 
         # 1. classify: absolute path outside the envelope → DANGEROUS
         tc = ToolCall(

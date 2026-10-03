@@ -131,6 +131,17 @@ class ToolClassification(BaseModel):
         return cls(tier=tier)
 
     @property
+    def decision(self) -> ApprovalDecision:
+        """The pre-execution approval decision this tier maps to."""
+        match self.tier:
+            case ApprovalTier.NORMAL:
+                return ApprovalDecision.ALLOWED
+            case ApprovalTier.HARDLINE:
+                return ApprovalDecision.DENIED
+            case ApprovalTier.DANGEROUS | ApprovalTier.SENSITIVE:
+                return ApprovalDecision.PENDING
+
+    @property
     def deny_reason(self) -> str | None:
         """The deny-side reason, when this classification denies."""
         if self.audit is not None and self.audit.decision is ApprovalAuditDecision.DENIED:

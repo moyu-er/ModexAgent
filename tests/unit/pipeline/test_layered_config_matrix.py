@@ -246,7 +246,7 @@ class TestConfiguratorMatrix:
 
         assert ctx.graph_instance_id == 42
         assert ctx.graph_context is graph_ctx
-        assert rt.services.approval is None
+        assert rt.services.tool_gate is None
         assert rt.state.custom[TurnCustomKey.MAX_TURNS] == 3
         assert rt.state.custom[TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT] == "## topology"
         assert rt.state.custom[TurnCustomKey.GRAPH_KNOWLEDGE_DIR] is not None
@@ -277,7 +277,7 @@ class TestConfiguratorMatrix:
 
         assert ctx.graph_instance_id == 42
         assert ctx.graph_context is graph_ctx
-        assert rt.services.approval is None
+        assert rt.services.tool_gate is None
 
         assert rt.state.custom.get(TurnCustomKey.MAX_TURNS) is None
         assert rt.state.custom.get(TurnCustomKey.GRAPH_TOPOLOGY_CONTEXT) is None

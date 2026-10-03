@@ -530,7 +530,7 @@ class TestToolNode:
 
         runtime = make_runtime()
         runtime.state.iteration = 1
-        runtime.services.approval = ApprovalRuntime(
+        runtime.services.tool_gate = ApprovalRuntime(
             classifier=_TierByNameClassifier(),
             default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN,
         )
@@ -565,7 +565,7 @@ class TestToolNode:
 
         runtime = make_runtime()
         runtime.state.iteration = 1
-        runtime.services.approval = ApprovalRuntime(
+        runtime.services.tool_gate = ApprovalRuntime(
             classifier=_AlwaysHardlineClassifier(),
             default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN,
         )
@@ -606,7 +606,7 @@ class TestToolNode:
 
         runtime = make_runtime()
         runtime.state.iteration = 1
-        runtime.services.approval = ApprovalRuntime(
+        runtime.services.tool_gate = ApprovalRuntime(
             classifier=_TierByNameClassifier(),
         )
         emitter = _MockSink()

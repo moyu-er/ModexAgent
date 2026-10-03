@@ -70,14 +70,14 @@ async def test_real_materialization_reports_effective_capabilities(tmp_path: Pat
         builder = instance.pipeline._turn_runner.turn_context_builder
         assert builder is not None
         services = builder.runtime_services
-        assert services is not None and services.approval is not None
+        assert services is not None and services.tool_gate is not None
         assert services.delegation is snapshot
         ctx = _make_graph_ctx(services)
         shared_read = ToolCall(tool_name="read", arguments={"path": "../shared/file"}, call_id="shared")
-        assert services.approval.classifier.classify(shared_read, ctx.agent_ctx).tier is ApprovalTier.NORMAL
+        assert services.tool_gate.classifier.classify(shared_read, ctx.agent_ctx).tier is ApprovalTier.NORMAL
         write = ToolCall(tool_name="write", arguments={"path": "file", "content": "x"}, call_id="write")
         expected = ApprovalTier.HARDLINE if surface == "none" else ApprovalTier.NORMAL
-        assert services.approval.classifier.classify(write, ctx.agent_ctx).tier is expected
+        assert services.tool_gate.classifier.classify(write, ctx.agent_ctx).tier is expected
     finally:
         await instance.stop()
 

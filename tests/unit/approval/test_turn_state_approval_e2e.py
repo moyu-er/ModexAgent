@@ -98,7 +98,7 @@ def _context(store: InMemoryTurnStateStore, tool_calls: list[str], default_deny_
     ctx.identity = identity
     ctx.runtime = AgentRuntime(
         services=AgentRuntimeServices(
-            approval=ApprovalRuntime(classifier=_DangerousClassifier(), default_deny_policy=default_deny_policy),
+            tool_gate=ApprovalRuntime(classifier=_DangerousClassifier(), default_deny_policy=default_deny_policy),
             turn_store=store,
         ),
         state=state,

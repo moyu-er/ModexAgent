@@ -224,7 +224,7 @@ async def _start_batch(
 ):
     runtime = make_runtime()
     runtime.state.iteration = 1
-    runtime.services.approval = approval_runtime
+    runtime.services.tool_gate = approval_runtime
     if max_parallel is not None:
         runtime.state.custom[TurnCustomKey.MAX_PARALLEL_TOOL_CALLS] = max_parallel
     ctx = make_graph_ctx(runtime=runtime)

@@ -243,15 +243,15 @@ class AgentTemplate:
         builder.runtime_services = (
             _replace(
                 base,
-                approval=guard_only,
-                guard_only_approval=guard_only,
+                tool_gate=guard_only,
+                guard_only_gate=guard_only,
                 delegation=snapshot,
                 approval_audit=approval_audit,
             )
             if base is not None
             else AgentRuntimeServices(
-                approval=guard_only,
-                guard_only_approval=guard_only,
+                tool_gate=guard_only,
+                guard_only_gate=guard_only,
                 delegation=snapshot,
                 approval_audit=approval_audit,
             )

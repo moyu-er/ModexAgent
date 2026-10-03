@@ -9,7 +9,6 @@ from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.context import get_agent_ctx
 from modex_agent.agents.react.ids import next_call_id
 from modex_agent.agents.react.nodes.tool_classification import (
-    decisions_of,
     record_guard_audit,
 )
 from modex_agent.agents.react.nodes.tool_settlement import (
@@ -123,7 +122,7 @@ class ToolNode(Node[ReActTurnState]):
         # downstream artifact — decisions, denial copy, audit rows — derives
         # from these stored values; nothing re-classifies.
         classifications = self._classify_all(tool_calls, agent_ctx)
-        decisions = decisions_of(classifications)
+        decisions = [classification.decision for classification in classifications]
         await record_guard_audit(classifications, tool_calls, ctx)
         await self._emit_tool_calls(ctx, tool_calls)
         # A hard denial is already a result; persist it before any sibling suspends.
@@ -141,7 +140,7 @@ class ToolNode(Node[ReActTurnState]):
                     error=classification.reason
                     or f"Denied by policy: '{tc.tool_name}' is not allowed.",
                 )
-                if classification.tier is ApprovalTier.HARDLINE
+                if classification.decision is ApprovalDecision.DENIED
                 else None,
             )
             for tc, classification in zip(tool_calls, classifications, strict=True)
@@ -282,12 +281,12 @@ class ToolNode(Node[ReActTurnState]):
         tool_calls: list[ToolCall],
         ctx: AgentContext,
     ) -> list[ToolClassification]:
-        """One classification per call; NORMAL when no approval runtime exists."""
+        """One classification per call; NORMAL when no tool gate exists."""
         runtime = ctx.runtime
-        if runtime is None or runtime.approval is None:
+        if runtime is None or runtime.tool_gate is None:
             return [ToolClassification.tier_result(ApprovalTier.NORMAL) for _ in tool_calls]
-        classifier = runtime.approval.classifier
-        return [classifier.classify(tc, ctx) for tc in tool_calls]
+        gate = runtime.tool_gate
+        return [gate.classify(tc, ctx) for tc in tool_calls]
 
     @staticmethod
     def denial_message(

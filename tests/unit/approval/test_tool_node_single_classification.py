@@ -214,7 +214,7 @@ async def _run_tool_node(
     expect_pending: bool = False,
 ) -> tuple[ReActGraphContext, _RecordingAuditStore | None]:
     services = AgentRuntimeServices(
-        approval=ApprovalRuntime(classifier=classifier),
+        tool_gate=ApprovalRuntime(classifier=classifier),
         approval_audit=audit_store,
         turn_store=InMemoryTurnStateStore(),
     )
@@ -299,7 +299,7 @@ class TestSingleClassification:
             counting = _CountingClassifier(_guard_classifier(escalate=True))
             ctx = _make_graph_ctx(
                 AgentRuntimeServices(
-                    approval=ApprovalRuntime(counting), turn_store=store, approval_audit=audit
+                    tool_gate=ApprovalRuntime(counting), turn_store=store, approval_audit=audit
                 )
             )
             call = ToolCall(
@@ -360,7 +360,7 @@ class TestSingleClassification:
         store = InMemoryTurnStateStore()
         audit = _RecordingAuditStore()
         services = AgentRuntimeServices(
-            approval=ApprovalRuntime(counting), turn_store=store, approval_audit=audit
+            tool_gate=ApprovalRuntime(counting), turn_store=store, approval_audit=audit
         )
         ctx = _make_graph_ctx(services)
         calls = [
@@ -436,7 +436,7 @@ class TestGuardAuditFromClassification:
             audit = SqliteApprovalAuditStore(manager, RecordScope(session_id="s1.main"))
             ctx = _make_graph_ctx(
                 AgentRuntimeServices(
-                    approval=ApprovalRuntime(_guard_classifier(escalate=False)),
+                    tool_gate=ApprovalRuntime(_guard_classifier(escalate=False)),
                     approval_audit=audit,
                     delegation=(
                         DelegationSnapshot(

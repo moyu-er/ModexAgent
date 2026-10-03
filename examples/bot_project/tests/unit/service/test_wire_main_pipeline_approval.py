@@ -26,7 +26,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from modex_agent.adapters.platform import StreamingMode
-from modex_agent.agents.react.nodes.tool_classification import decision_of
 from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
 from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
@@ -236,10 +235,10 @@ def test_wires_approval_runtime_when_enabled_and_tools_gated() -> None:
     assert builder is not None
     services = builder.runtime_services
     assert isinstance(services, AgentRuntimeServices)
-    assert isinstance(services.approval, ApprovalRuntime)
-    assert isinstance(services.approval.classifier, TieredToolApprovalClassifier)
+    assert isinstance(services.tool_gate, ApprovalRuntime)
+    assert isinstance(services.tool_gate.classifier, TieredToolApprovalClassifier)
     # Classifier carried the gated tool through.
-    assert "write_file" in services.approval.classifier.config.tools
+    assert "write_file" in services.tool_gate.classifier.config.tools
     # Safety is the pipeline's configured policy (not clobbered by the
     # default_factory on AgentRuntimeServices.safety).
     assert services.safety is pipeline.safety
@@ -259,7 +258,7 @@ def test_leaves_approval_untouched_but_threads_model_info_when_disabled() -> Non
     assert builder is not None
     services = builder.runtime_services
     assert isinstance(services, AgentRuntimeServices)
-    assert services.approval is None
+    assert services.tool_gate is None
     assert services.model_info is not None
     assert services.model_info.capabilities.supports(Modality.TEXT)
 
@@ -311,8 +310,8 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
     assert builder is not None
     services = builder.runtime_services
     assert services is not None
-    assert services.approval is not None
-    classifier = services.approval.classifier
+    assert services.tool_gate is not None
+    classifier = services.tool_gate.classifier
     ctx = AgentContext(
         system_prompt="t",
         history=ListMessageHistory(),
@@ -430,26 +429,26 @@ def test_main_and_graph_approval_wiring_matrix(
     outside = ToolCall(tool_name="write", arguments={"path": str(tmp_path.parent / "outside.txt")}, call_id="out")
     if backend is not SandboxBackend.HOST:
         if approval is not None and approval.enabled and approval.tools:
-            assert main_ctx.runtime.approval is not None
-            assert decision_of(main_ctx.runtime.approval.classifier.classify(outside, main_ctx)) is ApprovalDecision.PENDING
+            assert main_ctx.runtime.tool_gate is not None
+            assert main_ctx.runtime.tool_gate.classifier.classify(outside, main_ctx).decision is ApprovalDecision.PENDING
         else:
-            assert services.approval is None
-        assert services.guard_only_approval is None
-        assert graph_ctx.runtime.approval is None
+            assert services.tool_gate is None
+        assert services.guard_only_gate is None
+        assert graph_ctx.runtime.tool_gate is None
         return
-    assert main_ctx.runtime.approval is not None
-    assert graph_ctx.runtime.approval is services.guard_only_approval
-    assert graph_ctx.runtime.approval is not None
+    assert main_ctx.runtime.tool_gate is not None
+    assert graph_ctx.runtime.tool_gate is services.guard_only_gate
+    assert graph_ctx.runtime.tool_gate is not None
     expected = ApprovalDecision.PENDING if approval is not None and approval.enabled else ApprovalDecision.DENIED
-    assert decision_of(main_ctx.runtime.approval.classifier.classify(outside, main_ctx)) is expected
-    assert decision_of(graph_ctx.runtime.approval.classifier.classify(outside, graph_ctx)) is ApprovalDecision.DENIED
+    assert main_ctx.runtime.tool_gate.classifier.classify(outside, main_ctx).decision is expected
+    assert graph_ctx.runtime.tool_gate.classifier.classify(outside, graph_ctx).decision is ApprovalDecision.DENIED
 
 
 def test_explicit_default_sandbox_needs_no_root_provider() -> None:
     pipeline = _wire(approval=None, sandbox=SandboxSettings(backend=SandboxBackend.DEFAULT))
     builder = pipeline._turn_runner.turn_context_builder
     assert builder is not None and builder.runtime_services is not None
-    assert builder.runtime_services.guard_only_approval is None
+    assert builder.runtime_services.guard_only_gate is None
 
 
 def _memory_context_manager(tmp_path: Path):

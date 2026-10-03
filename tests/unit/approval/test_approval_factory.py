@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.agents.react.nodes.tool_classification import decision_of
 from modex_agent.approval.config import ApprovalConfig, ToolApprovalEntry
 from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.core.agent import AgentContext
@@ -126,5 +125,5 @@ def test_factory_approval_channel_matrix(
     )
     inside = ToolCall(tool_name="write", arguments={"path": str(tmp_path / "inside.txt")}, call_id="in")
     outside = ToolCall(tool_name="write", arguments={"path": str(tmp_path.parent / "outside.txt")}, call_id="out")
-    assert decision_of(runtime.classifier.classify(inside, ctx)) is inside_decision
-    assert decision_of(runtime.classifier.classify(outside, ctx)) is expected
+    assert runtime.classifier.classify(inside, ctx).decision is inside_decision
+    assert runtime.classifier.classify(outside, ctx).decision is expected

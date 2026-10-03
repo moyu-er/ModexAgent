@@ -193,7 +193,7 @@ class GraphApprovalConfigurator(TurnContextConfigurator):
     """Disable human escalation while retaining guards for graph turns.
 
     Noninteractive graph turns have no human decision channel. Use the
-    assembled guard-only runtime so boundary and hard findings still deny
+    assembled guard-only gate so boundary and hard findings still deny
     without cards. Without a guard, use None. Only the turn's services are
     changed; the pool-level approval configuration remains intact.
     """
@@ -204,7 +204,7 @@ class GraphApprovalConfigurator(TurnContextConfigurator):
     def configure(self, ctx: AgentContext, desc: TurnContextDescriptor) -> None:
         if ctx.runtime is None:
             return
-        ctx.runtime.services.approval = ctx.runtime.services.guard_only_approval
+        ctx.runtime.services.tool_gate = ctx.runtime.services.guard_only_gate
 
 
 class GraphMaxTurnsConfigurator(TurnContextConfigurator):

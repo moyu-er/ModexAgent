@@ -12,13 +12,13 @@ from typing import TYPE_CHECKING, TypeVar
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.media import MediaStore
+from modex_agent.core.tool_gate import ToolGate
 from modex_agent.core.turn.enums import TurnCustomKey
 from modex_agent.core.turn.models import TurnSnapshot, TurnStateBase
 
 if TYPE_CHECKING:
     import asyncio
 
-    from modex_agent.approval.runtime import ApprovalRuntime
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.turn.approval_decision import ApprovalAuditStore
@@ -42,11 +42,12 @@ class AgentRuntimeServices:
 
     hooks: HookRunner | None = None
     interceptors: InterceptorChain | None = None
-    approval: ApprovalRuntime | None = None
-    guard_only_approval: ApprovalRuntime | None = None
+    tool_gate: ToolGate | None = None
+    """The tool-gating service (approval / guard composite) for the turn."""
+    guard_only_gate: ToolGate | None = None
     """Escalate-off guard composite for channels that must not arbitrate.
 
-    Graph turns swap ``approval`` for this runtime
+    Graph turns swap ``tool_gate`` for this gate
     (``GraphApprovalConfigurator``, unified-security Ticket 05b) instead
     of ``None`` — guard HARDLINE verdicts keep denying when the human
     channel is off. ``None`` when no guard layer exists (plain approval
@@ -100,8 +101,8 @@ class AgentRuntime:
         return self.services.interceptors
 
     @property
-    def approval(self) -> ApprovalRuntime | None:
-        return self.services.approval
+    def tool_gate(self) -> ToolGate | None:
+        return self.services.tool_gate
 
     @property
     def governance(self) -> ContextGovernance | None:

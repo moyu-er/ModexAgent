@@ -203,10 +203,10 @@ class ToolBatchExecution:
         self._node.deliver(None, ReActNode.LLM, self._ctx)
 
     def _deny_policy(self) -> ApprovalDenyPolicy:
-        approval = self._agent_ctx.runtime.approval if self._agent_ctx.runtime else None
-        if approval is None:
+        gate = self._agent_ctx.runtime.tool_gate if self._agent_ctx.runtime else None
+        if gate is None:
             return ApprovalDenyPolicy.TOOL_RESULT_ONLY
-        return approval.default_deny_policy
+        return gate.default_deny_policy
 
     async def _emit(self, event: TurnEvent) -> None:
         """Emit one turn event through the agent context's sink (no-op

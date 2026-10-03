@@ -17,7 +17,7 @@ tool would wrongly classify as DANGEROUS even inside the project.
 classifier in the composite
 :class:`~modex_agent.sandbox.security_classifier.SecurityClassifier`
 sharing the same root provider — the single assembly point where
-``runtime.services.approval`` gains the guard layer. Assembly-time
+``runtime.services.tool_gate`` gains the guard layer. Assembly-time
 containment (approval ``allowed_paths`` ⊆ sandbox envelope) fails fast
 here.
 """

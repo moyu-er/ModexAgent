@@ -679,8 +679,8 @@ def test_builder_retains_approval_audit_and_policy_services(persisted: bool, gra
         settings=SandboxSettings(backend=SandboxBackend.HOST),
     )
     base = AgentRuntimeServices(
-        approval=approval,
-        guard_only_approval=guard_only,
+        tool_gate=approval,
+        guard_only_gate=guard_only,
         approval_audit=audit,
         delegation=delegation,
         governance=CompositeGovernance([]) if governed else None,
@@ -703,7 +703,7 @@ def test_builder_retains_approval_audit_and_policy_services(persisted: bool, gra
     assert ctx.runtime is not None
     assert ctx.runtime.services.approval_audit is audit
     assert ctx.runtime.services.delegation is delegation
-    assert ctx.runtime.services.guard_only_approval is guard_only
-    assert ctx.runtime.services.approval is (guard_only if graph else approval)
+    assert ctx.runtime.services.guard_only_gate is guard_only
+    assert ctx.runtime.services.tool_gate is (guard_only if graph else approval)
     assert ctx.runtime.services is not base
-    assert base.approval is approval
+    assert base.tool_gate is approval

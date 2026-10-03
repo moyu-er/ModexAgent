@@ -273,7 +273,7 @@ def _build_pipeline(
     approval_runtime = build_approval_runtime(approval_cfg, project_root=tmp_path)
 
     runtime_services = AgentRuntimeServices(
-        approval=approval_runtime,
+        tool_gate=approval_runtime,
         turn_store=turn_store,
     )
 
@@ -330,7 +330,7 @@ def _build_pipeline_with_agent(
     approval_runtime = build_approval_runtime(approval_cfg, project_root=tmp_path)
 
     runtime_services = AgentRuntimeServices(
-        approval=approval_runtime,
+        tool_gate=approval_runtime,
         turn_store=turn_store,
         governance=governance,
     )
