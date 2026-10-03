@@ -148,7 +148,7 @@ async def _create_declared_pool(pool_name: str, tmp_path: Path):
                 output_adapter=MagicMock(spec=OutputAdapter),
                 safety=RuntimeSafetyPolicy(),
                 retention=SessionRetentionPolicy(),
-                im_ui=MagicMock(),
+                im_ui_factory=lambda: MagicMock(),
                 shared_hooks=[],
                 shared_hook_runner=HookRunner(),
                 shared_interceptor_chain=InterceptorChain(),

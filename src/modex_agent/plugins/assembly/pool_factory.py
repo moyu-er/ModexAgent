@@ -336,6 +336,7 @@ def _build_agent_factory(
     runtime_constructor: AgentFactory | None = None,
     session_registry: SessionRegistry | None = None,
     session_binding_store: SessionBindingStore | None = None,
+    approval_declared: bool = False,
 ) -> Any:
     """Build the pool's runtime constructor, defaulting to the react factory.
 
@@ -344,6 +345,12 @@ def _build_agent_factory(
     react factory (``DefaultAgentFactory``). Either way the SAME
     emitter/pool-context wrapper applies — one post-build wiring step for
     every runtime shape (architecture rule 15).
+
+    ``approval_declared``: the pool root's ``approval:`` declaration
+    presence — the react factory constructs the approval collaborators
+    (resumer/renderer) only under it, so an undeclared boot loads no
+    approval implementation. Third-party constructors own their runner
+    construction and do not read the flag.
     """
     factory: AgentFactory
     if runtime_constructor is not None:
@@ -359,6 +366,7 @@ def _build_agent_factory(
             default_interceptor_chain=shared_interceptor_chain,
             control_channel=control_channel,
             session_registry=session_registry,
+            approval_declared=approval_declared,
         )
 
     _orig_create = factory.create_agent
@@ -550,7 +558,7 @@ async def create_pool(
     output_adapter: OutputAdapter,
     safety: RuntimeSafetyPolicy,
     retention: SessionRetentionPolicy,
-    im_ui: ApprovalUserInterface,
+    im_ui_factory: Callable[[], ApprovalUserInterface] | None,
     shared_hooks: list[Hook],
     shared_hook_runner: HookRunner,
     shared_interceptor_chain: Any,
@@ -936,6 +944,7 @@ async def create_pool(
             runtime_constructor=strategy_result.runtime_constructor,
             session_registry=session_registry,
             session_binding_store=session_binding_store,
+            approval_declared=main_spec.approval is not None,
         )
         pool._agent_factory = factory
         return NativeAssemblyInputs(
@@ -1064,6 +1073,7 @@ async def create_pool(
             media_store_resolver=media_store_resolver,
             session_registry=session_registry,
             session_binding_store=session_binding_store,
+            approval_declared=main_spec.approval is not None,
         )
     pool._agent_factory = factory  # type: ignore[attr-defined]
 
@@ -1263,7 +1273,7 @@ async def create_pool(
             inbox_consumer,
             notification_service,
             pool_interceptor_chain,
-            im_ui,
+            im_ui_factory,
             main_spec,
             assembly_deps,
             project_dir,

@@ -442,9 +442,14 @@ async def _assemble_resources(
                 )
             )
     shared_hook_runner = _build_hook_runner(shared_hooks)
-    im_ui = IMUserInterface(
-        output_adapter=service.output_adapter,
-    )
+
+    # The IM approval UI as a LAZY factory: constructed (and the approval UI
+    # implementation imported) only when a pool actually assembles an
+    # approval gate — an approval-free workspace boots without it.
+
+    def im_ui_factory() -> IMUserInterface:
+        return IMUserInterface(output_adapter=service.output_adapter)
+
     retention_cfg = app_config.multi_agent.session_retention
     retention = SessionRetentionPolicy(
         max_sessions_per_subagent=retention_cfg.max_sessions_per_subagent,
@@ -495,7 +500,7 @@ async def _assemble_resources(
             output_adapter=service.output_adapter,
             safety=service.safety_policy,
             retention=retention,
-            im_ui=im_ui,
+            im_ui_factory=im_ui_factory,
             shared_hooks=shared_hooks,
             shared_hook_runner=shared_hook_runner,
             shared_interceptor_chain=shared_interceptor_chain,

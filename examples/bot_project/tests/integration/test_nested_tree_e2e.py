@@ -311,7 +311,7 @@ async def _build_env(
             output_adapter=AsyncMock(spec=OutputAdapter),
             safety=RuntimeSafetyPolicy(),
             retention=SessionRetentionPolicy(),
-            im_ui=AsyncMock(),
+            im_ui_factory=lambda: AsyncMock(),
             shared_hooks=[],
             shared_hook_runner=HookRunner(),
             shared_interceptor_chain=InterceptorChain(),

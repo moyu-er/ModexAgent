@@ -369,7 +369,7 @@ async def _create_pool(tmp_path: Path, declaration: str, cfg: ModelRegistry, poo
             output_adapter=MagicMock(spec=OutputAdapter),
             safety=RuntimeSafetyPolicy(),
             retention=SessionRetentionPolicy(),
-            im_ui=MagicMock(),
+            im_ui_factory=lambda: MagicMock(),
             shared_hooks=[],
             shared_hook_runner=HookRunner(),
             shared_interceptor_chain=InterceptorChain(),

@@ -83,7 +83,7 @@ async def test_graph_node_resolves_pool_assembled_emitter_with_node_pool(
                 output_adapter=output_adapter,
                 safety=RuntimeSafetyPolicy(),
                 retention=SessionRetentionPolicy(),
-                im_ui=MagicMock(),
+                im_ui_factory=lambda: MagicMock(),
                 shared_hooks=[],
                 shared_hook_runner=HookRunner(),
                 shared_interceptor_chain=InterceptorChain(),

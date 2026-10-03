@@ -204,7 +204,10 @@ async def execute_pool_entry(
             output_adapter=assembly.output_adapter,
             safety=RuntimeSafetyPolicy(),
             retention=assembly.retention,
-            im_ui=assembly.output_adapter,
+            # The harbor passes the output adapter itself as the UI seam
+            # (duck-typed preserve of today's behavior), behind the lazy
+            # factory contract so no UI is constructed without a gate.
+            im_ui_factory=lambda: assembly.output_adapter,
             shared_hooks=assembly.shared_hooks,
             shared_hook_runner=assembly.shared_hook_runner,
             shared_interceptor_chain=assembly.shared_interceptor_chain,

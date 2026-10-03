@@ -242,7 +242,7 @@ async def test_create_pool_registers_tree_stores_in_index(tmp_path: Path) -> Non
                 output_adapter=output_adapter,
                 safety=RuntimeSafetyPolicy(),
                 retention=SessionRetentionPolicy(),
-                im_ui=MagicMock(),
+                im_ui_factory=lambda: MagicMock(),
                 shared_hooks=[],
                 shared_hook_runner=HookRunner(),
                 shared_interceptor_chain=InterceptorChain(),

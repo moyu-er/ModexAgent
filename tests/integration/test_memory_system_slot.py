@@ -153,7 +153,7 @@ class _BootHarness:
             output_adapter=MagicMock(),
             safety=RuntimeSafetyPolicy(),
             retention=SessionRetentionPolicy(),
-            im_ui=MagicMock(),
+            im_ui_factory=lambda: MagicMock(),
             shared_hooks=[],
             shared_hook_runner=HookRunner(),
             shared_interceptor_chain=InterceptorChain(),

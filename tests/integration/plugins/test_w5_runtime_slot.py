@@ -279,7 +279,7 @@ async def _create_canned_pool(tmp_path: Path) -> tuple[Any, _CannedLoopStrategy]
             output_adapter=object(),  # type: ignore[arg-type]
             safety=RuntimeSafetyPolicy(),
             retention=SessionRetentionPolicy(),
-            im_ui=object(),
+            im_ui_factory=lambda: object(),
             shared_hooks=[],
             shared_hook_runner=HookRunner(),
             shared_interceptor_chain=InterceptorChain(),

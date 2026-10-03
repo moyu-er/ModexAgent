@@ -36,6 +36,9 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.session_tree.session_binding import (
         SessionBindingStore,
     )
+    from modex_agent.plugins.defaults.capabilities.approval.ui import (
+        ApprovalUserInterface,
+    )
     from modex_agent.plugins.defaults.capabilities.sandbox.settings import SandboxSettings
     from modex_graph.context import GraphContext
 
@@ -61,14 +64,14 @@ def _declared_sandbox_settings(main_spec: AgentSpec) -> SandboxSettings | None:
     DEFAULT-tier section returns None: the approval assembly stays the
     plain tiered classifier (unified-security Ticket 02 double-gate).
     """
+    raw = (main_spec.interceptor_configs or {}).get("sandbox_guard")
+    if raw is None:
+        return None
     from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
         SandboxBackend,
         SandboxSettings,
     )
 
-    raw = (main_spec.interceptor_configs or {}).get("sandbox_guard")
-    if raw is None:
-        return None
     section = raw.get("sandbox", {}) if isinstance(raw, dict) else {}
     settings = SandboxSettings.model_validate(section)
     return None if settings.backend is SandboxBackend.DEFAULT else settings
@@ -80,7 +83,7 @@ def wire_main_pipeline(
     inbox_consumer: Any,
     notification_service: Any,
     shared_interceptor_chain: Any,
-    im_ui: Any,
+    im_ui_factory: Callable[[], ApprovalUserInterface] | None,
     main_spec: AgentSpec,
     assembly_deps: PoolAssemblyDeps,
     project_dir: Path,
@@ -120,6 +123,12 @@ def wire_main_pipeline(
     to the active workspace so in-workspace writes are auto-allowed; without it
     the classifier would fall back to ``project_dir`` (the deployment root),
     gating every in-workspace write as DANGEROUS.
+
+    ``im_ui_factory`` constructs the IM approval UI lazily — invoked only
+    when an approval runtime is actually assembled, so a deployment that
+    declares neither approval nor a sandbox never imports or constructs
+    the approval UI (undeclared feature ⇒ no feature implementation
+    loaded).
     """
     main_instance = pool._agents.get(root_agent_name)
     if main_instance is None or main_instance.pipeline is None:
@@ -174,21 +183,31 @@ def wire_main_pipeline(
             memory_system=memory_system,
             memory_context_resolver=memory_context_resolver,
         )
-    if approval is not None:
-        approval.user_interface = im_ui
 
-    from modex_agent.plugins.defaults.capabilities.approval.factory import (
-        build_approval_runtime,
-    )
     from modex_agent.runtime.services import AgentRuntimeServices
 
+    # Gate construction is declaration-gated: with neither an ``approval:``
+    # section nor a declared sandbox, build_approval_runtime is a no-op
+    # (returns None), so the import — and the whole approval implementation
+    # it pulls — never fires. Undeclared feature ⇒ no feature implementation
+    # loaded.
     sandbox_settings = _declared_sandbox_settings(main_spec)
-    approval_runtime = build_approval_runtime(
-        main_spec.approval,
-        project_root=project_dir,
-        root_provider=root_provider,
-        sandbox=sandbox_settings,
-    )
+    approval_runtime = None
+    if main_spec.approval is not None or sandbox_settings is not None:
+        from modex_agent.plugins.defaults.capabilities.approval.factory import (
+            build_approval_runtime,
+        )
+
+        approval_runtime = build_approval_runtime(
+            main_spec.approval,
+            project_root=project_dir,
+            root_provider=root_provider,
+            sandbox=sandbox_settings,
+        )
+    if approval_runtime is not None and approval is not None and im_ui_factory is not None:
+        # The IM approval UI is constructed only here, where a gate exists
+        # to prompt through it.
+        approval.user_interface = im_ui_factory()
 
     services_kwargs: dict[str, Any] = {
         "safety": pipeline.safety,

@@ -222,7 +222,7 @@ async def _create_scripted_pool(
         output_adapter=NullOutputAdapter(),
         safety=RuntimeSafetyPolicy(),
         retention=SessionRetentionPolicy(),
-        im_ui=NullOutputAdapter(),
+        im_ui_factory=lambda: NullOutputAdapter(),
         shared_hooks=[],
         shared_hook_runner=HookRunner(),
         shared_interceptor_chain=InterceptorChain(),

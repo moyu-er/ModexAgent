@@ -114,3 +114,87 @@ def test_mini_project_hand_written_line_count_under_ceiling() -> None:
         "example or promote the missing generic piece into the framework "
         "and raise this ceiling consciously."
     )
+
+
+#: The architecture anchor allowlist — the ONLY approval/sandbox capability
+#: modules an approval-free, sandbox-free boot may load. Entries:
+#: - ``approval``/``sandbox`` package inits + their ``registration`` (the
+#:   DefaultPlugin registration face) and ``capability`` (the registration
+#:   entry's import);
+#: - ``approval.config`` — pulled by ``approval.capability`` (config model);
+#: - ``approval.commands``/``approval.response``/``approval.stage`` — the
+#:   registration entry's command/input-stage products;
+#: - ``sandbox.settings`` — pulled by ``sandbox.capability`` (config model);
+#: - ``sandbox.tool_matrix`` — the tool-effect classification table the
+#:   TOOLS layer reads in ``wrap_standard_tools`` (workspace path scoping
+#:   for every native boot); light (pydantic + workspace.boundary only, no
+#:   guard/decision/approval pull), shared data rather than feature
+#:   implementation.
+_BOOT_CAPABILITY_ALLOWLIST: tuple[str, ...] = (
+    "modex_agent.plugins.defaults.capabilities.approval",
+    "modex_agent.plugins.defaults.capabilities.approval.capability",
+    "modex_agent.plugins.defaults.capabilities.approval.commands",
+    "modex_agent.plugins.defaults.capabilities.approval.config",
+    "modex_agent.plugins.defaults.capabilities.approval.registration",
+    "modex_agent.plugins.defaults.capabilities.approval.response",
+    "modex_agent.plugins.defaults.capabilities.approval.stage",
+    "modex_agent.plugins.defaults.capabilities.sandbox",
+    "modex_agent.plugins.defaults.capabilities.sandbox.capability",
+    "modex_agent.plugins.defaults.capabilities.sandbox.registration",
+    "modex_agent.plugins.defaults.capabilities.sandbox.settings",
+    "modex_agent.plugins.defaults.capabilities.sandbox.tool_matrix",
+)
+
+_CAPABILITY_PREFIXES = (
+    "modex_agent.plugins.defaults.capabilities.approval",
+    "modex_agent.plugins.defaults.capabilities.sandbox",
+)
+
+
+async def test_mini_project_boot_loads_no_undeclared_feature_modules(
+    tmp_path: Path,
+) -> None:
+    """Architecture anchor: undeclared feature ⇒ no feature implementation loaded.
+
+    mini_project declares NEITHER approval NOR a sandbox. After booting it
+    exactly the way ``main.py`` does and driving one scripted turn, the set
+    of loaded ``...capabilities.approval`` / ``...capabilities.sandbox``
+    modules must be EXACTLY ``_BOOT_CAPABILITY_ALLOWLIST`` — what
+    DefaultPlugin registration itself costs, plus the tools layer's shared
+    tool-effect table. Any new leak (a lazily-imported guard, classifier,
+    resumer, renderer, or UI reaching an undeclared boot) fails here with
+    the full diff, instead of silently re-coupling every deployment to
+    features it never declared.
+    """
+    project = tmp_path / "mini_project"
+    shutil.copytree(
+        MINI_PROJECT_DIR,
+        project,
+        ignore=shutil.ignore_patterns("tests", "__pycache__", DATA_DIR_NAME),
+    )
+
+    main = _load_main_module(project)
+    service = main.build_service(project_dir=project)
+    await service.initialize()
+    try:
+        await service.turn("anchor probe", session="anchor")
+        loaded = {
+            name
+            for name in sys.modules
+            if name.startswith(_CAPABILITY_PREFIXES)
+        }
+    finally:
+        await service.stop()
+
+    allowlist = set(_BOOT_CAPABILITY_ALLOWLIST)
+    assert loaded == allowlist, (
+        "mini_project boot leaked approval/sandbox capability modules "
+        "beyond the registration allowlist:\n"
+        f"  extra loaded:   {sorted(loaded - allowlist)}\n"
+        f"  allowlist miss: {sorted(allowlist - loaded)}\n"
+        "An approval-free, sandbox-free deployment must not load feature "
+        "implementation (guards, classifiers, resumers, renderers, UI); "
+        "either fix the new leak or — only if the module is "
+        "registration-required and light — extend the allowlist "
+        "consciously in _BOOT_CAPABILITY_ALLOWLIST."
+    )

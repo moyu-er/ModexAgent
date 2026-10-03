@@ -497,10 +497,11 @@ class RunnableAppService(AppService):
                     output_adapter=self.output_adapter,
                     safety=_safety_policy_of(app_config),
                     retention=_retention_of(app_config),
-                    # The IM approval UI is approval-channel vocabulary — built
-                    # lazily here so importing the runnable app pulls no approval
-                    # implementation until a pool actually boots.
-                    im_ui=_im_user_interface(self.output_adapter),
+                    # The IM approval UI is approval-channel vocabulary — a
+                    # LAZY factory, invoked only when a pool actually
+                    # assembles an approval gate, so an undeclared boot
+                    # imports no approval implementation.
+                    im_ui_factory=lambda: _im_user_interface(self.output_adapter),
                     shared_hooks=[],
                     shared_hook_runner=HookRunner(),
                     shared_interceptor_chain=InterceptorChain(),

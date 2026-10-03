@@ -44,11 +44,6 @@ import httpx
 import pytest
 
 from modex_agent.agents.react.llm_client import ReactLlmClient
-from modex_agent.core.turn_events import (
-    ToolArgsDeltaEvent,
-    TurnReasoningEvent,
-    TurnTextEvent,
-)
 from modex_agent.agents.react.media_injection import inject_multimodal
 from modex_agent.agents.react.message_builder import build_assistant_message
 from modex_agent.agents.react.state import ReActTurnState
@@ -69,6 +64,12 @@ from modex_agent.core.message import (
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn.enums import AgentKind, TurnPhase
 from modex_agent.core.turn.models import TurnIdentity
+from modex_agent.core.turn_events import (
+    ToolArgsDeltaEvent,
+    TurnReasoningEvent,
+    TurnTextEvent,
+    UsageEvent,
+)
 from modex_agent.media.store import LocalFileMediaStore
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.providers.factory import create_llm_provider
@@ -560,6 +561,18 @@ async def test_react_llm_client_drives_emitter_over_full_transport(
         ),
         ToolArgsDeltaEvent(
             call_id="call_a", tool_name="get_weather", args_fragment='{"city": "Beijing"}'
+        ),
+        # Provider-reported usage rides the turn stream as one UsageEvent per
+        # LLM call (never fabricated — only providers that report usage).
+        UsageEvent(
+            usage=TokenUsage(
+                input_tokens=10,
+                cache_read_input_tokens=0,
+                cache_creation_input_tokens=0,
+                output_tokens=5,
+                reasoning_tokens=0,
+                total_tokens=15,
+            )
         ),
     ]
     assert response.error is None

@@ -91,6 +91,12 @@ class ReActTurnRunner(TurnRunner):
     corresponding pipeline private method, with ``self.X`` rewritten to
     ``self._X``.
 
+    The approval collaborators (``resumer``/``approval``) are optional:
+    None is the undeclared-boot shape — no gate is ever assembled for a
+    deployment that declares neither approval nor a sandbox, so nothing
+    can suspend and every approval path (snapshot load, approval-command
+    detection, snapshot resume, GraphInterrupt prompting) is unreachable.
+
     Concrete implementation of the :class:`TurnRunner` ABC for ReAct pools
     (ADR-0025 D3).
     """
@@ -107,8 +113,8 @@ class ReActTurnRunner(TurnRunner):
         turn_store: TurnStateStore | None,
         registry: TurnSessionRegistry,
         builder: TurnContextBuilder,
-        resumer: ApprovalResumer,
-        approval: ApprovalRenderer,
+        resumer: ApprovalResumer | None = None,
+        approval: ApprovalRenderer | None = None,
         workspace_manager: WorkspaceManager | None,
         pool_name: str | None,
         pool_data_resolver: Callable[[str], str | None] | None,
@@ -132,10 +138,13 @@ class ReActTurnRunner(TurnRunner):
 
     @property
     def _user_interface(self) -> ApprovalUserInterface | None:
-        return self._approval._user_interface
+        # None renderer ⇒ no gate ⇒ the GraphInterrupt prompting branch
+        # that reads this is unreachable.
+        return self._approval._user_interface if self._approval is not None else None
 
     async def cleanup_session(self, session_id: str) -> None:
-        self._approval.cleanup_session(session_id)
+        if self._approval is not None:
+            self._approval.cleanup_session(session_id)
 
     async def load_pending_approval(
         self,
@@ -143,10 +152,15 @@ class ReActTurnRunner(TurnRunner):
         *,
         pool_data: PoolDataSnapshot | None = None,
     ) -> TurnSnapshot | None:
+        # No resumer ⇒ no gate ⇒ nothing ever suspended — no pending
+        # snapshot can exist (the undeclared-boot shape).
+        if self._resumer is None:
+            return None
         return await self._resumer.load_pending(session_id, pool_data=pool_data)
 
     def bind_to_pipeline(self, pipeline: Any) -> None:
-        self._approval.on_drain = pipeline._process_message
+        if self._approval is not None:
+            self._approval.on_drain = pipeline._process_message
 
     def set_pool_context(
         self,
@@ -165,7 +179,8 @@ class ReActTurnRunner(TurnRunner):
         self._builder.emitter_factory = emitter_factory
 
     @property
-    def approval_renderer(self) -> ApprovalRenderer:
+    def approval_renderer(self) -> ApprovalRenderer | None:
+        """The approval renderer; None on an undeclared boot (no gate)."""
         return self._approval
 
     @property
@@ -452,6 +467,12 @@ class ReActTurnRunner(TurnRunner):
         tool_call_id: str | None = None,
         approval_id: str | None = None,
     ) -> AgentResult | TurnSuspension | None:
+        # Reached only through a detected approval payload, which requires
+        # the renderer — and the renderer exists only under an approval
+        # declaration, which always pairs it with the resumer. No gate ⇒ no
+        # suspension ⇒ unreachable with None collaborators.
+        assert self._resumer is not None
+        assert self._approval is not None
         turn_store = await self._resumer.apply_resume(
             snapshot,
             action=action,
@@ -493,6 +514,10 @@ class ReActTurnRunner(TurnRunner):
         deleted, no decision continuation and no LLM run. Late decisions
         afterwards find no snapshot and are stale.
         """
+        # No resumer ⇒ no gate ⇒ no batch can exist (the undeclared-boot
+        # shape); False is the honest "nothing was terminated".
+        if self._resumer is None:
+            return False
         if pool_data is None:
             # The pool's cancel path has no snapshot at hand — resolve the
             # owning pool data so the decision coordinator is available and
@@ -586,8 +611,12 @@ class ReActTurnRunner(TurnRunner):
         if pool_data is not None and not self._is_subagent():
             ctx_mgr = pool_data.context_manager
 
-        pending_snapshot = await self._resumer.load_pending(
-            session_id, pool_data=pool_data,
+        # No resumer ⇒ no gate ⇒ nothing ever suspended — no pending
+        # snapshot can exist (the undeclared-boot shape).
+        pending_snapshot = (
+            await self._resumer.load_pending(session_id, pool_data=pool_data)
+            if self._resumer is not None
+            else None
         )
         turn_request = await self._builder.build_turn_request(
             input_msg,
@@ -625,13 +654,18 @@ class ReActTurnRunner(TurnRunner):
             sanitized_content = None
 
         approval_action = turn_request.approval_action
-        is_approval_cmd, approval_state = await self._approval.detect(
-            input_msg,
-            session_id,
-            input_metadata,
-            pending_snapshot=pending_snapshot,
-            approval_action=approval_action,
-        )
+        if self._approval is not None:
+            is_approval_cmd, approval_state = await self._approval.detect(
+                input_msg,
+                session_id,
+                input_metadata,
+                pending_snapshot=pending_snapshot,
+                approval_action=approval_action,
+            )
+        else:
+            # No renderer ⇒ no gate ⇒ no input can carry an approval
+            # payload (nothing ever suspended) — the undeclared-boot shape.
+            is_approval_cmd, approval_state = False, None
 
         context_state = await self._builder.assemble(
             session_id,

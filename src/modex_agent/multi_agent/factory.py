@@ -15,6 +15,12 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from modex_agent.multi_agent.session_tree.session_binding import SessionBindingStore
+    from modex_agent.plugins.defaults.capabilities.approval.renderer import (
+        ApprovalRenderer,
+    )
+    from modex_agent.plugins.defaults.capabilities.approval.resumer import (
+        ApprovalResumer,
+    )
 
 from modex_agent.core import AgentCommKind
 from modex_agent.core.inbox import InboxServer
@@ -89,6 +95,7 @@ class DefaultAgentFactory(AgentFactory):
         default_turn_store: Any | None = None,
         control_channel: InMemoryControlChannel | None = None,
         session_registry: SessionRegistry | None = None,
+        approval_declared: bool = False,
     ) -> None:
         self._default_llm_provider = default_llm_provider
         self._default_tool_manager = default_tool_manager
@@ -102,6 +109,7 @@ class DefaultAgentFactory(AgentFactory):
         self._default_turn_store = default_turn_store
         self._control_channel = control_channel
         self._session_registry = session_registry
+        self._approval_declared = approval_declared
         self._inbox_producer = InboxProducer(inbox_server) if inbox_server else None
         self._inbox_consumer = inbox_consumer
         # Shared runtime-context manager across all agents created by this factory.
@@ -195,12 +203,6 @@ class DefaultAgentFactory(AgentFactory):
     ) -> TurnRunner:
         from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
         from modex_agent.pipeline.turn_runner import ReActTurnRunner
-        from modex_agent.plugins.defaults.capabilities.approval.renderer import (
-            ApprovalRenderer,
-        )
-        from modex_agent.plugins.defaults.capabilities.approval.resumer import (
-            ApprovalResumer,
-        )
         from modex_agent.runtime.services import AgentRuntimeServices
         from modex_agent.utils.sanitizer import ContentSanitizer
 
@@ -234,15 +236,32 @@ class DefaultAgentFactory(AgentFactory):
             turn_store=turn_store,
             registry=registry,
         )
-        approval_state_machine = ApprovalResumer(
-            agent=agent,
-            turn_store=turn_store,
-            user_interface=None,
-        )
-        approval = ApprovalRenderer(
-            agent=agent,  # type: ignore[arg-type]
-            user_interface=None,
-        )
+        # The approval collaborators exist only when the pool's root agent
+        # declares approval (a root-only declaration). Without it no gate is
+        # ever assembled — nothing can suspend, so the resumer/renderer
+        # paths are unreachable and None is the undeclared-boot shape; the
+        # approval bundle's implementation stays unloaded. Guard-only
+        # sandbox deployments never suspend either, so they need no
+        # resumer.
+        approval_state_machine: ApprovalResumer | None = None
+        approval: ApprovalRenderer | None = None
+        if self._approval_declared:
+            from modex_agent.plugins.defaults.capabilities.approval.renderer import (
+                ApprovalRenderer,
+            )
+            from modex_agent.plugins.defaults.capabilities.approval.resumer import (
+                ApprovalResumer,
+            )
+
+            approval_state_machine = ApprovalResumer(
+                agent=agent,
+                turn_store=turn_store,
+                user_interface=None,
+            )
+            approval = ApprovalRenderer(
+                agent=agent,  # type: ignore[arg-type]
+                user_interface=None,
+            )
         return ReActTurnRunner(
             agent=agent,
             context_manager=ctx_mgr,
