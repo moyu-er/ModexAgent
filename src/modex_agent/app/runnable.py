@@ -46,7 +46,7 @@ from modex_agent.app.models.assembly import ModelRegistryAssembly
 from modex_agent.app.models.registry import ModelRegistry
 from modex_agent.app.roots import AppAssemblyRoots
 from modex_agent.app.service import AppService
-from modex_agent.control.channel import InMemoryControlChannel
+from modex_agent.control.channel import ControlChannel
 from modex_agent.core.emitter import TurnBinding, TurnEventSink, TurnEventSinkFactory
 from modex_agent.core.llm_struct import (
     LLMTimeoutPolicy,
@@ -59,7 +59,7 @@ from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn_events import TurnEvent
 from modex_agent.hook import HookRunner
 from modex_agent.interceptor.chain import InterceptorChain
-from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.broker import MessageBroker
 from modex_agent.messaging.models import InputMessage
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.communication.peer_resolution import (
@@ -421,8 +421,8 @@ class RunnableAppService(AppService):
             roots=roots,
             resource_root=resource_root if resource_root is not None else config_dir.parent,
         )
-        self._broker: InMemoryMessageBroker | None = None
-        self._control_channel = InMemoryControlChannel()
+        self._broker: MessageBroker | None = None
+        self._control_channel: ControlChannel | None = None
         self._router_task: asyncio.Task[None] | None = None
 
     @property
@@ -443,6 +443,12 @@ class RunnableAppService(AppService):
         assert app_config is not None
         try:
             self._component_registry = await self._load_component_registry()
+            # Service-level backends resolve once per boot from config
+            # through the plugin-populated registries (``in-memory``
+            # default — byte-identical to the former direct construction).
+            self._control_channel = self._control_channel_registry.resolve(
+                app_config.control_channel_backend
+            )
             await self._open_shared_persistence(app_config)
             self._pool_session_store = await self._build_pool_session_store(app_config)
             assert self._component_registry is not None
@@ -468,7 +474,7 @@ class RunnableAppService(AppService):
                 model_assembly.selection_provider() if model_registry is not None else None
             )
 
-            self._broker = InMemoryMessageBroker()
+            self._broker = self._broker_registry.resolve(app_config.broker_backend)
             await self._broker.start()
             paths = WorkspacePaths(root=data_dir)
             for name, pool_boot in boot.pools.items():

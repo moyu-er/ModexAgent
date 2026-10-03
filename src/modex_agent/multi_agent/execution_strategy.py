@@ -61,7 +61,7 @@ if TYPE_CHECKING:
     from modex_agent.app.models.choice import ModelChoiceRegistry
     from modex_agent.app.models.registry import ModelRegistry
     from modex_agent.commands.models import CommandProcessor
-    from modex_agent.control.channel import InMemoryControlChannel
+    from modex_agent.control.channel import ControlChannel
     from modex_agent.core.emitter import TurnEventSinkFactory
     from modex_agent.core.inbox import InboxMQ
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
@@ -400,7 +400,7 @@ class PoolAssemblyContext:
     env var is still emitted, just empty)."""
 
     command_processor: CommandProcessor | None = None
-    control_channel: InMemoryControlChannel | None = None
+    control_channel: ControlChannel | None = None
 
     pool_data: PoolDataSnapshot | None = None
 
@@ -476,7 +476,7 @@ class StrategyAssembly:
     """Pool binding store (``PoolAssembleStage`` propagates it into
     ``PoolRuntimeDeps``)."""
 
-    control_channel: InMemoryControlChannel | None = None
+    control_channel: ControlChannel | None = None
     """Pool control channel (``PoolAssembleStage`` propagates it into
     ``PoolRuntimeDeps``)."""
 

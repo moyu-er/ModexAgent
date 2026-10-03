@@ -2,7 +2,7 @@
 
 All consumers (hooks at safe points, interceptors wrapping long operations)
 call `drain_control_channel()` to atomically drain and validate control
-commands from InMemoryControlChannel.
+commands from the control channel.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from modex_agent.core.interceptor import (
 from modex_agent.core.tool_manager import ToolResult
 
 if TYPE_CHECKING:
-    from modex_agent.control.channel import InMemoryControlChannel
+    from modex_agent.control.channel import ControlChannel
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.stream_events import LLMStreamEvent
 
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 async def drain_control_channel(
-    channel: InMemoryControlChannel | None,
+    channel: ControlChannel | None,
     ctx: AgentContext,
     command_types: set[ControlCommandType] | None = None,
     *,
@@ -47,7 +47,7 @@ async def drain_control_channel(
     - If no turn_uuid in command payload → execute (backward-compatible defense)
 
     Args:
-        channel: The InMemoryControlChannel to drain from.
+        channel: The control channel to drain from.
         ctx: Current agent context (provides session_id).
         command_types: Types to drain. Defaults to {CANCEL_TURN}.
         turn_uuid: Current turn UUID for stale command validation.

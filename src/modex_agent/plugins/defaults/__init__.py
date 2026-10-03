@@ -25,6 +25,11 @@ The ``register_default_*`` functions populate 10 of the 11
 - ``register_default_namespaces``  → ``DATA_NAMESPACE`` (the bundled
   ``default`` graph-state model, W6)
 
+Besides the compile-time slots, ``register_default_backends``
+(backends.py) registers the bundled ``in-memory`` service-level backends
+(message broker + control channel, W2a) — the service-level counterpart
+of these factory registrations.
+
 The remaining slot (``INPUT_STAGE``) is EMPTY by FW design — input stages
 are deployment wiring registered by deployment plugins (e.g. the bot's
 ``IMInputStagesPlugin``), not framework defaults.
@@ -96,6 +101,7 @@ class DefaultPlugin(Plugin):
         guaranteed by the ``PluginRegistrationContext`` context manager
         wrapping this call in ``ComponentRegistryLoader._register_one``.
         """
+        from modex_agent.plugins.defaults.backends import register_default_backends
         from modex_agent.plugins.defaults.capabilities import register_default_capabilities
         from modex_agent.plugins.defaults.commands import register_default_commands
         from modex_agent.plugins.defaults.communication import (
@@ -123,4 +129,5 @@ class DefaultPlugin(Plugin):
         register_default_strategies(ctx)
         register_default_context_managers(ctx)
         register_default_namespaces(ctx)
+        register_default_backends(ctx)
 

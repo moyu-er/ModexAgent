@@ -10,11 +10,14 @@ from bot.workspace.wiring import WorkspaceStack
 
 from modex_agent.app.config import AppConfig
 from modex_agent.app.roots import AppAssemblyRoots
+from modex_agent.control.channel import ControlChannel
 from modex_agent.core.stores import PoolRoutingStore
+from modex_agent.messaging.broker import MessageBroker
 from modex_agent.persistence.managers import (
     RegistryPersistenceManager,
     WorkspacePersistenceManager,
 )
+from modex_agent.plugins.backends import BackendRegistry
 from modex_agent.plugins.loader import ChannelAdapterRegistry
 from modex_agent.workspace.paths import RESERVED_GLOBAL_DIR, WORKSPACE_STATE_DB
 
@@ -41,9 +44,14 @@ async def test_initialize_closes_canonical_registry_after_materialization_failur
     service.control_channel = None
     service.command_processor = None
     service._pool_session_store = None
-    # AppService.__init__ normally creates this; the partial-init instance
-    # enumerates every field initialize() reads (the registry load threads it).
+    # AppService.__init__ normally creates these; the partial-init instance
+    # enumerates every field initialize() reads (the registry load threads
+    # them — channel adapters + the W2a service-level backend registries).
     service._channel_adapter_registry = ChannelAdapterRegistry()
+    service._broker_registry = BackendRegistry[MessageBroker](family="message broker")
+    service._control_channel_registry = BackendRegistry[ControlChannel](
+        family="control channel"
+    )
     # Partial-init instance: initialize() reads the assembly roots directly.
     service.roots = AppAssemblyRoots.resident(
         config_dir=tmp_path / "config", resource_root=tmp_path
@@ -213,9 +221,14 @@ async def test_initialize_preserves_shared_dependencies_when_eviction_is_incompl
     service.control_channel = None
     service.command_processor = None
     service._pool_session_store = None
-    # AppService.__init__ normally creates this; the partial-init instance
-    # enumerates every field initialize() reads (the registry load threads it).
+    # AppService.__init__ normally creates these; the partial-init instance
+    # enumerates every field initialize() reads (the registry load threads
+    # them — channel adapters + the W2a service-level backend registries).
     service._channel_adapter_registry = ChannelAdapterRegistry()
+    service._broker_registry = BackendRegistry[MessageBroker](family="message broker")
+    service._control_channel_registry = BackendRegistry[ControlChannel](
+        family="control channel"
+    )
     # Partial-init instance: initialize() reads the assembly roots directly.
     service.roots = AppAssemblyRoots.resident(
         config_dir=tmp_path / "config", resource_root=tmp_path

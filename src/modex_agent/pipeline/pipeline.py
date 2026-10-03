@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from modex_agent.commands.skill import SkillResolver
-    from modex_agent.control.channel import InMemoryControlChannel
+    from modex_agent.control.channel import ControlChannel
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.core.turn.store import TurnStateStore
     from modex_agent.hook.runner import HookRunner
@@ -83,7 +83,7 @@ class AgentPipeline:
         command_processor: CommandProcessor | None = None,
         deduplicator: MessageDeduplicator | None = None,
         busy_input_mode: BusyInputMode = BusyInputMode.QUEUE,
-        control_channel: InMemoryControlChannel | None = None,
+        control_channel: ControlChannel | None = None,
         dream_engine: DreamEngine | None = None,
         dream_interval: float | None = None,
     ) -> None:

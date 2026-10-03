@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from modex_agent.adapters.output import OutputAdapter
     from modex_agent.commands.models import CommandHandlingResult, CommandProcessor
     from modex_agent.commands.skill import SkillResolver
-    from modex_agent.control.channel import InMemoryControlChannel
+    from modex_agent.control.channel import ControlChannel
     from modex_agent.core.agent import Agent, AgentContext
     from modex_agent.core.emitter import TurnEventSink, TurnEventSinkFactory
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
@@ -148,7 +148,7 @@ class TurnContextBuilder:
         governance: ContextGovernance | None,
         hook_runner: HookRunner | None,
         interceptor_chain: InterceptorChain | None,
-        control_channel: InMemoryControlChannel | None,
+        control_channel: ControlChannel | None,
         emitter_factory: TurnEventSinkFactory | None,
         output_adapter: OutputAdapter,
         turn_store: TurnStateStore | None,

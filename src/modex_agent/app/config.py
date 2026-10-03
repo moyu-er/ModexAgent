@@ -89,6 +89,18 @@ class AppConfig(BaseModel):
     (``~/.modex_agent/plugins`` — ``DEFAULT_USER_PLUGIN_DIR`` in
     ``modex_agent.plugins.loader``) is scanned at registry load. Default
     on; set ``false`` to opt out."""
+    broker_backend: str = "in-memory"
+    """Named message-broker backend, resolved once per boot through the
+    service-level ``BackendRegistry[MessageBroker]`` populated by
+    ``register_broker`` (``IN_MEMORY_BACKEND_NAME`` in
+    ``modex_agent.plugins.defaults.backends`` registers the default).
+    A plain name — the registry is the closed-set authority, so the
+    type matches the channel-adapter names."""
+    control_channel_backend: str = "in-memory"
+    """Named control-channel backend, resolved once per boot through the
+    service-level ``BackendRegistry[ControlChannel]`` populated by
+    ``register_control_channel``. Same plain-name contract as
+    ``broker_backend``."""
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> AppConfig:

@@ -59,7 +59,7 @@ from modex_agent.hook.abc import HookPayload, HookPoint
 from modex_graph.runtime import GraphRuntime
 
 if TYPE_CHECKING:
-    from modex_agent.control.channel import InMemoryControlChannel
+    from modex_agent.control.channel import ControlChannel
     from modex_agent.core.turn.models import TurnStateBase
     from modex_agent.core.turn.store import TurnStateStore
     from modex_agent.hook import HookRunner
@@ -102,7 +102,7 @@ class ReactGraphRuntime(GraphRuntime):
         hook_runner: HookRunner | None = None,
         interceptor_chain: InterceptorChain | None = None,
         governance: ContextGovernance | None = None,
-        control_channel: InMemoryControlChannel | None = None,
+        control_channel: ControlChannel | None = None,
         snapshot_policy: SnapshotPolicy | None = None,
         turn_state_store: TurnStateStore | None = None,
     ) -> None:

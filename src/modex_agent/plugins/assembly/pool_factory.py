@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.commands.processor import SlashCommandProcessor
-from modex_agent.control.channel import InMemoryControlChannel
+from modex_agent.control.channel import ControlChannel
 from modex_agent.core.emitter import TurnBinding, TurnEventSink, TurnEventSinkFactory
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.scope import RecordScope
@@ -425,7 +425,7 @@ def _build_assembly_context(
     model_assembly: PoolModelAssembly,
     record_scope: RecordScope | None,
     command_processor: Any | None,
-    control_channel: InMemoryControlChannel | None,
+    control_channel: ControlChannel | None,
     pool_data: PoolDataSnapshot | None,
     assembly_deps: PoolAssemblyDeps,
     root_system_prompt: str = "",
@@ -565,7 +565,7 @@ async def create_pool(
     control_origin: str,
     model_assembly: PoolModelAssembly,
     default_llm_provider_name: str,
-    control_channel: InMemoryControlChannel | None = None,
+    control_channel: ControlChannel | None = None,
     command_processor: Any = None,
     pool_data: PoolDataSnapshot | None = None,
     workspace_handle: WorkspaceHandle | None = None,

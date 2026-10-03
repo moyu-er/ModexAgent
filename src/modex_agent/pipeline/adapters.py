@@ -18,7 +18,7 @@ from modex_agent.messaging.models import InputMessage, OutputMessage
 
 if TYPE_CHECKING:
     from modex_agent.commands.models import CommandProcessor
-    from modex_agent.control.channel import InMemoryControlChannel
+    from modex_agent.control.channel import ControlChannel
     from modex_agent.pipeline.input.context import InputContext
     from modex_agent.pipeline.input.pipeline import UserInputPipeline
 
@@ -43,7 +43,7 @@ class InputAdapter(ABC):
     """
 
     def __init__(self) -> None:
-        self._control_channel: InMemoryControlChannel | None = None
+        self._control_channel: ControlChannel | None = None
         self._cmd_processor: CommandProcessor | None = None
         self._ctrl_output_adapter: OutputAdapter | None = None
         self._session_checker: Callable[[str], bool] | None = None
@@ -112,7 +112,7 @@ class InputAdapter(ABC):
     def configure_control_filter(
         self,
         *,
-        control_channel: InMemoryControlChannel | None = None,
+        control_channel: ControlChannel | None = None,
         command_processor: CommandProcessor | None = None,
         output_adapter: OutputAdapter | None = None,
         session_checker: Callable[[str], bool] | None = None,
@@ -122,7 +122,7 @@ class InputAdapter(ABC):
         """Configure control command interception.
 
         When configured, ``_try_intercept_control`` routes control slash
-        commands (e.g. /stop) to InMemoryControlChannel instead of Pipeline.
+        commands (e.g. /stop) to the control channel instead of Pipeline.
         Call this once after the adapter and command processor are created.
         """
         self._control_channel = control_channel
@@ -136,7 +136,7 @@ class InputAdapter(ABC):
         """Try to handle *text* as a control command.  Returns True if handled.
 
         When a control command (e.g. /stop) is detected it is pushed directly
-        into InMemoryControlChannel and acknowledged to the user.  The message
+        into the control channel and acknowledged to the user.  The message
         does NOT enter Pipeline's queue.
 
         Called by the **input pipeline** stages (``EnvironmentControlStage`` /

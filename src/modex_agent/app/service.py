@@ -34,8 +34,11 @@ from typing import TYPE_CHECKING, Any
 
 from modex_agent.adapters.output import OutputAdapter
 from modex_agent.app.roots import AppAssemblyRoots
+from modex_agent.control.channel import ControlChannel
 from modex_agent.core.emitter import TurnEventSinkFactory
+from modex_agent.messaging.broker import MessageBroker
 from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.plugins.backends import BackendRegistry
 from modex_agent.plugins.loader import ChannelAdapterRegistry
 from modex_agent.scope.component_registry import ComponentRegistry
 
@@ -71,6 +74,8 @@ class AppService(ABC):
         roots: AppAssemblyRoots | None = None,
         resource_root: Path | None = None,
         channel_adapters: ChannelAdapterRegistry | None = None,
+        brokers: BackendRegistry[MessageBroker] | None = None,
+        control_channels: BackendRegistry[ControlChannel] | None = None,
     ) -> None:
         if roots is not None and roots.config_dir != config_dir.resolve():
             raise ValueError(
@@ -98,6 +103,21 @@ class AppService(ABC):
         # registry load (its own construction order) passes its instance in.
         self._channel_adapter_registry = (
             channel_adapters if channel_adapters is not None else ChannelAdapterRegistry()
+        )
+
+        # Service-level backend registries, same create-or-accept shape:
+        # plugin broker / control-channel registrations land here, and the
+        # service's construction steps resolve the configured backend names
+        # through them (``in-memory`` by default, W2a).
+        self._broker_registry = (
+            brokers
+            if brokers is not None
+            else BackendRegistry[MessageBroker](family="message broker")
+        )
+        self._control_channel_registry = (
+            control_channels
+            if control_channels is not None
+            else BackendRegistry[ControlChannel](family="control channel")
         )
 
         # The loaded application config (None until the deployment's config
@@ -181,6 +201,8 @@ class AppService(ABC):
                 project_plugin_paths=(self.roots.plugins_dir,),
                 user_plugin_path=DEFAULT_USER_PLUGIN_DIR if user_plugins_enabled else None,
                 channel_adapters=self._channel_adapter_registry,
+                brokers=self._broker_registry,
+                control_channels=self._control_channel_registry,
             ),
         )
         logger.info("Component registry: %s", self.roots.plugins_dir)

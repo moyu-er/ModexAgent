@@ -6,12 +6,17 @@ plugin system (SPEC §4.5). A plugin declares its config schema and
 registers component factories via ``register(ctx)``; the registration
 context buffers factories and flushes them atomically on clean exit.
 
-Besides the 11 compile-time component slots, the context carries a
-service-level channel-adapter registration face
-(:meth:`PluginRegistrationContext.register_channel_adapter`) — channel
-adapters are resolved once per service boot from config, not compiled
-into assembly specs, so they land in a dedicated
-:class:`ChannelAdapterRegistry` instead of a ``ComponentSlot``.
+Besides the 11 compile-time component slots, the context carries
+service-level registration faces —
+:meth:`PluginRegistrationContext.register_channel_adapter` (channel
+adapters) plus the backend families
+:meth:`PluginRegistrationContext.register_broker` /
+:meth:`PluginRegistrationContext.register_control_channel`. All of them
+resolve once per service boot from config, not compiled into assembly
+specs, so they land in dedicated service-level registries
+(:class:`ChannelAdapterRegistry` and
+:class:`~modex_agent.plugins.backends.BackendRegistry`) instead of a
+``ComponentSlot``.
 
 Packaging contract (W6 — the directory layout is NOT the API):
 
@@ -51,8 +56,11 @@ from typing import Any, ClassVar, cast
 from pydantic import BaseModel
 
 from modex_agent.adapters.output import OutputAdapter
+from modex_agent.control.channel import ControlChannel
 from modex_agent.core.emitter import TurnBinding, TurnEventSink
+from modex_agent.messaging.broker import MessageBroker
 from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.plugins.backends import BackendRegistry, BrokerFactory, ControlChannelFactory
 from modex_agent.scope.capability import Capability
 from modex_agent.scope.component_registry import ComponentRegistry, PluginSource
 from modex_agent.scope.components import ComponentFactory, ComponentSlot
@@ -205,15 +213,21 @@ class PluginRegistrationContext:
         *,
         source: PluginSource | None = None,
         channel_adapters: ChannelAdapterRegistry | None = None,
+        brokers: BackendRegistry[MessageBroker] | None = None,
+        control_channels: BackendRegistry[ControlChannel] | None = None,
     ) -> None:
         self._registry = registry
         self._source: PluginSource | None = source
         self._channel_adapters = channel_adapters
+        self._brokers = brokers
+        self._control_channels = control_channels
         # CAPABILITY entries are capability instances, not factories
         # (SPEC §4) — the one slot whose buffered object is not a
         # ComponentFactory.
         self._buffer: list[tuple[ComponentSlot, str, ComponentFactory | Capability]] = []
         self._channel_buffer: list[tuple[str, ChannelAdapterFactory]] = []
+        self._broker_buffer: list[tuple[str, BrokerFactory]] = []
+        self._control_channel_buffer: list[tuple[str, ControlChannelFactory]] = []
 
     def _add(
         self, slot: ComponentSlot, name: str, component: ComponentFactory | Capability
@@ -281,6 +295,30 @@ class PluginRegistrationContext:
         """
         self._channel_buffer.append((name, factory))
 
+    def register_broker(self, name: str, factory: BrokerFactory) -> None:
+        """Register a message-broker backend constructor under *name*.
+
+        The broker is NOT a compile-time component slot: the service-level
+        boot resolves the configured backend name once per boot through the
+        ``BackendRegistry[MessageBroker]`` attached to this context.
+        Without one the entry is buffered and dropped at flush with a
+        warning naming the plugin — same drop semantics as
+        :meth:`register_channel_adapter`.
+        """
+        self._broker_buffer.append((name, factory))
+
+    def register_control_channel(self, name: str, factory: ControlChannelFactory) -> None:
+        """Register a control-channel backend constructor under *name*.
+
+        The control channel is NOT a compile-time component slot: the
+        service-level boot resolves the configured backend name once per
+        boot through the ``BackendRegistry[ControlChannel]`` attached to
+        this context. Without one the entry is buffered and dropped at
+        flush with a warning naming the plugin — same drop semantics as
+        :meth:`register_channel_adapter`.
+        """
+        self._control_channel_buffer.append((name, factory))
+
     def pending_channel_adapters(self) -> tuple[str, ...]:
         """Channel-adapter names buffered but not yet flushed.
 
@@ -290,6 +328,18 @@ class PluginRegistrationContext:
         dropped adapters before :meth:`flush` drains the buffer.
         """
         return tuple(name for name, _factory in self._channel_buffer)
+
+    def pending_brokers(self) -> tuple[str, ...]:
+        """Broker names buffered but not yet flushed (the loader's read
+        face for the drop warning — mirrors
+        :meth:`pending_channel_adapters`)."""
+        return tuple(name for name, _factory in self._broker_buffer)
+
+    def pending_control_channels(self) -> tuple[str, ...]:
+        """Control-channel names buffered but not yet flushed (the
+        loader's read face for the drop warning — mirrors
+        :meth:`pending_channel_adapters`)."""
+        return tuple(name for name, _factory in self._control_channel_buffer)
 
     # ---- context manager protocol ----
 
@@ -329,9 +379,19 @@ class PluginRegistrationContext:
         self._buffer = []
         channel_buffer = self._channel_buffer
         self._channel_buffer = []
+        broker_buffer = self._broker_buffer
+        self._broker_buffer = []
+        control_channel_buffer = self._control_channel_buffer
+        self._control_channel_buffer = []
         if channel_buffer and self._channel_adapters is not None:
             for name, channel_factory in channel_buffer:
                 self._channel_adapters.register(name, channel_factory)
+        if broker_buffer and self._brokers is not None:
+            for name, broker_factory in broker_buffer:
+                self._brokers.register(name, broker_factory)
+        if control_channel_buffer and self._control_channels is not None:
+            for name, control_channel_factory in control_channel_buffer:
+                self._control_channels.register(name, control_channel_factory)
         if not buffer:
             return
 
@@ -426,6 +486,12 @@ class PluginDiscoveryConfig:
     ``None``, a plugin that registers channel adapters gets a WARNING and
     the registrations are dropped — channel registrations are only owned
     by whichever load attached a registry (the app-service boot does)."""
+    brokers: BackendRegistry[MessageBroker] | None = None
+    """Landing registry for plugin message-broker backend registrations.
+    Same drop-with-warning-when-absent semantics as ``channel_adapters``."""
+    control_channels: BackendRegistry[ControlChannel] | None = None
+    """Landing registry for plugin control-channel backend registrations.
+    Same drop-with-warning-when-absent semantics as ``channel_adapters``."""
 
 
 #: Default per-user plugin directory — enabled by default by the
@@ -482,6 +548,8 @@ class ComponentRegistryLoader:
             cls._register_one(
                 registry, plugin, source=PluginSource.BUNDLED,
                 channel_adapters=discovery.channel_adapters,
+                brokers=discovery.brokers,
+                control_channels=discovery.control_channels,
             )
 
         # 2. Project directories
@@ -489,6 +557,8 @@ class ComponentRegistryLoader:
             cls._load_from_directory(
                 registry, path, source=PluginSource.PROJECT,
                 channel_adapters=discovery.channel_adapters,
+                brokers=discovery.brokers,
+                control_channels=discovery.control_channels,
             )
 
         # 3. User directory (optional)
@@ -496,6 +566,8 @@ class ComponentRegistryLoader:
             cls._load_from_directory(
                 registry, discovery.user_plugin_path, source=PluginSource.USER,
                 channel_adapters=discovery.channel_adapters,
+                brokers=discovery.brokers,
+                control_channels=discovery.control_channels,
             )
 
         # 4. Entry points (PyPI)
@@ -512,6 +584,8 @@ class ComponentRegistryLoader:
             cls._register_one(
                 registry, plugin, source=PluginSource.ENTRY_POINTS,
                 channel_adapters=discovery.channel_adapters,
+                brokers=discovery.brokers,
+                control_channels=discovery.control_channels,
             )
 
     # ---- internal helpers ----
@@ -524,6 +598,8 @@ class ComponentRegistryLoader:
         *,
         source: PluginSource,
         channel_adapters: ChannelAdapterRegistry | None = None,
+        brokers: BackendRegistry[MessageBroker] | None = None,
+        control_channels: BackendRegistry[ControlChannel] | None = None,
     ) -> None:
         """Register one plugin instance.
 
@@ -534,13 +610,18 @@ class ComponentRegistryLoader:
         ``ValueError`` out of :meth:`load` so the conflicting source is
         fixed at boot instead of being silently shadowed.
 
-        Channel-adapter registrations land in *channel_adapters* when the
-        load carries one; without one they are dropped with a WARNING
-        naming the plugin and its adapters (the generic load path's only
-        channel face — service-level boots attach a registry).
+        Service-level registrations (channel adapters, broker and
+        control-channel backends) land in their registries when the load
+        carries them; without one they are dropped with a WARNING naming
+        the plugin and the dropped names (the generic load path's only
+        service-level face — service-level boots attach registries).
         """
         ctx = PluginRegistrationContext(
-            registry, source=source, channel_adapters=channel_adapters
+            registry,
+            source=source,
+            channel_adapters=channel_adapters,
+            brokers=brokers,
+            control_channels=control_channels,
         )
         try:
             plugin.register(ctx)
@@ -564,6 +645,31 @@ class ComponentRegistryLoader:
                     source,
                     list(dropped),
                 )
+        if brokers is None:
+            dropped = ctx.pending_brokers()
+            if dropped:
+                logger.warning(
+                    "Plugin %s from %s registered broker backends %s but "
+                    "the load carries no broker BackendRegistry — dropping "
+                    "them (attach a registry via PluginDiscoveryConfig."
+                    "brokers to keep them)",
+                    type(plugin).__name__,
+                    source,
+                    list(dropped),
+                )
+        if control_channels is None:
+            dropped = ctx.pending_control_channels()
+            if dropped:
+                logger.warning(
+                    "Plugin %s from %s registered control-channel backends "
+                    "%s but the load carries no control-channel "
+                    "BackendRegistry — dropping them (attach a registry "
+                    "via PluginDiscoveryConfig.control_channels to keep "
+                    "them)",
+                    type(plugin).__name__,
+                    source,
+                    list(dropped),
+                )
         ctx.flush()
 
     @classmethod
@@ -574,6 +680,8 @@ class ComponentRegistryLoader:
         *,
         source: PluginSource,
         channel_adapters: ChannelAdapterRegistry | None = None,
+        brokers: BackendRegistry[MessageBroker] | None = None,
+        control_channels: BackendRegistry[ControlChannel] | None = None,
     ) -> None:
         """Scan *directory* for .py files, import Plugin subclasses.
 
@@ -610,7 +718,12 @@ class ComponentRegistryLoader:
                     )
                     continue
                 cls._register_one(
-                    registry, plugin, source=source, channel_adapters=channel_adapters
+                    registry,
+                    plugin,
+                    source=source,
+                    channel_adapters=channel_adapters,
+                    brokers=brokers,
+                    control_channels=control_channels,
                 )
 
     @classmethod

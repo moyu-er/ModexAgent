@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from modex_agent.agents.external.agent import ExternalAgent
     from modex_agent.commands.skill import SkillResolver
-    from modex_agent.control.channel import InMemoryControlChannel
+    from modex_agent.control.channel import ControlChannel
     from modex_agent.core.provider import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -93,7 +93,7 @@ class DefaultAgentFactory(AgentFactory):
         default_hook_runner: Any | None = None,
         default_interceptor_chain: Any | None = None,
         default_turn_store: Any | None = None,
-        control_channel: InMemoryControlChannel | None = None,
+        control_channel: ControlChannel | None = None,
         session_registry: SessionRegistry | None = None,
         approval_declared: bool = False,
     ) -> None:

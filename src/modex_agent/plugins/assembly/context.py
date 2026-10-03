@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from modex_agent.commands.models import CommandProcessor
-    from modex_agent.control.channel import InMemoryControlChannel
+    from modex_agent.control.channel import ControlChannel
     from modex_agent.core.emitter import TurnEventSinkFactory
     from modex_agent.core.provider import LLMProvider
     from modex_agent.core.session_id import SessionInfo
@@ -112,7 +112,7 @@ class PoolRuntimeDeps:
     """
 
     session_tree_manager: SessionTreeManager | None = None
-    control_channel: InMemoryControlChannel | None = None
+    control_channel: ControlChannel | None = None
     notification_service: AgentNotificationService | None = None
     binding_store: CommunicationTargetStore | None = None
     pool_assembly_ctx: PoolAssemblyContext | None = None

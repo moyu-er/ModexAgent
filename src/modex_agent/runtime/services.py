@@ -19,7 +19,7 @@ from modex_agent.core.turn.models import TurnSnapshot, TurnStateBase
 if TYPE_CHECKING:
     import asyncio
 
-    from modex_agent.control.channel import InMemoryControlChannel
+    from modex_agent.control.channel import ControlChannel
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.turn.approval_decision import ApprovalAuditStore
     from modex_agent.hook import HookRunner
@@ -69,7 +69,7 @@ class AgentRuntimeServices:
     pending_input_queue: asyncio.Queue[str] | None = None
     safety: RuntimeSafetyPolicy = field(default_factory=RuntimeSafetyPolicy)
     runtime_context_manager: RuntimeContextManager | None = None
-    control_channel: InMemoryControlChannel | None = None
+    control_channel: ControlChannel | None = None
     model_info: ModelInfo | None = None
     media_store: MediaStore | None = None
 
@@ -138,8 +138,8 @@ class AgentRuntime:
         return self.state.custom.get(TurnCustomKey.TURN_UUID)
 
     @property
-    def control_channel(self) -> InMemoryControlChannel | None:
-        """InMemoryControlChannel for control command consumption."""
+    def control_channel(self) -> ControlChannel | None:
+        """ControlChannel for control command consumption."""
         return self.services.control_channel
 
     # ------------------------------------------------------------------
