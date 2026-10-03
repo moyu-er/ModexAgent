@@ -22,8 +22,9 @@ All 11 slots are populated:
   (``plugins/defaults/namespaces.py``).
 
 ``CAPABILITY`` holds the FW-bundled capability packages (``aci``,
-``ast_grep``, ``approval``, ``experience``, ``subagents``, ``todo``;
-ADR-0047 — grows one package per migration wave).
+``ast_grep``, ``approval``, ``experience``, ``sandbox``, ``shell``,
+``skills``, ``subagents``, ``todo``, ``tracing``; ADR-0047 — grows one
+package per migration wave).
 """
 
 from __future__ import annotations
@@ -243,13 +244,13 @@ class TestPerSlotNameSets:
 
     async def test_capability_slot_has_bundled_packages(self) -> None:
         """CAPABILITY carries the FW-bundled capability packages — ``aci``,
-        ``ast_grep``, ``approval``, ``experience``, ``shell``, ``subagents``,
-        ``todo`` and ``tracing`` (ADR-0047; grows one package per migration
-        wave)."""
+        ``ast_grep``, ``approval``, ``experience``, ``sandbox``, ``shell``,
+        ``skills``, ``subagents``, ``todo`` and ``tracing`` (ADR-0047; grows
+        one package per migration wave)."""
         registry = await _load_default_plugin()
         actual = _slot_names(registry, ComponentSlot.CAPABILITY)
         assert actual == {
-            "aci", "ast_grep", "approval", "experience", "shell",
+            "aci", "ast_grep", "approval", "experience", "sandbox", "shell",
             "skills", "subagents", "todo", "tracing",
         }, (
             f"CAPABILITY drift: {actual}"

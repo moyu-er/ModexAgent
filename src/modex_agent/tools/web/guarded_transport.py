@@ -21,12 +21,16 @@ from collections.abc import (
     Iterable,
     Mapping,
 )
+from typing import TYPE_CHECKING
 
 import anyio
 import httpcore
 import httpx
 
-from modex_agent.sandbox.guard_network import NetworkGuard
+if TYPE_CHECKING:
+    from modex_agent.plugins.defaults.capabilities.sandbox.guard_network import (
+        NetworkGuard,
+    )
 
 __all__ = [
     "AsyncResolver",
@@ -71,7 +75,17 @@ class ValidatingNetworkBackend(httpcore.AsyncNetworkBackend):
         resolver: AsyncResolver | None = None,
         dialer: httpcore.AsyncNetworkBackend | None = None,
     ) -> None:
-        self._guard = guard if guard is not None else NetworkGuard()
+        # Lazy guard construction (W1-B3): this module loads at boot with
+        # the default tool registration — the sandbox bundle's guard loads
+        # only when a backend is actually constructed without an injected
+        # guard. The guard still applies on every web call.
+        if guard is None:
+            from modex_agent.plugins.defaults.capabilities.sandbox.guard_network import (
+                NetworkGuard,
+            )
+
+            guard = NetworkGuard()
+        self._guard = guard
         self._resolver = resolver if resolver is not None else _anyio_resolver
         self._dialer = dialer if dialer is not None else _default_dialer()
 

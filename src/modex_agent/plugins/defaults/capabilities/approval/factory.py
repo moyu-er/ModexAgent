@@ -16,7 +16,7 @@ the classifier cannot evaluate path patterns (``["./*"]``), and every gated
 tool would wrongly classify as DANGEROUS even inside the project.
 
 ``sandbox=``: a non-DEFAULT
-:class:`~modex_agent.sandbox.settings.SandboxSettings` wraps the tiered
+:class:`~modex_agent.plugins.defaults.capabilities.sandbox.settings.SandboxSettings` wraps the tiered
 classifier in the composite
 :class:`~modex_agent.plugins.defaults.capabilities.approval.security.SecurityClassifier`
 sharing the same root provider — the single assembly point where
@@ -48,9 +48,14 @@ from modex_agent.plugins.defaults.capabilities.approval.security import (
     SecurityClassifier,
     guard_only_runtime,
 )
-from modex_agent.sandbox.approval_envelope import validate_approval_envelope
-from modex_agent.sandbox.decision import SecurityDecisionService
-from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
+from modex_agent.plugins.defaults.capabilities.sandbox.approval_envelope import (
+    validate_approval_envelope,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.decision import SecurityDecisionService
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
+    SandboxBackend,
+    SandboxSettings,
+)
 
 
 def build_approval_runtime(

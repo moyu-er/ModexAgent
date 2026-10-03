@@ -156,6 +156,15 @@ FORBIDDEN_MODULE_PATHS: tuple[str, ...] = (
     "pipeline/approval_renderer.py",
     "pipeline/input/stages/approval.py",
     "plugins/assembly/approval_factory.py",
+    # W1-B3 (sandbox capability bundle): the ENTIRE sandbox vertical
+    # slice (settings, decision, guard family, runtimes, adapters,
+    # delegation, interceptor, selection, tool_matrix, shell_plan, …)
+    # moved into ``plugins/defaults/capabilities/sandbox/`` — the
+    # top-level package is deleted with no shim; every old import site
+    # was converged to the bundle in the same batch (the adapter-facade
+    # ``__init__`` died with the package; the bundle facade re-exports
+    # only the registration entry).
+    "sandbox",
     # D2 OLD-AUTHORITY: skill assignment is disk-owned; the generic IOC
     # config module no longer supplies roots or allow-lists.
     "ioc/configs/skills.py",

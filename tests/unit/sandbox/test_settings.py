@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     ExclusiveConfig,
     GuardSettings,
     ParallelConfig,

@@ -27,14 +27,14 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.sandbox.bwrap_runtime import BwrapRuntime
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.sandbox.bwrap_runtime import BwrapRuntime
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     ExclusiveConfig,
     SandboxBackend,
     SandboxSettings,
     WriteSurface,
 )
-from modex_agent.sandbox.types import EnforcementLevel
+from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel
 
 pytest.importorskip("pexpect", reason="persistent-shell integration needs pexpect")
 

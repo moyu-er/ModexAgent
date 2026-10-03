@@ -15,6 +15,20 @@ import pytest
 from modex_agent.core.tool_group import ToolGroup
 from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.plugins.assembly.context import AgentContext
+from modex_agent.plugins.defaults.capabilities.sandbox.exceptions import SandboxUnavailableError
+from modex_agent.plugins.defaults.capabilities.sandbox.interceptor import SandboxGuardInterceptor
+from modex_agent.plugins.defaults.capabilities.sandbox.runtime import (
+    ResolvedSandbox,
+    SandboxRuntime,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
+    ExclusiveConfig,
+    SandboxBackend,
+    SandboxSettings,
+    WriteSurface,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.shell_plan import SandboxBinding
+from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel
 from modex_agent.plugins.defaults.capabilities.shell import (
     SHELL_CAPABILITY_NAME,
     SHELL_WIRING_KEY,
@@ -23,17 +37,6 @@ from modex_agent.plugins.defaults.capabilities.shell import (
     ShellToolGroupFactory,
     ShellWiring,
 )
-from modex_agent.sandbox.exceptions import SandboxUnavailableError
-from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
-from modex_agent.sandbox.runtime import ResolvedSandbox, SandboxRuntime
-from modex_agent.sandbox.settings import (
-    ExclusiveConfig,
-    SandboxBackend,
-    SandboxSettings,
-    WriteSurface,
-)
-from modex_agent.sandbox.shell_plan import SandboxBinding
-from modex_agent.sandbox.types import EnforcementLevel
 from modex_agent.scope.capability import CapabilityWiring
 from modex_agent.tools.terminal.persistent_bash import (
     BashInputTool,
@@ -106,8 +109,10 @@ async def test_initialization_unavailable_keeps_host_bash(
     monkeypatch: pytest.MonkeyPatch,
     error: Exception,
 ) -> None:
-    from modex_agent.sandbox.decision import SecurityDecisionService
-    from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
+    from modex_agent.plugins.defaults.capabilities.sandbox.decision import SecurityDecisionService
+    from modex_agent.plugins.defaults.capabilities.sandbox.interceptor import (
+        SandboxGuardInterceptor,
+    )
 
     settings = SandboxSettings(backend=SandboxBackend.LOCAL)
     root = FixedRoot(tmp_path)
@@ -127,8 +132,10 @@ async def test_initialization_unavailable_keeps_host_bash(
 
 @pytest.mark.parametrize("error", [PermissionError("denied"), ValueError("bad config"), TypeError("bug"), OSError(errno.EINVAL, "bad argument")])
 async def test_initialization_errors_are_not_unavailability(tmp_path: Path, error: Exception) -> None:
-    from modex_agent.sandbox.decision import SecurityDecisionService
-    from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
+    from modex_agent.plugins.defaults.capabilities.sandbox.decision import SecurityDecisionService
+    from modex_agent.plugins.defaults.capabilities.sandbox.interceptor import (
+        SandboxGuardInterceptor,
+    )
 
     settings = SandboxSettings(backend=SandboxBackend.LOCAL)
     root = FixedRoot(tmp_path)
@@ -213,7 +220,9 @@ async def test_local_one_shot_keeps_prefix_and_cwd(tmp_path: Path, monkeypatch: 
 async def test_oci_one_shot_translates_windows_cwd(monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio
 
-    from modex_agent.sandbox.container_executor import ContainerShellExecutor
+    from modex_agent.plugins.defaults.capabilities.sandbox.container_executor import (
+        ContainerShellExecutor,
+    )
     process = AsyncMock()
     process.communicate.return_value = (b"ok", b"")
     process.returncode = 0
@@ -224,10 +233,10 @@ async def test_oci_one_shot_translates_windows_cwd(monkeypatch: pytest.MonkeyPat
 
 
 async def test_actual_local_launch_unavailable_after_selection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from modex_agent.sandbox.bwrap_runtime import BwrapRuntime
-    from modex_agent.sandbox.platform import Platform
-    monkeypatch.setattr("modex_agent.sandbox.bwrap_runtime._get_platform", lambda: Platform.LINUX)
-    monkeypatch.setattr("modex_agent.sandbox.bwrap_runtime._resolve_host_shell", lambda: "/bin/bash")
+    from modex_agent.plugins.defaults.capabilities.sandbox.bwrap_runtime import BwrapRuntime
+    from modex_agent.plugins.defaults.capabilities.sandbox.platform import Platform
+    monkeypatch.setattr("modex_agent.plugins.defaults.capabilities.sandbox.bwrap_runtime._get_platform", lambda: Platform.LINUX)
+    monkeypatch.setattr("modex_agent.plugins.defaults.capabilities.sandbox.bwrap_runtime._resolve_host_shell", lambda: "/bin/bash")
     calls = []
     def cannot_launch(argv, **kwargs):
         calls.append(argv)
@@ -288,9 +297,9 @@ async def test_shell_pair_real_cwd_env_pipeline_and_input(tmp_path: Path, monkey
 
 
 async def test_seatbelt_cleanup_only_reclaims_its_own_profiles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from modex_agent.sandbox.platform import Platform
-    from modex_agent.sandbox.seatbelt_runtime import SeatbeltRuntime
-    monkeypatch.setattr("modex_agent.sandbox.seatbelt_runtime._get_platform", lambda: Platform.MACOS)
+    from modex_agent.plugins.defaults.capabilities.sandbox.platform import Platform
+    from modex_agent.plugins.defaults.capabilities.sandbox.seatbelt_runtime import SeatbeltRuntime
+    monkeypatch.setattr("modex_agent.plugins.defaults.capabilities.sandbox.seatbelt_runtime._get_platform", lambda: Platform.MACOS)
     first, second = SeatbeltRuntime(), SeatbeltRuntime()
     settings = SandboxSettings(backend=SandboxBackend.LOCAL)
     a = await first.resolve(settings, tmp_path)
@@ -309,7 +318,9 @@ async def test_seatbelt_cleanup_only_reclaims_its_own_profiles(tmp_path: Path, m
 async def test_oci_dead_result_reports_uncertainty_without_replay(monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio
 
-    from modex_agent.sandbox.container_executor import ContainerShellExecutor
+    from modex_agent.plugins.defaults.capabilities.sandbox.container_executor import (
+        ContainerShellExecutor,
+    )
     process = AsyncMock()
     process.communicate.return_value = (b"side effect happened\n", b"Error: container is not running")
     process.returncode = 1
@@ -324,7 +335,9 @@ async def test_oci_dead_result_reports_uncertainty_without_replay(monkeypatch: p
 async def test_operation_permission_denied_keeps_executor(monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio
 
-    from modex_agent.sandbox.container_executor import ContainerShellExecutor
+    from modex_agent.plugins.defaults.capabilities.sandbox.container_executor import (
+        ContainerShellExecutor,
+    )
     process = AsyncMock()
     process.communicate.return_value = (b"", b"Operation not permitted")
     process.returncode = 1
@@ -359,11 +372,14 @@ async def test_transport_error_after_send_does_not_replay(tmp_path: Path, monkey
 async def test_runtime_compiles_canonical_relative_roots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, engine: str,
 ) -> None:
-    from modex_agent.sandbox.bwrap_runtime import BwrapRuntime
-    from modex_agent.sandbox.oci_runtime import OciContainerRuntime
-    from modex_agent.sandbox.oci_support import CliResult, ContainerMount
-    from modex_agent.sandbox.platform import Platform
-    from modex_agent.sandbox.seatbelt_runtime import SeatbeltRuntime
+    from modex_agent.plugins.defaults.capabilities.sandbox.bwrap_runtime import BwrapRuntime
+    from modex_agent.plugins.defaults.capabilities.sandbox.oci_runtime import OciContainerRuntime
+    from modex_agent.plugins.defaults.capabilities.sandbox.oci_support import (
+        CliResult,
+        ContainerMount,
+    )
+    from modex_agent.plugins.defaults.capabilities.sandbox.platform import Platform
+    from modex_agent.plugins.defaults.capabilities.sandbox.seatbelt_runtime import SeatbeltRuntime
     from modex_agent.workspace.boundary import canonicalize_path
 
     workspace = tmp_path / "workspace"
@@ -374,14 +390,14 @@ async def test_runtime_compiles_canonical_relative_roots(
     (tmp_path / "protected").mkdir()
     settings = SandboxSettings(backend=SandboxBackend.LOCAL,
         exclusive=ExclusiveConfig(write_surface=WriteSurface.WORKSPACE, writable_roots=[Path("../shared")], protected_subpaths=[".git", "../protected"]))
-    monkeypatch.setattr("modex_agent.sandbox.bwrap_runtime._get_platform", lambda: Platform.LINUX)
-    monkeypatch.setattr("modex_agent.sandbox.seatbelt_runtime._get_platform", lambda: Platform.MACOS)
+    monkeypatch.setattr("modex_agent.plugins.defaults.capabilities.sandbox.bwrap_runtime._get_platform", lambda: Platform.LINUX)
+    monkeypatch.setattr("modex_agent.plugins.defaults.capabilities.sandbox.seatbelt_runtime._get_platform", lambda: Platform.MACOS)
     monkeypatch.setattr(SandboxRuntime, "_validate_startup", AsyncMock())
     monkeypatch.setattr(BwrapRuntime, "_validate_startup", AsyncMock())
     monkeypatch.setattr(SeatbeltRuntime, "_validate_startup", AsyncMock())
     async def cli(argv, **kwargs):
         return CliResult(returncode=1, stderr="no such object") if argv[1] == "inspect" else CliResult(returncode=0)
-    monkeypatch.setattr("modex_agent.sandbox.oci_runtime._run_cli", cli)
+    monkeypatch.setattr("modex_agent.plugins.defaults.capabilities.sandbox.oci_runtime._run_cli", cli)
     runtime = {"bwrap": BwrapRuntime, "seatbelt": SeatbeltRuntime, "oci": OciContainerRuntime}[engine]()
     try:
         resolved = await runtime.resolve_available(settings, workspace / ".." / "workspace")
@@ -414,9 +430,11 @@ _HAS_REAL_BWRAP = sys.platform.startswith("linux") and shutil.which("bwrap") is 
 
 @pytest.mark.skipif(not _HAS_REAL_BWRAP, reason="requires real Linux bwrap")
 async def test_real_bwrap_writes_permitted_relative_extra_root(tmp_path: Path) -> None:
-    from modex_agent.sandbox.bwrap_runtime import BwrapRuntime
-    from modex_agent.sandbox.container_executor import ContainerShellExecutor
-    from modex_agent.sandbox.decision import SecurityDecisionService
+    from modex_agent.plugins.defaults.capabilities.sandbox.bwrap_runtime import BwrapRuntime
+    from modex_agent.plugins.defaults.capabilities.sandbox.container_executor import (
+        ContainerShellExecutor,
+    )
+    from modex_agent.plugins.defaults.capabilities.sandbox.decision import SecurityDecisionService
     workspace = tmp_path / "workspace"
     shared = tmp_path / "shared"
     workspace.mkdir()
@@ -438,8 +456,10 @@ async def assembled_shell(
     pty: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[SandboxGuardInterceptor, ToolGroup]:
-    from modex_agent.sandbox.decision import SecurityDecisionService
-    from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
+    from modex_agent.plugins.defaults.capabilities.sandbox.decision import SecurityDecisionService
+    from modex_agent.plugins.defaults.capabilities.sandbox.interceptor import (
+        SandboxGuardInterceptor,
+    )
     class FixedRuntime(SandboxRuntime):
         async def resolve(self, settings, workspace_root):
             return resolved
@@ -693,16 +713,16 @@ async def test_factory_reclaims_only_owned_profiles_on_failure(
     import asyncio
 
     from modex_agent.plugins.assembly.context import AgentContext, PoolRuntimeDeps
-    from modex_agent.plugins.defaults.interceptors import (
+    from modex_agent.plugins.defaults.capabilities.sandbox.platform import Platform
+    from modex_agent.plugins.defaults.capabilities.sandbox.registration import (
         SandboxGuardConfig,
         SandboxGuardInterceptorFactory,
     )
-    from modex_agent.sandbox.platform import Platform
-    from modex_agent.sandbox.seatbelt_runtime import SeatbeltRuntime
+    from modex_agent.plugins.defaults.capabilities.sandbox.seatbelt_runtime import SeatbeltRuntime
     from modex_graph.exceptions import GraphInterrupt
 
-    monkeypatch.setattr("modex_agent.sandbox.seatbelt_runtime.tempfile.tempdir", str(tmp_path))
-    monkeypatch.setattr("modex_agent.sandbox.seatbelt_runtime._get_platform", lambda: Platform.MACOS)
+    monkeypatch.setattr("modex_agent.plugins.defaults.capabilities.sandbox.seatbelt_runtime.tempfile.tempdir", str(tmp_path))
+    monkeypatch.setattr("modex_agent.plugins.defaults.capabilities.sandbox.seatbelt_runtime._get_platform", lambda: Platform.MACOS)
     runtime, shared = SeatbeltRuntime(), SeatbeltRuntime()
     settings = SandboxSettings(backend=SandboxBackend.LOCAL)
     shared_resolved = await shared.resolve(settings, tmp_path)
@@ -723,8 +743,8 @@ async def test_factory_reclaims_only_owned_profiles_on_failure(
         if cleanup_fails:
             raise RuntimeError("cleanup failed after releasing profile")
     monkeypatch.setattr(runtime, "close", close)
-    monkeypatch.setattr("modex_agent.plugins.defaults.interceptors.resolve_selection", AsyncMock())
-    monkeypatch.setattr("modex_agent.plugins.defaults.interceptors.select_runtime", lambda selection: runtime)
+    monkeypatch.setattr("modex_agent.plugins.defaults.capabilities.sandbox.selection.resolve_selection", AsyncMock())
+    monkeypatch.setattr("modex_agent.plugins.defaults.capabilities.sandbox.selection.select_runtime", lambda selection: runtime)
     ctx = AgentContext(registry=MagicMock(), workspace_ctx=MagicMock(), agent_name="fixture",
                        pool_runtime=PoolRuntimeDeps(root_provider=FixedRoot(tmp_path)))
     task = asyncio.create_task(SandboxGuardInterceptorFactory().create(SandboxGuardConfig(sandbox=settings), ctx))

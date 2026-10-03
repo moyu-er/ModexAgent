@@ -26,16 +26,19 @@ from modex_agent.plugins.assembly.single_agent import (
     assemble_declared_single_agent,
 )
 from modex_agent.plugins.defaults import DefaultPlugin
-from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.sandbox.selection import resolve_selection, select_runtime
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.sandbox.selection import (
+    resolve_selection,
+    select_runtime,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     ExclusiveConfig,
     SandboxBackend,
     SandboxSettings,
     WriteSurface,
 )
-from modex_agent.sandbox.shell_plan import resolved_binding
-from modex_agent.sandbox.types import EnforcementLevel
+from modex_agent.plugins.defaults.capabilities.sandbox.shell_plan import resolved_binding
+from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel
+from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.scope.compiler import compile_scope
 from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec

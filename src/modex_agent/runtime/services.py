@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from modex_agent.hook import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.memory.context_governance import ContextGovernance
-    from modex_agent.sandbox.delegation import DelegationSnapshot
+    from modex_agent.plugins.defaults.capabilities.sandbox.delegation import DelegationSnapshot
     from modex_agent.trace.otel_store import OtelSpanTraceStore
 
     from .context import RuntimeContext, RuntimeContextManager

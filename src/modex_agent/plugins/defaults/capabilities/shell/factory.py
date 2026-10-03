@@ -1,19 +1,25 @@
-"""The single TOOL-slot factory for every native shell group variant."""
+"""The single TOOL-slot factory for every native shell group variant.
+
+Sandbox-import-light (W1-B3): the module loads for EVERY deployment
+(capability classes load at registration/boot), so the sandbox-backed
+substrate pieces import lazily — ``SandboxBackend`` is the pydantic-level
+settings enum (light), while the container executor (and, through the
+capability's assemble, the live-binding plan) load only when a
+sandbox-backed group is actually constructed at create() time.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 from enum import StrEnum
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.tool_group import ToolGroup, ToolGroupResource
 from modex_agent.plugins.assembly.context import AgentContext
-from modex_agent.sandbox.container_executor import ContainerShellExecutor
-from modex_agent.sandbox.runtime import ResolvedSandbox
-from modex_agent.sandbox.settings import SandboxBackend
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import SandboxBackend
 from modex_agent.scope.components import ComponentFactory
 from modex_agent.tools.terminal.command_tool import CommandTool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
@@ -42,6 +48,11 @@ from .capability import (
     ShellMode,
     ShellWiring,
 )
+
+if TYPE_CHECKING:
+    from modex_agent.plugins.defaults.capabilities.sandbox.runtime import (
+        ResolvedSandbox,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +247,10 @@ def _sandbox_subprocess_group(
     wiring: ShellWiring,
     resolved: ResolvedSandbox,
 ) -> ToolGroup:
+    from modex_agent.plugins.defaults.capabilities.sandbox.container_executor import (
+        ContainerShellExecutor,
+    )
+
     assert wiring.binding is not None
     if not resolved.one_shot_command_argv_prefix:
         raise ValueError(

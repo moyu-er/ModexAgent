@@ -24,17 +24,17 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-import modex_agent.sandbox.bwrap_runtime as bwrap_mod
-from modex_agent.sandbox.bwrap_runtime import BwrapRuntime
-from modex_agent.sandbox.platform import Platform
-from modex_agent.sandbox.runtime import ResolvedSandbox
-from modex_agent.sandbox.settings import (
+import modex_agent.plugins.defaults.capabilities.sandbox.bwrap_runtime as bwrap_mod
+from modex_agent.plugins.defaults.capabilities.sandbox.bwrap_runtime import BwrapRuntime
+from modex_agent.plugins.defaults.capabilities.sandbox.platform import Platform
+from modex_agent.plugins.defaults.capabilities.sandbox.runtime import ResolvedSandbox
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     ExclusiveConfig,
     SandboxBackend,
     SandboxSettings,
     WriteSurface,
 )
-from modex_agent.sandbox.types import EnforcementLevel
+from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel
 
 _WS = Path("/ws/project")
 
@@ -56,8 +56,8 @@ def _patch_shell(monkeypatch: pytest.MonkeyPatch, shell: str) -> None:
     """Patch the host-shell seam in BOTH namespaces — degradation paths
     delegate to ``HostRuntime().resolve()``, which reads its own
     ``runtime._resolve_host_shell`` alias, not bwrap_runtime's."""
-    import modex_agent.sandbox.bwrap_runtime as bwrap_mod
-    import modex_agent.sandbox.runtime as runtime_mod
+    import modex_agent.plugins.defaults.capabilities.sandbox.bwrap_runtime as bwrap_mod
+    import modex_agent.plugins.defaults.capabilities.sandbox.runtime as runtime_mod
 
     monkeypatch.setattr(bwrap_mod, "_resolve_host_shell", lambda: shell)
     monkeypatch.setattr(runtime_mod, "_resolve_host_shell", lambda: shell)

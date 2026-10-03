@@ -37,6 +37,9 @@ def register_default_capabilities(ctx: PluginRegistrationContext) -> None:
     from modex_agent.plugins.defaults.capabilities.experience import (
         register_experience_feature,
     )
+    from modex_agent.plugins.defaults.capabilities.sandbox import (
+        register_sandbox_feature,
+    )
     from modex_agent.plugins.defaults.capabilities.shell.capability import (
         SHELL_CAPABILITY_NAME,
         ShellCapability,
@@ -50,6 +53,7 @@ def register_default_capabilities(ctx: PluginRegistrationContext) -> None:
     ctx.register_capability("ast_grep", AstGrepCapability())
     register_approval_feature(ctx)
     register_experience_feature(ctx)
+    register_sandbox_feature(ctx)
     register_skills_feature(ctx)
     ctx.register_capability(SHELL_CAPABILITY_NAME, ShellCapability())
     ctx.register_capability("subagents", SubagentsCapability())

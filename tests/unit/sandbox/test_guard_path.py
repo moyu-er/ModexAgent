@@ -4,8 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.sandbox.guard import CommandSeverity, GuardMatch
-from modex_agent.sandbox.guard_path import PathBoundaryConfig, PathBoundaryGuard
+from modex_agent.plugins.defaults.capabilities.sandbox.guard import CommandSeverity, GuardMatch
+from modex_agent.plugins.defaults.capabilities.sandbox.guard_path import (
+    PathBoundaryConfig,
+    PathBoundaryGuard,
+)
 
 
 class TestPathBoundaryGuardPOSIX:

@@ -1,7 +1,9 @@
 """Unified-security ticket 05a → the unified ``AgentSpec.sandbox`` declaration.
 
 The retired ``allowed_dirs`` field is subsumed by the same two-class
-``sandbox.settings.SandboxSettings`` shape every agent carries. Covers:
+``SandboxSettings`` shape every agent carries. W1-B3: the spec field is
+the RAW declaration mapping (rule 14 open face) — the sandbox capability
+bundle's ``SandboxSettings`` validates it at its use sites. Covers:
 
 - declaration parsing: ``None`` (inherit the caller wholesale), the
   parallel/exclusive faces, relative paths, round-trip through the
@@ -21,13 +23,13 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.sandbox.settings import (
-    ExclusiveConfig,
-    SandboxBackend,
-    SandboxSettings,
-    ToolPaths,
-    WriteSurface,
+from modex_agent.plugins.defaults.capabilities.sandbox import (
+    register_sandbox_feature,
 )
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
+    SandboxSettings,
+)
+from modex_agent.plugins.loader import PluginRegistrationContext
 from modex_agent.scope import (
     AgentSpec,
     PoolSpec,
@@ -40,6 +42,7 @@ from modex_agent.scope import (
     validate_effective_configs,
 )
 from modex_agent.scope.compiler import ScopeCompilation
+from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -48,8 +51,17 @@ def _workspace_ctx(tmp_path: Path) -> WorkspaceContext:
     return WorkspaceContext(target=tmp_path, paths=WorkspacePaths(root=tmp_path), is_home=False)
 
 
+def _registry() -> ComponentRegistry:
+    registry = ComponentRegistry()
+    with PluginRegistrationContext(registry) as registration:
+        register_sandbox_feature(registration)
+    return registry
+
+
 def _compile(spec: ScopeSpec, tmp_path: Path) -> ScopeCompilation:
-    return compile_scope(spec, workspace_ctx=_workspace_ctx(tmp_path))
+    return compile_scope(
+        spec, workspace_ctx=_workspace_ctx(tmp_path), registry=_registry()
+    )
 
 
 def _single_pool(*agents: AgentSpec) -> ScopeSpec:
@@ -65,14 +77,15 @@ class TestSandboxDeclaration:
         assert AgentSpec(name="a").sandbox is None
 
     def test_block_round_trips(self) -> None:
-        sandbox = SandboxSettings(
-            exclusive=ExclusiveConfig(
-                write_surface=WriteSurface.ROOTS,
-                writable_roots=[Path("/srv/shared")],
-            )
+        spec = AgentSpec(
+            name="a",
+            sandbox={
+                "exclusive": {"write_surface": "roots", "writable_roots": ["/srv/shared"]}
+            },
         )
-        spec = AgentSpec(name="a", sandbox=sandbox)
-        assert spec.sandbox is sandbox
+        assert spec.sandbox == {
+            "exclusive": {"write_surface": "roots", "writable_roots": ["/srv/shared"]}
+        }
 
     def test_relative_paths_parse_verbatim(self) -> None:
         # Pure form check at declaration time — existence and resolution
@@ -81,14 +94,16 @@ class TestSandboxDeclaration:
             {"name": "a", "sandbox": {"exclusive": {"writable_roots": ["../shared-lib"]}}}
         )
         assert spec.sandbox is not None
-        assert spec.sandbox.exclusive.writable_roots == [Path("../shared-lib")]
+        settings = SandboxSettings.model_validate(spec.sandbox)
+        assert settings.exclusive.writable_roots == [Path("../shared-lib")]
 
     def test_parallel_boundary_parses(self) -> None:
         spec = AgentSpec.model_validate(
             {"name": "a", "sandbox": {"parallel": {"boundaries": {"grep": {"paths": ["./src"]}}}}}
         )
         assert spec.sandbox is not None
-        assert spec.sandbox.parallel.boundaries["grep"] == ToolPaths(paths=(Path("./src"),))
+        settings = SandboxSettings.model_validate(spec.sandbox)
+        assert settings.parallel.boundaries["grep"].paths == (Path("./src"),)
 
     def test_backend_in_subagent_block_is_ignored_at_runtime_but_declared(self) -> None:
         # The substrate stays with the caller; the block still parses it
@@ -97,11 +112,12 @@ class TestSandboxDeclaration:
             {"name": "a", "sandbox": {"backend": "oci", "exclusive": {"write_surface": "none"}}}
         )
         assert spec.sandbox is not None
-        assert spec.sandbox.backend is SandboxBackend.OCI
-        assert spec.sandbox.exclusive.write_surface is WriteSurface.NONE
+        settings = SandboxSettings.model_validate(spec.sandbox)
+        assert settings.backend.value == "oci"
+        assert settings.exclusive.write_surface.value == "none"
 
     def test_frozen(self) -> None:
-        spec = AgentSpec(name="a", sandbox=SandboxSettings())
+        spec = AgentSpec(name="a", sandbox={"backend": "host"})
         with pytest.raises(ValidationError):
             spec.sandbox = None  # type: ignore[misc]
 
@@ -138,9 +154,7 @@ class TestSandboxBill:
                 AgentSpec(
                     name="sub",
                     parent="root",
-                    sandbox=SandboxSettings(
-                        exclusive=ExclusiveConfig(writable_roots=[Path("/srv/shared")])
-                    ),
+                    sandbox={"exclusive": {"writable_roots": ["/srv/shared"]}},
                 ),
             ),
             tmp_path,
@@ -157,7 +171,7 @@ class TestSandboxBill:
         compilation = _compile(
             _single_pool(
                 AgentSpec(name="root"),
-                AgentSpec(name="sub", parent="root", sandbox=SandboxSettings()),
+                AgentSpec(name="sub", parent="root", sandbox={"backend": "host"}),
             ),
             tmp_path,
         )
@@ -175,9 +189,7 @@ class TestValidatorUnaffected:
             AgentSpec(
                 name="sub",
                 parent="root",
-                sandbox=SandboxSettings(
-                    exclusive=ExclusiveConfig(writable_roots=[Path("/srv/shared")])
-                ),
+                sandbox={"exclusive": {"writable_roots": ["/srv/shared"]}},
             ),
         )
         assert validate_declaration(spec) == []
@@ -186,8 +198,6 @@ class TestValidatorUnaffected:
         # sandbox on a non-root agent must NOT trip V9 (it is not an
         # approval declaration), and V9 itself still fires for approval.
         from modex_agent.plugins.defaults import DefaultPlugin
-        from modex_agent.plugins.loader import PluginRegistrationContext
-        from modex_agent.scope.component_registry import ComponentRegistry
 
         registry = ComponentRegistry()
         ctx = PluginRegistrationContext(registry)
@@ -199,9 +209,7 @@ class TestValidatorUnaffected:
             AgentSpec(
                 name="sub",
                 parent="root",
-                sandbox=SandboxSettings(
-                    exclusive=ExclusiveConfig(writable_roots=[Path("/srv/shared")])
-                ),
+                sandbox={"exclusive": {"writable_roots": ["/srv/shared"]}},
             ),
             AgentSpec(name="bad", parent="root", approval={"enabled": True}),
         )

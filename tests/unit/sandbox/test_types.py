@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.sandbox.types import EnforcementLevel, SandboxArtifact, SandboxResult
+from modex_agent.plugins.defaults.capabilities.sandbox.types import (
+    EnforcementLevel,
+    SandboxArtifact,
+    SandboxResult,
+)
 
 
 class TestEnforcementLevel:

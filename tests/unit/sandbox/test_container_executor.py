@@ -23,7 +23,9 @@ from typing import Any
 import pytest
 
 from modex_agent.core.terminal import Platform, ShellFamily
-from modex_agent.sandbox.container_executor import ContainerShellExecutor
+from modex_agent.plugins.defaults.capabilities.sandbox.container_executor import (
+    ContainerShellExecutor,
+)
 from modex_agent.tools.terminal.subprocess_tool import create_subprocess_executor
 
 _PREFIX = ["docker", "exec", "modex-sbx-test"]
@@ -92,7 +94,7 @@ class TestContainerShellExecutor:
             seen["argv"] = argv
             return _FakeProcess()
 
-        import modex_agent.sandbox.container_executor as ce_mod
+        import modex_agent.plugins.defaults.capabilities.sandbox.container_executor as ce_mod
 
         original = ce_mod.asyncio.create_subprocess_exec
         ce_mod.asyncio.create_subprocess_exec = fake_exec

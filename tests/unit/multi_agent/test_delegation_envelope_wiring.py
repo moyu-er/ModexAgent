@@ -23,7 +23,6 @@ from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.plugins.assembly.subagent_materializer import SubagentMaterializer
 from modex_agent.plugins.defaults import DefaultPlugin
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.sandbox.settings import ExclusiveConfig, SandboxSettings
 from modex_agent.scope.compiler import compile_scope
 from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.spec import AgentSpec, PoolSpec, ScopeKind, ScopeSpec
@@ -155,9 +154,7 @@ async def test_allowed_dir_under_pool_writable_root_materializes(tmp_path: Path)
     deps.scope_path = ScopePath(workspace_root=ws, pool_name="main")
     template = _compiled_template(
         "scout",
-        sandbox=SandboxSettings(
-            exclusive=ExclusiveConfig(writable_roots=[vendor / "libs"])
-        ),
+        sandbox={"exclusive": {"writable_roots": [str(vendor / "libs")]}},
     )
 
     with patch(
@@ -196,9 +193,7 @@ async def test_allowed_dir_outside_all_pool_roots_still_fails(tmp_path: Path) ->
     deps.scope_path = ScopePath(workspace_root=ws, pool_name="main")
     template = _compiled_template(
         "scout",
-        sandbox=SandboxSettings(
-            exclusive=ExclusiveConfig(writable_roots=[elsewhere])
-        ),
+        sandbox={"exclusive": {"writable_roots": [str(elsewhere)]}},
     )
 
     with (

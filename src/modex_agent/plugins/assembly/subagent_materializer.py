@@ -38,8 +38,8 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
     from modex_agent.multi_agent.template import AgentTemplate
     from modex_agent.plugins.assembly.context import AssemblyContext
-    from modex_agent.sandbox.delegation import DelegationSnapshot
-    from modex_agent.sandbox.settings import SandboxSettings
+    from modex_agent.plugins.defaults.capabilities.sandbox.delegation import DelegationSnapshot
+    from modex_agent.plugins.defaults.capabilities.sandbox.settings import SandboxSettings
     from modex_agent.scope.assembly_spec import AssemblySpec
 
 __all__ = [
@@ -218,7 +218,7 @@ class SubagentMaterializer(AgentMaterializer):
             SANDBOX_GUARD_INTERCEPTOR,
             assemble_interceptor_chain,
         )
-        from modex_agent.sandbox.settings import SandboxBackend
+        from modex_agent.plugins.defaults.capabilities.sandbox.settings import SandboxBackend
 
         guard_chain = None
         if settings.backend is not SandboxBackend.DEFAULT:

@@ -66,7 +66,7 @@ if TYPE_CHECKING:
 
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.message import ToolCall
-    from modex_agent.sandbox.decision import SecurityDecisionService
+    from modex_agent.plugins.defaults.capabilities.sandbox.decision import SecurityDecisionService
 
 __all__ = [
     "SecurityClassifier",
@@ -89,7 +89,7 @@ class SecurityClassifier(ApprovalClassifier):
     classification routes the verdict reason through the builder and the
     RESULT becomes the classification ``reason``. The delegation
     deployment passes
-    :func:`~modex_agent.sandbox.delegation.delegation_denial_message` so
+    :func:`~modex_agent.plugins.defaults.capabilities.sandbox.delegation.delegation_denial_message` so
     subagent denials name the restriction and direct requests to the main session.
     """
 
@@ -169,7 +169,7 @@ def guard_only_runtime(
     setting ``approval=None``: guard findings must still deny without prompts.
 
     *decision* is the caller-constructed
-    :class:`~modex_agent.sandbox.decision.SecurityDecisionService` (W3b
+    :class:`~modex_agent.plugins.defaults.capabilities.sandbox.decision.SecurityDecisionService` (W3b
     inversion: approval must not import the sandbox package, so the callers
     — all above both packages — build the service from their own settings
     and root provider). Delegation supplies its denial renderer.

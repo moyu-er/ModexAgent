@@ -3,9 +3,12 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.sandbox.guard import CommandPatternGuard, CommandPatternGuardConfig
-from modex_agent.sandbox.guard_network import NetworkGuard
-from modex_agent.sandbox.guard_pipeline import GuardPipeline
+from modex_agent.plugins.defaults.capabilities.sandbox.guard import (
+    CommandPatternGuard,
+    CommandPatternGuardConfig,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.guard_network import NetworkGuard
+from modex_agent.plugins.defaults.capabilities.sandbox.guard_pipeline import GuardPipeline
 
 
 class TestGuardPipeline:

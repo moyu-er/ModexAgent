@@ -24,11 +24,8 @@ from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.agents.react.tool_executor import ToolExecutor
-from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig, ToolApprovalConfig
-from modex_agent.plugins.defaults.capabilities.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
-from modex_agent.plugins.defaults.capabilities.approval.security import SecurityClassifier
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.emitter import AgentResult, TurnEvent, TurnEventSink
+from modex_agent.core.emitter import TurnEvent, TurnEventSink
 from modex_agent.core.message import ChatMessage, MessageRole, ToolCall
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo
@@ -46,15 +43,24 @@ from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.approval_audit_store import (
     SqliteApprovalAuditStore,
 )
-from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-from modex_agent.sandbox.decision import SecurityDecisionService
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.approval.config import (
+    AgentApprovalConfig,
+    ToolApprovalConfig,
+)
+from modex_agent.plugins.defaults.capabilities.approval.runtime import (
+    ApprovalRuntime,
+    TieredToolApprovalClassifier,
+)
+from modex_agent.plugins.defaults.capabilities.approval.security import SecurityClassifier
+from modex_agent.plugins.defaults.capabilities.sandbox.decision import SecurityDecisionService
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     ExclusiveConfig,
     GuardSettings,
     SandboxBackend,
     SandboxSettings,
     WriteSurface,
 )
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_graph import (
     GraphPersistenceCoordinator,

@@ -340,7 +340,7 @@ async def test_wrapped_glob_workspace_switch(
 
 
 def test_scoped_path_preserves_the_approved_spelling(tmp_path: Path) -> None:
-    from modex_agent.sandbox.tool_matrix import approval_anchor
+    from modex_agent.plugins.defaults.capabilities.sandbox.tool_matrix import approval_anchor
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()

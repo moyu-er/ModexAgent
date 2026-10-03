@@ -43,8 +43,8 @@ if TYPE_CHECKING:
     from modex_agent.core.turn.approval_decision import ApprovalAuditStore
     from modex_agent.multi_agent.descriptor import AgentInstance
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
-    from modex_agent.sandbox.delegation import DelegationSnapshot
-    from modex_agent.sandbox.settings import SandboxSettings
+    from modex_agent.plugins.defaults.capabilities.sandbox.delegation import DelegationSnapshot
+    from modex_agent.plugins.defaults.capabilities.sandbox.settings import SandboxSettings
     from modex_agent.scope.assembly_spec import AssemblySpec
     from modex_agent.scope.spec import PoolSpec
 
@@ -86,7 +86,7 @@ def _pool_sandbox_settings(deps: AgentMaterializeDeps) -> SandboxSettings | None
     activate a substrate, but the declared permission face is preserved
     through :func:`resolve_agent_sandbox` for delegation.
     """
-    from modex_agent.sandbox.settings import SandboxSettings
+    from modex_agent.plugins.defaults.capabilities.sandbox.settings import SandboxSettings
 
     pool_assembly = deps.pool_assembly_ctx
     if pool_assembly is None:
@@ -140,7 +140,11 @@ class AgentTemplate:
         deps: AgentMaterializeDeps,
     ) -> AgentInstance:
         """Validate before building; every strategy shares post-build delegation metadata."""
-        from modex_agent.sandbox.delegation import DelegationSnapshot, resolve_agent_sandbox
+        from modex_agent.plugins.defaults.capabilities.sandbox.delegation import (
+            DelegationSnapshot,
+            resolve_agent_sandbox,
+        )
+        from modex_agent.plugins.defaults.capabilities.sandbox.settings import SandboxSettings
 
         materializer = deps.materializer
         if materializer is None:
@@ -152,7 +156,15 @@ class AgentTemplate:
             )
         root = subagent_workspace_root(deps)
         pool_settings = _pool_sandbox_settings(deps)
-        settings = resolve_agent_sandbox(self.spec.sandbox, pool_settings, root)
+        # The spec holds the RAW ``sandbox:`` declaration (rule 14 open
+        # face); the bundle's config model validates it here, lazily and
+        # gated on the field being non-None.
+        declared = (
+            SandboxSettings.model_validate(self.spec.sandbox)
+            if self.spec.sandbox is not None
+            else None
+        )
+        settings = resolve_agent_sandbox(declared, pool_settings, root)
         snapshot = DelegationSnapshot(
             workspace_root=root, settings=settings, depth=self._declared_depth(deps),
         )
@@ -199,14 +211,16 @@ class AgentTemplate:
         from modex_agent.plugins.defaults.capabilities.approval.security import (
             guard_only_runtime,
         )
-        from modex_agent.runtime.services import AgentRuntimeServices
-        from modex_agent.sandbox.decision import SecurityDecisionService
-        from modex_agent.sandbox.delegation import (
+        from modex_agent.plugins.defaults.capabilities.sandbox.decision import (
+            SecurityDecisionService,
+        )
+        from modex_agent.plugins.defaults.capabilities.sandbox.delegation import (
             delegation_denial_message,
         )
-        from modex_agent.sandbox.settings import SandboxBackend
-        from modex_agent.sandbox.shell_plan import resolved_substrate
-        from modex_agent.sandbox.types import EnforcementLevel
+        from modex_agent.plugins.defaults.capabilities.sandbox.settings import SandboxBackend
+        from modex_agent.plugins.defaults.capabilities.sandbox.shell_plan import resolved_substrate
+        from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel
+        from modex_agent.runtime.services import AgentRuntimeServices
         from modex_agent.scope.execution_kind import strategy_name_of
 
         builder = instance.pipeline._turn_runner.turn_context_builder if instance.pipeline else None

@@ -61,13 +61,13 @@ from modex_agent.plugins.defaults.capabilities.approval.runtime import (
     ApprovalRuntime,
     TieredToolApprovalClassifier,
 )
-from modex_agent.runtime.services import AgentRuntimeServices
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     ExclusiveConfig,
     SandboxBackend,
     SandboxSettings,
     WriteSurface,
 )
+from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.scope.spec import AgentSpec, PoolSpec
 from modex_agent.tools.manager import InMemoryToolManager
 

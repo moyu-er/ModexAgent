@@ -175,7 +175,10 @@ def wrap_standard_tools(
 
     Wrapping is idempotent: an already-scoped tool is not re-wrapped.
     """
-    from modex_agent.sandbox.tool_matrix import ToolEffect, describe_tool_security
+    from modex_agent.plugins.defaults.capabilities.sandbox.tool_matrix import (
+        ToolEffect,
+        describe_tool_security,
+    )
 
     scoped: list[Tool] = []
     for tool in tools:

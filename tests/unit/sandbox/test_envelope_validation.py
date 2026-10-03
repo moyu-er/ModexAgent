@@ -18,11 +18,16 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.plugins.defaults.capabilities.approval.config import ApprovalConfig, ToolApprovalEntry
 from modex_agent.core.workspace_root import WorkspaceRootProvider
-from modex_agent.sandbox.approval_envelope import validate_approval_envelope
-from modex_agent.sandbox.delegation import resolve_agent_sandbox
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.approval.config import (
+    ApprovalConfig,
+    ToolApprovalEntry,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.approval_envelope import (
+    validate_approval_envelope,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.delegation import resolve_agent_sandbox
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     ExclusiveConfig,
     SandboxBackend,
     SandboxSettings,

@@ -1,11 +1,11 @@
-<!-- Parent: ../AGENTS.md -->
+<!-- Parent: ../../../../AGENTS.md -->
 <!-- Updated: 2026-09-10 | shell capability ownership -->
 
 # sandbox
 
 ## Purpose
 
-Opt-in execution substrate plus backend-independent permission judgments. Read [README.md](README.md) for configuration and the [substrate PRD](../../../docs/design/sandbox-integration/PRD.md) / [permission PRD](../../../docs/design/unified-security/PRD.md) before changing selection, approval or delegation. Implementation validation and platform gaps are recorded in [sandbox tickets](../../../docs/design/sandbox-integration/tickets.md#validation-evidence).
+Opt-in execution substrate plus backend-independent permission judgments. Read [README.md](README.md) for configuration and the [substrate PRD](../../../../../docs/design/sandbox-integration/PRD.md) / [permission PRD](../../../../../docs/design/unified-security/PRD.md) before changing selection, approval or delegation. Implementation validation and platform gaps are recorded in [sandbox tickets](../../../../../docs/design/sandbox-integration/tickets.md#validation-evidence).
 
 ## Settled Semantics
 
@@ -51,7 +51,7 @@ The actual YAML shape is `workspace.pools.<pool>.agents.<root>` with `approval`,
 
 `multi_agent/template.py:materialize` derives the effective settings through `delegation.resolve_agent_sandbox` — the ONE derivation: an undeclared subagent inherits the caller wholesale (a dormant caller normalizes to guard-only HOST), a declared block is authoritative for the permission face while the substrate (backend/network/image) stays with the caller, and every declared path must fit the caller envelope (a delegation can only narrow, never amplify — violations fail assembly). DEFAULT still skips substrate construction/probing but native delegation installs a guard-only classifier. External strategies receive truthful metadata, not framework tool enforcement.
 
-Path normalization/containment belongs to `workspace/boundary.py`. Runtime compilation canonicalizes workspace/extra roots first; native main/subagent file and AST path tools use the same workspace wrapper. Known child file writes use the caller workspace + validated declared roots; child reads (parallel class) are unrestricted by default. Nonempty whitespace spelling is preserved, and explicit relative cwd shares canonical permission/approval-anchor semantics. Additional roots are not authorized by approval, and changing configuration does not mutate an existing delegation snapshot. See the [multi-root example](../../../docs/design/unified-security/PRD.md#multi-root-example) for relative and host-native absolute paths.
+Path normalization/containment belongs to `workspace/boundary.py`. Runtime compilation canonicalizes workspace/extra roots first; native main/subagent file and AST path tools use the same workspace wrapper. Known child file writes use the caller workspace + validated declared roots; child reads (parallel class) are unrestricted by default. Nonempty whitespace spelling is preserved, and explicit relative cwd shares canonical permission/approval-anchor semantics. Additional roots are not authorized by approval, and changing configuration does not mutate an existing delegation snapshot. See the [multi-root example](../../../../../docs/design/unified-security/PRD.md#multi-root-example) for relative and host-native absolute paths.
 
 All three shell variants share tool-name judging: terminal-group execution is HOST, persistent PTY uses selected argv, and subprocess uses the selected prefix. LOCAL/OCI terminal requests select their persistent/subprocess variant without changing substrate. Approval waives only the matching BOUNDARY backstop, never kernel bounds; approved outside-envelope shell calls may still fail at the OS boundary. Graph turns are noninteractive and retain active guard-only classification; DEFAULT is filtered before that wiring. Native delegation receives the pool audit sink, keeping ESCALATED and APPROVED distinct.
 
@@ -67,4 +67,4 @@ This package is not import-isolated from the framework: decision/shell integrati
 
 ## Validation
 
-See [ticket evidence](../../../docs/design/sandbox-integration/tickets.md#validation-evidence) for parent-reported Windows/WSL suites, bot pool wiring and scoped static checks. WSL includes real bwrap/Docker; macOS/Podman coverage is simulated, with no live execution validation. Warnings remain. These results do not imply all-platform or arbitrary-code containment; Windows-native isolation/new-backend research is outside this delivery.
+See [ticket evidence](../../../../../docs/design/sandbox-integration/tickets.md#validation-evidence) for parent-reported Windows/WSL suites, bot pool wiring and scoped static checks. WSL includes real bwrap/Docker; macOS/Podman coverage is simulated, with no live execution validation. Warnings remain. These results do not imply all-platform or arbitrary-code containment; Windows-native isolation/new-backend research is outside this delivery.

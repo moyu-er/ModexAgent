@@ -12,8 +12,8 @@ from modex_agent.core.turn.approval_decision import ApprovalAuditStore
 from modex_agent.core.turn.approval_types import ApprovalAuditSource, ApprovalTier
 from modex_agent.multi_agent.descriptor import AgentInstance
 from modex_agent.multi_agent.factory import DefaultAgentFactory
-from modex_agent.sandbox.settings import SandboxBackend, WriteSurface
-from modex_agent.sandbox.types import EnforcementLevel
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import SandboxBackend, WriteSurface
+from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel
 from modex_agent.scope.spec import AgentSpec
 from modex_agent.workspace.scope_path import ScopePath
 from tests.unit.approval.test_tool_node_single_classification import _make_graph_ctx

@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.session_tree.session_binding import (
         SessionBindingStore,
     )
-    from modex_agent.sandbox.settings import SandboxSettings
+    from modex_agent.plugins.defaults.capabilities.sandbox.settings import SandboxSettings
     from modex_graph.context import GraphContext
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,10 @@ def _declared_sandbox_settings(main_spec: AgentSpec) -> SandboxSettings | None:
     DEFAULT-tier section returns None: the approval assembly stays the
     plain tiered classifier (unified-security Ticket 02 double-gate).
     """
-    from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
+    from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
+        SandboxBackend,
+        SandboxSettings,
+    )
 
     raw = (main_spec.interceptor_configs or {}).get("sandbox_guard")
     if raw is None:
@@ -208,7 +211,9 @@ def wire_main_pipeline(
         from modex_agent.plugins.defaults.capabilities.approval.security import (
             guard_only_runtime,
         )
-        from modex_agent.sandbox.decision import SecurityDecisionService
+        from modex_agent.plugins.defaults.capabilities.sandbox.decision import (
+            SecurityDecisionService,
+        )
 
         if root_provider is None:
             # build_approval_runtime already raised for a sandbox tier

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.sandbox.config import SandboxConfig
+from modex_agent.plugins.defaults.capabilities.sandbox.config import SandboxConfig
 
 
 class TestSandboxConfigDeadFieldsRemoved:

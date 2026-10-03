@@ -16,24 +16,26 @@ from typing import Any
 
 import pytest
 
-from modex_agent.plugins.defaults.capabilities.approval.config import (
-    AgentApprovalConfig,
-    ApprovalConfig,
-    ToolApprovalConfig,
-    ToolApprovalEntry,
-)
-from modex_agent.plugins.defaults.capabilities.approval.runtime import TieredToolApprovalClassifier
-from modex_agent.plugins.defaults.capabilities.approval.security import SecurityClassifier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.message import ToolCall
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.turn.approval_types import ApprovalTier
 from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.plugins.defaults.capabilities.approval.config import (
+    AgentApprovalConfig,
+    ApprovalConfig,
+    ToolApprovalConfig,
+    ToolApprovalEntry,
+)
 from modex_agent.plugins.defaults.capabilities.approval.factory import build_approval_runtime
-from modex_agent.sandbox.approval_envelope import validate_approval_envelope
-from modex_agent.sandbox.decision import SecurityDecisionService
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.approval.runtime import TieredToolApprovalClassifier
+from modex_agent.plugins.defaults.capabilities.approval.security import SecurityClassifier
+from modex_agent.plugins.defaults.capabilities.sandbox.approval_envelope import (
+    validate_approval_envelope,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.decision import SecurityDecisionService
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     GuardSettings,
     SandboxBackend,
     SandboxSettings,
@@ -213,7 +215,9 @@ class TestCleanFallback:
         )
         # The inner matcher is optional in the dataclass; give it the real
         # ArgumentMatcher through the factory path for pattern resolution.
-        from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import ArgumentMatcher
+        from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import (
+            ArgumentMatcher,
+        )
 
         inner.argument_matcher = ArgumentMatcher(root_provider=_FixedRoot(WS))
         classifier = _classifier(inner=inner)
@@ -224,7 +228,9 @@ class TestCleanFallback:
         inner = _inner(
             tools={"write": ToolApprovalConfig(allowed_paths=["./*"])}
         )
-        from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import ArgumentMatcher
+        from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import (
+            ArgumentMatcher,
+        )
 
         inner.argument_matcher = ArgumentMatcher(root_provider=_FixedRoot(WS))
         classifier = _classifier(inner=inner)

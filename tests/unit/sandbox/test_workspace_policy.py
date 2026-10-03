@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.sandbox.exceptions import WorkspaceBoundaryError
-from modex_agent.sandbox.workspace_policy import WorkspacePolicy, WorkspacePolicyConfig
+from modex_agent.plugins.defaults.capabilities.sandbox.exceptions import WorkspaceBoundaryError
+from modex_agent.plugins.defaults.capabilities.sandbox.workspace_policy import (
+    WorkspacePolicy,
+    WorkspacePolicyConfig,
+)
 
 
 class TestWorkspacePolicyResolvePath:

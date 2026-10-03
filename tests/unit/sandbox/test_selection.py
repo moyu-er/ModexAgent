@@ -25,26 +25,26 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-import modex_agent.sandbox.selection as selection_mod
-from modex_agent.sandbox.bwrap_runtime import BwrapRuntime
-from modex_agent.sandbox.oci_runtime import OciContainerRuntime
-from modex_agent.sandbox.platform import Platform
-from modex_agent.sandbox.runtime import HostRuntime, ResolvedSandbox
-from modex_agent.sandbox.seatbelt_runtime import SeatbeltRuntime
-from modex_agent.sandbox.selection import (
+import modex_agent.plugins.defaults.capabilities.sandbox.selection as selection_mod
+from modex_agent.plugins.defaults.capabilities.sandbox.bwrap_runtime import BwrapRuntime
+from modex_agent.plugins.defaults.capabilities.sandbox.oci_runtime import OciContainerRuntime
+from modex_agent.plugins.defaults.capabilities.sandbox.platform import Platform
+from modex_agent.plugins.defaults.capabilities.sandbox.runtime import HostRuntime, ResolvedSandbox
+from modex_agent.plugins.defaults.capabilities.sandbox.seatbelt_runtime import SeatbeltRuntime
+from modex_agent.plugins.defaults.capabilities.sandbox.selection import (
     LocalSandboxEngine,
     OciEngine,
     SandboxSelection,
     resolve_selection,
     select_runtime,
 )
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     ExclusiveConfig,
     SandboxBackend,
     SandboxSettings,
     WriteSurface,
 )
-from modex_agent.sandbox.types import EnforcementLevel
+from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel
 
 _WS = Path("/ws/project")
 
@@ -61,7 +61,7 @@ def _patch_platform(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
 def _set_probe(
     monkeypatch: pytest.MonkeyPatch, engine: str, available: bool
 ) -> None:
-    from modex_agent.sandbox import engine_probe
+    from modex_agent.plugins.defaults.capabilities.sandbox import engine_probe
 
     async def fake_probe() -> engine_probe.ProbeResult:
         detail = "stub ok" if available else "stub missing"
@@ -434,7 +434,7 @@ class TestSelectorSoleProbeOwner:
     async def test_bwrap_resolve_never_probes(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        import modex_agent.sandbox.bwrap_runtime as bwrap_mod
+        import modex_agent.plugins.defaults.capabilities.sandbox.bwrap_runtime as bwrap_mod
 
         calls = _explosive_probe(monkeypatch, ["bwrap"])
         monkeypatch.setattr(bwrap_mod, "_get_platform", lambda: Platform.LINUX)
@@ -452,7 +452,7 @@ class TestSelectorSoleProbeOwner:
     async def test_seatbelt_resolve_never_probes(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        import modex_agent.sandbox.seatbelt_runtime as seatbelt_mod
+        import modex_agent.plugins.defaults.capabilities.sandbox.seatbelt_runtime as seatbelt_mod
 
         calls = _explosive_probe(monkeypatch, ["seatbelt"])
         monkeypatch.setattr(seatbelt_mod, "_get_platform", lambda: Platform.MACOS)
@@ -473,7 +473,7 @@ class TestSelectorSoleProbeOwner:
         from tests.unit.sandbox.test_oci_runtime import FakeCli
 
         calls = _explosive_probe(monkeypatch, ["docker", "podman"])
-        import modex_agent.sandbox.oci_runtime as oci_mod
+        import modex_agent.plugins.defaults.capabilities.sandbox.oci_runtime as oci_mod
 
         monkeypatch.setattr(oci_mod, "_run_cli", FakeCli(engine="docker"))
         resolved = await OciContainerRuntime(engine=OciEngine.DOCKER).resolve(

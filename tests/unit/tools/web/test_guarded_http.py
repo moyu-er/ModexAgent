@@ -13,7 +13,7 @@ import httpcore
 import httpx
 import pytest
 
-from modex_agent.sandbox.guard_network import NetworkGuard
+from modex_agent.plugins.defaults.capabilities.sandbox.guard_network import NetworkGuard
 from modex_agent.tools.web.guarded_http import (
     GuardedHttpError,
     PolicyBlockedError,
@@ -135,7 +135,9 @@ class TestFailClosed:
         assert scripted.dials == []
 
     async def test_allowed_network_config_permits_private(self) -> None:
-        from modex_agent.sandbox.guard_network import NetworkGuardConfig
+        from modex_agent.plugins.defaults.capabilities.sandbox.guard_network import (
+            NetworkGuardConfig,
+        )
 
         guard = NetworkGuard(NetworkGuardConfig(allowed_networks=("10.0.0.0/8",)))
         scripted, client = make_stack(

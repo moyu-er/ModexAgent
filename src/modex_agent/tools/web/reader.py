@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpcore
 import httpx
 
 from modex_agent.core.tool_manager import ParallelTool, ToolConfig
-from modex_agent.sandbox.guard_network import NetworkGuard, NetworkGuardConfig
 from modex_agent.tools.web.guarded_http import (
     GuardedHttpError,
     PolicyBlockedError,
@@ -20,6 +19,11 @@ from modex_agent.tools.web.guarded_transport import (
     AsyncResolver,
     ValidatingNetworkBackend,
 )
+
+if TYPE_CHECKING:
+    from modex_agent.plugins.defaults.capabilities.sandbox.guard_network import (
+        NetworkGuard,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +81,18 @@ class WebReaderTool(ParallelTool):
             },
             config=ToolConfig(),
         )
-        self._guard = guard if guard is not None else NetworkGuard(NetworkGuardConfig())
+        if guard is None:
+            # Lazy guard construction (W1-B3): the default tool
+            # registration chain loads this module at boot — the sandbox
+            # bundle's guard loads only when a reader is actually
+            # constructed. The guard still applies on every fetch.
+            from modex_agent.plugins.defaults.capabilities.sandbox.guard_network import (
+                NetworkGuard,
+                NetworkGuardConfig,
+            )
+
+            guard = NetworkGuard(NetworkGuardConfig())
+        self._guard = guard
         self._resolver = resolver
         self._dialer = dialer
 

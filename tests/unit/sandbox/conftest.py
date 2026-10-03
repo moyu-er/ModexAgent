@@ -6,7 +6,7 @@ from collections.abc import Generator
 
 import pytest
 
-from modex_agent.sandbox import engine_probe
+from modex_agent.plugins.defaults.capabilities.sandbox import engine_probe
 
 
 @pytest.fixture(autouse=True)

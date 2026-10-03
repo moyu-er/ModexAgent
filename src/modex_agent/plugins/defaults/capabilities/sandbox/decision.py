@@ -34,16 +34,29 @@ from typing import assert_never
 
 from modex_agent.core.guard import GuardCategory, GuardVerdict
 from modex_agent.core.workspace_root import WorkspaceRootProvider
-from modex_agent.sandbox.guard import CommandGuard, CommandPatternGuard, GuardResult
-from modex_agent.sandbox.guard_network import NetworkGuard, NetworkGuardConfig
-from modex_agent.sandbox.guard_path import PathBoundaryConfig, PathBoundaryGuard
-from modex_agent.sandbox.guard_pipeline import GuardPipeline
-from modex_agent.sandbox.readonly import classify_readonly, resolve_command_family
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.sandbox.guard import (
+    CommandGuard,
+    CommandPatternGuard,
+    GuardResult,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.guard_network import (
+    NetworkGuard,
+    NetworkGuardConfig,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.guard_path import (
+    PathBoundaryConfig,
+    PathBoundaryGuard,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.guard_pipeline import GuardPipeline
+from modex_agent.plugins.defaults.capabilities.sandbox.readonly import (
+    classify_readonly,
+    resolve_command_family,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     SandboxSettings,
     WriteSurface,
 )
-from modex_agent.sandbox.tool_matrix import (
+from modex_agent.plugins.defaults.capabilities.sandbox.tool_matrix import (
     ToolEffect,
     approval_anchor,
     describe_tool_security,

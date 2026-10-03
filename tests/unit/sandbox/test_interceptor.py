@@ -29,13 +29,16 @@ from modex_agent.core.message import ToolCall
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.turn.enums import TurnCustomKey
 from modex_agent.core.workspace_root import WorkspaceRootProvider
-from modex_agent.sandbox.decision import SecurityDecisionService
-from modex_agent.sandbox.interceptor import (
+from modex_agent.plugins.defaults.capabilities.sandbox.decision import SecurityDecisionService
+from modex_agent.plugins.defaults.capabilities.sandbox.interceptor import (
     SandboxGuardInterceptor,
     translate_denial,
 )
-from modex_agent.sandbox.runtime import ResolvedSandbox, SandboxRuntime
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.sandbox.runtime import (
+    ResolvedSandbox,
+    SandboxRuntime,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     GuardSettings,
     ParallelConfig,
     SandboxBackend,
@@ -43,7 +46,7 @@ from modex_agent.sandbox.settings import (
     ToolPaths,
     WriteSurface,
 )
-from modex_agent.sandbox.types import EnforcementLevel
+from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel
 
 WS = Path("/ws/project")
 
@@ -190,8 +193,8 @@ async def _ok_result_async(tool_name: str) -> ToolResult:
 
 
 def test_select_runtime_moved_to_selection_layer() -> None:
-    import modex_agent.sandbox.interceptor as interceptor_mod
-    from modex_agent.sandbox.selection import select_runtime
+    import modex_agent.plugins.defaults.capabilities.sandbox.interceptor as interceptor_mod
+    from modex_agent.plugins.defaults.capabilities.sandbox.selection import select_runtime
 
     assert not hasattr(interceptor_mod, "select_runtime")
     assert callable(select_runtime)
@@ -581,14 +584,14 @@ class TestShellArgvCarrying:
 
 
 # ---------------------------------------------------------------------------
-# Factory — plugins/defaults/interceptors.py
+# Factory — plugins/defaults/capabilities/sandbox/registration.py
 # ---------------------------------------------------------------------------
 
 
 class TestSandboxGuardFactory:
     def test_registered_in_interceptor_slot(self) -> None:
-        from modex_agent.plugins.defaults.interceptors import (
-            register_default_interceptors,
+        from modex_agent.plugins.defaults.capabilities.sandbox import (
+            register_sandbox_feature,
         )
         from modex_agent.plugins.loader import PluginRegistrationContext
         from modex_agent.scope.component_registry import ComponentRegistry
@@ -596,14 +599,14 @@ class TestSandboxGuardFactory:
 
         registry = ComponentRegistry()
         with PluginRegistrationContext(registry) as registration:
-            register_default_interceptors(registration)
+            register_sandbox_feature(registration)
         factory = registry.resolve(ComponentSlot.INTERCEPTOR, "sandbox_guard")
         assert isinstance(factory, ComponentFactory)
 
     async def test_default_backend_factory_refuses(self) -> None:
         """The FIRST DEFAULT gate: the factory never builds a guard for the
         dormant tier — opt-in means the roster must declare a real backend."""
-        from modex_agent.plugins.defaults.interceptors import (
+        from modex_agent.plugins.defaults.capabilities.sandbox.registration import (
             SandboxGuardConfig,
             SandboxGuardInterceptorFactory,
         )
@@ -616,7 +619,7 @@ class TestSandboxGuardFactory:
             await factory.create(config, ctx=None)  # type: ignore[arg-type]
 
     async def test_default_backend_without_sandbox_section_refuses(self) -> None:
-        from modex_agent.plugins.defaults.interceptors import (
+        from modex_agent.plugins.defaults.capabilities.sandbox.registration import (
             SandboxGuardConfig,
             SandboxGuardInterceptorFactory,
         )
@@ -633,7 +636,7 @@ class TestSandboxGuardFactory:
             AgentContext,
             PoolRuntimeDeps,
         )
-        from modex_agent.plugins.defaults.interceptors import (
+        from modex_agent.plugins.defaults.capabilities.sandbox.registration import (
             SandboxGuardConfig,
             SandboxGuardInterceptorFactory,
         )
@@ -654,13 +657,17 @@ class TestSandboxGuardFactory:
         assert guard.name == "sandbox_guard"
 
     def test_config_rejects_unknown_fields(self) -> None:
-        from modex_agent.plugins.defaults.interceptors import SandboxGuardConfig
+        from modex_agent.plugins.defaults.capabilities.sandbox.registration import (
+            SandboxGuardConfig,
+        )
 
         with pytest.raises(ValidationError):
             SandboxGuardConfig.model_validate({"unknown": True})
 
     def test_config_sandbox_is_frozen_sandbox_settings(self) -> None:
-        from modex_agent.plugins.defaults.interceptors import SandboxGuardConfig
+        from modex_agent.plugins.defaults.capabilities.sandbox.registration import (
+            SandboxGuardConfig,
+        )
 
         config = SandboxGuardConfig.model_validate(
             {"sandbox": {"backend": "host"}}

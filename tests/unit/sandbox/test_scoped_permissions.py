@@ -5,16 +5,22 @@ from pathlib import Path
 import pytest
 
 from modex_agent.core.workspace_root import WorkspaceRootProvider
-from modex_agent.sandbox.decision import GuardCategory, SecurityDecisionService
-from modex_agent.sandbox.delegation import DelegationSnapshot, resolve_agent_sandbox
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.sandbox.decision import (
+    GuardCategory,
+    SecurityDecisionService,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.delegation import (
+    DelegationSnapshot,
+    resolve_agent_sandbox,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     ExclusiveConfig,
     GuardSettings,
     SandboxBackend,
     SandboxSettings,
     WriteSurface,
 )
-from modex_agent.sandbox.tool_matrix import (
+from modex_agent.plugins.defaults.capabilities.sandbox.tool_matrix import (
     approval_anchor,
     describe_tool_security,
     extract_call_target,

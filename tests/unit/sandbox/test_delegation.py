@@ -16,13 +16,13 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.sandbox.delegation import (
+from modex_agent.plugins.defaults.capabilities.sandbox.delegation import (
     MAX_DELEGATION_DEPTH,
     DelegationSnapshot,
     delegation_denial_message,
     resolve_agent_sandbox,
 )
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     ExclusiveConfig,
     SandboxBackend,
     SandboxSettings,
@@ -162,7 +162,7 @@ class TestSettingsDerivation:
             resolve_agent_sandbox(declared, caller, WS)
 
     def test_declared_boundary_outside_caller_ceiling_fails(self) -> None:
-        from modex_agent.sandbox.settings import ToolPaths
+        from modex_agent.plugins.defaults.capabilities.sandbox.settings import ToolPaths
 
         caller = SandboxSettings(backend=SandboxBackend.HOST)
         declared = SandboxSettings(

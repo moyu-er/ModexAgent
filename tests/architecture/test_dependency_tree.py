@@ -331,7 +331,6 @@ PACKAGE_LEVELS: dict[str, int] = {
     "presentation": 1,
     "persistence": 2,
     "memory": 2,
-    "sandbox": 2,
     "trace": 2,
     "runtime": 2,
     "tools": 3,
@@ -400,17 +399,38 @@ def test_package_levels_table_covers_every_package() -> None:
 # consumers reach the bundle's implementation modules through LAZY
 # function-body imports at their use sites — the capability-bundle
 # import-light contract (the framework import graph only loads bundle
-# implementation modules when approval is actually in play). The five
-# pinned edges below are exactly that lazy set; the ADR-0051 port-seam
+# implementation modules when approval is actually in play). The pinned
+# edges below are exactly that lazy set; the ADR-0051 port-seam
 # resolution (ABC below + injection from above, as AgentMaterializer did
 # for materialization) removes them and empties this ledger again. Any
 # OTHER upward edge remains new debt and fails the gate.
+#
+# W1-B3 (sandbox capability bundle): the sandbox vertical slice moved
+# into ``plugins/defaults/capabilities/sandbox/`` (the top-level
+# ``sandbox`` package is deleted). The same import-light contract
+# applies: the below-bundle edges below (template/materializer dispatch,
+# the delegation-depth budget, workspace tool wrapping, and the web
+# tools' SSRF guard) are LAZY function-body imports at their use sites —
+# an undeclared deployment never loads the sandbox bundle's
+# implementation modules. Intra-plugins edges (assembly sites, the shell
+# bundle, approval→sandbox composition) are not this gate's concern.
 EXPECTED_LAYERING_OFFENDERS: set[tuple[str, str]] = {
     ("multi_agent/factory.py", "modex_agent.plugins.defaults.capabilities.approval.renderer"),
     ("multi_agent/factory.py", "modex_agent.plugins.defaults.capabilities.approval.resumer"),
     ("multi_agent/template.py", "modex_agent.plugins.defaults.capabilities.approval.security"),
     ("pipeline/turn_context_builder.py", "modex_agent.plugins.defaults.capabilities.approval.response"),
     ("pipeline/turn_runner.py", "modex_agent.plugins.defaults.capabilities.approval.views"),
+    # ── W1-B3: the sandbox bundle's below-bundle lazy edges ──
+    ("multi_agent/template.py", "modex_agent.plugins.defaults.capabilities.sandbox.decision"),
+    ("multi_agent/template.py", "modex_agent.plugins.defaults.capabilities.sandbox.delegation"),
+    ("multi_agent/template.py", "modex_agent.plugins.defaults.capabilities.sandbox.settings"),
+    ("multi_agent/template.py", "modex_agent.plugins.defaults.capabilities.sandbox.shell_plan"),
+    ("multi_agent/template.py", "modex_agent.plugins.defaults.capabilities.sandbox.types"),
+    ("multi_agent/tools.py", "modex_agent.plugins.defaults.capabilities.sandbox.delegation"),
+    ("tools/web/guarded_http.py", "modex_agent.plugins.defaults.capabilities.sandbox.guard_network"),
+    ("tools/web/guarded_transport.py", "modex_agent.plugins.defaults.capabilities.sandbox.guard_network"),
+    ("tools/web/reader.py", "modex_agent.plugins.defaults.capabilities.sandbox.guard_network"),
+    ("tools/workspace_scoped.py", "modex_agent.plugins.defaults.capabilities.sandbox.tool_matrix"),
 }
 
 def test_no_upward_or_same_level_runtime_imports() -> None:

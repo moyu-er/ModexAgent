@@ -50,16 +50,21 @@ pytestmark = [
     ),
 ]
 
-from modex_agent.sandbox.container_executor import ContainerShellExecutor
-from modex_agent.sandbox.oci_runtime import OciContainerRuntime, _container_name
-from modex_agent.sandbox.selection import OciEngine
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.sandbox.container_executor import (
+    ContainerShellExecutor,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.oci_runtime import (
+    OciContainerRuntime,
+    _container_name,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.selection import OciEngine
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     ExclusiveConfig,
     SandboxBackend,
     SandboxSettings,
     WriteSurface,
 )
-from modex_agent.sandbox.types import EnforcementLevel
+from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel
 
 _IMAGE = "debian:bookworm-slim"
 

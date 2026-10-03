@@ -13,11 +13,6 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig
-from modex_agent.plugins.defaults.capabilities.approval.runtime import (
-    ApprovalClassifier,
-    TieredToolApprovalClassifier,
-)
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.guard import GuardCategory
 from modex_agent.core.message import ToolCall
@@ -32,6 +27,11 @@ from modex_agent.core.turn.approval_types import (
     ToolClassification,
 )
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig
+from modex_agent.plugins.defaults.capabilities.approval.runtime import (
+    ApprovalClassifier,
+    TieredToolApprovalClassifier,
+)
 from modex_agent.tools.manager import InMemoryToolManager
 
 WS = Path("/ws/project")
@@ -54,8 +54,8 @@ def _tiered() -> TieredToolApprovalClassifier:
 
 def _guard_classifier():  # type: ignore[no-untyped-def]
     from modex_agent.plugins.defaults.capabilities.approval.security import SecurityClassifier
-    from modex_agent.sandbox.decision import SecurityDecisionService
-    from modex_agent.sandbox.settings import (
+    from modex_agent.plugins.defaults.capabilities.sandbox.decision import SecurityDecisionService
+    from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
         GuardSettings,
         SandboxBackend,
         SandboxSettings,
@@ -190,8 +190,10 @@ class TestSecurityClassifierReturnsClassification:
 
     def test_deny_message_builder_shapes_reason(self) -> None:
         from modex_agent.plugins.defaults.capabilities.approval.security import SecurityClassifier
-        from modex_agent.sandbox.decision import SecurityDecisionService
-        from modex_agent.sandbox.settings import (
+        from modex_agent.plugins.defaults.capabilities.sandbox.decision import (
+            SecurityDecisionService,
+        )
+        from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
             GuardSettings,
             SandboxBackend,
             SandboxSettings,

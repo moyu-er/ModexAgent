@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.sandbox.adapters.docker import DockerSandbox
-from modex_agent.sandbox.adapters.e2b import E2BSandbox
-from modex_agent.sandbox.adapters.subprocess import SubprocessSandbox
-from modex_agent.sandbox.config import SandboxConfig
-from modex_agent.sandbox.types import EnforcementLevel, SandboxResult
-from modex_agent.sandbox.workspace_policy import WorkspacePolicyConfig
+from modex_agent.plugins.defaults.capabilities.sandbox.adapters.docker import DockerSandbox
+from modex_agent.plugins.defaults.capabilities.sandbox.adapters.e2b import E2BSandbox
+from modex_agent.plugins.defaults.capabilities.sandbox.adapters.subprocess import SubprocessSandbox
+from modex_agent.plugins.defaults.capabilities.sandbox.config import SandboxConfig
+from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel, SandboxResult
+from modex_agent.plugins.defaults.capabilities.sandbox.workspace_policy import WorkspacePolicyConfig
 
 
 class TestSubprocessWorkspaceBoundary:
@@ -78,7 +78,7 @@ class TestDockerArgvCommand:
         class FakeClient:
             containers = FakeContainers()
 
-        import modex_agent.sandbox.adapters.docker as docker_module
+        import modex_agent.plugins.defaults.capabilities.sandbox.adapters.docker as docker_module
 
         monkeypatch.setattr(docker_module, "_check_docker_available", lambda: True)
         monkeypatch.setattr(docker_module, "DOCKER_AVAILABLE", True)
@@ -117,7 +117,7 @@ class TestE2bApiKeyHandling:
                 calls.append(kwargs)
                 return object()
 
-        import modex_agent.sandbox.adapters.e2b as e2b_module
+        import modex_agent.plugins.defaults.capabilities.sandbox.adapters.e2b as e2b_module
 
         monkeypatch.setattr(e2b_module, "Sandbox", FakeSdk, raising=False)
         monkeypatch.delenv("E2B_API_KEY", raising=False)
@@ -135,7 +135,7 @@ class TestE2bApiKeyHandling:
                 calls.append(kwargs)
                 return object()
 
-        import modex_agent.sandbox.adapters.e2b as e2b_module
+        import modex_agent.plugins.defaults.capabilities.sandbox.adapters.e2b as e2b_module
 
         monkeypatch.setattr(e2b_module, "Sandbox", FakeSdk, raising=False)
         monkeypatch.delenv("E2B_API_KEY", raising=False)
@@ -148,7 +148,7 @@ class TestE2bApiKeyHandling:
         """Static contract: the adapter has no os.environ write for the key."""
         import inspect
 
-        import modex_agent.sandbox.adapters.e2b as e2b_module
+        import modex_agent.plugins.defaults.capabilities.sandbox.adapters.e2b as e2b_module
 
         source = inspect.getsource(e2b_module)
         assert "os.environ[\"E2B_API_KEY\"]" not in source
@@ -180,7 +180,7 @@ class TestE2bApiKeyHandling:
             def kill(self):
                 pass
 
-        import modex_agent.sandbox.adapters.e2b as e2b_module
+        import modex_agent.plugins.defaults.capabilities.sandbox.adapters.e2b as e2b_module
 
         monkeypatch.setattr(e2b_module, "_check_e2b_available", lambda key=None: True)
         monkeypatch.delenv("E2B_API_KEY", raising=False)

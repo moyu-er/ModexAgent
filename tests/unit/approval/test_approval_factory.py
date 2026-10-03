@@ -18,7 +18,7 @@ from modex_agent.plugins.defaults.capabilities.approval.runtime import (
     ApprovalRuntime,
     TieredToolApprovalClassifier,
 )
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     ExclusiveConfig,
     SandboxBackend,
     SandboxSettings,

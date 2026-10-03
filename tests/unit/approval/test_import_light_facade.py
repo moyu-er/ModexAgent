@@ -2,7 +2,7 @@
 
 Importing the registration entry must NOT eagerly import the bundle's
 sandbox-coupled implementation modules (``security``, ``resumer``,
-``factory``) nor ``modex_agent.sandbox.decision`` — the framework import
+``factory``) nor ``modex_agent.plugins.defaults.capabilities.sandbox.decision`` — the framework import
 graph only loads bundle implementation modules when approval is actually
 in play. Pinned via ``sys.modules`` in a subprocess (the same pattern as
 the experience bundle's facade test).
@@ -24,7 +24,7 @@ def test_facade_does_not_eagerly_import_heavy_modules() -> None:
         "            'modex_agent.plugins.defaults.capabilities.approval.')\n"
         "        and any(m.endswith('.' + b) for b in banned)]\n"
         "assert not hits, f'eagerly imported: {hits}'\n"
-        "assert 'modex_agent.sandbox.decision' not in sys.modules, (\n"
+        "assert 'modex_agent.plugins.defaults.capabilities.sandbox.decision' not in sys.modules, (\n"
         "    'the facade pulled the sandbox decision service'\n"
         ")\n"
         "print('import-light OK')\n"

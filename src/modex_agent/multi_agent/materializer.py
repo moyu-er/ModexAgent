@@ -31,8 +31,8 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.descriptor import AgentInstance
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
     from modex_agent.multi_agent.template import AgentTemplate
-    from modex_agent.sandbox.delegation import DelegationSnapshot
-    from modex_agent.sandbox.settings import SandboxSettings
+    from modex_agent.plugins.defaults.capabilities.sandbox.delegation import DelegationSnapshot
+    from modex_agent.plugins.defaults.capabilities.sandbox.settings import SandboxSettings
 
 __all__ = [
     "AgentMaterializer",

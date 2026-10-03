@@ -119,7 +119,7 @@ def _delegation_depth_denial(context: AgentContext) -> str | None:
     above ``MAX_DELEGATION_DEPTH`` is refused with actionable copy
     before any session is minted. ``None`` = within budget.
     """
-    from modex_agent.sandbox.delegation import MAX_DELEGATION_DEPTH
+    from modex_agent.plugins.defaults.capabilities.sandbox.delegation import MAX_DELEGATION_DEPTH
 
     runtime = context.runtime
     if runtime is None or runtime.services.delegation is None:

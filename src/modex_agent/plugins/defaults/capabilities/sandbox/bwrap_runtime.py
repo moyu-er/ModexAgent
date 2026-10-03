@@ -1,6 +1,6 @@
 """Linux LOCAL runtime: compile bwrap arguments and validate startup.
 
-Compiles a :class:`~modex_agent.sandbox.settings.SandboxSettings` write surface into
+Compiles a :class:`~modex_agent.plugins.defaults.capabilities.sandbox.settings.SandboxSettings` write surface into
 a bubblewrap argv prefix — the execve-style CLI wrapper the PRD's local
 family is built on (the wrapper configures the namespaces and then becomes
 the target process, so pexpect/marker-protocol semantics carry through

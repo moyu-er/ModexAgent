@@ -5,8 +5,8 @@ import socket
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.sandbox.guard import CommandSeverity, GuardMatch
-from modex_agent.sandbox.guard_network import (
+from modex_agent.plugins.defaults.capabilities.sandbox.guard import CommandSeverity, GuardMatch
+from modex_agent.plugins.defaults.capabilities.sandbox.guard_network import (
     NetworkGuard,
     NetworkGuardConfig,
     validate_url_target,

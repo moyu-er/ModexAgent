@@ -43,8 +43,8 @@ from modex_agent.core.interceptor import (
     ToolCallNext,
 )
 from modex_agent.core.tool_manager import ToolResult
-from modex_agent.sandbox.decision import SecurityDecisionService
-from modex_agent.sandbox.guard_presentation import (
+from modex_agent.plugins.defaults.capabilities.sandbox.decision import SecurityDecisionService
+from modex_agent.plugins.defaults.capabilities.sandbox.guard_presentation import (
     anchor_matches_approval,
     evaluate_call,
     is_container_dead,
@@ -52,17 +52,17 @@ from modex_agent.sandbox.guard_presentation import (
     translate_denial,
     verdict_to_denial,
 )
-from modex_agent.sandbox.runtime import (
+from modex_agent.plugins.defaults.capabilities.sandbox.runtime import (
     ResolvedSandbox,
     SandboxRuntime,
     write_enforcement_snapshot,
 )
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     SandboxBackend,
     SandboxSettings,
 )
-from modex_agent.sandbox.shell_plan import SandboxBinding
-from modex_agent.sandbox.tool_matrix import (
+from modex_agent.plugins.defaults.capabilities.sandbox.shell_plan import SandboxBinding
+from modex_agent.plugins.defaults.capabilities.sandbox.tool_matrix import (
     describe_tool_security,
     extract_call_target,
 )

@@ -35,7 +35,7 @@ from modex_agent.messaging.models import ApprovalAction
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_outcome import TurnSuspension
 from modex_agent.plugins.defaults.capabilities.approval.views import view_from_request
-from modex_agent.sandbox.decision import approval_anchor
+from modex_agent.plugins.defaults.capabilities.sandbox.decision import approval_anchor
 from modex_agent.workspace.runtime import resolve_workspace_root
 
 if TYPE_CHECKING:

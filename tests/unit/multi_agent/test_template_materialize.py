@@ -950,7 +950,7 @@ async def test_materialize_lands_delegation_snapshot_and_guard_only_gate():
     subagent never owns a card channel."""
     from modex_agent.plugins.defaults.capabilities.approval.runtime import ApprovalRuntime
     from modex_agent.plugins.defaults.capabilities.approval.security import SecurityClassifier
-    from modex_agent.sandbox.delegation import DelegationSnapshot
+    from modex_agent.plugins.defaults.capabilities.sandbox.delegation import DelegationSnapshot
 
     deps, factory = await _make_deps()
     template = _compiled_template("scout")
@@ -1017,14 +1017,11 @@ async def test_materialize_declared_roots_extend_the_write_envelope():
     """PRD #5: 声明根内写 → NORMAL (the dirs join the envelope)."""
     from modex_agent.core.message import ToolCall
     from modex_agent.core.turn.approval_types import ApprovalTier
-    from modex_agent.sandbox.settings import ExclusiveConfig, SandboxSettings
 
     deps, factory = await _make_deps()
     template = _compiled_template(
         "scout",
-        sandbox=SandboxSettings(
-            exclusive=ExclusiveConfig(writable_roots=[Path("/ws/shared")])
-        ),
+        sandbox={"exclusive": {"writable_roots": ["/ws/shared"]}},
     )
     parent = SessionIdFactory().create(agent_name="main")
     instance = await template.materialize(
@@ -1047,14 +1044,10 @@ async def test_materialize_declared_roots_extend_the_write_envelope():
 async def test_materialize_declared_roots_outside_pool_envelope_fails_fast():
     """A declared root escaping the caller envelope aborts materialization
     — a delegation can only narrow, never amplify."""
-    from modex_agent.sandbox.settings import ExclusiveConfig, SandboxSettings
-
     deps, factory = await _make_deps()
     template = _compiled_template(
         "scout",
-        sandbox=SandboxSettings(
-            exclusive=ExclusiveConfig(writable_roots=[Path("/elsewhere")])
-        ),
+        sandbox={"exclusive": {"writable_roots": ["/elsewhere"]}},
     )
     parent = SessionIdFactory().create(agent_name="main")
 
@@ -1099,7 +1092,9 @@ async def test_materialize_pool_full_access_inherits_to_subagent():
     full-access pool yields a full-access subagent (equal, never wider
     than the caller). A DECLARED block still narrows: the second half
     pins a workspace declaration under the full caller."""
-    from modex_agent.sandbox.settings import ExclusiveConfig, SandboxSettings, WriteSurface
+    from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
+        WriteSurface,
+    )
 
     deps, factory = await _make_deps()
     root = AgentSpec(
@@ -1147,7 +1142,7 @@ async def test_materialize_pool_full_access_inherits_to_subagent():
     # A DECLARED workspace block narrows even under a full caller.
     narrowed = _compiled_template(
         "scout",
-        sandbox=SandboxSettings(exclusive=ExclusiveConfig()),
+        sandbox={"exclusive": {}},
     )
     instance2 = await narrowed.materialize(
         parent_session=parent, invocation_id="inv2", deps=deps
@@ -1167,9 +1162,15 @@ async def test_materialize_pool_full_access_inherits_to_subagent():
 async def test_callback_failure_retries_transferred_shell_before_owned_guard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from modex_agent.sandbox.runtime import ResolvedSandbox, SandboxRuntime
-    from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
-    from modex_agent.sandbox.types import EnforcementLevel
+    from modex_agent.plugins.defaults.capabilities.sandbox.runtime import (
+        ResolvedSandbox,
+        SandboxRuntime,
+    )
+    from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
+        SandboxBackend,
+        SandboxSettings,
+    )
+    from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel
     from modex_agent.tools.terminal.persistent_bash import PersistentShellManager
 
     events: list[str] = []
@@ -1203,11 +1204,11 @@ async def test_callback_failure_retries_transferred_shell_before_owned_guard(
         return object()
 
     monkeypatch.setattr(
-        "modex_agent.plugins.defaults.interceptors.resolve_selection",
+        "modex_agent.plugins.defaults.capabilities.sandbox.selection.resolve_selection",
         resolve_selection,
     )
     monkeypatch.setattr(
-        "modex_agent.plugins.defaults.interceptors.select_runtime",
+        "modex_agent.plugins.defaults.capabilities.sandbox.selection.select_runtime",
         lambda selection: Runtime(),
     )
     monkeypatch.setattr(
@@ -1305,9 +1306,15 @@ async def test_callback_failure_retries_transferred_shell_before_owned_guard(
 async def test_post_materialize_wiring_failure_stops_owned_guard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from modex_agent.sandbox.runtime import ResolvedSandbox, SandboxRuntime
-    from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
-    from modex_agent.sandbox.types import EnforcementLevel
+    from modex_agent.plugins.defaults.capabilities.sandbox.runtime import (
+        ResolvedSandbox,
+        SandboxRuntime,
+    )
+    from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
+        SandboxBackend,
+        SandboxSettings,
+    )
+    from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel
 
     events: list[str] = []
 
@@ -1334,11 +1341,11 @@ async def test_post_materialize_wiring_failure_stops_owned_guard(
         return object()
 
     monkeypatch.setattr(
-        "modex_agent.plugins.defaults.interceptors.resolve_selection",
+        "modex_agent.plugins.defaults.capabilities.sandbox.selection.resolve_selection",
         resolve_selection,
     )
     monkeypatch.setattr(
-        "modex_agent.plugins.defaults.interceptors.select_runtime",
+        "modex_agent.plugins.defaults.capabilities.sandbox.selection.select_runtime",
         lambda selection: Runtime(),
     )
 

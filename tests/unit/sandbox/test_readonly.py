@@ -20,12 +20,15 @@ from modex_agent.core.terminal import (
     ShellInfo,
 )
 from modex_agent.core.workspace_root import WorkspaceRootProvider
-from modex_agent.sandbox.decision import (
+from modex_agent.plugins.defaults.capabilities.sandbox.decision import (
     GuardCategory,
     SecurityDecisionService,
 )
-from modex_agent.sandbox.readonly import classify_readonly, resolve_command_family
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.sandbox.readonly import (
+    classify_readonly,
+    resolve_command_family,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     GuardSettings,
     SandboxBackend,
     SandboxSettings,
@@ -148,7 +151,7 @@ class TestFamilyDispatch:
 
     def test_host_follows_detected_shell(self, monkeypatch) -> None:
         monkeypatch.setattr(
-            "modex_agent.sandbox.readonly.detect_platform_shell",
+            "modex_agent.plugins.defaults.capabilities.sandbox.readonly.detect_platform_shell",
             lambda: _platform(ShellFamily.POWERSHELL),
         )
         assert resolve_command_family(SandboxBackend.HOST) is ShellFamily.POWERSHELL
@@ -157,9 +160,9 @@ class TestFamilyDispatch:
         self, monkeypatch
     ) -> None:
         monkeypatch.setattr(
-            "modex_agent.sandbox.readonly.detect_platform_shell", lambda: None
+            "modex_agent.plugins.defaults.capabilities.sandbox.readonly.detect_platform_shell", lambda: None
         )
-        import modex_agent.sandbox.readonly as ro
+        import modex_agent.plugins.defaults.capabilities.sandbox.readonly as ro
 
         monkeypatch.setattr(ro, "get_platform", lambda: ro.Platform.WINDOWS)
         assert resolve_command_family(SandboxBackend.HOST) is ShellFamily.CMD

@@ -266,11 +266,18 @@ def _field_value(
             return compiled.spec.memory_overrides.model_dump(mode="json")
         case "sandbox":
             # Declaration face — the two-class permission block (None =
-            # inherit the caller's settings wholesale).
-            return (
-                agent_spec.sandbox.model_dump(mode="json")
-                if agent_spec.sandbox is not None
-                else None
+            # inherit the caller's settings wholesale). The raw mapping
+            # is validated through the bundle's config model here (the
+            # schema holds the raw face), producing the same canonical
+            # value the typed field used to dump.
+            if agent_spec.sandbox is None:
+                return None
+            from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
+                SandboxSettings,
+            )
+
+            return SandboxSettings.model_validate(agent_spec.sandbox).model_dump(
+                mode="json"
             )
     raise KeyError(f"unknown provenance field {field!r}")
 

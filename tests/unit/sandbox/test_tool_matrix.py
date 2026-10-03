@@ -26,10 +26,13 @@ import pytest
 from pydantic import ValidationError
 
 from modex_agent.core.workspace_root import WorkspaceRootProvider
-from modex_agent.sandbox.decision import GuardCategory, SecurityDecisionService
-from modex_agent.sandbox.guard_presentation import verdict_to_denial
-from modex_agent.sandbox.settings import SandboxSettings, WriteSurface
-from modex_agent.sandbox.tool_matrix import (
+from modex_agent.plugins.defaults.capabilities.sandbox.decision import (
+    GuardCategory,
+    SecurityDecisionService,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.guard_presentation import verdict_to_denial
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import SandboxSettings, WriteSurface
+from modex_agent.plugins.defaults.capabilities.sandbox.tool_matrix import (
     ToolCallTarget,
     ToolEffect,
     ToolSecurityDescriptor,
@@ -244,13 +247,13 @@ class TestPermissionClass:
     """The two-class derivation: parallel reads vs exclusive read-writes."""
 
     def test_read_family_is_parallel(self) -> None:
-        from modex_agent.sandbox.tool_matrix import PermissionClass
+        from modex_agent.plugins.defaults.capabilities.sandbox.tool_matrix import PermissionClass
 
         for name in ("read", "ls", "glob", "grep", "ast_grep_search", "web_reader"):
             assert describe_tool_security(name).permission_class is PermissionClass.PARALLEL, name
 
     def test_write_family_is_exclusive(self) -> None:
-        from modex_agent.sandbox.tool_matrix import PermissionClass
+        from modex_agent.plugins.defaults.capabilities.sandbox.tool_matrix import PermissionClass
 
         for name in (
             "write", "edit", "aci_edit", "ast_grep_replace", "bash", "bash_input", "process",

@@ -13,8 +13,11 @@ from typing import TYPE_CHECKING
 
 from modex_agent.core.terminal import ShellLaunchOwner
 from modex_agent.core.turn.env_context import _current_session_id
-from modex_agent.sandbox.runtime import HostRuntime, ResolvedSandbox
-from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
+from modex_agent.plugins.defaults.capabilities.sandbox.runtime import HostRuntime, ResolvedSandbox
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
+    SandboxBackend,
+    SandboxSettings,
+)
 
 if TYPE_CHECKING:
     from modex_agent.interceptor.chain import InterceptorChain
@@ -74,7 +77,9 @@ async def resolved_binding(chain: InterceptorChain | None) -> SandboxBinding | N
     """Read the execution owner, not a captured snapshot, from the guard."""
     if chain is None:
         return None
-    from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
+    from modex_agent.plugins.defaults.capabilities.sandbox.interceptor import (
+        SandboxGuardInterceptor,
+    )
 
     for interceptor in chain.interceptors:
         if isinstance(interceptor, SandboxGuardInterceptor):

@@ -374,9 +374,12 @@ class TestTaskDispatchToolDescription:
 def _runtime_with_delegation(depth: int) -> object:
     from modex_agent.core.turn.enums import AgentKind, TurnPhase
     from modex_agent.core.turn.models import TurnIdentity, TurnStateBase
+    from modex_agent.plugins.defaults.capabilities.sandbox.delegation import DelegationSnapshot
+    from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
+        SandboxBackend,
+        SandboxSettings,
+    )
     from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-    from modex_agent.sandbox.delegation import DelegationSnapshot
-    from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
 
     snapshot = DelegationSnapshot(
         workspace_root=Path("/ws"),

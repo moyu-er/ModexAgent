@@ -23,14 +23,17 @@ from pydantic import ValidationError
 
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.turn.enums import TurnCustomKey
-from modex_agent.sandbox.runtime import (
+from modex_agent.plugins.defaults.capabilities.sandbox.runtime import (
     HostRuntime,
     ResolvedSandbox,
     SandboxRuntime,
     write_enforcement_snapshot,
 )
-from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
-from modex_agent.sandbox.types import EnforcementLevel
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
+    SandboxBackend,
+    SandboxSettings,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel
 
 # ---------------------------------------------------------------------------
 # ResolvedSandbox value model
@@ -77,7 +80,7 @@ class TestResolvedSandbox:
 
 async def test_default_rejected_by_selection() -> None:
     """DEFAULT must never reach selection — program error if it leaks through."""
-    from modex_agent.sandbox.selection import resolve_selection
+    from modex_agent.plugins.defaults.capabilities.sandbox.selection import resolve_selection
 
     with pytest.raises(ValueError, match="DEFAULT"):
         await resolve_selection(SandboxBackend.DEFAULT)
@@ -112,7 +115,7 @@ class TestHostRuntime:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            "modex_agent.sandbox.runtime._resolve_host_shell",
+            "modex_agent.plugins.defaults.capabilities.sandbox.runtime._resolve_host_shell",
             lambda: "/usr/bin/bash",
         )
         runtime = HostRuntime()
@@ -123,7 +126,7 @@ class TestHostRuntime:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            "modex_agent.sandbox.runtime._resolve_host_shell",
+            "modex_agent.plugins.defaults.capabilities.sandbox.runtime._resolve_host_shell",
             lambda: None,
         )
         runtime = HostRuntime()
@@ -143,7 +146,7 @@ class TestHostRuntime:
         """HostRuntime constructed by the selector with a degradation reason
         reports it verbatim — the honest-reporting obligation."""
         monkeypatch.setattr(
-            "modex_agent.sandbox.runtime._resolve_host_shell",
+            "modex_agent.plugins.defaults.capabilities.sandbox.runtime._resolve_host_shell",
             lambda: "/usr/bin/bash",
         )
         runtime = HostRuntime(degraded_reason="bwrap unavailable: not found on PATH")

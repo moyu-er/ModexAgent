@@ -19,8 +19,8 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.sandbox import engine_probe
-from modex_agent.sandbox.engine_probe import (
+from modex_agent.plugins.defaults.capabilities.sandbox import engine_probe
+from modex_agent.plugins.defaults.capabilities.sandbox.engine_probe import (
     clear_probe_cache,
     probe_bwrap,
     probe_docker,
@@ -77,19 +77,19 @@ def patch_probe_layers(
         smoke_results: dict[str, tuple[int, str]] | FakeVersionRunner | None = None,
     ) -> FakeVersionRunner:
         monkeypatch.setattr(
-            "modex_agent.sandbox.engine_probe._which", lambda name: which_map.get(name)
+            "modex_agent.plugins.defaults.capabilities.sandbox.engine_probe._which", lambda name: which_map.get(name)
         )
         if isinstance(version_results, FakeVersionRunner):
             runner = version_results
         else:
             runner = FakeVersionRunner(version_results)
-        monkeypatch.setattr("modex_agent.sandbox.engine_probe._run_version", runner)
+        monkeypatch.setattr("modex_agent.plugins.defaults.capabilities.sandbox.engine_probe._run_version", runner)
         smoke_runner = (
             smoke_results
             if isinstance(smoke_results, FakeVersionRunner)
             else FakeVersionRunner(smoke_results or {})
         )
-        monkeypatch.setattr("modex_agent.sandbox.engine_probe._run_smoke", smoke_runner)
+        monkeypatch.setattr("modex_agent.plugins.defaults.capabilities.sandbox.engine_probe._run_smoke", smoke_runner)
         return runner
 
     return _patch

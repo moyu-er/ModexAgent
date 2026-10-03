@@ -32,17 +32,24 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.sandbox import oci_runtime
-from modex_agent.sandbox.exceptions import SandboxConfigurationError, SandboxPermissionError
-from modex_agent.sandbox.oci_runtime import (
+from modex_agent.plugins.defaults.capabilities.sandbox import oci_runtime
+from modex_agent.plugins.defaults.capabilities.sandbox.exceptions import (
+    SandboxConfigurationError,
+    SandboxPermissionError,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.oci_runtime import (
     OciContainerRuntime,
     windows_host_to_engine,
 )
-from modex_agent.sandbox.oci_support import CliResult
-from modex_agent.sandbox.runtime import ResolvedSandbox
-from modex_agent.sandbox.selection import OciEngine
-from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings, WriteSurface
-from modex_agent.sandbox.types import EnforcementLevel
+from modex_agent.plugins.defaults.capabilities.sandbox.oci_support import CliResult
+from modex_agent.plugins.defaults.capabilities.sandbox.runtime import ResolvedSandbox
+from modex_agent.plugins.defaults.capabilities.sandbox.selection import OciEngine
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
+    SandboxBackend,
+    SandboxSettings,
+    WriteSurface,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel
 
 _WS = Path("/ws/project")
 _IMAGE = "debian:bookworm-slim"
@@ -186,7 +193,7 @@ class TestEngineValidation:
     def test_unknown_engine_literal_is_unrepresentable(self) -> None:
         """The engine is the typed OciEngine enum — an unknown literal
         cannot be constructed at all."""
-        from modex_agent.sandbox.selection import OciEngine
+        from modex_agent.plugins.defaults.capabilities.sandbox.selection import OciEngine
 
         with pytest.raises(ValueError):
             OciEngine("nerdctl")

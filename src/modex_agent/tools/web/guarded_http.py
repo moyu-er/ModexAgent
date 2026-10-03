@@ -16,14 +16,19 @@ fully read response here imposes no response-size limit.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 import httpx
 
-from modex_agent.sandbox.guard_network import NetworkGuard
 from modex_agent.tools.web.guarded_transport import (
     GuardedAsyncTransport,
     ValidatingNetworkBackend,
 )
+
+if TYPE_CHECKING:
+    from modex_agent.plugins.defaults.capabilities.sandbox.guard_network import (
+        NetworkGuard,
+    )
 
 __all__ = [
     "DEFAULT_MAX_HOPS",
@@ -109,6 +114,13 @@ async def follow_guarded(
     """Send with manual redirects: each URL (initial + every hop) passes
     the static guard before sending; httpx's sanitized ``next_request``
     is reused so redirect header hygiene is preserved."""
+    # Lazy guard construction (W1-B3): the default tool registration
+    # chain loads this module at boot — the sandbox bundle's guard loads
+    # only when a guarded fetch actually runs without an injected guard.
+    from modex_agent.plugins.defaults.capabilities.sandbox.guard_network import (
+        NetworkGuard,
+    )
+
     policy = guard if guard is not None else NetworkGuard()
     hops = 0
     response: httpx.Response | None = None

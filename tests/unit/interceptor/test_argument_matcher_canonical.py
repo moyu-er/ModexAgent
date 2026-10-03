@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import ArgumentMatcher
 from modex_agent.core.workspace_root import WorkspaceRootProvider
+from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import ArgumentMatcher
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -75,7 +75,7 @@ class TestArgumentMatcherCanonicalContainment:
 
 class TestApprovalAnchorCanonical:
     def test_dot_dot_form_anchors_identically_to_plain(self, tmp_path: Path) -> None:
-        from modex_agent.sandbox.decision import approval_anchor
+        from modex_agent.plugins.defaults.capabilities.sandbox.decision import approval_anchor
 
         ws = tmp_path / "ws"
         plain = approval_anchor("write", {"path": "notes/a.md"}, ws)
@@ -84,7 +84,7 @@ class TestApprovalAnchorCanonical:
         assert plain == dotted
 
     def test_symlinked_target_anchors_to_resolved_location(self, tmp_path: Path) -> None:
-        from modex_agent.sandbox.decision import approval_anchor
+        from modex_agent.plugins.defaults.capabilities.sandbox.decision import approval_anchor
 
         ws = tmp_path / "ws"
         real = tmp_path / "real"
@@ -97,7 +97,7 @@ class TestApprovalAnchorCanonical:
         assert Path(anchor) == (real / "a.md").resolve(strict=False)
 
     def test_absolute_path_case_drive_canonical(self, tmp_path: Path) -> None:
-        from modex_agent.sandbox.decision import approval_anchor
+        from modex_agent.plugins.defaults.capabilities.sandbox.decision import approval_anchor
 
         ws = tmp_path.resolve(strict=False)
         drive = ws.drive

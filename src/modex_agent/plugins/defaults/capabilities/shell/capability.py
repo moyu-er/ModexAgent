@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, ClassVar
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.tool_group import ToolGroupSpec, ToolGroupVariant
-from modex_agent.sandbox.shell_plan import SandboxBinding, resolved_binding
 from modex_agent.scope.capability import (
     Capability,
     CapabilityBinding,
@@ -22,6 +21,9 @@ from modex_agent.workspace.boundary import canonicalize_path
 
 if TYPE_CHECKING:
     from modex_agent.plugins.assembly.context import AgentContext
+    from modex_agent.plugins.defaults.capabilities.sandbox.shell_plan import (
+        SandboxBinding,
+    )
 
 SHELL_CAPABILITY_NAME = "shell"
 SHELL_WIRING_KEY = "shell"
@@ -129,6 +131,13 @@ class ShellCapability(Capability):
             return CapabilityWiring()
         if ctx.spec is None:
             raise ValueError("shell capability assembly requires the compiled agent spec")
+
+        # Sandbox-import-light: the live-binding read pulls the sandbox
+        # bundle's shell_plan only when a shell is actually assembled for
+        # this agent (the plain host path resolves None without it).
+        from modex_agent.plugins.defaults.capabilities.sandbox.shell_plan import (
+            resolved_binding,
+        )
 
         pool_runtime = ctx.pool_runtime
         sandbox_binding = await resolved_binding(

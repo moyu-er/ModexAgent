@@ -17,8 +17,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.adapters.output import OutputAdapter
-from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig
-from modex_agent.plugins.defaults.capabilities.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.commands.constants import CommandAction, CommandDispatchPolicy, CommandParseStatus
 from modex_agent.commands.models import (
     CommandHandlingResult,
@@ -41,10 +39,18 @@ from modex_agent.pipeline.turn_context_config import (
     TurnContextDescriptor,
 )
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig
+from modex_agent.plugins.defaults.capabilities.approval.runtime import (
+    ApprovalRuntime,
+    TieredToolApprovalClassifier,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.delegation import DelegationSnapshot
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
+    SandboxBackend,
+    SandboxSettings,
+)
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
-from modex_agent.sandbox.delegation import DelegationSnapshot
-from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
 from modex_agent.tools.manager import InMemoryToolManager
 
 

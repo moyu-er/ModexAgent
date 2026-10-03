@@ -50,16 +50,22 @@ from modex_agent.core.workspace_root import WorkspaceRootProvider
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.messaging.models import ApprovalAction
 from modex_agent.plugins.defaults.capabilities.approval.resumer import ApprovalResumer
-from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-from modex_agent.sandbox.decision import GuardCategory, SecurityDecisionService
-from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
-from modex_agent.sandbox.runtime import ResolvedSandbox, SandboxRuntime
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.sandbox.decision import (
+    GuardCategory,
+    SecurityDecisionService,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.interceptor import SandboxGuardInterceptor
+from modex_agent.plugins.defaults.capabilities.sandbox.runtime import (
+    ResolvedSandbox,
+    SandboxRuntime,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     SandboxBackend,
     SandboxSettings,
     WriteSurface,
 )
-from modex_agent.sandbox.types import EnforcementLevel
+from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.tools.manager import InMemoryToolManager
 from modex_agent.workspace.boundary import canonicalize_path
 from modex_agent.workspace.runtime import bind_workspace_root
@@ -346,7 +352,7 @@ class TestInterceptorBackstop:
         # intercept-level denial only exists once the boundary actually
         # fires — what this test pins is the anchor divergence the waive
         # check would see.)
-        from modex_agent.sandbox.decision import approval_anchor
+        from modex_agent.plugins.defaults.capabilities.sandbox.decision import approval_anchor
 
         root = _SwitchableRoot()
         guard = _guard(root)
@@ -370,7 +376,7 @@ class TestInterceptorBackstop:
     async def test_same_relative_path_same_root_passes(self) -> None:
         # The white-approval positive: approve + execute under the same
         # root — identical anchors.
-        from modex_agent.sandbox.decision import approval_anchor
+        from modex_agent.plugins.defaults.capabilities.sandbox.decision import approval_anchor
 
         guard = _guard(_FixedRoot(WS))
         state = _turn_state()
@@ -459,8 +465,13 @@ class TestEndToEndWhiteApproval:
     async def test_classify_card_approve_execute_loop(self) -> None:
         """PRD 验收标准 2: outside-envelope path → DANGEROUS card →
         /approve → the guard that would deny now executes."""
-        from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import ArgumentMatcher
-        from modex_agent.plugins.defaults.capabilities.approval.config import AgentApprovalConfig, ToolApprovalConfig
+        from modex_agent.plugins.defaults.capabilities.approval.argument_matcher import (
+            ArgumentMatcher,
+        )
+        from modex_agent.plugins.defaults.capabilities.approval.config import (
+            AgentApprovalConfig,
+            ToolApprovalConfig,
+        )
         from modex_agent.plugins.defaults.capabilities.approval.runtime import (
             ApprovalRuntime,
             TieredToolApprovalClassifier,
@@ -585,7 +596,7 @@ class TestDelegationRegression:
 
 class TestApprovalAnchor:
     def test_relative_file_path_anchors_to_root(self) -> None:
-        from modex_agent.sandbox.decision import approval_anchor
+        from modex_agent.plugins.defaults.capabilities.sandbox.decision import approval_anchor
 
         assert (
             approval_anchor("write", {"path": "notes/a.md"}, WS)
@@ -593,7 +604,7 @@ class TestApprovalAnchor:
         )
 
     def test_absolute_path_unchanged(self) -> None:
-        from modex_agent.sandbox.decision import approval_anchor
+        from modex_agent.plugins.defaults.capabilities.sandbox.decision import approval_anchor
 
         assert (
             approval_anchor("write", {"path": "/etc/hosts"}, None)
@@ -601,12 +612,12 @@ class TestApprovalAnchor:
         )
 
     def test_bash_anchor_is_command(self) -> None:
-        from modex_agent.sandbox.decision import approval_anchor
+        from modex_agent.plugins.defaults.capabilities.sandbox.decision import approval_anchor
 
         assert approval_anchor("bash", {"command": "ls /tmp"}, None) == "ls /tmp"
 
     def test_web_anchor_is_url(self) -> None:
-        from modex_agent.sandbox.decision import approval_anchor
+        from modex_agent.plugins.defaults.capabilities.sandbox.decision import approval_anchor
 
         assert (
             approval_anchor("web_reader", {"url": "https://x.example"}, None)
@@ -614,7 +625,7 @@ class TestApprovalAnchor:
         )
 
     def test_missing_arguments_are_none(self) -> None:
-        from modex_agent.sandbox.decision import approval_anchor
+        from modex_agent.plugins.defaults.capabilities.sandbox.decision import approval_anchor
 
         assert approval_anchor("write", {}, WS) is None
         assert approval_anchor("write", {"path": ""}, WS) is None

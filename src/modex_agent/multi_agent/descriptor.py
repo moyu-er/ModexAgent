@@ -20,7 +20,7 @@ from modex_agent.messaging.agent_messages import AgentAddress
 
 if TYPE_CHECKING:
     from modex_agent.pipeline.pipeline import AgentPipeline
-    from modex_agent.sandbox.delegation import DelegationSnapshot
+    from modex_agent.plugins.defaults.capabilities.sandbox.delegation import DelegationSnapshot
 
 
 class AgentLLMConfig(BaseModel):

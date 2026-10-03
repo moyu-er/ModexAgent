@@ -34,7 +34,6 @@ from modex_agent.core.tool_vocabulary import (
     ToolPreset,
 )
 from modex_agent.persistence.config import PersistenceBackend
-from modex_agent.sandbox.settings import SandboxSettings
 
 ExecutionStrategyName = ExecutionStrategyKind | str
 """Execution-strategy reference — an :class:`ExecutionStrategyKind` member
@@ -247,9 +246,17 @@ class AgentSpec(BaseModel):
     eager: bool | None = None
     """Registration timing override: ``True`` = eager at boot, ``False`` =
     lazy on first dispatch; ``None`` = position-derived default."""
-    sandbox: SandboxSettings | None = None
-    """The subagent's own sandbox declaration — the SAME two-class shape
-    every agent carries (``sandbox.settings.SandboxSettings``).
+    # Open extension payload (rule 14): the RAW sandbox declaration — the
+    # same open capability-config face as the ``capabilities:`` override map.
+    # The schema holds the raw shape; the sandbox capability's config model
+    # (``SandboxSettings`` in the sandbox capability bundle) validates and
+    # interprets it at compile/assembly time.
+    sandbox: dict[str, Any] | None = None
+    """The agent's own sandbox declaration — the SAME two-class shape
+    every agent carries (``SandboxSettings`` in the sandbox capability
+    bundle). Unlike approval, sandbox is NOT root-only: subagents declare
+    it and the compiler translates it into the ``sandbox`` capability
+    override on every native agent.
 
     ``None`` (the default) inherits the caller's settings wholesale
     (``resolve_agent_sandbox``): the subagent's permission face equals

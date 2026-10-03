@@ -12,12 +12,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from modex_agent.core.interceptor import ToolCallContext
-from modex_agent.sandbox.decision import (
+from modex_agent.plugins.defaults.capabilities.sandbox.decision import (
     GuardCategory,
     GuardVerdict,
 )
-from modex_agent.sandbox.settings import WriteSurface
-from modex_agent.sandbox.tool_matrix import (
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import WriteSurface
+from modex_agent.plugins.defaults.capabilities.sandbox.tool_matrix import (
     PermissionClass,
     ToolEffect,
     approval_anchor,
@@ -25,7 +25,7 @@ from modex_agent.sandbox.tool_matrix import (
 )
 
 if TYPE_CHECKING:
-    from modex_agent.sandbox.decision import SecurityDecisionService
+    from modex_agent.plugins.defaults.capabilities.sandbox.decision import SecurityDecisionService
 
 __all__ = [
     "translate_denial",

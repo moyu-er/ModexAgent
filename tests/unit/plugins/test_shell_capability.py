@@ -34,12 +34,18 @@ from modex_agent.plugins.assembly.native_core import (
     assemble_native_agent,
 )
 from modex_agent.plugins.defaults import DefaultPlugin
+from modex_agent.plugins.defaults.capabilities.sandbox.decision import SecurityDecisionService
+from modex_agent.plugins.defaults.capabilities.sandbox.interceptor import SandboxGuardInterceptor
+from modex_agent.plugins.defaults.capabilities.sandbox.runtime import (
+    ResolvedSandbox,
+    SandboxRuntime,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
+    SandboxBackend,
+    SandboxSettings,
+)
+from modex_agent.plugins.defaults.capabilities.sandbox.types import EnforcementLevel
 from modex_agent.plugins.loader import PluginRegistrationContext
-from modex_agent.sandbox.decision import SecurityDecisionService
-from modex_agent.sandbox.interceptor import SandboxGuardInterceptor
-from modex_agent.sandbox.runtime import ResolvedSandbox, SandboxRuntime
-from modex_agent.sandbox.settings import SandboxBackend, SandboxSettings
-from modex_agent.sandbox.types import EnforcementLevel
 from modex_agent.scope.compiler import compile_scope
 from modex_agent.scope.component_registry import ComponentRegistry
 from modex_agent.scope.components import AgentType, ComponentFactory, ComponentSlot

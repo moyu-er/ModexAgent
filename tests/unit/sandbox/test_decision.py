@@ -14,12 +14,12 @@ import pytest
 from pydantic import ValidationError
 
 from modex_agent.core.workspace_root import WorkspaceRootProvider
-from modex_agent.sandbox.decision import (
+from modex_agent.plugins.defaults.capabilities.sandbox.decision import (
     GuardCategory,
     GuardVerdict,
     SecurityDecisionService,
 )
-from modex_agent.sandbox.settings import (
+from modex_agent.plugins.defaults.capabilities.sandbox.settings import (
     GuardSettings,
     SandboxSettings,
     WriteSurface,

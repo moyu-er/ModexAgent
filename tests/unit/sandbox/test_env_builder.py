@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.sandbox.env_builder import EnvBuilderConfig, EnvironmentBuilder, EnvPolicy
+from modex_agent.plugins.defaults.capabilities.sandbox.env_builder import (
+    EnvBuilderConfig,
+    EnvironmentBuilder,
+    EnvPolicy,
+)
 
 
 class TestEnvironmentBuilderUnixMinimal:
@@ -182,7 +186,7 @@ class TestModuleHasNoTerminalDependency:
         (the docstring may name it, code must not import it)."""
         import ast
 
-        import modex_agent.sandbox.env_builder as module
+        import modex_agent.plugins.defaults.capabilities.sandbox.env_builder as module
 
         tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
         for node in ast.walk(tree):
