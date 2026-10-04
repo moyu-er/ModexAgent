@@ -210,3 +210,72 @@ describe("AgentForm capability enablement (corrections 3+4)", () => {
     expect(screen.queryByTestId("selection-list")).toBeNull();
   });
 });
+
+describe("AgentForm implementation selector (restored native/external toggle)", () => {
+  const openAndPick = (label: string, optionLabel: string) => {
+    // FormSection headers are buttons too — pick the listbox-opening one.
+    const trigger = screen
+      .getAllByRole("button", { name: label })
+      .find((el) => el.getAttribute("aria-haspopup") === "listbox");
+    expect(trigger).toBeTruthy();
+    fireEvent.click(trigger!);
+    fireEvent.click(screen.getByRole("option", { name: optionLabel }));
+  };
+
+  const implementationTrigger = () =>
+    screen
+      .getAllByRole("button", { name: "Implementation" })
+      .find((el) => el.getAttribute("aria-haspopup") === "listbox")!;
+
+  it("offers native + external when the runtime registers an external provider", () => {
+    renderForm({});
+    fireEvent.click(implementationTrigger());
+    expect(screen.getByRole("option", { name: "Native" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "External provider" })).toBeTruthy();
+  });
+
+  it("hides the external entry when no provider kind is registered", () => {
+    renderForm({}, ["main"], { provider_kinds: [] });
+    fireEvent.click(implementationTrigger());
+    expect(screen.queryByRole("option", { name: "External provider" })).toBeNull();
+  });
+
+  it("switching to external writes strategy + default provider and strips the tool-surface keys", () => {
+    const { updated } = renderForm({
+      capabilities: { shell: {} },
+      toolset: "full",
+      mcp: ["playwright"],
+    });
+    openAndPick("Implementation", "External provider");
+    const b = updated()!;
+    expect(b.execution_strategy).toBe("external");
+    expect(b.provider_kind).toBe("opencode");
+    expect(b.capabilities).toBeUndefined();
+    expect(b.toolset).toBeUndefined();
+    expect(b.mcp).toBeUndefined();
+  });
+
+  it("shows the provider dropdown and brand logo for external agents", () => {
+    const { updated } = renderForm({ execution_strategy: "external", provider_kind: "opencode" });
+    expect(screen.getByTestId("provider-brand")).toBeTruthy();
+    openAndPick("Provider", "opencode");
+    expect(updated()!.provider_kind).toBe("opencode");
+  });
+
+  it("switching back to native clears every external-only key", () => {
+    const { updated } = renderForm({
+      execution_strategy: "external",
+      provider_kind: "opencode",
+      channel: "serve",
+      permission: "bridge",
+      system_append: "note",
+    });
+    openAndPick("Implementation", "Native");
+    const b = updated()!;
+    expect(b.execution_strategy).toBeUndefined();
+    expect(b.provider_kind).toBeUndefined();
+    expect(b.channel).toBeUndefined();
+    expect(b.permission).toBeUndefined();
+    expect(b.system_append).toBeUndefined();
+  });
+});

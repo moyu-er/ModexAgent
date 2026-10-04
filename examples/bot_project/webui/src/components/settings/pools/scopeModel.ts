@@ -230,6 +230,45 @@ export function setField(body: AgentBody, key: string, value: unknown): void {
   else body[key] = value;
 }
 
+/** Switch an agent between the native (react) and external implementations.
+
+  Mirrors the restored visual Implementation selector (the pre-streamline
+  SubagentCard toggle, re-based on the ADR-0056 vocabulary):
+
+  - → external: sets ``execution_strategy: external`` and the provider kind
+    (first registered kind when none declared); drops the tool-surface keys
+    the provider owns — ``capabilities`` (V12 rejects explicit capability
+    declarations on external agents), ``toolset``, ``mcp``.
+  - → native: clears ``execution_strategy`` and every external-only key
+    (``provider_kind`` / ``channel`` / ``permission`` / ``system_append``) —
+    the spec validators reject those without a provider.
+
+  Identity (description / prompt / hooks) and host-owned blocks
+  (memory / sandbox / approval) are left untouched: they remain meaningful
+  or explicitly not-applicable on both runtimes.
+*/
+export function switchAgentImplementation(
+  body: AgentBody,
+  external: boolean,
+  defaultProviderKind: string | null,
+): void {
+  if (external) {
+    setField(body, "execution_strategy", "external");
+    if (!body.provider_kind && defaultProviderKind) {
+      setField(body, "provider_kind", defaultProviderKind);
+    }
+    delete body.capabilities;
+    delete body.toolset;
+    delete body.mcp;
+  } else {
+    setField(body, "execution_strategy", null);
+    delete body.provider_kind;
+    delete body.channel;
+    delete body.permission;
+    delete body.system_append;
+  }
+}
+
 // ── Agent model pin (D-5) ────────────────────────────────────────────────────
 //
 // The declaration's `model: {provider, name}` references a model.yml entry

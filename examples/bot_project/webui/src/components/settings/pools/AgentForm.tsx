@@ -37,6 +37,7 @@ import { Textarea } from "../../ui/Textarea";
 import { HelperText } from "../../ui/HelperText";
 import { SelectionList } from "../../ui/SelectionList";
 import { FormSection } from "./FormSection";
+import { PROVIDER_BRAND_ICONS } from "./externalBrands";
 import { Badge } from "./chips";
 import { AgentSkillSelector } from "../AgentSkillSelector";
 import { PromptBodyEditor } from "./PromptBodyEditor";
@@ -59,6 +60,7 @@ import {
   setField,
   setMemoryLayer,
   setSessionTitle,
+  switchAgentImplementation,
   toggleInListField,
   type AgentBody,
   type AgentTreeNode,
@@ -177,6 +179,25 @@ export function AgentForm({
     [body.mcp],
   );
 
+  /** Native + (capability-gated) external entries for the Implementation
+      selector — "external" only when the runtime registers a strategy AND
+      at least one provider kind. */
+  const implementationOptions = useMemo(() => {
+    const entries = [
+      { value: "react", label: t("settings.poolsPanel.implementationNative") },
+    ];
+    if (
+      options.execution_strategies.includes("external") &&
+      options.provider_kinds.length > 0
+    ) {
+      entries.push({
+        value: "external",
+        label: t("settings.poolsPanel.implementationExternal"),
+      });
+    }
+    return entries;
+  }, [options.execution_strategies, options.provider_kinds, t]);
+
   /** Capability checkbox: ON preserves any existing config object; OFF
    * writes the real false veto. Uses the real tri-state mutation. */
   const capabilityItems = useMemo(
@@ -242,6 +263,53 @@ export function AgentForm({
         >
           {t("settings.poolsPanel.identitySaveFirst")}
         </p>
+      ) : null}
+
+      {/* ── Implementation (restored visual selector: native vs external
+            provider — parity with the pre-streamline SubagentCard toggle,
+            re-based on the ADR-0056 vocabulary; the provider list and the
+            external option come from the live options endpoint, so a
+            runtime without registered external providers never offers it) */}
+      {implementationOptions.length > 0 ? (
+        <FormSection title={t("settings.poolsPanel.implementation")}>
+          <DropdownPanel
+            label={t("settings.poolsPanel.implementation")}
+            helper={t("settings.poolsPanel.implementationHelper")}
+            value={isExternal ? "external" : "react"}
+            options={implementationOptions}
+            onChange={(v) =>
+              updateAgent((b) =>
+                switchAgentImplementation(
+                  b,
+                  v === "external",
+                  options.provider_kinds[0] ?? null,
+                ),
+              )
+            }
+          />
+          {isExternal ? (
+            <>
+              {(() => {
+                const brand = PROVIDER_BRAND_ICONS[asString(body.provider_kind)];
+                return brand ? (
+                  <div
+                    data-testid="provider-brand"
+                    className="flex items-center gap-2 rounded-sm border border-hairline bg-canvas-elevated px-3 py-2"
+                  >
+                    <brand.Icon width={18} height={18} aria-hidden="true" />
+                    <span className="font-mono text-xs font-semibold">{asString(body.provider_kind)}</span>
+                  </div>
+                ) : null;
+              })()}
+              <DropdownPanel
+                label={t("settings.poolsPanel.provider")}
+                value={asString(body.provider_kind)}
+                options={options.provider_kinds.map((k) => ({ value: k, label: k }))}
+                onChange={(v) => updateAgent((b) => setField(b, "provider_kind", v || null))}
+              />
+            </>
+          ) : null}
+        </FormSection>
       ) : null}
 
       {/* ── Overview ──────────────────────────────────────────────────── */}

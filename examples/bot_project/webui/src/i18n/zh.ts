@@ -187,6 +187,12 @@ export const zh: Messages = {
       forkMax: "最多继承消息数", forkMaxHelper: "父级消息上限为 1–{max}，默认 {default}。", executionStrategy: "执行策略",
       strategyDefault: "默认（ReAct）", providerKind: "执行器类型", providerKindNone: "选择执行器…", externalRuntime: "外部执行器",
       managedByProvider: "由外部执行器管理", providerOwns: "步数、终端、工具、操作确认、MCP 和系统指令由 {cli} CLI 管理；声明负责身份说明及拓扑配置。",
+      implementation: "实现方式",
+      implementationHelper:
+        "原生在本运行时内执行 agent 循环；外部实现将其委托给 provider 的编码 agent（如 opencode）。",
+      implementationNative: "原生",
+      implementationExternal: "外部 provider",
+      provider: "提供方（Provider）",
       eager: "加载时机", eagerHelper: "默认：{value}（由节点位置确定）。", eagerOn: "启动时加载", eagerOff: "首次调用时加载",
       memoryArchive: "归档记忆", memoryCore: "核心记忆", memoryCoreHelper: "核心记忆需要先开启归档记忆。",
       promptName: "工作指令", promptHelper: "助手使用的系统指令。", promptNone: "未指定（使用 agents/<name>.md）",

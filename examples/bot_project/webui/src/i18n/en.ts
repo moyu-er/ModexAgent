@@ -592,6 +592,12 @@ export const en = {
       managedByProvider: "Managed by the provider runtime",
       providerOwns:
         "Max steps, terminal, tools, approval, MCP and the system prompt are owned by the {cli} CLI. The declaration carries only identity (description) and topology (peers, subagents).",
+      implementation: "Implementation",
+      implementationHelper:
+        "Native runs the agent loop in this runtime; external delegates it to the provider's coding agent (e.g. opencode).",
+      implementationNative: "Native",
+      implementationExternal: "External provider",
+      provider: "Provider",
       eager: "Registration timing",
       eagerHelper: "Default: {value} (position-derived).",
       eagerOn: "Eager (at boot)",
