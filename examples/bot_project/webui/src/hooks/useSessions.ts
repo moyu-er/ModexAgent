@@ -333,13 +333,15 @@ export function useSessions({
     [sessions, activePool, ws],
   );
 
-  const selectSession = useCallback(
-    (sessionId: string): void => {
-      setSelectedId(sessionId);
-      refreshSessions();
-    },
-    [refreshSessions],
-  );
+  const selectSession = useCallback((sessionId: string): void => {
+    // Pure selection — no list refresh. The clicked node is already in the
+    // rendered list, and refreshSessions() flips the loading gate that
+    // UNMOUNTS the SessionTree (its expansion state is internal), which made
+    // every click collapse the sidebar tree. Real list changes arrive via
+    // the sessions_changed WS ping, which already refreshes with epoch
+    // ordering.
+    setSelectedId(sessionId);
+  }, []);
 
   const handleNew = useCallback(
     (pool: string): void => {

@@ -271,3 +271,26 @@ describe("useSessions rename + refresh (PA-02)", () => {
     expect(result.current.activePool).toBe("coder");
   });
 });
+
+
+describe("useSessions selection purity (sidebar tree-collapse regression)", () => {
+  beforeEach(() => {
+    vi.mocked(fetchSessions).mockResolvedValue([]);
+  });
+
+  it("selectSession does NOT refetch or flip the loading gate", async () => {
+    const { result } = renderHook(() => useSessions({ ws: "", pools }));
+    await waitFor(() => expect(result.current.isLoadingSessions).toBe(false));
+    const fetchCalls = vi.mocked(fetchSessions).mock.calls.length;
+
+    act(() => {
+      result.current.selectSession("abc123.main");
+    });
+
+    expect(result.current.selectedId).toBe("abc123.main");
+    // Pure selection: no new fetch, no loading gate — the gate unmounts the
+    // SessionTree and destroys its internal expansion state.
+    expect(vi.mocked(fetchSessions).mock.calls.length).toBe(fetchCalls);
+    expect(result.current.isLoadingSessions).toBe(false);
+  });
+});
